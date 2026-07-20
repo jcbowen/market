@@ -1,0 +1,161 @@
+services:
+  # ===== 基础设施 =====
+  mysql:
+    image: mysql:8.0
+    container_name: market-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: market123
+      MYSQL_DATABASE: market
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: market-redis
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===== 微服务 =====
+  user-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: user
+    container_name: market-user
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  product-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: product
+    container_name: market-product
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  order-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: order
+    container_name: market-order
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  cart-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: cart
+    container_name: market-cart
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      redis:
+        condition: service_healthy
+      product-service:
+        condition: service_started
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: payment
+    container_name: market-payment
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      order-service:
+        condition: service_started
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.gateway
+    container_name: market-gateway
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      user-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      cart-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+      # 开发阶段挂载宿主机前端编译产物，避免每次修改都重新构建 gateway 镜像
+      - ./bin/static/admin:/app/static/admin:ro
+      - ./bin/static/h5:/app/static/h5:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./gateway"
+
+volumes:
+  mysql_data:
+  redis_data:

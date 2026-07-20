@@ -1,0 +1,90 @@
+web_server:
+    port: 18080
+    enable_ssl: false
+    cert_path: ""
+    key_path: ""
+db:
+    driverName: mysql
+    protocol: tcp
+    host: mysql
+    port: "3306"
+    dbname: market
+    username: root
+    password: "market123"
+    charset: utf8mb4
+    tablePrefix: ""
+    parseTime: "True"
+    singularTable: true
+    disableForeignKeyConstraintWhenMigrating: true
+redis:
+    host: redis
+    port: "6379"
+    password: ""
+    db: "0"
+project:
+    name: 社区商超
+grpc:
+    user_service: user-service:50051
+    product_service: product-service:50052
+    order_service: order-service:50053
+    cart_service: cart-service:50054
+    payment_service: payment-service:50055
+jwt:
+    secret: market-secret-key-change-in-production
+    access_token_ttl: 7200
+    refresh_token_ttl: 604800
+log:
+    level: info
+    format: json
+    file_path: logs/
+    max_size: 100
+    max_backups: 30
+    max_age: 7
+    compress: true
+upload:
+    max_size: 10485760
+    allowed_types: []
+    storage: local
+    local_path: static/uploads/
+wechat:
+    app_id: "wx_test_appid"
+    app_secret: ""
+    mch_id: "1234567890"
+    api_key: "test_api_key_change_in_production"
+    notify_url: "http://localhost:18080/api/v1/payments/callback/wechat"
+    cert_path: ""
+alipay:
+    app_id: "2024test_appid"
+    private_key: "test_private_key"
+    alipay_public_key: "test_public_key"
+    notify_url: "http://localhost:18080/api/v1/payments/callback/alipay"
+    return_url: "http://localhost:18080/s/order"
+sms:
+    provider: aliyun
+    access_key: ""
+    secret_key: ""
+    sign_name: 社区商超
+    template_code: ""
+    code_expire: 300
+    send_interval: 60
+business:
+    expire_warning_days: 3
+    order_timeout: 1800
+    auto_complete_days: 7
+user_service:
+    grpc_port: 50051
+product_service:
+    grpc_port: 50052
+order_service:
+    grpc_port: 50053
+cart_service:
+    grpc_port: 50054
+payment_service:
+    grpc_port: 50055
+
+# ========== 支付方式开关 ==========
+# enabled_channels 控制当前可用的支付渠道
+# 可选值：wechat（微信支付）、alipay（支付宝支付）、cash（货到付款/现金）
+payment:
+    enabled_channels:
+        - cash

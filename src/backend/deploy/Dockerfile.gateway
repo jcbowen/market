@@ -1,0 +1,18 @@
+# Gateway 镜像
+# 仅打包已编译的二进制产物和前端静态资源，不编译源码
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+
+# 复制预编译的 gateway 二进制
+COPY bin/gateway ./gateway
+
+# 复制前端编译产物（非源码）
+COPY bin/static ./static
+
+# 配置文件通过运行时 volume 挂载，不打包进镜像
+EXPOSE 18080
+
+CMD ["./gateway"]

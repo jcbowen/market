@@ -1,0 +1,70 @@
+# === 依赖 ===
+node_modules/
+.pnpm-store/
+
+# === 编译产物 ===
+dist/
+bin/static/
+bin/logs/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# === Go ===
+# go.sum 与 go.mod 一并提交，保证依赖可重现
+# pkg/ 为 GOPATH/pkg，仅存放 go mod tidy 下载的第三方依赖缓存
+pkg/*
+!pkg/.gitkeep
+
+# === 后端构建产物 ===
+bin/gateway
+bin/*-service
+bin/logs/
+bin/release/
+/cart
+/order
+/payment
+/product
+/user
+/gateway
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# === macOS ===
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# === 环境变量 ===
+.env
+.env.local
+.env.*.local
+
+# === 日志 ===
+*.log
+npm-debug.log*
+
+# === 临时文件 ===
+*.tmp
+*.temp
+.cache/
+
+# === Playwright 测试产物 ===
+test-results/
+
+# === 测试脚本生成的截图 ===
+scripts/*.png
+
+# === uni-app ===
+unpackage/
+src/client/dist/
+
+# === 其他 ===
+Thumbs.db

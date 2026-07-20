@@ -1,0 +1,47 @@
+# 忽略 IDE 与系统文件
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# 忽略前端依赖与构建产物
+src/admin/node_modules/
+src/admin/dist/
+src/client/node_modules/
+src/client/dist/
+src/client/unpackage/
+
+# 忽略 Go 后端源码，仅保留 Dockerfile
+src/backend/**
+!src/backend/deploy/
+!src/backend/deploy/**
+
+# 忽略日志与临时文件
+logs/
+*.log
+tmp/
+
+# 忽略 Git
+.git/
+.gitignore
+
+# 已构建的二进制和前端产物需要打包进镜像，不要忽略
+# bin/gateway
+# bin/*-service
+# bin/static
+
+# 忽略前端源码（Docker 内不依赖源码编译，最终镜像通过 COPY bin/static 引入）
+src/admin/
+src/client/
+
+# 忽略文档与计划文件
+*.md
+开发计划.md
+C端开发计划.md
+docs/需求文档.md
+目录结构调整说明.md
+
+# 忽略构建脚本
+build.sh
+deploy.sh

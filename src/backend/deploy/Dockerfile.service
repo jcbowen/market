@@ -1,0 +1,16 @@
+# 微服务通用镜像
+# 仅打包已编译的二进制产物，不编译源码
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+
+# 通过构建参数指定服务名，从宿主机 bin 目录复制预编译二进制
+ARG SERVICE_NAME
+COPY bin/${SERVICE_NAME}-service ./service
+
+# 配置文件通过运行时 volume 挂载，不打包进镜像
+EXPOSE 50051
+
+CMD ["./service"]
