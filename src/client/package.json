@@ -9,7 +9,7 @@
     "dev:app": "uni -p app",
     "build:mp-weixin": "uni build -p mp-weixin",
     "build:mp-alipay": "uni build -p mp-alipay",
-    "build:h5": "uni build && rm -rf ../../bin/static/h5 && mv dist/build/h5 ../../bin/static/h5 && rm -rf dist",
+    "build:h5": "uni build && rm -rf ../../bin/static/h5 && mv dist/build/h5 ../../bin/static/h5 && node build-frame.js && rm -rf dist",
     "build:app": "uni build -p app"
   },
   "dependencies": {

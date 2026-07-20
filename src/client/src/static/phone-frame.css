@@ -1,7 +1,12 @@
 /**
  * 手机外观边框容器样式
- * 仅在非移动设备（屏幕宽度 >= 768px）下显示手机边框容器，
- * 移动设备下保持原生全屏体验。
+ *
+ * 采用 iframe 嵌套方案：
+ * - Frame 模式（body.frame-mode）：在非移动设备上显示手机边框容器，iframe 加载真实 H5 应用。
+ * - App 模式（body.app-mode）：渲染真实 uni-app 应用，保持原生全屏体验，不添加任何影响
+ *   fixed 定位的 transform 或滚动容器。
+ *
+ * 仅在非移动设备（屏幕宽度 >= 768px）且处于 Frame 模式时显示手机边框容器。
  */
 
 html,
@@ -12,28 +17,6 @@ body {
   height: 100%;
 }
 
-/**
- * 设备外框
- * 移动端：透明无装饰，占满全屏
- */
-.device-frame {
-  width: 100%;
-  min-height: 100%;
-  background: transparent;
-  box-sizing: border-box;
-}
-
-/**
- * 屏幕显示区域
- * 移动端：占满父容器，允许内容自然滚动
- */
-.device-screen {
-  width: 100%;
-  min-height: 100%;
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
 /* 装饰元素默认隐藏 */
 .device-notch,
 .device-home-indicator,
@@ -42,26 +25,46 @@ body {
 }
 
 /**
- * 非移动设备：显示手机边框容器
+ * App 模式：原生全屏体验
+ * 不限制滚动，不添加 transform，让 uni-app 的 fixed 定位元素按浏览器默认视口固定。
+ */
+body.app-mode {
+  overflow: auto;
+}
+
+body.app-mode #app-root {
+  width: 100%;
+  min-height: 100%;
+}
+
+/**
+ * 非移动设备 Frame 模式：显示手机边框容器
  * 采用 18:9 比例，容器宽度 375px，高度 750px
  * 通过 CSS 变量 --device-scale 实现等比例缩放，确保小屏幕也能完整显示
  */
 @media screen and (min-width: 768px) {
-  body {
+  body.frame-mode {
     display: flex;
     align-items: center;
     justify-content: center;
     min-height: 100vh;
-    background: #1a1a1a;
+    background: #f5f5f5;
     overflow: hidden;
   }
 
-  .device-frame {
+  /* 夜间模式：外部背景使用深色 */
+  @media (prefers-color-scheme: dark) {
+    body.frame-mode {
+      background: #1a1a1a;
+    }
+  }
+
+  body.frame-mode .device-frame {
     position: relative;
     width: 375px;
     height: 750px;
     min-height: auto;
-    padding: 36px 12px 24px;
+    padding: 0;
     border-radius: 44px;
     background: #000000;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 2px #333333;
@@ -74,29 +77,24 @@ body {
     margin-right: calc((var(--device-scale, 1) - 1) * 375px / 2);
   }
 
-  .device-screen {
+  /* iframe 作为屏幕显示区域，占满手机边框内部 */
+  body.frame-mode .device-screen {
+    display: block;
     width: 100%;
     height: 100%;
     min-height: auto;
+    box-sizing: border-box;
+    border: none;
     border-radius: 34px;
     background: #ffffff;
-    overflow-y: auto;
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
-    position: relative;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  .device-screen::-webkit-scrollbar {
-    display: none;
+    overflow: hidden;
   }
 
   /**
    * 顶部刘海装饰
-   * 位于外框顶部 padding 区域，不遮挡屏幕内容
+   * 覆盖在屏幕顶部安全区域，不响应鼠标事件
    */
-  .device-notch {
+  body.frame-mode .device-notch {
     display: block;
     position: absolute;
     top: 8px;
@@ -107,13 +105,14 @@ body {
     background: #000000;
     border-radius: 0 0 16px 16px;
     z-index: 100;
+    pointer-events: none;
   }
 
   /**
    * 底部 Home 指示条装饰
-   * 位于外框底部 padding 区域
+   * 覆盖在屏幕底部安全区域，不响应鼠标事件
    */
-  .device-home-indicator {
+  body.frame-mode .device-home-indicator {
     display: block;
     position: absolute;
     bottom: 8px;
@@ -124,12 +123,13 @@ body {
     background: rgba(255, 255, 255, 0.6);
     border-radius: 2px;
     z-index: 100;
+    pointer-events: none;
   }
 
   /**
    * 侧边电源/音量键装饰
    */
-  .device-button {
+  body.frame-mode .device-button {
     display: block;
     position: absolute;
     right: -4px;
@@ -138,11 +138,5 @@ body {
     height: 60px;
     background: #333333;
     border-radius: 0 2px 2px 0;
-  }
-
-  /* 确保应用根节点至少占满屏幕区域，并允许内容超出后滚动 */
-  .device-screen > #app {
-    width: 100%;
-    min-height: 100%;
   }
 }

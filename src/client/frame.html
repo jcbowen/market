@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>社区商超</title>
+		<link rel="stylesheet" href="static/phone-frame.css" />
+	</head>
+	<body class="frame-mode">
+		<div id="frame-shell" class="device-frame">
+			<div class="device-notch"></div>
+			<iframe
+				id="app-frame"
+				class="device-screen"
+				frameborder="0"
+				title="社区商超"
+			></iframe>
+			<div class="device-home-indicator"></div>
+			<div class="device-button"></div>
+		</div>
+
+		<script>
+			/**
+			 * PC 端模拟手机边框入口
+			 * 通过 iframe 加载真实 H5 应用，使内部 fixed 定位元素（顶部导航栏、底部 tabBar）
+			 * 相对于 iframe 自身视口固定，避免外层 transform 缩放导致滚动时一起移动。
+			 */
+			(function () {
+				var frame = document.getElementById('app-frame')
+
+				/**
+				 * 根据运行环境选择 iframe 加载的应用入口：
+				 * - 开发环境（vite dev server，端口通常为 5173）：加载同目录下的 index.html
+				 * - 生产环境（构建产物）：加载重命名后的 app.html
+				 */
+				var appSrc = location.port === '5173' ? './index.html' : './app.html'
+				frame.src = appSrc + window.location.hash
+
+				/**
+				 * 根据视口大小计算手机边框容器的缩放比例，确保在 PC 屏幕内完整显示。
+				 * 宽度方向保留 40px 边距，高度方向保留 10% 边距，缩放比例不超过 1。
+				 */
+				function updateDeviceScale() {
+					var width = window.innerWidth
+					var height = window.innerHeight
+					var root = document.documentElement
+					if (width < 768) {
+						root.style.removeProperty('--device-scale')
+						return
+					}
+					var scaleX = (width - 40) / 375
+					var scaleY = (height * 0.9) / 750
+					var scale = Math.min(scaleX, scaleY, 1)
+					root.style.setProperty('--device-scale', scale.toFixed(4))
+				}
+
+				updateDeviceScale()
+				window.addEventListener('resize', updateDeviceScale)
+				window.addEventListener('orientationchange', updateDeviceScale)
+
+				/**
+				 * 同步 iframe 内部 hash 路由到外层地址栏，刷新时可保持当前页面。
+				 * 仅同步 hash 部分，不影响 iframe 内部路由。
+				 */
+				frame.addEventListener('load', function () {
+					try {
+						var frameWindow = frame.contentWindow
+						if (!frameWindow) return
+						frameWindow.addEventListener('hashchange', function () {
+							if (window.location.hash !== frameWindow.location.hash) {
+								window.location.hash = frameWindow.location.hash
+							}
+						})
+					} catch (e) {
+						// 跨域时忽略同步
+					}
+				})
+			})()
+		</script>
+	</body>
+</html>

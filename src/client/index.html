@@ -7,48 +7,18 @@
 				CSS.supports('top: constant(a)'))
 			document.write(
 				'<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0' +
-				(coverSupport ? ', viewport-fit=cover' : '') + '" />')
+				(coverSupport ? ', viewport-fit=cover' : '') + '" />'
+			)
 		</script>
 		<title>社区商超</title>
 		<link rel="stylesheet" href="static/phone-frame.css" />
 		<!--preload-links-->
 		<!--app-context-->
 	</head>
-	<body>
-		<div class="device-frame">
-			<div class="device-notch"></div>
-			<div class="device-screen">
-				<div id="app"><!--app-html--></div>
-			</div>
-			<div class="device-home-indicator"></div>
-			<div class="device-button"></div>
+	<body class="app-mode">
+		<div id="app-root">
+			<div id="app"><!--app-html--></div>
 		</div>
-		<script>
-			/**
-			 * 在非移动设备（屏幕宽度 >= 768px）下，根据视口大小动态计算
-			 * 手机边框容器的缩放比例，确保容器能完整显示在屏幕内。
-			 * 计算规则：宽度方向保留 40px 边距，高度方向保留 10% 边距，
-			 * 取最小缩放比例且不超过原始大小（scale <= 1）。
-			 */
-			(function () {
-				function updateDeviceScale() {
-					var width = window.innerWidth
-					var height = window.innerHeight
-					var root = document.documentElement
-					if (width < 768) {
-						root.style.removeProperty('--device-scale')
-						return
-					}
-					var scaleX = (width - 40) / 375
-					var scaleY = (height * 0.9) / 750
-					var scale = Math.min(scaleX, scaleY, 1)
-					root.style.setProperty('--device-scale', scale.toFixed(4))
-				}
-				updateDeviceScale()
-				window.addEventListener('resize', updateDeviceScale)
-				window.addEventListener('orientationchange', updateDeviceScale)
-			})()
-		</script>
 		<script type="module" src="/src/main.ts"></script>
 	</body>
 </html>
