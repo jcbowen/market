@@ -3,9 +3,7 @@ node_modules/
 .pnpm-store/
 
 # === 编译产物 ===
-dist/
-bin/static/
-bin/logs/
+bin/
 *.exe
 *.dll
 *.so
