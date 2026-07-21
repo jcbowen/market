@@ -9,6 +9,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
+	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/order/model"
 	"github.com/jcbowen/market/src/backend/services/order/service"
 )
@@ -16,20 +17,23 @@ import (
 // server 实现 order.OrderServiceServer 接口
 type server struct {
 	order.UnimplementedOrderServiceServer
-	orderService  *service.OrderService
-	refundService *service.RefundService
+	orderService   *service.OrderService
+	refundService  *service.RefundService
+	paymentClient  payment.PaymentServiceClient
 }
 
 // newServer 创建订单服务 gRPC 实现
 // 参数：
 //   - db: MySQL 实例
+//   - paymentClient: 支付服务 gRPC 客户端
 //
 // 返回值：
 //   - *server: gRPC 服务实现
-func newServer(db *mysql.Instance) *server {
+func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient) *server {
 	return &server{
 		orderService:  service.NewOrderService(db),
-		refundService: service.NewRefundService(db),
+		refundService: service.NewRefundService(db, paymentClient),
+		paymentClient: paymentClient,
 	}
 }
 
@@ -284,6 +288,7 @@ func ToRefundInfo(r *model.Refund) *order.RefundInfo {
 		RefundNo:     r.RefundNo,
 		OrderId:      r.OrderID,
 		UserId:       r.UserID,
+		PaymentNo:    r.PaymentNo,
 		Amount:       r.Amount,
 		Reason:       r.Reason,
 		Status:       r.Status,

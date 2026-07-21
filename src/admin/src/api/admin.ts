@@ -132,3 +132,62 @@ export function deleteRole(id: number) {
     method: 'DELETE',
   })
 }
+
+/**
+ * 支付配置信息
+ */
+export interface PaymentSetting {
+  enabled_channels: string[]
+  wechat: WechatPayConfig
+  alipay: AlipayPayConfig
+  wechat_payment_ready: boolean
+  alipay_ready: boolean
+}
+
+/**
+ * 微信支付配置
+ */
+export interface WechatPayConfig {
+  app_id: string
+  app_secret: string
+  mch_id: string
+  api_v3_key: string
+  cert_serial_no: string
+  private_key: string
+  notify_url: string
+}
+
+/**
+ * 支付宝支付配置
+ */
+export interface AlipayPayConfig {
+  app_id: string
+  private_key: string
+  alipay_public_key: string
+  notify_url: string
+  return_url: string
+}
+
+/**
+ * 获取支付配置
+ * @returns 支付配置详情
+ */
+export function getPaymentSetting() {
+  return request<ApiResult<PaymentSetting>>({
+    url: '/api/v1/admin/settings/payment',
+    method: 'GET',
+  })
+}
+
+/**
+ * 更新支付配置
+ * @param data 支付配置数据
+ * @returns 更新结果
+ */
+export function updatePaymentSetting(data: PaymentSetting) {
+  return request<ApiResult<{ success: boolean }>>({
+    url: '/api/v1/admin/settings/payment',
+    method: 'PUT',
+    data,
+  })
+}

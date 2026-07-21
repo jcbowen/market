@@ -48,6 +48,7 @@ message PaymentInfo {
 
 message WechatCallbackReq {
   bytes body = 1;
+  map<string, string> headers = 2;
 }
 
 message AlipayCallbackReq {
@@ -58,4 +59,5 @@ message ProcessRefundReq {
   int64 order_id = 1;
   string refund_no = 2;
   double amount = 3;
+  string payment_no = 4;
 }

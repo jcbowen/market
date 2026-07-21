@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/proto/order"
+	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/order/model"
@@ -16,20 +17,23 @@ import (
 
 // RefundService 退款业务服务
 type RefundService struct {
-	db *mysql.Instance
+	db            *mysql.Instance
+	paymentClient payment.PaymentServiceClient
 }
 
 // NewRefundService 创建退款业务服务
 // 参数：
 //   - db: MySQL 实例
+//   - paymentClient: 支付服务 gRPC 客户端
 //
 // 返回值：
 //   - *RefundService: 退款业务服务实例
-func NewRefundService(db *mysql.Instance) *RefundService {
-	return &RefundService{db: db}
+func NewRefundService(db *mysql.Instance, paymentClient payment.PaymentServiceClient) *RefundService {
+	return &RefundService{db: db, paymentClient: paymentClient}
 }
 
 // ApplyRefund 申请退款
+// 申请时自动关联订单最近一次成功支付的支付单号
 // 参数：
 //   - ctx: 上下文
 //   - req: 申请请求
@@ -49,11 +53,19 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		return nil, fmt.Errorf("订单状态不允许申请退款")
 	}
 
+	paymentNo := ""
+	if s.paymentClient != nil {
+		if p, err := s.paymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: req.OrderId}); err == nil && p != nil {
+			paymentNo = p.PaymentNo
+		}
+	}
+
 	now := time.Now().Format("2006-01-02 15:04:05")
 	refund := &model.Refund{
 		RefundNo:  generateRefundNo(),
 		OrderID:   req.OrderId,
 		UserID:    req.UserId,
+		PaymentNo: paymentNo,
 		Amount:    req.Amount,
 		Reason:    req.Reason,
 		Status:    1,
@@ -112,6 +124,8 @@ func (s *RefundService) ListRefunds(ctx context.Context, req *order.ListRefundsR
 }
 
 // ApproveRefund 同意退款
+// 先调用 payment-service 发起实际退款，退款成功后再更新订单状态并释放库存
+// 支持通过 req.PaymentNo 透传支付单号；未透传时自动使用退款申请时记录的 payment_no
 // 参数：
 //   - ctx: 上下文
 //   - req: 审核请求
@@ -134,6 +148,23 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 		refund.UpdatedAt = now
 		if err := tx.Save(&refund).Error; err != nil {
 			return err
+		}
+
+		paymentNo := req.PaymentNo
+		if paymentNo == "" {
+			paymentNo = refund.PaymentNo
+		}
+
+		if s.paymentClient != nil {
+			_, err := s.paymentClient.ProcessRefund(ctx, &payment.ProcessRefundReq{
+				OrderId:   refund.OrderID,
+				RefundNo:  refund.RefundNo,
+				Amount:    refund.Amount,
+				PaymentNo: paymentNo,
+			})
+			if err != nil {
+				return fmt.Errorf("调用支付退款失败: %w", err)
+			}
 		}
 
 		var o model.Order

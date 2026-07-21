@@ -1010,6 +1010,7 @@ type RefundInfo struct {
 	RejectReason  string                 `protobuf:"bytes,8,opt,name=reject_reason,json=rejectReason,proto3" json:"reject_reason,omitempty"`
 	RefundTime    string                 `protobuf:"bytes,9,opt,name=refund_time,json=refundTime,proto3" json:"refund_time,omitempty"`
 	CreatedAt     string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	PaymentNo     string                 `protobuf:"bytes,11,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1110,6 +1111,13 @@ func (x *RefundInfo) GetRefundTime() string {
 func (x *RefundInfo) GetCreatedAt() string {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *RefundInfo) GetPaymentNo() string {
+	if x != nil {
+		return x.PaymentNo
 	}
 	return ""
 }
@@ -1230,6 +1238,7 @@ type ApproveRefundReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	OperatorId    int64                  `protobuf:"varint,2,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	PaymentNo     string                 `protobuf:"bytes,3,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1276,6 +1285,13 @@ func (x *ApproveRefundReq) GetOperatorId() int64 {
 		return x.OperatorId
 	}
 	return 0
+}
+
+func (x *ApproveRefundReq) GetPaymentNo() string {
+	if x != nil {
+		return x.PaymentNo
+	}
+	return ""
 }
 
 type RejectRefundReq struct {
@@ -2069,7 +2085,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x16\n" +
 	"\x06amount\x18\x03 \x01(\x01R\x06amount\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reason\"\x9a\x02\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\"\xb9\x02\n" +
 	"\n" +
 	"RefundInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1b\n" +
@@ -2084,7 +2100,9 @@ const file_order_order_proto_rawDesc = "" +
 	"refundTime\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\n" +
-	" \x01(\tR\tcreatedAt\"\x7f\n" +
+	" \x01(\tR\tcreatedAt\x12\x1d\n" +
+	"\n" +
+	"payment_no\x18\v \x01(\tR\tpaymentNo\"\x7f\n" +
 	"\x0eListRefundsReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x122\n" +
@@ -2095,11 +2113,13 @@ const file_order_order_proto_rawDesc = "" +
 	"\x04list\x18\x01 \x03(\v2\x11.order.RefundInfoR\x04list\x12:\n" +
 	"\n" +
 	"pagination\x18\x02 \x01(\v2\x1a.common.PaginationResponseR\n" +
-	"pagination\"C\n" +
+	"pagination\"b\n" +
 	"\x10ApproveRefundReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\voperator_id\x18\x02 \x01(\x03R\n" +
-	"operatorId\"g\n" +
+	"operatorId\x12\x1d\n" +
+	"\n" +
+	"payment_no\x18\x03 \x01(\tR\tpaymentNo\"g\n" +
 	"\x0fRejectRefundReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\voperator_id\x18\x02 \x01(\x03R\n" +

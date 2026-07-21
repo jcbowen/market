@@ -37,6 +37,7 @@ const statusOptions = [
 const columns: DataTableColumns<Record<string, unknown>> = [
   { title: '退款单号', key: 'refund_no' },
   { title: '订单 ID', key: 'order_id' },
+  { title: '支付单号', key: 'payment_no' },
   { title: '退款金额', key: 'amount' },
   { title: '原因', key: 'reason' },
   { title: '状态', key: 'status' },
@@ -68,7 +69,7 @@ async function loadData() {
 }
 
 async function approve(row: Record<string, unknown>) {
-  const res = await approveRefund(row.id as number)
+  const res = await approveRefund(row.id as number, row.payment_no as string)
   if (res.data.code === 0) loadData()
 }
 

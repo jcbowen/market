@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
@@ -21,12 +22,13 @@ import (
 )
 
 // AdminHandler 管理员接口处理器
-// 封装管理员登录、管理员 CRUD、角色查询、商品/订单/库存/营销/社区/退款等管理端 HTTP 接口
+// 封装管理员登录、管理员 CRUD、角色查询、商品/订单/库存/营销/社区/退款/支付配置等管理端 HTTP 接口
 type AdminHandler struct {
 	jwtManager    *jwt.Manager
 	userClient    user.UserServiceClient
 	productClient product.ProductServiceClient
 	orderClient   order.OrderServiceClient
+	cfg           *config.Config
 }
 
 // NewAdminHandler 创建管理员接口处理器
@@ -35,15 +37,17 @@ type AdminHandler struct {
 //   - userClient: user-service gRPC 客户端
 //   - productClient: product-service gRPC 客户端
 //   - orderClient: order-service gRPC 客户端
+//   - cfg: 全局配置指针
 //
 // 返回值：
 //   - *AdminHandler: 管理员处理器实例
-func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, productClient product.ProductServiceClient, orderClient order.OrderServiceClient) *AdminHandler {
+func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, productClient product.ProductServiceClient, orderClient order.OrderServiceClient, cfg *config.Config) *AdminHandler {
 	return &AdminHandler{
 		jwtManager:    jwtManager,
 		userClient:    userClient,
 		productClient: productClient,
 		orderClient:   orderClient,
+		cfg:           cfg,
 	}
 }
 
@@ -1979,7 +1983,13 @@ func (h *AdminHandler) ListRefunds(c *gin.Context) {
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
 }
 
+// ApproveRefundReq 同意退款请求
+type ApproveRefundReq struct {
+	PaymentNo string `json:"payment_no"`
+}
+
 // ApproveRefund 同意退款
+// 接收前端透传的 payment_no，并原样转发给 order-service/payment-service
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ApproveRefund(c *gin.Context) {
@@ -1989,10 +1999,14 @@ func (h *AdminHandler) ApproveRefund(c *gin.Context) {
 		return
 	}
 
+	var req ApproveRefundReq
+	_ = c.ShouldBindJSON(&req)
+
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.ApproveRefund(c.Request.Context(), &order.ApproveRefundReq{
 		Id:         id,
 		OperatorId: uc.UserID,
+		PaymentNo:  req.PaymentNo,
 	})
 	if err != nil {
 		response.Error(c, errcode.InternalServerError)
@@ -2085,4 +2099,65 @@ func orderStatusText(status int32) string {
 	default:
 		return "未知"
 	}
+}
+
+// PaymentSetting 支付配置视图对象
+// 同时用于 GET 响应与 PUT 请求
+type PaymentSetting struct {
+	EnabledChannels    []string             `json:"enabled_channels"`
+	Wechat             config.WechatConfig  `json:"wechat"`
+	Alipay             config.AlipayConfig  `json:"alipay"`
+	WechatPaymentReady bool                 `json:"wechat_payment_ready"`
+	AlipayReady        bool                 `json:"alipay_ready"`
+}
+
+// GetPaymentSetting 获取支付配置
+// 返回当前支付渠道开关、顺序以及微信/支付宝配置
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
+	config.CfgMu.RLock()
+	defer config.CfgMu.RUnlock()
+
+	response.Success(c, PaymentSetting{
+		EnabledChannels:    h.cfg.Payment.EnabledChannels,
+		Wechat:             h.cfg.Wechat,
+		Alipay:             h.cfg.Alipay,
+		WechatPaymentReady: h.cfg.Wechat.IsPaymentConfigured(),
+		AlipayReady:        h.cfg.Alipay.IsConfigured(),
+	})
+}
+
+// UpdatePaymentSetting 更新支付配置
+// 保存后会回写到配置文件，支付渠道列表即时生效；微信支付密钥等修改后需重启服务生效
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
+	var req PaymentSetting
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	// 支付宝保持关闭，即使前端传入也过滤掉
+	var filtered []string
+	for _, ch := range req.EnabledChannels {
+		if ch != "alipay" {
+			filtered = append(filtered, ch)
+		}
+	}
+
+	config.CfgMu.Lock()
+	defer config.CfgMu.Unlock()
+
+	h.cfg.Payment.EnabledChannels = filtered
+	h.cfg.Wechat = req.Wechat
+	h.cfg.Alipay = req.Alipay
+
+	if err := config.Save(h.cfg); err != nil {
+		response.Error(c, errcode.InternalServerError, err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{"success": true})
 }

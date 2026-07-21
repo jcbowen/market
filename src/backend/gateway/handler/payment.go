@@ -88,8 +88,10 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 
-	if !isChannelEnabled(req.Channel, h.cfg.Payment.EnabledChannels) {
-		response.Error(c, errcode.ParamError, "当前支付方式未开启")
+	config.CfgMu.RLock()
+	defer config.CfgMu.RUnlock()
+	if !isChannelEnabled(req.Channel, h.cfg.Payment.EnabledChannels) || !h.isChannelAvailable(req.Channel) {
+		response.Error(c, errcode.ParamError, "当前支付方式未开启或配置不完整")
 		return
 	}
 
@@ -137,7 +139,7 @@ type PaymentChannel struct {
 }
 
 // PaymentChannels 获取当前启用的支付方式列表
-// 根据后台配置 payment.enabled_channels 返回可用渠道
+// 根据后台配置 payment.enabled_channels 与渠道实际配置完整性返回可用渠道
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) PaymentChannels(c *gin.Context) {
@@ -147,14 +149,40 @@ func (h *PaymentHandler) PaymentChannels(c *gin.Context) {
 		"cash":   "货到付款",
 	}
 
+	config.CfgMu.RLock()
+	defer config.CfgMu.RUnlock()
+
 	var list []PaymentChannel
 	for _, ch := range h.cfg.Payment.EnabledChannels {
+		if !h.isChannelAvailable(ch) {
+			continue
+		}
 		list = append(list, PaymentChannel{
 			Channel: ch,
 			Name:    channelNames[ch],
 		})
 	}
 	response.Success(c, gin.H{"channels": list})
+}
+
+// isChannelAvailable 判断支付渠道是否真正可用
+// 微信支付还需校验 V3 配置完整性，支付宝保持关闭
+// 参数：
+//   - channel: 支付渠道
+//
+// 返回值：
+//   - bool: 是否可用
+func (h *PaymentHandler) isChannelAvailable(channel string) bool {
+	switch channel {
+	case "wechat":
+		return h.cfg.Wechat.IsPaymentConfigured()
+	case "alipay":
+		return false
+	case "cash":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetPayment 根据订单 ID 查询支付单
@@ -178,7 +206,7 @@ func (h *PaymentHandler) GetPayment(c *gin.Context) {
 }
 
 // WechatCallback 微信支付回调
-// 读取 raw body 调用 payment.HandleWechatCallback，返回 XML 成功响应
+// 读取 raw body 与微信签名头，调用 payment.HandleWechatCallback，返回 XML 成功响应
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) WechatCallback(c *gin.Context) {
@@ -188,8 +216,16 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 		return
 	}
 
+	headers := make(map[string]string)
+	for k, v := range c.Request.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
 	_, err = h.paymentClient.HandleWechatCallback(c.Request.Context(), &payment.WechatCallbackReq{
-		Body: body,
+		Body:    body,
+		Headers: headers,
 	})
 	if err != nil {
 		c.String(http.StatusOK, "<xml><return_code><![CDATA[FAIL]]></return_code></xml>")

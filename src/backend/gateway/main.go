@@ -82,9 +82,11 @@ func main() {
 // 返回：
 //   - *config.Config: 全局配置指针
 func loadConfig() *config.Config {
+	path := getConfigPath()
+	config.SetConfigPath(path)
 	opt := jcbaseGo.New(jcbaseGo.Option{
 		ConfigType:   jcbaseGo.ConfigTypeYAML,
-		ConfigSource: getConfigPath(),
+		ConfigSource: path,
 		ConfigData:   &config.Config{},
 	})
 	return (*opt.GetConfig()).(*config.Config)
@@ -120,7 +122,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	cartHandler := handler.NewCartHandler(clients.CartClient)
 	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, cfg)
-	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat.AppID, cfg.Wechat.AppSecret)
+	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat)
 
 	apiV1 := r.Group("/api/v1")
 	{
@@ -181,7 +183,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		}
 	}
 
-	adminHandler := handler.NewAdminHandler(jwtManager, clients.UserClient, clients.ProductClient, clients.OrderClient)
+	adminHandler := handler.NewAdminHandler(jwtManager, clients.UserClient, clients.ProductClient, clients.OrderClient, cfg)
 	admin := r.Group("/api/v1/admin")
 	{
 		admin.POST("/auth/login", adminHandler.Login)
@@ -252,6 +254,9 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/banners", gwMiddleware.RequirePermission("marketing:create"), adminHandler.CreateBanner)
 			authAdmin.PUT("/banners/:id", gwMiddleware.RequirePermission("marketing:update"), adminHandler.UpdateBanner)
 			authAdmin.DELETE("/banners/:id", gwMiddleware.RequirePermission("marketing:delete"), adminHandler.DeleteBanner)
+
+			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentSetting)
+			authAdmin.PUT("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdatePaymentSetting)
 
 			authAdmin.GET("/users", gwMiddleware.RequirePermission("user:view"), adminHandler.ListUsers)
 

@@ -50,9 +50,10 @@ wechat:
     app_id: "wx_test_appid"
     app_secret: ""
     mch_id: "1234567890"
-    api_key: "test_api_key_change_in_production"
+    api_v3_key: ""
+    cert_serial_no: ""
+    private_key: ""
     notify_url: "http://localhost:18080/api/v1/payments/callback/wechat"
-    cert_path: ""
 alipay:
     app_id: "2024test_appid"
     private_key: "test_private_key"
@@ -83,8 +84,10 @@ payment_service:
     grpc_port: 50055
 
 # ========== 支付方式开关 ==========
-# enabled_channels 控制当前可用的支付渠道
+# enabled_channels 控制当前可用的支付渠道，同时决定 C 端展示顺序
 # 可选值：wechat（微信支付）、alipay（支付宝支付）、cash（货到付款/现金）
+# 微信支付是否实际展示还会校验微信 V3 配置是否完整
 payment:
     enabled_channels:
+        - wechat
         - cash

@@ -4,14 +4,19 @@ go 1.25.0
 
 replace github.com/jcbowen/jcbaseGo => ../../../jcbaseGo
 
+replace github.com/jcbowen/wego => ../../../wego
+
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
-	github.com/jcbowen/jcbaseGo v0.0.0-00010101000000-000000000000
+	github.com/google/uuid v1.6.0
+	github.com/jcbowen/jcbaseGo v0.13.19
+	github.com/jcbowen/wego v0.0.0
 	golang.org/x/crypto v0.50.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
-	gorm.io/gorm v1.25.7-0.20240204074919-46816ad31dde
+	gopkg.in/yaml.v3 v3.0.1
+	gorm.io/gorm v1.31.0
 )
 
 require (
@@ -27,7 +32,7 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
 	github.com/go-redis/redis/v8 v8.11.5 // indirect
-	github.com/go-sql-driver/mysql v1.6.0 // indirect
+	github.com/go-sql-driver/mysql v1.7.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
@@ -36,6 +41,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
@@ -51,6 +57,6 @@ require (
 	golang.org/x/text v0.36.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
-	gorm.io/driver/mysql v1.4.1 // indirect
+	gorm.io/driver/mysql v1.5.1 // indirect
+	gorm.io/driver/sqlite v1.6.0 // indirect
 )

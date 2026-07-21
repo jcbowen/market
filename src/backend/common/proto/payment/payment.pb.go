@@ -329,6 +329,7 @@ func (x *PaymentInfo) GetPayTime() string {
 type WechatCallbackReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Body          []byte                 `protobuf:"bytes,1,opt,name=body,proto3" json:"body,omitempty"`
+	Headers       map[string]string      `protobuf:"bytes,2,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -366,6 +367,13 @@ func (*WechatCallbackReq) Descriptor() ([]byte, []int) {
 func (x *WechatCallbackReq) GetBody() []byte {
 	if x != nil {
 		return x.Body
+	}
+	return nil
+}
+
+func (x *WechatCallbackReq) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
 	}
 	return nil
 }
@@ -419,6 +427,7 @@ type ProcessRefundReq struct {
 	OrderId       int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
 	RefundNo      string                 `protobuf:"bytes,2,opt,name=refund_no,json=refundNo,proto3" json:"refund_no,omitempty"`
 	Amount        float64                `protobuf:"fixed64,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	PaymentNo     string                 `protobuf:"bytes,4,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -474,6 +483,13 @@ func (x *ProcessRefundReq) GetAmount() float64 {
 	return 0
 }
 
+func (x *ProcessRefundReq) GetPaymentNo() string {
+	if x != nil {
+		return x.PaymentNo
+	}
+	return ""
+}
+
 var File_payment_payment_proto protoreflect.FileDescriptor
 
 const file_payment_payment_proto_rawDesc = "" +
@@ -504,18 +520,24 @@ const file_payment_payment_proto_rawDesc = "" +
 	"\x06amount\x18\x06 \x01(\x01R\x06amount\x12\x16\n" +
 	"\x06status\x18\a \x01(\x05R\x06status\x12%\n" +
 	"\x0etransaction_id\x18\b \x01(\tR\rtransactionId\x12\x19\n" +
-	"\bpay_time\x18\t \x01(\tR\apayTime\"'\n" +
+	"\bpay_time\x18\t \x01(\tR\apayTime\"\xa6\x01\n" +
 	"\x11WechatCallbackReq\x12\x12\n" +
-	"\x04body\x18\x01 \x01(\fR\x04body\"\x8e\x01\n" +
+	"\x04body\x18\x01 \x01(\fR\x04body\x12A\n" +
+	"\aheaders\x18\x02 \x03(\v2'.payment.WechatCallbackReq.HeadersEntryR\aheaders\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +
 	"\x11AlipayCallbackReq\x12>\n" +
 	"\x06params\x18\x01 \x03(\v2&.payment.AlipayCallbackReq.ParamsEntryR\x06params\x1a9\n" +
 	"\vParamsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"b\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x81\x01\n" +
 	"\x10ProcessRefundReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x1b\n" +
 	"\trefund_no\x18\x02 \x01(\tR\brefundNo\x12\x16\n" +
-	"\x06amount\x18\x03 \x01(\x01R\x06amount2\xf0\x02\n" +
+	"\x06amount\x18\x03 \x01(\x01R\x06amount\x12\x1d\n" +
+	"\n" +
+	"payment_no\x18\x04 \x01(\tR\tpaymentNo2\xf0\x02\n" +
 	"\x0ePaymentService\x12F\n" +
 	"\rCreatePayment\x12\x19.payment.CreatePaymentReq\x1a\x1a.payment.CreatePaymentResp\x12:\n" +
 	"\n" +
@@ -536,7 +558,7 @@ func file_payment_payment_proto_rawDescGZIP() []byte {
 	return file_payment_payment_proto_rawDescData
 }
 
-var file_payment_payment_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_payment_payment_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_payment_payment_proto_goTypes = []any{
 	(*CreatePaymentReq)(nil),      // 0: payment.CreatePaymentReq
 	(*CreatePaymentResp)(nil),     // 1: payment.CreatePaymentResp
@@ -545,26 +567,28 @@ var file_payment_payment_proto_goTypes = []any{
 	(*WechatCallbackReq)(nil),     // 4: payment.WechatCallbackReq
 	(*AlipayCallbackReq)(nil),     // 5: payment.AlipayCallbackReq
 	(*ProcessRefundReq)(nil),      // 6: payment.ProcessRefundReq
-	nil,                           // 7: payment.AlipayCallbackReq.ParamsEntry
-	(*common.CommonResponse)(nil), // 8: common.CommonResponse
+	nil,                           // 7: payment.WechatCallbackReq.HeadersEntry
+	nil,                           // 8: payment.AlipayCallbackReq.ParamsEntry
+	(*common.CommonResponse)(nil), // 9: common.CommonResponse
 }
 var file_payment_payment_proto_depIdxs = []int32{
-	7, // 0: payment.AlipayCallbackReq.params:type_name -> payment.AlipayCallbackReq.ParamsEntry
-	0, // 1: payment.PaymentService.CreatePayment:input_type -> payment.CreatePaymentReq
-	2, // 2: payment.PaymentService.GetPayment:input_type -> payment.GetPaymentReq
-	4, // 3: payment.PaymentService.HandleWechatCallback:input_type -> payment.WechatCallbackReq
-	5, // 4: payment.PaymentService.HandleAlipayCallback:input_type -> payment.AlipayCallbackReq
-	6, // 5: payment.PaymentService.ProcessRefund:input_type -> payment.ProcessRefundReq
-	1, // 6: payment.PaymentService.CreatePayment:output_type -> payment.CreatePaymentResp
-	3, // 7: payment.PaymentService.GetPayment:output_type -> payment.PaymentInfo
-	8, // 8: payment.PaymentService.HandleWechatCallback:output_type -> common.CommonResponse
-	8, // 9: payment.PaymentService.HandleAlipayCallback:output_type -> common.CommonResponse
-	8, // 10: payment.PaymentService.ProcessRefund:output_type -> common.CommonResponse
-	6, // [6:11] is the sub-list for method output_type
-	1, // [1:6] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	7, // 0: payment.WechatCallbackReq.headers:type_name -> payment.WechatCallbackReq.HeadersEntry
+	8, // 1: payment.AlipayCallbackReq.params:type_name -> payment.AlipayCallbackReq.ParamsEntry
+	0, // 2: payment.PaymentService.CreatePayment:input_type -> payment.CreatePaymentReq
+	2, // 3: payment.PaymentService.GetPayment:input_type -> payment.GetPaymentReq
+	4, // 4: payment.PaymentService.HandleWechatCallback:input_type -> payment.WechatCallbackReq
+	5, // 5: payment.PaymentService.HandleAlipayCallback:input_type -> payment.AlipayCallbackReq
+	6, // 6: payment.PaymentService.ProcessRefund:input_type -> payment.ProcessRefundReq
+	1, // 7: payment.PaymentService.CreatePayment:output_type -> payment.CreatePaymentResp
+	3, // 8: payment.PaymentService.GetPayment:output_type -> payment.PaymentInfo
+	9, // 9: payment.PaymentService.HandleWechatCallback:output_type -> common.CommonResponse
+	9, // 10: payment.PaymentService.HandleAlipayCallback:output_type -> common.CommonResponse
+	9, // 11: payment.PaymentService.ProcessRefund:output_type -> common.CommonResponse
+	7, // [7:12] is the sub-list for method output_type
+	2, // [2:7] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_payment_payment_proto_init() }
@@ -578,7 +602,7 @@ func file_payment_payment_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_payment_payment_proto_rawDesc), len(file_payment_payment_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

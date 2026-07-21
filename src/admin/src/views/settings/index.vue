@@ -22,6 +22,105 @@
             <n-data-table :columns="roleColumns" :data="roles" :loading="roleLoading" scroll-x="600" />
           </n-space>
         </n-tab-pane>
+
+        <n-tab-pane name="payment" tab="支付配置">
+          <n-spin :show="paymentLoading">
+            <n-form :model="paymentForm" label-placement="top">
+              <n-form-item label="支付渠道开关与顺序">
+                <n-dynamic-input
+                  v-model:value="paymentForm.enabled_channels"
+                  :min="1"
+                  :max="3"
+                  :on-create="createChannelItem"
+                >
+                  <template #default="{ value, index }">
+                    <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
+                      <n-select v-model:value="value.channel" :options="channelOptions" style="flex: 1;" />
+                      <n-button quaternary type="primary" :disabled="index === 0" @click="moveChannel(index, -1)">上移</n-button>
+                      <n-button quaternary type="primary" :disabled="index === paymentForm.enabled_channels.length - 1" @click="moveChannel(index, 1)">下移</n-button>
+                    </div>
+                  </template>
+                </n-dynamic-input>
+              </n-form-item>
+
+              <n-divider>微信支付配置</n-divider>
+              <n-alert v-if="!paymentForm.wechat_payment_ready" type="warning" title="微信支付未就绪" style="margin-bottom: 16px;">
+                当前微信支付配置不完整，C 端不会展示微信支付选项
+              </n-alert>
+              <n-alert v-else type="success" title="微信支付已就绪" style="margin-bottom: 16px;">
+                微信支付配置完整，C 端可正常展示
+              </n-alert>
+              <n-grid :cols="2" :x-gap="16">
+                <n-grid-item>
+                  <n-form-item label="AppID">
+                    <n-input v-model:value="paymentForm.wechat.app_id" placeholder="小程序/公众号 AppID" />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item>
+                  <n-form-item label="AppSecret">
+                    <n-input v-model:value="paymentForm.wechat.app_secret" type="password" placeholder="小程序/公众号 AppSecret" />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item>
+                  <n-form-item label="商户号 MchID">
+                    <n-input v-model:value="paymentForm.wechat.mch_id" placeholder="微信支付商户号" />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item>
+                  <n-form-item label="API V3 密钥">
+                    <n-input v-model:value="paymentForm.wechat.api_v3_key" type="password" placeholder="微信支付 V3 API 密钥" />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item>
+                  <n-form-item label="证书序列号">
+                    <n-input v-model:value="paymentForm.wechat.cert_serial_no" placeholder="微信支付商户证书序列号" />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item>
+                  <n-form-item label="通知 URL">
+                    <n-input v-model:value="paymentForm.wechat.notify_url" placeholder="微信支付结果通知 URL" />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item :span="2">
+                  <n-form-item label="商户私钥 PEM">
+                    <n-input v-model:value="paymentForm.wechat.private_key" type="textarea" :rows="6" placeholder="-----BEGIN PRIVATE KEY----- ..." />
+                  </n-form-item>
+                </n-grid-item>
+              </n-grid>
+
+              <n-divider>支付宝支付配置（已关闭）</n-divider>
+              <n-alert type="info" title="支付宝支付保持关闭" style="margin-bottom: 16px;">
+                支付宝支付当前仅保存配置，不会对外启用
+              </n-alert>
+              <n-grid :cols="2" :x-gap="16">
+                <n-grid-item>
+                  <n-form-item label="AppID">
+                    <n-input v-model:value="paymentForm.alipay.app_id" placeholder="支付宝 AppID" disabled />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item>
+                  <n-form-item label="通知 URL">
+                    <n-input v-model:value="paymentForm.alipay.notify_url" placeholder="支付宝支付结果通知 URL" disabled />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item :span="2">
+                  <n-form-item label="应用私钥">
+                    <n-input v-model:value="paymentForm.alipay.private_key" type="textarea" :rows="4" placeholder="支付宝应用私钥" disabled />
+                  </n-form-item>
+                </n-grid-item>
+                <n-grid-item :span="2">
+                  <n-form-item label="支付宝公钥">
+                    <n-input v-model:value="paymentForm.alipay.alipay_public_key" type="textarea" :rows="4" placeholder="支付宝公钥" disabled />
+                  </n-form-item>
+                </n-grid-item>
+              </n-grid>
+
+              <n-space>
+                <n-button type="primary" :loading="paymentSaving" :disabled="!authStore.hasPermission('system:update')" @click="savePaymentSetting">保存配置</n-button>
+              </n-space>
+            </n-form>
+          </n-spin>
+        </n-tab-pane>
       </n-tabs>
     </n-card>
 
@@ -80,7 +179,8 @@
 import { h, onMounted, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getRoleList, createRole, updateRole, deleteRole, changeAdminPassword } from '@/api/admin'
+import { getRoleList, createRole, updateRole, deleteRole, changeAdminPassword, getPaymentSetting, updatePaymentSetting } from '@/api/admin'
+import type { PaymentSetting } from '@/api/admin'
 import type { Role } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 
@@ -108,6 +208,40 @@ const passwordForm = reactive({
   new_password: '',
   confirm_password: '',
 })
+
+const paymentLoading = ref(false)
+const paymentSaving = ref(false)
+interface PaymentChannelItem {
+  channel: string
+}
+
+const paymentForm = reactive({
+  enabled_channels: [{ channel: 'cash' }] as PaymentChannelItem[],
+  wechat: {
+    app_id: '',
+    app_secret: '',
+    mch_id: '',
+    api_v3_key: '',
+    cert_serial_no: '',
+    private_key: '',
+    notify_url: '',
+  },
+  alipay: {
+    app_id: '',
+    private_key: '',
+    alipay_public_key: '',
+    notify_url: '',
+    return_url: '',
+  },
+  wechat_payment_ready: false,
+  alipay_ready: false,
+})
+
+/** 支付渠道可选项，支付宝保持关闭 */
+const channelOptions = [
+  { label: '微信支付', value: 'wechat' },
+  { label: '货到付款', value: 'cash' },
+]
 
 /** 权限可选项 */
 const permissionOptions = [
@@ -137,7 +271,8 @@ const permissionOptions = [
   { label: '退款查看', value: 'refund:view' },
   { label: '退款更新', value: 'refund:update' },
   { label: '数据统计', value: 'statistics:view' },
-  { label: '系统管理', value: 'settings:view' },
+  { label: '系统管理查看', value: 'settings:view' },
+  { label: '系统管理修改', value: 'settings:update' },
 ]
 
 /** 角色表格列 */
@@ -285,8 +420,71 @@ async function savePassword() {
   }
 }
 
+/**
+ * 创建新的支付渠道项
+ */
+function createChannelItem() {
+  return { channel: 'cash' }
+}
+
+/**
+ * 移动支付渠道顺序
+ * @param index 当前索引
+ * @param direction 移动方向，-1 上移，1 下移
+ */
+function moveChannel(index: number, direction: number) {
+  const newIndex = index + direction
+  if (newIndex < 0 || newIndex >= paymentForm.enabled_channels.length) {
+    return
+  }
+  const temp = paymentForm.enabled_channels[index]
+  paymentForm.enabled_channels[index] = paymentForm.enabled_channels[newIndex]
+  paymentForm.enabled_channels[newIndex] = temp
+}
+
+/**
+ * 加载支付配置
+ */
+async function loadPaymentSetting() {
+  paymentLoading.value = true
+  try {
+    const res = await getPaymentSetting()
+    const data = res.data.data
+    paymentForm.enabled_channels = data.enabled_channels
+      .filter((ch: string) => ch !== 'alipay')
+      .map((ch: string) => ({ channel: ch }))
+    paymentForm.wechat = data.wechat
+    paymentForm.alipay = data.alipay
+    paymentForm.wechat_payment_ready = data.wechat_payment_ready
+    paymentForm.alipay_ready = data.alipay_ready
+  } finally {
+    paymentLoading.value = false
+  }
+}
+
+/**
+ * 保存支付配置
+ */
+async function savePaymentSetting() {
+  paymentSaving.value = true
+  try {
+    const payload: PaymentSetting = {
+      enabled_channels: paymentForm.enabled_channels.map((item) => item.channel),
+      wechat: paymentForm.wechat,
+      alipay: paymentForm.alipay,
+      wechat_payment_ready: paymentForm.wechat_payment_ready,
+      alipay_ready: paymentForm.alipay_ready,
+    }
+    await updatePaymentSetting(payload)
+    message.success('支付配置已保存，微信支付密钥等修改需重启后端服务生效')
+  } finally {
+    paymentSaving.value = false
+  }
+}
+
 onMounted(() => {
   loadRoles()
+  loadPaymentSetting()
 })
 </script>
 

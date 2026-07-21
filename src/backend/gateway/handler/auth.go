@@ -2,50 +2,53 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
+	"github.com/jcbowen/wego/miniprogram"
 )
 
 // AuthHandler C 端认证处理器
 // 负责微信小程序登录、手机号验证码登录、token 刷新
 // 当前手机号登录为测试模式，不调用真实短信服务
-// 微信小程序登录调用微信 auth.code2Session 接口换取 openid
+// 微信小程序登录调用 wego/miniprogram Code2Session 接口换取 openid
 // 登录成功后统一签发 access_token 与 refresh_token
 type AuthHandler struct {
-	jwtManager  *jwt.Manager
-	userClient  user.UserServiceClient
-	wechatAppID string
-	wechatSecret string
+	jwtManager       *jwt.Manager
+	userClient       user.UserServiceClient
+	wechatMiniClient *miniprogram.Client
 }
 
 // NewAuthHandler 创建 C 端认证处理器
+// 若微信小程序配置完整，则自动初始化 wego 小程序客户端
 //
 // 参数：
 //   - jwtManager: JWT 管理器
 //   - userClient: user-service gRPC 客户端
-//   - wechatAppID: 微信小程序 AppID
-//   - wechatSecret: 微信小程序 AppSecret
+//   - wechatCfg: 微信配置
 //
 // 返回：
 //   - *AuthHandler: 认证处理器实例
-func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, wechatAppID, wechatSecret string) *AuthHandler {
-	return &AuthHandler{
-		jwtManager:   jwtManager,
-		userClient:   userClient,
-		wechatAppID:  wechatAppID,
-		wechatSecret: wechatSecret,
+func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, wechatCfg config.WechatConfig) *AuthHandler {
+	h := &AuthHandler{
+		jwtManager: jwtManager,
+		userClient: userClient,
 	}
+	if wechatCfg.IsMiniprogramConfigured() {
+		h.wechatMiniClient = miniprogram.NewClient(&miniprogram.Config{
+			AppID:     wechatCfg.AppID,
+			AppSecret: wechatCfg.AppSecret,
+		})
+	}
+	return h
 }
 
 // WechatLoginReq 微信小程序登录请求
@@ -90,17 +93,8 @@ type loginUser struct {
 	CommunityName string `json:"community_name"`
 }
 
-// wechatSessionResp 微信 auth.code2Session 响应
-type wechatSessionResp struct {
-	OpenID     string `json:"openid"`
-	SessionKey string `json:"session_key"`
-	UnionID    string `json:"unionid"`
-	ErrCode    int    `json:"errcode"`
-	ErrMsg     string `json:"errmsg"`
-}
-
 // WechatLogin 微信小程序登录
-// 使用微信临时登录凭证 code 换取 openid，创建或更新用户后签发 token
+// 使用 wego/miniprogram Code2Session 换取 openid，创建或更新用户后签发 token
 //
 // 参数：
 //   - c: gin 上下文
@@ -111,7 +105,12 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 		return
 	}
 
-	session, err := h.wechatCode2Session(req.Code)
+	if h.wechatMiniClient == nil {
+		response.Error(c, errcode.InternalServerError, "微信小程序未配置")
+		return
+	}
+
+	session, err := h.wechatMiniClient.Code2Session(c.Request.Context(), req.Code)
 	if err != nil {
 		response.Error(c, errcode.InternalServerError, err.Error())
 		return
@@ -263,45 +262,6 @@ func (h *AuthHandler) successResponse(c *gin.Context, u *user.UserInfo) {
 			CommunityName: "",
 		},
 	})
-}
-
-// wechatCode2Session 调用微信 auth.code2Session 接口
-//
-// 参数：
-//   - code: 小程序前端获取的临时登录凭证
-//
-// 返回：
-//   - *wechatSessionResp: 微信响应
-//   - error: 错误信息
-func (h *AuthHandler) wechatCode2Session(code string) (*wechatSessionResp, error) {
-	url := fmt.Sprintf(
-		"https://api.weixin.qq.com/sns/jscode2session?appid=%s&secret=%s&js_code=%s&grant_type=authorization_code",
-		h.wechatAppID, h.wechatSecret, code,
-	)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var session wechatSessionResp
-	if err := json.Unmarshal(body, &session); err != nil {
-		return nil, err
-	}
-	if session.ErrCode != 0 {
-		return nil, fmt.Errorf("微信登录失败: %s", session.ErrMsg)
-	}
-	if session.OpenID == "" {
-		return nil, fmt.Errorf("微信登录未返回 openid")
-	}
-	return &session, nil
 }
 
 // isValidPhone 校验中国大陆手机号格式

@@ -27,6 +27,10 @@ func main() {
 		log.Fatalf("初始化 user-service 客户端失败: %v", err)
 	}
 
+	if err := grpcclient.InitPaymentClient(cfg.Grpc.Payment); err != nil {
+		log.Fatalf("初始化 payment-service 客户端失败: %v", err)
+	}
+
 	db, err := bootstrap.InitMySQL(cfg)
 	if err != nil {
 		log.Fatalf("初始化 MySQL 失败: %v", err)
@@ -37,7 +41,7 @@ func main() {
 	_ = bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer()
-	order.RegisterOrderServiceServer(srv, newServer(db))
+	order.RegisterOrderServiceServer(srv, newServer(db, grpcclient.PaymentClient))
 	bootstrap.RegisterHealth(srv)
 
 	if err := bootstrap.RunGRPCServer(srv, cfg.OrderService.GrpcPort); err != nil {

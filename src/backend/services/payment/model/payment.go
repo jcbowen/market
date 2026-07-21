@@ -41,7 +41,7 @@ func (Payment) TableName() string {
 type RefundPayment struct {
 	base.MysqlBaseModel
 	ID            int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	RefundNo      string  `gorm:"column:refund_no;type:varchar(50);not null;index" json:"refund_no"`
+	RefundNo      string  `gorm:"column:refund_no;type:varchar(50);not null;uniqueIndex" json:"refund_no"`
 	PaymentNo     string  `gorm:"column:payment_no;type:varchar(50);not null;index" json:"payment_no"`
 	OrderID       int64   `gorm:"column:order_id;type:bigint;not null;index" json:"order_id"`
 	Amount        float64 `gorm:"column:amount;type:decimal(10,2);not null" json:"amount"`

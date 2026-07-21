@@ -1,7 +1,12 @@
 package config
 
 import (
+	"fmt"
+	"os"
+	"sync"
+
 	"github.com/jcbowen/jcbaseGo"
+	"gopkg.in/yaml.v3"
 )
 
 // Config 全局配置结构体
@@ -40,21 +45,8 @@ type Config struct {
 		Storage      string   `json:"storage" yaml:"storage" default:"local"`
 		LocalPath    string   `json:"local_path" yaml:"local_path" default:"static/uploads/"`
 	} `json:"upload" yaml:"upload"`
-	Wechat struct {
-		AppID     string `json:"app_id" yaml:"app_id"`
-		AppSecret string `json:"app_secret" yaml:"app_secret"`
-		MchID     string `json:"mch_id" yaml:"mch_id"`
-		APIKey    string `json:"api_key" yaml:"api_key"`
-		NotifyURL string `json:"notify_url" yaml:"notify_url"`
-		CertPath  string `json:"cert_path" yaml:"cert_path"`
-	} `json:"wechat" yaml:"wechat"`
-	Alipay struct {
-		AppID           string `json:"app_id" yaml:"app_id"`
-		PrivateKey      string `json:"private_key" yaml:"private_key"`
-		AlipayPublicKey string `json:"alipay_public_key" yaml:"alipay_public_key"`
-		NotifyURL       string `json:"notify_url" yaml:"notify_url"`
-		ReturnURL       string `json:"return_url" yaml:"return_url"`
-	} `json:"alipay" yaml:"alipay"`
+	Wechat WechatConfig `json:"wechat" yaml:"wechat"`
+	Alipay AlipayConfig `json:"alipay" yaml:"alipay"`
 	SMS struct {
 		Provider     string `json:"provider" yaml:"provider" default:"aliyun"`
 		AccessKey    string `json:"access_key" yaml:"access_key"`
@@ -87,8 +79,142 @@ type ServiceConfig struct {
 }
 
 // PaymentConfig 支付方式开关配置
-// enabled_channels 控制当前可用的支付渠道
+// enabled_channels 控制当前可用的支付渠道，同时决定 C 端展示顺序
 // 可选值：wechat（微信支付）、alipay（支付宝支付）、cash（货到付款/现金）
 type PaymentConfig struct {
 	EnabledChannels []string `json:"enabled_channels" yaml:"enabled_channels"`
+}
+
+// WechatConfig 微信相关配置
+// 同时用于微信小程序登录与微信支付 V3
+type WechatConfig struct {
+	AppID        string `json:"app_id" yaml:"app_id"`                 // 小程序/公众号 AppID
+	AppSecret    string `json:"app_secret" yaml:"app_secret"`         // 小程序/公众号 AppSecret
+	MchID        string `json:"mch_id" yaml:"mch_id"`                 // 微信支付商户号
+	APIV3Key     string `json:"api_v3_key" yaml:"api_v3_key"`         // 微信支付 V3 API 密钥
+	CertSerialNo string `json:"cert_serial_no" yaml:"cert_serial_no"` // 微信支付商户证书序列号
+	PrivateKey   string `json:"private_key" yaml:"private_key"`       // 微信支付商户私钥 PEM
+	NotifyURL    string `json:"notify_url" yaml:"notify_url"`         // 微信支付结果通知 URL
+}
+
+// IsMiniprogramConfigured 判断微信小程序登录配置是否完整
+//
+// 返回：
+//   - bool: 配置完整返回 true
+func (w *WechatConfig) IsMiniprogramConfigured() bool {
+	return w.AppID != "" && w.AppSecret != ""
+}
+
+// IsPaymentConfigured 判断微信支付 V3 配置是否完整
+// 缺少任一必要字段则 C 端不展示微信支付选项
+//
+// 返回：
+//   - bool: 配置完整返回 true
+func (w *WechatConfig) IsPaymentConfigured() bool {
+	return w.AppID != "" &&
+		w.MchID != "" &&
+		w.APIV3Key != "" &&
+		w.CertSerialNo != "" &&
+		w.PrivateKey != "" &&
+		w.NotifyURL != ""
+}
+
+// AlipayConfig 支付宝支付配置
+// 当前项目仅做配置保存与开关控制，实际支付仍为模拟实现
+type AlipayConfig struct {
+	AppID           string `json:"app_id" yaml:"app_id"`                     // 支付宝 AppID
+	PrivateKey      string `json:"private_key" yaml:"private_key"`           // 支付宝应用私钥
+	AlipayPublicKey string `json:"alipay_public_key" yaml:"alipay_public_key"` // 支付宝公钥
+	NotifyURL       string `json:"notify_url" yaml:"notify_url"`             // 支付宝支付结果通知 URL
+	ReturnURL       string `json:"return_url" yaml:"return_url"`             // 支付宝支付完成回跳 URL
+}
+
+// IsConfigured 判断支付宝支付配置是否完整
+//
+// 返回：
+//   - bool: 配置完整返回 true
+func (a *AlipayConfig) IsConfigured() bool {
+	return a.AppID != "" &&
+		a.PrivateKey != "" &&
+		a.AlipayPublicKey != "" &&
+		a.NotifyURL != ""
+}
+
+// currentConfigPath 当前加载的配置文件路径
+// 由 gateway 启动时通过 SetConfigPath 设置
+var currentConfigPath string
+
+// CfgMu 配置读写锁
+// 用于保护运行时的配置并发读写（如 Admin 修改支付配置时与 PaymentChannels 读取）
+var CfgMu sync.RWMutex
+
+// SetConfigPath 设置配置文件保存路径
+// 参数：
+//   - path: 配置文件绝对路径
+func SetConfigPath(path string) {
+	currentConfigPath = path
+}
+
+// GetConfigPath 获取配置文件保存路径
+//
+// 返回：
+//   - string: 配置文件路径
+func GetConfigPath() string {
+	return currentConfigPath
+}
+
+// Save 将支付相关配置增量写回配置文件
+// 只更新 wechat、alipay、payment 节点，保留其他配置不变
+// 写回后 Gateway 内存中的配置对象会同步更新，底层微信支付相关密钥修改后需要重启服务生效
+// 参数：
+//   - cfg: 要保存的配置
+//
+// 返回值：
+//   - error: 保存失败时返回错误
+func Save(cfg *Config) error {
+	if currentConfigPath == "" {
+		return fmt.Errorf("配置文件路径未设置")
+	}
+
+	data, err := os.ReadFile(currentConfigPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	var root map[string]interface{}
+	if len(data) > 0 {
+		if err := yaml.Unmarshal(data, &root); err != nil {
+			return fmt.Errorf("解析配置文件失败: %w", err)
+		}
+	}
+	if root == nil {
+		root = make(map[string]interface{})
+	}
+
+	newData, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("序列化配置失败: %w", err)
+	}
+
+	var partial map[string]interface{}
+	if err := yaml.Unmarshal(newData, &partial); err != nil {
+		return fmt.Errorf("解析新配置失败: %w", err)
+	}
+
+	for _, key := range []string{"wechat", "alipay", "payment"} {
+		if v, ok := partial[key]; ok {
+			root[key] = v
+		}
+	}
+
+	updated, err := yaml.Marshal(root)
+	if err != nil {
+		return fmt.Errorf("序列化合并后配置失败: %w", err)
+	}
+
+	if err := os.WriteFile(currentConfigPath, updated, 0644); err != nil {
+		return fmt.Errorf("写入配置文件失败: %w", err)
+	}
+
+	return nil
 }

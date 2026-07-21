@@ -87,12 +87,14 @@ export function getRefundList(params: PageParams & { status?: number }) {
 /**
  * 同意退款
  * @param id 退款单 ID
+ * @param paymentNo 支付单号，可选
  * @returns 操作结果
  */
-export function approveRefund(id: number) {
+export function approveRefund(id: number, paymentNo?: string) {
   return request<ApiResult<null>>({
     url: `/api/v1/admin/refunds/${id}/approve`,
     method: 'POST',
+    data: { payment_no: paymentNo },
   })
 }
 
