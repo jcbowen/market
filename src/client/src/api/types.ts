@@ -197,6 +197,7 @@ export interface Payment {
   order_id: number
   amount: number
   status: number
+  pay_type: number
   pay_url: string
   pay_params: Record<string, string>
 }

@@ -34,7 +34,7 @@
       <view class="order-info">
         <text>订单编号: {{ order.order_no }}</text>
         <text>创建时间: {{ formatDate(order.created_at) }}</text>
-        <text>支付方式: {{ order.pay_type_text || '微信支付' }}</text>
+        <text>支付方式: {{ order.pay_type_text || '未支付' }}</text>
       </view>
       <view class="amount-row">
         <text>商品总额: {{ formatPrice(order.total_amount) }}</text>
@@ -75,7 +75,7 @@
 import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { getOrderDetail, cancelOrder, confirmReceive, applyRefund } from '@/api/order'
-import { createPayment, getPaymentChannels } from '@/api/payment'
+import { createPayment, getPaymentChannels, getPaymentDetail } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
 import { goOrderList } from '@/utils/navigate'
 import type { Order, PaymentChannel } from '@/api/types'
@@ -133,9 +133,32 @@ async function loadOrder() {
     const res = await getOrderDetail(orderId.value)
     if (res.data) {
       order.value = res.data
+      await loadPayTypeText()
     }
   } catch {
     // ignore
+  }
+}
+
+/**
+ * 加载支付方式展示文本
+ * 未支付订单直接显示"未支付"；已支付订单查询支付单获取真实支付渠道
+ */
+async function loadPayTypeText() {
+  if (order.value.status === 1) {
+    order.value.pay_type_text = '未支付'
+    return
+  }
+  try {
+    const res = await getPaymentDetail(order.value.id)
+    const payTypeMap: Record<number, string> = {
+      1: '微信支付',
+      2: '支付宝支付',
+      3: '货到付款',
+    }
+    order.value.pay_type_text = payTypeMap[res.data?.pay_type] || '在线支付'
+  } catch {
+    order.value.pay_type_text = '在线支付'
   }
 }
 

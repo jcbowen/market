@@ -58,7 +58,7 @@ npm-debug.log*
 test-results/
 
 # === 测试脚本生成的截图 ===
-scripts/*.png
+scripts
 
 # === uni-app ===
 unpackage/

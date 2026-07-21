@@ -38,6 +38,10 @@
 
     <!-- 优惠券、支付方式与备注 -->
     <view class="extra-card">
+      <view class="extra-item">
+        <text>满减优惠</text>
+        <text class="extra-value" :class="{ 'discount-value': fullReductionDiscount > 0 }">{{ fullReductionText }}</text>
+      </view>
       <view class="extra-item" @click="onSelectCoupon">
         <text>优惠券</text>
         <text class="extra-value">{{ couponText }}</text>
@@ -79,13 +83,13 @@ import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getAddressList } from '@/api/user'
 import { getCart } from '@/api/cart'
-import { getProductDetail, getSkuById } from '@/api/product'
+import { getFullReductions, getProductDetail, getSkuById } from '@/api/product'
 import { createOrder } from '@/api/order'
 import { getPaymentChannels, createPayment } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
 import { formatPrice } from '@/utils/format'
 import { goAddressList, goOrderDetail, goLogin } from '@/utils/navigate'
-import type { Address, OrderItem, PaymentChannel, UserCoupon } from '@/api/types'
+import type { Address, FullReduction, OrderItem, PaymentChannel, UserCoupon } from '@/api/types'
 
 const userStore = useUserStore()
 const addresses = ref<Address[]>([])
@@ -108,10 +112,38 @@ const totalAmount = computed(() => {
 const channels = ref<PaymentChannel[]>([])
 const selectedChannel = ref<PaymentChannel | null>(null)
 const selectedCoupon = ref<UserCoupon | null>(null)
+const fullReductions = ref<FullReduction[]>([])
 
 const couponText = computed(() => {
   if (!selectedCoupon.value) return '暂不使用'
   return `满${formatPrice(selectedCoupon.value.threshold)}减${formatPrice(selectedCoupon.value.value)}`
+})
+
+/**
+ * 计算当前订单可享的满减优惠
+ * 规则与后端一致：在生效且满足门槛的满减活动中取减免金额最大的一项，不超过商品总额
+ */
+const fullReductionDiscount = computed(() => {
+  const communityId = userStore.communityInfo?.id
+  if (!communityId || !fullReductions.value.length) return 0
+  const now = new Date()
+  let best = 0
+  for (const fr of fullReductions.value) {
+    if (fr.status !== 1) continue
+    const start = new Date(fr.start_time.replace(' ', 'T'))
+    const end = new Date(fr.end_time.replace(' ', 'T'))
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue
+    if (now < start || now > end) continue
+    if (totalAmount.value >= fr.threshold && fr.reduce_amount > best) {
+      best = fr.reduce_amount
+    }
+  }
+  return Math.min(best, totalAmount.value)
+})
+
+const fullReductionText = computed(() => {
+  if (fullReductionDiscount.value <= 0) return '暂无可用满减'
+  return `- ${formatPrice(fullReductionDiscount.value)}`
 })
 
 const couponDiscount = computed(() => {
@@ -121,7 +153,7 @@ const couponDiscount = computed(() => {
 })
 
 const payAmount = computed(() => {
-  return Math.max(0, totalAmount.value - couponDiscount.value)
+  return Math.max(0, totalAmount.value - fullReductionDiscount.value - couponDiscount.value)
 })
 
 const selectedChannelName = computed(() => {
@@ -145,6 +177,7 @@ onShow(() => {
   }
   loadAddresses()
   loadPaymentChannels()
+  loadFullReductions()
   loadItems()
 })
 
@@ -269,6 +302,18 @@ async function loadPaymentChannels() {
     }
   } catch {
     channels.value = []
+  }
+}
+
+/**
+ * 加载当前社区生效的满减活动
+ */
+async function loadFullReductions() {
+  try {
+    const res = await getFullReductions({ community_id: userStore.communityInfo?.id })
+    fullReductions.value = res.data || []
+  } catch {
+    fullReductions.value = []
   }
 }
 
@@ -485,6 +530,10 @@ async function onSubmit() {
   margin-right: 12rpx;
   font-size: 26rpx;
   color: #999999;
+}
+
+.extra-value.discount-value {
+  color: #ff4d4f;
 }
 
 .footer-bar {
