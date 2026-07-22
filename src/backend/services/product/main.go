@@ -28,7 +28,7 @@ func main() {
 	_ = bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer()
-	product.RegisterProductServiceServer(srv, newServer(db))
+	product.RegisterProductServiceServer(srv, newServer(db, cfg))
 	bootstrap.RegisterHealth(srv)
 
 	if err := bootstrap.RunGRPCServer(srv, cfg.ProductService.GrpcPort); err != nil {
@@ -46,6 +46,7 @@ func autoMigrate(db *mysql.Instance) error {
 	return db.GetDb().AutoMigrate(
 		&model.Category{},
 		&model.Product{},
+		&model.ProductImage{},
 		&model.Sku{},
 		&model.CommunityPricing{},
 		&model.StockRecord{},

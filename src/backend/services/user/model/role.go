@@ -21,5 +21,5 @@ type Role struct {
 // 返回：
 //   - string: 表名
 func (Role) TableName() string {
-	return "roles"
+	return "admin_roles"
 }

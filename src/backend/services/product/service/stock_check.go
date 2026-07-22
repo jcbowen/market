@@ -120,6 +120,74 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 	})
 }
 
+// GetStockCheck 查询盘点单详情（含明细）
+// 参数：
+//   - ctx: 上下文
+//   - req: 查询请求
+//
+// 返回值：
+//   - *product.StockCheckDetail: 盘点单详情
+//   - error: 错误信息
+func (s *StockCheckService) GetStockCheck(ctx context.Context, req *product.GetStockCheckReq) (*product.StockCheckDetail, error) {
+	var check model.StockCheck
+	if err := s.db.GetDb().WithContext(ctx).First(&check, req.Id).Error; err != nil {
+		return nil, err
+	}
+
+	type itemRow struct {
+		ID           int64
+		SkuID        int64
+		SkuCode      string
+		ProductName  string
+		SpecName     string
+		SystemStock  int32
+		ActualStock  int32
+		DiffQuantity int32
+		CreatedAt    string
+	}
+	var rows []itemRow
+	err := s.db.GetDb().WithContext(ctx).Raw(`
+		SELECT
+			sci.id,
+			sci.sku_id,
+			s.sku_code,
+			p.name AS product_name,
+			s.spec_name,
+			sci.system_stock,
+			sci.actual_stock,
+			sci.diff_quantity,
+			sci.created_at
+		FROM stock_check_items sci
+		INNER JOIN skus s ON s.id = sci.sku_id
+		INNER JOIN products p ON p.id = s.product_id
+		WHERE sci.check_id = ?
+		ORDER BY sci.id ASC
+	`, req.Id).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]*product.StockCheckDetailItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, &product.StockCheckDetailItem{
+			Id:           r.ID,
+			SkuId:        r.SkuID,
+			SkuCode:      r.SkuCode,
+			ProductName:  r.ProductName,
+			SpecName:     r.SpecName,
+			SystemStock:  r.SystemStock,
+			ActualStock:  r.ActualStock,
+			DiffQuantity: r.DiffQuantity,
+			CreatedAt:    r.CreatedAt,
+		})
+	}
+
+	return &product.StockCheckDetail{
+		Info:  ToStockCheckInfo(&check),
+		Items: items,
+	}, nil
+}
+
 // ListStockChecks 查询盘点单列表
 // 参数：
 //   - ctx: 上下文

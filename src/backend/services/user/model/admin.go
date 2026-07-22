@@ -9,7 +9,7 @@ import (
 type Admin struct {
 	base.MysqlBaseModel
 	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	Username    string `gorm:"column:username;type:varchar(50);not null;uniqueIndex" json:"username"`
+	Username    string `gorm:"column:username;type:varchar(50);not null;uniqueIndex:idx_admins_username" json:"username"`
 	Password    string `gorm:"column:password;type:varchar(255);not null" json:"password"`
 	RealName    string `gorm:"column:real_name;type:varchar(50)" json:"real_name"`
 	Phone       string `gorm:"column:phone;type:varchar(20)" json:"phone"`
@@ -26,5 +26,5 @@ type Admin struct {
 // 返回：
 //   - string: 表名
 func (Admin) TableName() string {
-	return "admins"
+	return "admin_users"
 }

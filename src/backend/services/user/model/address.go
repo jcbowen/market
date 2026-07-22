@@ -26,5 +26,5 @@ type Address struct {
 // 返回：
 //   - string: 表名
 func (Address) TableName() string {
-	return "addresses"
+	return "user_addresses"
 }

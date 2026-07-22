@@ -28,5 +28,5 @@ type Sku struct {
 // 返回值：
 //   - string: 表名
 func (Sku) TableName() string {
-	return "skus"
+	return "product_skus"
 }

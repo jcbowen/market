@@ -59,23 +59,33 @@
 				window.addEventListener('orientationchange', updateDeviceScale)
 
 				/**
-				 * 同步 iframe 内部 hash 路由到外层地址栏，刷新时可保持当前页面。
-				 * 仅同步 hash 部分，不影响 iframe 内部路由。
-				 */
-				frame.addEventListener('load', function () {
-					try {
-						var frameWindow = frame.contentWindow
-						if (!frameWindow) return
-						frameWindow.addEventListener('hashchange', function () {
-							if (window.location.hash !== frameWindow.location.hash) {
-								window.location.hash = frameWindow.location.hash
-							}
-						})
-					} catch (e) {
-						// 跨域时忽略同步
-					}
-				})
-			})()
+			 * 同步 iframe 内部 hash 路由到外层地址栏，刷新时可保持当前页面。
+			 * 同时监听外层 hash 变化，将新 hash 同步到 iframe 内部，支持通过外链直接访问指定路由。
+			 * 仅同步 hash 部分，不影响 iframe 内部路由。
+			 */
+			frame.addEventListener('load', function () {
+				try {
+					var frameWindow = frame.contentWindow
+					if (!frameWindow) return
+
+					// iframe -> 外层
+					frameWindow.addEventListener('hashchange', function () {
+						if (window.location.hash !== frameWindow.location.hash) {
+							window.location.hash = frameWindow.location.hash
+						}
+					})
+
+					// 外层 -> iframe
+					window.addEventListener('hashchange', function () {
+						if (frameWindow.location.hash !== window.location.hash) {
+							frameWindow.location.hash = window.location.hash
+						}
+					})
+				} catch (e) {
+					// 跨域时忽略同步
+				}
+			})
+		})()
 		</script>
 	</body>
 </html>

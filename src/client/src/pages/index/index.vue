@@ -17,7 +17,6 @@
     <view class="banner-section">
       <u-swiper
         :list="bannerImages"
-        keyName="image"
         showTitle
         height="320rpx"
         radius="16"
@@ -107,7 +106,7 @@ const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 /** u-swiper 需要的图片列表 */
 const bannerImages = computed(() =>
   banners.value.map((item) => ({
-    image: item.image_url,
+    url: item.image_url,
     title: item.title,
     link: item.link_url,
   })),

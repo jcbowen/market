@@ -192,6 +192,29 @@ export interface InventoryCheck {
 }
 
 /**
+ * 盘点单明细项
+ */
+export interface StockCheckItem {
+  id: number
+  sku_id: number
+  sku_code: string
+  product_name: string
+  spec_name: string
+  system_stock: number
+  actual_stock: number
+  diff_quantity: number
+  created_at: string
+}
+
+/**
+ * 盘点单详情
+ */
+export interface StockCheckDetail {
+  info: InventoryCheck
+  items: StockCheckItem[]
+}
+
+/**
  * 补货建议项
  */
 export interface PurchaseOrderItem {
@@ -213,6 +236,15 @@ export interface Community {
   address: string
   manager_name: string
   manager_phone: string
+  longitude: number
+  latitude: number
+  contact_phone: string
+  pickup_address: string
+  delivery_fee: number
+  min_order_amount: number
+  delivery_range_km: number
+  business_hours: string
+  sort: number
   status: number
 }
 

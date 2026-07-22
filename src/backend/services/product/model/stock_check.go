@@ -9,7 +9,7 @@ import (
 type StockCheck struct {
 	base.MysqlBaseModel
 	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	CheckNo     string `gorm:"column:check_no;type:varchar(50);not null;uniqueIndex" json:"check_no"`
+	CheckNo     string `gorm:"column:check_no;type:varchar(50);not null;unique" json:"check_no"`
 	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;index" json:"community_id"`
 	OperatorID  int64  `gorm:"column:operator_id;type:bigint;default:0" json:"operator_id"`
 	Status      int32  `gorm:"column:status;type:tinyint;default:1;comment:1待提交 2已提交" json:"status"`

@@ -46,6 +46,7 @@ const (
 	ProductService_CreateStockCheck_FullMethodName      = "/product.ProductService/CreateStockCheck"
 	ProductService_SubmitStockCheck_FullMethodName      = "/product.ProductService/SubmitStockCheck"
 	ProductService_ListStockChecks_FullMethodName       = "/product.ProductService/ListStockChecks"
+	ProductService_GetStockCheck_FullMethodName         = "/product.ProductService/GetStockCheck"
 	ProductService_SetCommunityPricing_FullMethodName   = "/product.ProductService/SetCommunityPricing"
 	ProductService_ListCommunityPricing_FullMethodName  = "/product.ProductService/ListCommunityPricing"
 	ProductService_GetReferencePricing_FullMethodName   = "/product.ProductService/GetReferencePricing"
@@ -105,6 +106,7 @@ type ProductServiceClient interface {
 	CreateStockCheck(ctx context.Context, in *CreateStockCheckReq, opts ...grpc.CallOption) (*StockCheckInfo, error)
 	SubmitStockCheck(ctx context.Context, in *SubmitStockCheckReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ListStockChecks(ctx context.Context, in *ListStockChecksReq, opts ...grpc.CallOption) (*ListStockChecksResp, error)
+	GetStockCheck(ctx context.Context, in *GetStockCheckReq, opts ...grpc.CallOption) (*StockCheckDetail, error)
 	// 定价
 	SetCommunityPricing(ctx context.Context, in *SetPricingReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ListCommunityPricing(ctx context.Context, in *ListPricingReq, opts ...grpc.CallOption) (*ListPricingResp, error)
@@ -400,6 +402,16 @@ func (c *productServiceClient) ListStockChecks(ctx context.Context, in *ListStoc
 	return out, nil
 }
 
+func (c *productServiceClient) GetStockCheck(ctx context.Context, in *GetStockCheckReq, opts ...grpc.CallOption) (*StockCheckDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StockCheckDetail)
+	err := c.cc.Invoke(ctx, ProductService_GetStockCheck_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *productServiceClient) SetCommunityPricing(ctx context.Context, in *SetPricingReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.CommonResponse)
@@ -655,6 +667,7 @@ type ProductServiceServer interface {
 	CreateStockCheck(context.Context, *CreateStockCheckReq) (*StockCheckInfo, error)
 	SubmitStockCheck(context.Context, *SubmitStockCheckReq) (*common.CommonResponse, error)
 	ListStockChecks(context.Context, *ListStockChecksReq) (*ListStockChecksResp, error)
+	GetStockCheck(context.Context, *GetStockCheckReq) (*StockCheckDetail, error)
 	// 定价
 	SetCommunityPricing(context.Context, *SetPricingReq) (*common.CommonResponse, error)
 	ListCommunityPricing(context.Context, *ListPricingReq) (*ListPricingResp, error)
@@ -767,6 +780,9 @@ func (UnimplementedProductServiceServer) SubmitStockCheck(context.Context, *Subm
 }
 func (UnimplementedProductServiceServer) ListStockChecks(context.Context, *ListStockChecksReq) (*ListStockChecksResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListStockChecks not implemented")
+}
+func (UnimplementedProductServiceServer) GetStockCheck(context.Context, *GetStockCheckReq) (*StockCheckDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetStockCheck not implemented")
 }
 func (UnimplementedProductServiceServer) SetCommunityPricing(context.Context, *SetPricingReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetCommunityPricing not implemented")
@@ -1323,6 +1339,24 @@ func _ProductService_ListStockChecks_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_GetStockCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStockCheckReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetStockCheck(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetStockCheck_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetStockCheck(ctx, req.(*GetStockCheckReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProductService_SetCommunityPricing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetPricingReq)
 	if err := dec(in); err != nil {
@@ -1829,6 +1863,10 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListStockChecks",
 			Handler:    _ProductService_ListStockChecks_Handler,
+		},
+		{
+			MethodName: "GetStockCheck",
+			Handler:    _ProductService_GetStockCheck_Handler,
 		},
 		{
 			MethodName: "SetCommunityPricing",

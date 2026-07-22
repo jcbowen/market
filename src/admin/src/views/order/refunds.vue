@@ -40,7 +40,20 @@ const columns: DataTableColumns<Record<string, unknown>> = [
   { title: '支付单号', key: 'payment_no' },
   { title: '退款金额', key: 'amount' },
   { title: '原因', key: 'reason' },
-  { title: '状态', key: 'status' },
+  {
+    title: '状态',
+    key: 'status',
+    render(row) {
+      const statusMap: Record<number, string> = {
+        1: '待审核',
+        2: '已同意',
+        3: '已拒绝',
+        4: '退款中',
+        5: '已退款',
+      }
+      return statusMap[row.status as number] || '未知'
+    },
+  },
   { title: '申请时间', key: 'created_at' },
   {
     title: '操作',

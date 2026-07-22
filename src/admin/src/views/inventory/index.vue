@@ -85,21 +85,6 @@
     <!-- 盘点弹窗 -->
     <n-modal v-model:show="showCheckModal" title="新增盘点" preset="card" style="width: 520px; max-width: 90vw" scrollable>
       <n-form :model="checkForm" label-placement="top">
-        <n-form-item label="商品 ID">
-          <n-input-number v-model:value="checkForm.product_id" placeholder="商品 ID" style="width: 100%;" @update:value="onCheckProductChange" />
-        </n-form-item>
-        <n-form-item label="选择 SKU">
-          <n-select
-            v-model:value="checkForm.sku_id"
-            :options="checkSkuOptions"
-            placeholder="请先输入商品 ID"
-            style="width: 100%;"
-            :disabled="!checkSkuOptions.length"
-          />
-        </n-form-item>
-        <n-form-item label="实际库存">
-          <n-input-number v-model:value="checkForm.actual_stock" placeholder="实际库存" style="width: 100%;" />
-        </n-form-item>
         <n-form-item label="备注">
           <n-input v-model:value="checkForm.remark" placeholder="备注" />
         </n-form-item>
@@ -107,7 +92,7 @@
       <template #footer>
         <n-space justify="end">
           <n-button @click="showCheckModal = false">取消</n-button>
-          <n-button type="primary" :loading="checkModalLoading" @click="saveCheck">保存</n-button>
+          <n-button type="primary" :loading="checkModalLoading" @click="saveCheck">创建盘点单</n-button>
         </n-space>
       </template>
     </n-modal>
@@ -117,11 +102,13 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import type { DataTableColumns } from 'naive-ui'
-import { stockIn, getInventoryLogList, getInventoryCheckList, createInventoryCheck, submitInventoryCheck, getStockWarnings, getSkuList } from '@/api/inventory'
+import { stockIn, getInventoryLogList, getInventoryCheckList, createInventoryCheck, getStockWarnings, getSkuList } from '@/api/inventory'
 import type { InventoryLog, InventoryCheck, Sku } from '@/api/types'
 
 const message = useMessage()
+const router = useRouter()
 const pageSize = 10
 
 const activeTab = ref('entry')
@@ -217,18 +204,14 @@ const checkPageCount = ref(1)
 const showCheckModal = ref(false)
 const checkModalLoading = ref(false)
 const checkForm = reactive({
-  product_id: undefined as number | undefined,
-  sku_id: undefined as number | undefined,
-  actual_stock: undefined as number | undefined,
   remark: '',
 })
-const checkSkuOptions = ref<{ label: string; value: number }[]>([])
 
 /**
  * 商品 ID 变化时加载 SKU 列表
  * @param productId 商品 ID
  */
-async function onProductChange(productId: number | undefined) {
+async function onProductChange(productId: number | null) {
   stockInForm.sku_id = undefined
   skuOptions.value = []
   if (!productId) return
@@ -324,57 +307,24 @@ async function loadChecks() {
 }
 
 /**
- * 商品 ID 变化时加载盘点 SKU 列表
- * @param productId 商品 ID
- */
-async function onCheckProductChange(productId: number | undefined) {
-  checkForm.sku_id = undefined
-  checkSkuOptions.value = []
-  if (!productId) return
-
-  try {
-    const res = await getSkuList(productId)
-    const list: Sku[] = res.data.data || []
-    checkSkuOptions.value = list.map((sku) => ({
-      label: `${sku.sku_code || sku.id} ${sku.attrs ? JSON.stringify(sku.attrs) : ''}`.trim(),
-      value: sku.id,
-    }))
-  } catch {
-    message.error('加载 SKU 失败')
-  }
-}
-
-/**
  * 打开新增盘点弹窗
  */
 function openCheckModal() {
-  checkForm.product_id = undefined
-  checkForm.sku_id = undefined
-  checkForm.actual_stock = undefined
   checkForm.remark = ''
-  checkSkuOptions.value = []
   showCheckModal.value = true
 }
 
 /**
- * 保存盘点记录
+ * 创建盘点单并跳转到详情页录入盘点项
  */
 async function saveCheck() {
-  if (!checkForm.sku_id || checkForm.actual_stock === undefined) {
-    message.warning('请选择 SKU 并填写实际库存')
-    return
-  }
   checkModalLoading.value = true
   try {
     const res = await createInventoryCheck({ remark: checkForm.remark })
     if (res.data.code === 0 && res.data.data.id) {
-      await submitInventoryCheck(res.data.data.id, [
-        { sku_id: checkForm.sku_id, actual_stock: checkForm.actual_stock },
-      ])
+      showCheckModal.value = false
+      router.push(`/inventory/check/${res.data.data.id}`)
     }
-    message.success('盘点记录创建成功')
-    showCheckModal.value = false
-    loadChecks()
   } finally {
     checkModalLoading.value = false
   }

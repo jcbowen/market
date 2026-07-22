@@ -48,7 +48,6 @@
         <view v-if="bannerImages.length" class="category-banner">
           <u-swiper
             :list="bannerImages"
-            keyName="image"
             height="240rpx"
             radius="16"
             @click="onBannerClick"
@@ -259,7 +258,7 @@ const banners = ref<Banner[]>([])
 /** 分类页 Banner 图片列表 */
 const bannerImages = computed(() =>
   banners.value.map((item) => ({
-    image: item.image_url,
+    url: item.image_url,
     link: item.link_url,
   })),
 )

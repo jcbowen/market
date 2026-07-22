@@ -27,7 +27,7 @@ func NewBannerService(db *mysql.Instance) *BannerService {
 }
 
 // ListBanners 查询 Banner 列表
-// C 端仅返回启用且在有效期内的记录，按 sort 升序、id 降序排列
+// 管理态返回全部记录，C 端仅返回启用且在有效期内的记录，均按 sort 升序、id 降序排列
 // 参数：
 //   - ctx: 上下文
 //   - req: 查询请求
@@ -41,29 +41,12 @@ func (s *BannerService) ListBanners(ctx context.Context, req *product.ListBanner
 	if req.Position > 0 {
 		db = db.Where("position = ?", req.Position)
 	}
-	// C 端调用：无管理态标识，默认只查启用且在有效期内的
-	now := time.Now().Format("2006-01-02 15:04:05")
-	db = db.Where("status = ?", 1).
-		Where("(start_time IS NULL OR start_time <= ?)", now).
-		Where("(end_time IS NULL OR end_time >= ?)", now)
-	err := db.Order("sort asc, id desc").Find(&list).Error
-	return list, err
-}
-
-// ListAdminBanners 后台查询 Banner 列表
-// 返回全部记录，支持按位置、状态筛选
-// 参数：
-//   - ctx: 上下文
-//   - req: 查询请求
-//
-// 返回值：
-//   - []*model.Banner: Banner 列表
-//   - error: 错误信息
-func (s *BannerService) ListAdminBanners(ctx context.Context, req *product.ListBannersReq) ([]*model.Banner, error) {
-	var list []*model.Banner
-	db := s.db.GetDb().WithContext(ctx).Where("community_id = ?", req.CommunityId)
-	if req.Position > 0 {
-		db = db.Where("position = ?", req.Position)
+	// C 端调用：只查启用且在有效期内的
+	if !req.IsAdmin {
+		now := time.Now().Format("2006-01-02 15:04:05")
+		db = db.Where("status = ?", 1).
+			Where("(start_time IS NULL OR start_time <= ?)", now).
+			Where("(end_time IS NULL OR end_time >= ?)", now)
 	}
 	err := db.Order("sort asc, id desc").Find(&list).Error
 	return list, err

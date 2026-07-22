@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, InventoryCheck, InventoryLog, PageParams, PageResult, PurchaseOrderItem, Sku } from './types'
+import type { ApiResult, InventoryCheck, InventoryLog, PageParams, PageResult, PurchaseOrderItem, Sku, StockCheckDetail } from './types'
 
 /**
  * 库存管理相关 API
@@ -153,7 +153,7 @@ export function getInventoryCheckList(params: PageParams & { product_id?: number
  * @returns 盘点单详情
  */
 export function getInventoryCheckDetail(id: number) {
-  return request<ApiResult<InventoryCheck>>({
+  return request<ApiResult<StockCheckDetail>>({
     url: `/api/v1/admin/inventory/checks/${id}`,
     method: 'GET',
   })

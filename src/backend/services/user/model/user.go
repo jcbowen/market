@@ -9,10 +9,10 @@ import (
 type User struct {
 	base.MysqlBaseModel
 	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	Openid       string  `gorm:"column:openid;type:varchar(64);index:idx_user_openid,unique" json:"openid"`
-	AlipayUserID *string `gorm:"column:alipay_user_id;type:varchar(64);index:idx_user_alipay,unique" json:"alipay_user_id"`
-	Unionid      *string `gorm:"column:union_id;type:varchar(64);index:idx_user_union,unique" json:"union_id"`
-	Phone        string  `gorm:"column:phone;type:varchar(20);index:idx_user_phone,unique" json:"phone"`
+	Openid       string  `gorm:"column:openid;type:varchar(64);uniqueIndex:idx_user_openid" json:"openid"`
+	AlipayUserID *string `gorm:"column:alipay_user_id;type:varchar(64);uniqueIndex:idx_user_alipay" json:"alipay_user_id"`
+	Unionid      *string `gorm:"column:union_id;type:varchar(64);uniqueIndex:idx_user_union" json:"union_id"`
+	Phone        string  `gorm:"column:phone;type:varchar(20);uniqueIndex:idx_user_phone" json:"phone"`
 	Nickname     string `gorm:"column:nickname;type:varchar(100)" json:"nickname"`
 	Avatar       string `gorm:"column:avatar;type:varchar(255)" json:"avatar"`
 	Gender       int32  `gorm:"column:gender;type:tinyint;default:0" json:"gender"`

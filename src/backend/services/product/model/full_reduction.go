@@ -29,5 +29,5 @@ type FullReduction struct {
 // 返回值：
 //   - string: 表名
 func (FullReduction) TableName() string {
-	return "full_reductions"
+	return "full_reduction_rules"
 }

@@ -96,7 +96,7 @@ func (OrderStatusLog) TableName() string {
 }
 
 // Refund 退款申请模型
-// 状态：1待审核 2已同意 3已拒绝 4已退款
+// 状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
 //
 //nolint:lll
 //go:generate go tool gormgen -struct Refund
@@ -109,7 +109,7 @@ type Refund struct {
 	PaymentNo    string  `gorm:"column:payment_no;type:varchar(50)" json:"payment_no"`
 	Amount       float64 `gorm:"column:amount;type:decimal(10,2);not null" json:"amount"`
 	Reason       string  `gorm:"column:reason;type:varchar(255)" json:"reason"`
-	Status       int32   `gorm:"column:status;type:tinyint;default:1;comment:1待审核 2已同意 3已拒绝 4已退款" json:"status"`
+	Status       int32   `gorm:"column:status;type:tinyint;default:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
 	RejectReason string  `gorm:"column:reject_reason;type:varchar(255)" json:"reject_reason"`
 	OperatorID   int64    `gorm:"column:operator_id;type:bigint;default:0" json:"operator_id"`
 	RefundTime   *string  `gorm:"column:refund_time;type:datetime" json:"refund_time"`

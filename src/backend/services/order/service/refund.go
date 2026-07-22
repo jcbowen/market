@@ -124,7 +124,8 @@ func (s *RefundService) ListRefunds(ctx context.Context, req *order.ListRefundsR
 }
 
 // ApproveRefund 同意退款
-// 先调用 payment-service 发起实际退款，退款成功后再更新订单状态并释放库存
+// 审核通过后将退款单置为"退款中"，调用 payment-service 发起实际退款；
+// 退款成功后再更新为"已退款"、释放库存并更新订单状态。
 // 支持通过 req.PaymentNo 透传支付单号；未透传时自动使用退款申请时记录的 payment_no
 // 参数：
 //   - ctx: 上下文
@@ -133,42 +134,57 @@ func (s *RefundService) ListRefunds(ctx context.Context, req *order.ListRefundsR
 // 返回值：
 //   - error: 错误信息
 func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRefundReq) error {
+	var refund model.Refund
+	if err := s.db.GetDb().WithContext(ctx).First(&refund, req.Id).Error; err != nil {
+		return err
+	}
+	if refund.Status != 1 {
+		return fmt.Errorf("退款状态不允许审核")
+	}
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	refund.Status = 4
+	refund.OperatorID = req.OperatorId
+	refund.UpdatedAt = now
+	if err := s.db.GetDb().WithContext(ctx).Save(&refund).Error; err != nil {
+		return err
+	}
+
+	paymentNo := req.PaymentNo
+	if paymentNo == "" {
+		paymentNo = refund.PaymentNo
+	}
+
+	if s.paymentClient != nil {
+		_, err := s.paymentClient.ProcessRefund(ctx, &payment.ProcessRefundReq{
+			OrderId:   refund.OrderID,
+			RefundNo:  refund.RefundNo,
+			Amount:    refund.Amount,
+			PaymentNo: paymentNo,
+		})
+		if err != nil {
+			return fmt.Errorf("调用支付退款失败: %w", err)
+		}
+	}
+
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var refund model.Refund
-		if err := tx.First(&refund, req.Id).Error; err != nil {
+		var refundCompleted model.Refund
+		if err := tx.First(&refundCompleted, req.Id).Error; err != nil {
 			return err
 		}
-		if refund.Status != 1 {
-			return fmt.Errorf("退款状态不允许审核")
+		if refundCompleted.Status != 4 {
+			return fmt.Errorf("退款单状态异常")
 		}
 
-		now := time.Now().Format("2006-01-02 15:04:05")
-		refund.Status = 2
-		refund.OperatorID = req.OperatorId
-		refund.UpdatedAt = now
-		if err := tx.Save(&refund).Error; err != nil {
+		refundCompleted.Status = 5
+		refundCompleted.RefundTime = &now
+		refundCompleted.UpdatedAt = now
+		if err := tx.Save(&refundCompleted).Error; err != nil {
 			return err
-		}
-
-		paymentNo := req.PaymentNo
-		if paymentNo == "" {
-			paymentNo = refund.PaymentNo
-		}
-
-		if s.paymentClient != nil {
-			_, err := s.paymentClient.ProcessRefund(ctx, &payment.ProcessRefundReq{
-				OrderId:   refund.OrderID,
-				RefundNo:  refund.RefundNo,
-				Amount:    refund.Amount,
-				PaymentNo: paymentNo,
-			})
-			if err != nil {
-				return fmt.Errorf("调用支付退款失败: %w", err)
-			}
 		}
 
 		var o model.Order
-		if err := tx.First(&o, refund.OrderID).Error; err != nil {
+		if err := tx.First(&o, refundCompleted.OrderID).Error; err != nil {
 			return err
 		}
 
@@ -184,13 +200,6 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 			}); err != nil {
 				return fmt.Errorf("释放库存失败: %w", err)
 			}
-		}
-
-		refund.Status = 4
-		refund.RefundTime = &now
-		refund.UpdatedAt = now
-		if err := tx.Save(&refund).Error; err != nil {
-			return err
 		}
 
 		o.Status = 8

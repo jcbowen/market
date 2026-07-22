@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/service"
@@ -28,16 +29,17 @@ type server struct {
 // newServer 创建商品服务 gRPC 实现
 // 参数：
 //   - db: MySQL 实例
+//   - cfg: 全局配置
 //
 // 返回值：
 //   - *server: gRPC 服务实现
-func newServer(db *mysql.Instance) *server {
+func newServer(db *mysql.Instance, cfg *config.Config) *server {
 	return &server{
 		categoryService:   service.NewCategoryService(db),
 		productService:    service.NewProductService(db),
 		skuService:        service.NewSkuService(db),
 		pricingService:    service.NewPricingService(db),
-		stockService:      service.NewStockService(db),
+		stockService:      service.NewStockService(db, cfg.Business.ExpireWarningDays),
 		stockCheckService: service.NewStockCheckService(db),
 		marketingService:  service.NewMarketingService(db),
 		bannerService:     service.NewBannerService(db),
@@ -100,6 +102,15 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 		return nil, status.Errorf(codes.Internal, err.Error())
 	}
 
+	productIDs := make([]int64, 0, len(list))
+	for _, p := range list {
+		productIDs = append(productIDs, p.ID)
+	}
+	imageMap, err := s.productService.BuildProductImages(ctx, productIDs)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, err.Error())
+	}
+
 	page, pageSize := 1, 10
 	if req.Pagination != nil {
 		page = int(req.Pagination.Page)
@@ -115,7 +126,7 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 	}
 	for _, p := range list {
 		resp.List = append(resp.List, service.ToProductInfoWithExtra(
-			p, categoryNames[p.CategoryID], prices[p.ID], stocks[p.ID],
+			p, categoryNames[p.CategoryID], prices[p.ID], stocks[p.ID], imageMap[p.ID],
 		))
 	}
 	return resp, nil
@@ -132,6 +143,15 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 		return nil, status.Errorf(codes.Internal, err.Error())
 	}
 
+	images, err := s.productService.ListProductImages(ctx, req.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, err.Error())
+	}
+	imageURLs := make([]string, 0, len(images))
+	for _, img := range images {
+		imageURLs = append(imageURLs, img.URL)
+	}
+
 	var price float64
 	var stock int32
 	if len(skus) > 0 {
@@ -140,7 +160,7 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 	}
 
 	detail := &product.ProductDetail{
-		Product: service.ToProductInfoWithExtra(p, "", price, stock),
+		Product: service.ToProductInfoWithExtra(p, "", price, stock, imageURLs),
 		Skus:    make([]*product.SkuInfo, 0, len(skus)),
 	}
 	for _, sku := range skus {
@@ -391,6 +411,15 @@ func (s *server) ListStockChecks(ctx stdctx.Context, req *product.ListStockCheck
 		resp.List = append(resp.List, service.ToStockCheckInfo(c))
 	}
 	return resp, nil
+}
+
+// GetStockCheck 查询盘点单详情
+func (s *server) GetStockCheck(ctx stdctx.Context, req *product.GetStockCheckReq) (*product.StockCheckDetail, error) {
+	detail, err := s.stockCheckService.GetStockCheck(ctx, req)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, err.Error())
+	}
+	return detail, nil
 }
 
 // ==================== 营销 ====================

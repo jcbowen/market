@@ -15,17 +15,22 @@ import (
 
 // StockService 库存业务服务
 type StockService struct {
-	db *mysql.Instance
+	db                *mysql.Instance
+	expireWarningDays int
 }
 
 // NewStockService 创建库存业务服务
 // 参数：
 //   - db: MySQL 实例
+//   - expireWarningDays: 临期预警天数，<=0 时默认 3 天
 //
 // 返回值：
 //   - *StockService: 库存业务服务实例
-func NewStockService(db *mysql.Instance) *StockService {
-	return &StockService{db: db}
+func NewStockService(db *mysql.Instance, expireWarningDays int) *StockService {
+	if expireWarningDays <= 0 {
+		expireWarningDays = 3
+	}
+	return &StockService{db: db, expireWarningDays: expireWarningDays}
 }
 
 // DeductStock 扣减库存
@@ -204,6 +209,7 @@ func (s *StockService) ListStockRecords(ctx context.Context, req *product.ListSt
 }
 
 // GetStockWarnings 获取库存预警
+// 同时检查低库存（warning_type=1）与临期（warning_type=2）两种情况，同一 SKU 可能产生两条预警记录。
 // 参数：
 //   - ctx: 上下文
 //   - communityID: 社区 ID
@@ -221,13 +227,27 @@ func (s *StockService) GetStockWarnings(ctx context.Context, communityID int64) 
 		return nil, err
 	}
 
-	var warnings []*product.StockWarningInfo
+	// 按 SKU 聚合最早未过期批次日期
+	earliestExpireDate, err := s.getEarliestExpireDateBySku(ctx, communityID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 批量查询商品名称
+	productIDs := make([]int64, 0, len(skus))
 	for _, sku := range skus {
+		productIDs = append(productIDs, sku.ProductID)
+	}
+	productNames := s.getProductNames(ctx, productIDs)
+
+	var warnings []*product.StockWarningInfo
+	now := time.Now()
+	deadline := now.AddDate(0, 0, s.expireWarningDays).Format("2006-01-02")
+	for _, sku := range skus {
+		productName := productNames[sku.ProductID]
+
+		// 低库存预警
 		if sku.Stock <= sku.SafetyStock {
-			var productName string
-			var p model.Product
-			_ = s.db.GetDb().WithContext(ctx).Select("name").First(&p, sku.ProductID).Error
-			productName = p.Name
 			warnings = append(warnings, &product.StockWarningInfo{
 				SkuId:       sku.ID,
 				SkuCode:     sku.SkuCode,
@@ -238,8 +258,79 @@ func (s *StockService) GetStockWarnings(ctx context.Context, communityID int64) 
 				WarningType: 1,
 			})
 		}
+
+		// 临期预警：当前库存大于 0 且存在即将过期的批次
+		if sku.Stock > 0 {
+			if expireDate, ok := earliestExpireDate[sku.ID]; ok && expireDate != "" {
+				if expireDate <= deadline {
+					warnings = append(warnings, &product.StockWarningInfo{
+						SkuId:       sku.ID,
+						SkuCode:     sku.SkuCode,
+						SpecName:    sku.SpecName,
+						ProductName: productName,
+						Stock:       sku.Stock,
+						SafetyStock: sku.SafetyStock,
+						WarningType: 2,
+						ExpireDate:  expireDate,
+					})
+				}
+			}
+		}
 	}
 	return warnings, nil
+}
+
+// getEarliestExpireDateBySku 查询各 SKU 最早未过期的批次过期日期
+// 参数：
+//   - ctx: 上下文
+//   - communityID: 社区 ID，<=0 时查询全部社区
+//
+// 返回值：
+//   - map[int64]string: SKU ID -> 最早过期日期（YYYY-MM-DD）
+//   - error: 错误信息
+func (s *StockService) getEarliestExpireDateBySku(ctx context.Context, communityID int64) (map[int64]string, error) {
+	type result struct {
+		SkuID      int64  `gorm:"column:sku_id"`
+		ExpireDate string `gorm:"column:expire_date"`
+	}
+	db := s.db.GetDb().WithContext(ctx).Model(&model.StockRecord{}).
+		Select("sku_id", "MIN(expire_date) as expire_date").
+		Where("expire_date IS NOT NULL").
+		Where("expire_date >= ?", time.Now().Format("2006-01-02"))
+	if communityID > 0 {
+		db = db.Where("community_id = ?", communityID)
+	}
+	var rows []result
+	if err := db.Group("sku_id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	m := make(map[int64]string, len(rows))
+	for _, r := range rows {
+		m[r.SkuID] = r.ExpireDate
+	}
+	return m, nil
+}
+
+// getProductNames 批量查询商品名称
+// 参数：
+//   - ctx: 上下文
+//   - productIDs: 商品 ID 列表
+//
+// 返回值：
+//   - map[int64]string: 商品 ID -> 商品名称
+func (s *StockService) getProductNames(ctx context.Context, productIDs []int64) map[int64]string {
+	names := make(map[int64]string)
+	if len(productIDs) == 0 {
+		return names
+	}
+	var products []model.Product
+	if err := s.db.GetDb().WithContext(ctx).Select("id", "name").Where("id IN ?", productIDs).Find(&products).Error; err != nil {
+		return names
+	}
+	for _, p := range products {
+		names[p.ID] = p.Name
+	}
+	return names
 }
 
 // StockOut 库存出库（销售出库/报损出库）
@@ -267,9 +358,12 @@ func (s *StockService) StockOut(ctx context.Context, req *product.StockOutReq) e
 }
 
 // GeneratePurchaseOrder 生成补货建议单
+// 仅针对低库存预警（warning_type=1）的 SKU 生成补货建议；
+// 临期预警 SKU 不参与补货，应由促销/清仓流程处理。
+//
 // 参数：
 //   - ctx: 上下文
-//   - communityID: 社区 ID
+//   - communityID: 社区 ID，<=0 时查询全部
 //
 // 返回值：
 //   - []*product.PurchaseOrderItem: 补货建议列表
@@ -281,17 +375,21 @@ func (s *StockService) GeneratePurchaseOrder(ctx context.Context, communityID in
 	}
 	items := make([]*product.PurchaseOrderItem, 0, len(warnings))
 	for _, w := range warnings {
+		// 跳过临期预警，仅处理低库存
+		if w.WarningType != 1 {
+			continue
+		}
 		suggest := w.SafetyStock*2 - w.Stock
 		if suggest < 1 {
 			suggest = 1
 		}
 		items = append(items, &product.PurchaseOrderItem{
-			SkuId:         w.SkuId,
-			SkuCode:       w.SkuCode,
-			SpecName:      w.SpecName,
-			ProductName:   w.ProductName,
-			CurrentStock:  w.Stock,
-			SafetyStock:   w.SafetyStock,
+			SkuId:           w.SkuId,
+			SkuCode:         w.SkuCode,
+			SpecName:        w.SpecName,
+			ProductName:     w.ProductName,
+			CurrentStock:    w.Stock,
+			SafetyStock:     w.SafetyStock,
 			SuggestQuantity: suggest,
 		})
 	}

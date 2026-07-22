@@ -16,14 +16,17 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
+import { updateAdmin } from '@/api/admin'
 import type { AdminInfo } from '@/api/types'
 
 /**
  * 个人设置页面
- * 当前为前端本地展示，保存接口待对接
+ * 展示并修改当前登录管理员的真实姓名与手机号
  */
 const authStore = useAuthStore()
+const message = useMessage()
 const form = ref<Partial<AdminInfo>>({
   real_name: '',
   phone: '',
@@ -31,11 +34,21 @@ const form = ref<Partial<AdminInfo>>({
 
 onMounted(() => {
   if (authStore.admin) {
-    form.value = { ...authStore.admin }
+    form.value = { real_name: authStore.admin.real_name, phone: authStore.admin.phone }
   }
 })
 
-function submit() {
-  // 待对接修改个人信息接口
+async function submit() {
+  if (!authStore.admin) return
+  const res = await updateAdmin(authStore.admin.id, {
+    real_name: form.value.real_name,
+    phone: form.value.phone,
+  })
+  if (res.data.code === 0) {
+    message.success('保存成功')
+    authStore.fetchAdminInfo()
+  } else {
+    message.error(res.data.message || '保存失败')
+  }
 }
 </script>

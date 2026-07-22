@@ -2,6 +2,7 @@ package handler
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -230,20 +231,49 @@ func (h *UserHandler) DeleteAddress(c *gin.Context) {
 }
 
 // ListCommunities 获取社区列表（公开接口）
-// 调用 user.ListCommunities
+// 支持关键词搜索与基于经纬度的附近社区排序
 // 参数：
 //   - c: gin 上下文
 func (h *UserHandler) ListCommunities(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	keyword := c.Query("keyword")
+	longitude, _ := strconv.ParseFloat(c.Query("longitude"), 64)
+	latitude, _ := strconv.ParseFloat(c.Query("latitude"), 64)
 
-	resp, err := h.userClient.ListCommunities(c.Request.Context(), &common.Pagination{
-		Page:     int32(page),
-		PageSize: int32(pageSize),
-	})
+	var resp *user.ListCommunitiesResp
+	var err error
+	if longitude != 0 && latitude != 0 {
+		resp, err = h.userClient.ListNearbyCommunities(c.Request.Context(), &user.ListNearbyCommunitiesReq{
+			Longitude: longitude,
+			Latitude:  latitude,
+			Pagination: &common.Pagination{
+				Page:     int32(page),
+				PageSize: int32(pageSize),
+			},
+		})
+	} else {
+		resp, err = h.userClient.ListCommunities(c.Request.Context(), &common.Pagination{
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		})
+	}
 	if err != nil {
 		response.Error(c, errcode.InternalServerError)
 		return
 	}
-	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
+
+	list := resp.List
+	if keyword != "" {
+		filtered := make([]*user.CommunityInfo, 0, len(list))
+		lowerKeyword := strings.ToLower(keyword)
+		for _, item := range list {
+			if strings.Contains(strings.ToLower(item.Name), lowerKeyword) || strings.Contains(strings.ToLower(item.Address), lowerKeyword) {
+				filtered = append(filtered, item)
+			}
+		}
+		list = filtered
+	}
+
+	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
 }

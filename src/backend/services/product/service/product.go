@@ -132,6 +132,36 @@ func (s *ProductService) BuildProductExtras(ctx context.Context, products []*mod
 	return categoryNames, prices, stocks, nil
 }
 
+// BuildProductImages 批量查询商品对应的图片 URL 列表
+// 返回结果中的图片按 `sort` 升序、`id` 升序排列。
+//
+// 参数：
+//   - ctx: 上下文
+//   - productIDs: 商品 ID 列表
+//
+// 返回值：
+//   - map[int64][]string: 商品 ID -> 图片 URL 列表
+//   - error: 错误信息
+func (s *ProductService) BuildProductImages(ctx context.Context, productIDs []int64) (map[int64][]string, error) {
+	imageMap := make(map[int64][]string)
+	if len(productIDs) == 0 {
+		return imageMap, nil
+	}
+
+	var images []model.ProductImage
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("product_id IN ?", productIDs).
+		Order("sort asc, id asc").
+		Find(&images).Error; err != nil {
+		return nil, err
+	}
+
+	for _, img := range images {
+		imageMap[img.ProductID] = append(imageMap[img.ProductID], img.URL)
+	}
+	return imageMap, nil
+}
+
 // GetProduct 根据 ID 查询商品
 // 参数：
 //   - ctx: 上下文
@@ -150,6 +180,9 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 }
 
 // CreateProduct 创建商品
+// 创建商品主记录的同时，将请求中的图片 URL 按顺序写入 `product_images` 表，
+// 并继续保留 `products.images` JSON 字段作为过渡兼容。
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建请求
@@ -172,13 +205,23 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 		Status:      1,
 		Sort:        req.Sort,
 	}
-	if err := s.db.GetDb().WithContext(ctx).Create(p).Error; err != nil {
-		return nil, err
-	}
-	return p, nil
+
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(p).Error; err != nil {
+			return err
+		}
+		if len(req.Images) > 0 {
+			return s.saveProductImages(tx, p.ID, req.Images)
+		}
+		return nil
+	})
+	return p, err
 }
 
 // UpdateProduct 更新商品
+// 更新商品主记录后，删除该商品在 `product_images` 表中的全部旧记录，
+// 再按请求中的新图片顺序重新插入，同时同步更新 `products.images` JSON 字段。
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新请求
@@ -204,10 +247,6 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	if req.CoverImage != "" {
 		p.CoverImage = req.CoverImage
 	}
-	if len(req.Images) > 0 {
-		imagesJSON, _ := json.Marshal(req.Images)
-		p.Images = string(imagesJSON)
-	}
 	if req.Unit != "" {
 		p.Unit = req.Unit
 	}
@@ -221,10 +260,22 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 		p.MinBuy = req.MinBuy
 	}
 
-	if err := s.db.GetDb().WithContext(ctx).Save(p).Error; err != nil {
-		return nil, err
-	}
-	return p, nil
+	imagesJSON, _ := json.Marshal(req.Images)
+	p.Images = string(imagesJSON)
+
+	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(p).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("product_id = ?", req.Id).Delete(&model.ProductImage{}).Error; err != nil {
+			return err
+		}
+		if len(req.Images) > 0 {
+			return s.saveProductImages(tx, req.Id, req.Images)
+		}
+		return nil
+	})
+	return p, err
 }
 
 // DeleteProduct 删除商品（软删除：状态置为 2）
@@ -274,14 +325,56 @@ func (s *ProductService) ListSkusByProductID(ctx context.Context, productID int6
 	return list, err
 }
 
+// ListProductImages 查询指定商品的图片记录
+// 返回结果按 `sort` 升序、`id` 升序排列。
+//
+// 参数：
+//   - ctx: 上下文
+//   - productID: 商品 ID
+//
+// 返回值：
+//   - []model.ProductImage: 商品图片记录列表
+//   - error: 错误信息
+func (s *ProductService) ListProductImages(ctx context.Context, productID int64) ([]model.ProductImage, error) {
+	var list []model.ProductImage
+	err := s.db.GetDb().WithContext(ctx).
+		Where("product_id = ?", productID).
+		Order("sort asc, id asc").
+		Find(&list).Error
+	return list, err
+}
+
+// saveProductImages 批量保存商品图片记录
+// 图片按传入顺序设置 `sort`，从 0 开始递增。
+//
+// 参数：
+//   - tx: GORM 事务对象
+//   - productID: 商品 ID
+//   - images: 图片 URL 列表
+//
+// 返回值：
+//   - error: 错误信息
+func (s *ProductService) saveProductImages(tx *gorm.DB, productID int64, images []string) error {
+	records := make([]model.ProductImage, 0, len(images))
+	for i, url := range images {
+		records = append(records, model.ProductImage{
+			ProductID: productID,
+			URL:       url,
+			Sort:      int32(i),
+		})
+	}
+	return tx.Create(&records).Error
+}
+
 // ToProductInfo 将商品模型转换为 proto 商品信息
 // 参数：
 //   - p: 商品模型
+//   - images: 商品图片 URL 列表
 //
 // 返回值：
 //   - *product.ProductInfo: proto 商品信息
-func ToProductInfo(p *model.Product) *product.ProductInfo {
-	return ToProductInfoWithExtra(p, "", 0, 0)
+func ToProductInfo(p *model.Product, images []string) *product.ProductInfo {
+	return ToProductInfoWithExtra(p, "", 0, 0, images)
 }
 
 // ToProductInfoWithExtra 将商品模型转换为 proto 商品信息，并附加分类名称与默认 SKU 价格/库存
@@ -291,15 +384,14 @@ func ToProductInfo(p *model.Product) *product.ProductInfo {
 //   - categoryName: 分类名称
 //   - price: 默认 SKU 售价
 //   - stock: 默认 SKU 库存
+//   - images: 商品图片 URL 列表
 //
 // 返回值：
 //   - *product.ProductInfo: proto 商品信息
-func ToProductInfoWithExtra(p *model.Product, categoryName string, price float64, stock int32) *product.ProductInfo {
+func ToProductInfoWithExtra(p *model.Product, categoryName string, price float64, stock int32, images []string) *product.ProductInfo {
 	if p == nil {
 		return nil
 	}
-	var images []string
-	_ = json.Unmarshal([]byte(p.Images), &images)
 	return &product.ProductInfo{
 		Id:           p.ID,
 		CommunityId:  p.CommunityID,

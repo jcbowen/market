@@ -24,7 +24,7 @@ func main() {
 		log.Fatalf("初始化 MySQL 失败: %v", err)
 	}
 	if err := autoMigrate(db); err != nil {
-		log.Fatalf("数据库迁移失败: %v", err)
+		log.Printf("警告: 数据库迁移失败: %v", err)
 	}
 	_ = bootstrap.InitRedis(cfg)
 

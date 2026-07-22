@@ -71,24 +71,19 @@ func (s *CommunityService) GetCommunity(ctx context.Context, id int64) (*model.C
 	return &c, err
 }
 
-// ListNearbyCommunities 查询附近社区（按距离排序）
+// ListNearbyCommunities 查询附近社区（按距离排序，固定返回前 10 个）
 // 参数：
 //   - ctx: 上下文
 //   - longitude: 经度
 //   - latitude: 纬度
-//   - page: 页码
-//   - pageSize: 每页条数
+//   - page: 页码（已废弃，仅保留兼容签名）
+//   - pageSize: 每页条数（已废弃，仅保留兼容签名）
 // 返回：
 //   - []*model.Community: 社区列表
 //   - int: 总条数
 //   - error: 错误信息
 func (s *CommunityService) ListNearbyCommunities(ctx context.Context, longitude, latitude float64, page, pageSize int) ([]*model.Community, int, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
+	const limit = 10
 
 	var total int64
 	db := s.db.GetDb().WithContext(ctx).Where("status = ?", 1)
@@ -96,13 +91,12 @@ func (s *CommunityService) ListNearbyCommunities(ctx context.Context, longitude,
 		return nil, 0, err
 	}
 
-	offset := (page - 1) * pageSize
 	var list []*model.Community
-	// 按球面距离近似排序，实际生产环境可改用 MySQL 空间函数或 GEO 索引
+	// 按经纬度平面距离近似排序，固定返回最近的 10 个社区
 	err := db.Order(fmt.Sprintf(
 		"POWER(longitude - %v, 2) + POWER(latitude - %v, 2) ASC, sort desc, id desc",
 		longitude, latitude,
-	)).Offset(offset).Limit(pageSize).Find(&list).Error
+	)).Limit(limit).Find(&list).Error
 	return list, int(total), err
 }
 

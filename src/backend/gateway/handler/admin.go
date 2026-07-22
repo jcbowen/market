@@ -249,12 +249,19 @@ type UpdateAdminReq struct {
 }
 
 // UpdateAdmin 更新管理员
+// 普通管理员只允许修改自己的基础信息；超级管理员可修改任意管理员
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	ctx := appcontext.GetUserContext(c)
+	if ctx.Role != "super_admin" && ctx.UserID != id {
+		response.Error(c, errcode.NoPermission)
 		return
 	}
 
@@ -1227,25 +1234,14 @@ func (h *AdminHandler) GetStockCheckDetail(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.productClient.ListStockChecks(c.Request.Context(), &product.ListStockChecksReq{
-		CommunityId: h.getAdminCommunityID(c),
-		Pagination: &common.Pagination{
-			Page:     1,
-			PageSize: 1000,
-		},
+	resp, err := h.productClient.GetStockCheck(c.Request.Context(), &product.GetStockCheckReq{
+		Id: id,
 	})
 	if err != nil {
 		response.Error(c, errcode.InternalServerError)
 		return
 	}
-
-	for _, item := range resp.List {
-		if item.Id == id {
-			response.Success(c, item)
-			return
-		}
-	}
-	response.Error(c, errcode.StockCheckNotFound)
+	response.Success(c, resp)
 }
 
 // CreateStockCheckReq 创建盘点单请求
@@ -1657,6 +1653,7 @@ func (h *AdminHandler) UpdateFullReduction(c *gin.Context) {
 // --- Banner 管理 ---
 
 // ListAdminBanners 获取 Banner 列表
+// 管理态返回全部记录，支持按位置筛选
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminBanners(c *gin.Context) {
@@ -1666,6 +1663,7 @@ func (h *AdminHandler) ListAdminBanners(c *gin.Context) {
 	resp, err := h.productClient.ListBanners(c.Request.Context(), &product.ListBannersReq{
 		CommunityId: communityID,
 		Position:    int32(position),
+		IsAdmin:     true,
 	})
 	if err != nil {
 		response.Error(c, errcode.InternalServerError)
