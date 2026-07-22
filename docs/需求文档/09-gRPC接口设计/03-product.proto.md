@@ -1,0 +1,552 @@
+
+### product.proto
+
+```protobuf
+syntax = "proto3";
+
+package product;
+
+option go_package = "github.com/jcbowen/market/src/backend/common/proto/product";
+
+import "common/common.proto";
+
+service ProductService {
+  // 分类
+  rpc ListCategories(ListCategoriesReq) returns (ListCategoriesResp);
+  rpc GetCategory(GetCategoryReq) returns (CategoryInfo);
+  rpc CreateCategory(CreateCategoryReq) returns (CategoryInfo);
+  rpc UpdateCategory(UpdateCategoryReq) returns (CategoryInfo);
+  rpc DeleteCategory(DeleteCategoryReq) returns (common.CommonResponse);
+
+  // 商品
+  rpc ListProducts(ListProductsReq) returns (ListProductsResp);
+  rpc GetProduct(GetProductReq) returns (ProductDetail);
+  rpc SearchProducts(SearchProductsReq) returns (ListProductsResp);
+  rpc CreateProduct(CreateProductReq) returns (ProductDetail);
+  rpc UpdateProduct(UpdateProductReq) returns (ProductDetail);
+  rpc DeleteProduct(DeleteProductReq) returns (common.CommonResponse);
+  rpc UpdateProductStatus(UpdateProductStatusReq) returns (common.CommonResponse);
+
+  // SKU
+  rpc ListSkus(ListSkusReq) returns (ListSkusResp);
+  rpc CreateSku(CreateSkuReq) returns (SkuInfo);
+  rpc UpdateSku(UpdateSkuReq) returns (SkuInfo);
+  rpc GetSkuById(GetSkuByIdReq) returns (SkuInfo);
+
+  // 库存
+  rpc DeductStock(DeductStockReq) returns (DeductStockResp);
+  rpc ReleaseStock(ReleaseStockReq) returns (common.CommonResponse);
+  rpc StockEntry(StockEntryReq) returns (common.CommonResponse);
+  rpc ListStockRecords(ListStockRecordsReq) returns (ListStockRecordsResp);
+  rpc GetStockWarnings(GetStockWarningsReq) returns (ListStockWarningsResp);
+
+  // 盘点
+  rpc CreateStockCheck(CreateStockCheckReq) returns (StockCheckInfo);
+  rpc SubmitStockCheck(SubmitStockCheckReq) returns (common.CommonResponse);
+  rpc ListStockChecks(ListStockChecksReq) returns (ListStockChecksResp);
+
+  // 定价
+  rpc SetCommunityPricing(SetPricingReq) returns (common.CommonResponse);
+  rpc ListCommunityPricing(ListPricingReq) returns (ListPricingResp);
+  rpc GetReferencePricing(GetReferencePricingReq) returns (ListPricingResp);
+
+  // 营销
+  rpc ListCoupons(ListCouponsReq) returns (ListCouponsResp);
+  rpc GetCoupon(GetCouponReq) returns (CouponInfo);
+  rpc CreateCoupon(CreateCouponReq) returns (CouponInfo);
+  rpc UpdateCoupon(UpdateCouponReq) returns (CouponInfo);
+  rpc ReceiveCoupon(ReceiveCouponReq) returns (common.CommonResponse);
+  rpc ListUserCoupons(ListUserCouponsReq) returns (ListUserCouponsResp);
+  rpc UseCoupon(UseCouponReq) returns (common.CommonResponse);
+
+  rpc ListFlashSales(ListFlashSalesReq) returns (ListFlashSalesResp);
+  rpc GetFlashSale(GetFlashSaleReq) returns (FlashSaleDetail);
+  rpc CreateFlashSale(CreateFlashSaleReq) returns (FlashSaleInfo);
+
+  rpc ListFullReductions(ListFullReductionsReq) returns (ListFullReductionsResp);
+  rpc CreateFullReduction(CreateFullReductionReq) returns (FullReductionInfo);
+}
+
+// --- 分类 ---
+message ListCategoriesReq {
+  int64 community_id = 1;
+}
+
+message GetCategoryReq {
+  int64 id = 1;
+}
+
+message CreateCategoryReq {
+  int64 community_id = 1;
+  int64 parent_id = 2;
+  string name = 3;
+  string icon = 4;
+  int32 sort = 5;
+}
+
+message UpdateCategoryReq {
+  int64 id = 1;
+  string name = 2;
+  string icon = 3;
+  int32 sort = 4;
+  int32 status = 5;
+}
+
+message DeleteCategoryReq {
+  int64 id = 1;
+}
+
+message CategoryInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 parent_id = 3;
+  string name = 4;
+  string icon = 5;
+  int32 sort = 6;
+  int32 status = 7;
+  repeated CategoryInfo children = 8;
+}
+
+message ListCategoriesResp {
+  repeated CategoryInfo list = 1;
+}
+
+// --- 商品 ---
+message ListProductsReq {
+  int64 community_id = 1;
+  int64 category_id = 2;
+  string keyword = 3;
+  string sort = 4;           // sales | price_asc | price_desc
+  common.Pagination pagination = 5;
+}
+
+message GetProductReq {
+  int64 id = 1;
+  int64 community_id = 2;
+}
+
+message SearchProductsReq {
+  int64 community_id = 1;
+  string keyword = 2;
+  common.Pagination pagination = 3;
+}
+
+message CreateProductReq {
+  int64 community_id = 1;
+  int64 category_id = 2;
+  string name = 3;
+  string description = 4;
+  string cover_image = 5;
+  repeated string images = 6;
+  string unit = 7;
+  bool is_multi_spec = 8;
+  int32 sort = 9;
+  repeated CreateSkuReq skus = 10;
+}
+
+message UpdateProductReq {
+  int64 id = 1;
+  int64 category_id = 2;
+  string name = 3;
+  string description = 4;
+  string cover_image = 5;
+  repeated string images = 6;
+  string unit = 7;
+  int32 sort = 8;
+}
+
+message DeleteProductReq {
+  int64 id = 1;
+}
+
+message UpdateProductStatusReq {
+  int64 id = 1;
+  int32 status = 2;
+}
+
+message ProductInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 category_id = 3;
+  string name = 4;
+  string description = 5;
+  string cover_image = 6;
+  repeated string images = 7;
+  string unit = 8;
+  bool is_multi_spec = 9;
+  int32 status = 10;
+  int32 sort = 11;
+  int32 sales_count = 12;
+}
+
+message ProductDetail {
+  ProductInfo product = 1;
+  repeated SkuInfo skus = 2;
+}
+
+message ListProductsResp {
+  repeated ProductInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// --- SKU ---
+message ListSkusReq {
+  int64 product_id = 1;
+}
+
+message GetSkuByIdReq {
+  int64 id = 1;
+}
+
+message CreateSkuReq {
+  int64 product_id = 1;
+  int64 community_id = 2;
+  string sku_code = 3;
+  string spec_name = 4;
+  string spec_json = 5;
+  double price = 6;
+  double cost_price = 7;
+  int32 stock = 8;
+  int32 safety_stock = 9;
+  string image = 10;
+}
+
+message UpdateSkuReq {
+  int64 id = 1;
+  string spec_name = 2;
+  string spec_json = 3;
+  double price = 4;
+  double cost_price = 5;
+  int32 safety_stock = 6;
+  string image = 7;
+  int32 status = 8;
+}
+
+message SkuInfo {
+  int64 id = 1;
+  int64 product_id = 2;
+  int64 community_id = 3;
+  string sku_code = 4;
+  string spec_name = 5;
+  string spec_json = 6;
+  double price = 7;
+  double cost_price = 8;
+  int32 stock = 9;
+  int32 safety_stock = 10;
+  string image = 11;
+  int32 status = 12;
+}
+
+message ListSkusResp {
+  repeated SkuInfo list = 1;
+}
+
+// --- 库存 ---
+message DeductStockReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  int64 order_id = 3;
+}
+
+message DeductStockResp {
+  bool success = 1;
+  int32 remain_stock = 2;
+}
+
+message ReleaseStockReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  int64 order_id = 3;
+}
+
+message StockEntryItem {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  string batch_no = 3;
+  string production_date = 4;
+  string expire_date = 5;
+}
+
+message StockEntryReq {
+  int64 community_id = 1;
+  int32 type = 2;               // 1采购入库 2退货入库
+  repeated StockEntryItem items = 3;
+  int64 operator_id = 4;
+  string remark = 5;
+}
+
+message ListStockRecordsReq {
+  int64 community_id = 1;
+  int64 sku_id = 2;
+  int32 type = 3;
+  string start_date = 4;
+  string end_date = 5;
+  common.Pagination pagination = 6;
+}
+
+message StockRecordInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  int32 type = 3;
+  int32 quantity = 4;
+  int32 before_stock = 5;
+  int32 after_stock = 6;
+  string batch_no = 7;
+  string production_date = 8;
+  string expire_date = 9;
+  int64 related_order_id = 10;
+  int64 operator_id = 11;
+  string remark = 12;
+  string created_at = 13;
+}
+
+message ListStockRecordsResp {
+  repeated StockRecordInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetStockWarningsReq {
+  int64 community_id = 1;
+}
+
+message StockWarningInfo {
+  int64 sku_id = 1;
+  string sku_code = 2;
+  string spec_name = 3;
+  string product_name = 4;
+  int32 stock = 5;
+  int32 safety_stock = 6;
+  int32 warning_type = 7;       // 1低库存 2临期
+  string expire_date = 8;
+}
+
+message ListStockWarningsResp {
+  repeated StockWarningInfo list = 1;
+}
+
+// --- 盘点 ---
+message CreateStockCheckReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+  string remark = 3;
+}
+
+message StockCheckItem {
+  int64 sku_id = 1;
+  int32 actual_stock = 2;
+}
+
+message SubmitStockCheckReq {
+  int64 id = 1;
+  repeated StockCheckItem items = 2;
+}
+
+message StockCheckInfo {
+  int64 id = 1;
+  string check_no = 2;
+  int32 status = 3;
+  int32 total_items = 4;
+  int32 diff_items = 5;
+  string remark = 6;
+  string created_at = 7;
+}
+
+message ListStockChecksReq {
+  int64 community_id = 1;
+  common.Pagination pagination = 2;
+}
+
+message ListStockChecksResp {
+  repeated StockCheckInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// --- 定价 ---
+message SetPricingReq {
+  int64 community_id = 1;
+  int64 sku_id = 2;
+  double price = 3;
+}
+
+message PricingInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string community_name = 3;
+  int64 sku_id = 4;
+  double price = 5;
+}
+
+message ListPricingReq {
+  int64 sku_id = 1;
+  int64 community_id = 2;
+}
+
+message ListPricingResp {
+  repeated PricingInfo list = 1;
+}
+
+message GetReferencePricingReq {
+  int64 sku_id = 1;
+  int64 exclude_community_id = 2;
+}
+
+// --- 营销 ---
+message ListCouponsReq {
+  int64 community_id = 1;
+  int32 status = 2;
+}
+
+message GetCouponReq {
+  int64 id = 1;
+}
+
+message CreateCouponReq {
+  int64 community_id = 1;
+  string name = 2;
+  int32 type = 3;
+  double threshold = 4;
+  double discount_value = 5;
+  int32 total_count = 6;
+  int32 per_user_limit = 7;
+  string start_time = 8;
+  string end_time = 9;
+  int32 valid_days = 10;
+}
+
+message UpdateCouponReq {
+  int64 id = 1;
+  string name = 2;
+  int32 status = 3;
+}
+
+message CouponInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string name = 3;
+  int32 type = 4;
+  double threshold = 5;
+  double discount_value = 6;
+  int32 total_count = 7;
+  int32 received_count = 8;
+  int32 per_user_limit = 9;
+  string start_time = 10;
+  string end_time = 11;
+  int32 valid_days = 12;
+  int32 status = 13;
+}
+
+message ListCouponsResp {
+  repeated CouponInfo list = 1;
+}
+
+message ReceiveCouponReq {
+  int64 coupon_id = 1;
+  int64 user_id = 2;
+}
+
+message ListUserCouponsReq {
+  int64 user_id = 1;
+  int32 status = 2;
+}
+
+message UserCouponInfo {
+  int64 id = 1;
+  int64 coupon_id = 2;
+  string name = 3;
+  int32 type = 4;
+  double threshold = 5;
+  double discount_value = 6;
+  int32 status = 7;
+  string expire_at = 8;
+}
+
+message ListUserCouponsResp {
+  repeated UserCouponInfo list = 1;
+}
+
+message UseCouponReq {
+  int64 user_coupon_id = 1;
+  int64 order_id = 2;
+}
+
+message ListFlashSalesReq {
+  int64 community_id = 1;
+}
+
+message GetFlashSaleReq {
+  int64 id = 1;
+}
+
+message CreateFlashSaleReq {
+  int64 community_id = 1;
+  string name = 2;
+  string start_time = 3;
+  string end_time = 4;
+  repeated FlashSaleItemReq items = 5;
+}
+
+message FlashSaleItemReq {
+  int64 sku_id = 1;
+  double flash_price = 2;
+  int32 stock = 3;
+  int32 limit_per_user = 4;
+}
+
+message FlashSaleInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string name = 3;
+  string start_time = 4;
+  string end_time = 5;
+  int32 status = 6;
+}
+
+message FlashSaleDetail {
+  FlashSaleInfo info = 1;
+  repeated FlashSaleItemInfo items = 2;
+}
+
+message FlashSaleItemInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  double flash_price = 6;
+  double original_price = 7;
+  int32 stock = 8;
+  int32 limit_per_user = 9;
+}
+
+message ListFlashSalesResp {
+  repeated FlashSaleInfo list = 1;
+}
+
+message ListFullReductionsReq {
+  int64 community_id = 1;
+}
+
+message CreateFullReductionReq {
+  int64 community_id = 1;
+  string name = 2;
+  double threshold = 3;
+  double reduce_amount = 4;
+  string start_time = 5;
+  string end_time = 6;
+}
+
+message FullReductionInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string name = 3;
+  double threshold = 4;
+  double reduce_amount = 5;
+  string start_time = 6;
+  string end_time = 7;
+  int32 status = 8;
+}
+
+message ListFullReductionsResp {
+  repeated FullReductionInfo list = 1;
+}
+```

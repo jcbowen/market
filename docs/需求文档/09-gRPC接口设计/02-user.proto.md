@@ -1,0 +1,224 @@
+### user.proto
+
+```protobuf
+syntax = "proto3";
+
+package user;
+
+option go_package = "github.com/jcbowen/market/src/backend/common/proto/user";
+
+import "common/common.proto";
+
+service UserService {
+  // 用户信息
+  rpc GetUserById(GetUserByIdReq) returns (UserInfo);
+  rpc GetUserByPhone(GetUserByPhoneReq) returns (UserInfo);
+  rpc CreateOrUpdateUser(CreateUserReq) returns (UserInfo);
+  rpc UpdateUserCommunity(UpdateCommunityReq) returns (common.CommonResponse);
+
+  // 地址管理
+  rpc ListAddresses(ListAddressesReq) returns (ListAddressesResp);
+  rpc GetAddress(GetAddressReq) returns (AddressInfo);
+  rpc CreateAddress(CreateAddressReq) returns (AddressInfo);
+  rpc UpdateAddress(UpdateAddressReq) returns (AddressInfo);
+  rpc DeleteAddress(DeleteAddressReq) returns (common.CommonResponse);
+  rpc SetDefaultAddress(SetDefaultAddressReq) returns (common.CommonResponse);
+
+  // 社区
+  rpc ListCommunities(common.Pagination) returns (ListCommunitiesResp);
+  rpc GetCommunity(GetCommunityReq) returns (CommunityInfo);
+
+  // 管理员
+  rpc GetAdminByUsername(GetAdminByUsernameReq) returns (AdminInfo);
+  rpc ListAdmins(ListAdminsReq) returns (ListAdminsResp);
+  rpc CreateAdmin(CreateAdminReq) returns (AdminInfo);
+  rpc UpdateAdmin(UpdateAdminReq) returns (AdminInfo);
+  rpc DeleteAdmin(DeleteAdminReq) returns (common.CommonResponse);
+  rpc ListRoles(common.Empty) returns (ListRolesResp);
+}
+
+message GetUserByIdReq {
+  int64 id = 1;
+}
+
+message GetUserByPhoneReq {
+  string phone = 1;
+}
+
+message CreateUserReq {
+  string openid = 1;
+  string alipay_user_id = 2;
+  string union_id = 3;
+  string phone = 4;
+  string nickname = 5;
+  string avatar = 6;
+  int32 gender = 7;
+  int64 community_id = 8;
+}
+
+message UpdateCommunityReq {
+  int64 user_id = 1;
+  int64 community_id = 2;
+}
+
+message UserInfo {
+  int64 id = 1;
+  string openid = 2;
+  string alipay_user_id = 3;
+  string union_id = 4;
+  string phone = 5;
+  string nickname = 6;
+  string avatar = 7;
+  int32 gender = 8;
+  int64 community_id = 9;
+  int32 status = 10;
+  string last_login_at = 11;
+  string created_at = 12;
+}
+
+message ListAddressesReq {
+  int64 user_id = 1;
+}
+
+message GetAddressReq {
+  int64 id = 1;
+}
+
+message CreateAddressReq {
+  int64 user_id = 1;
+  string contact_name = 2;
+  string contact_phone = 3;
+  string province = 4;
+  string city = 5;
+  string district = 6;
+  string detail = 7;
+  string tag = 8;
+  bool is_default = 9;
+}
+
+message UpdateAddressReq {
+  int64 id = 1;
+  int64 user_id = 2;
+  string contact_name = 3;
+  string contact_phone = 4;
+  string province = 5;
+  string city = 6;
+  string district = 7;
+  string detail = 8;
+  string tag = 9;
+  bool is_default = 10;
+}
+
+message DeleteAddressReq {
+  int64 id = 1;
+  int64 user_id = 2;
+}
+
+message SetDefaultAddressReq {
+  int64 id = 1;
+  int64 user_id = 2;
+}
+
+message AddressInfo {
+  int64 id = 1;
+  int64 user_id = 2;
+  string contact_name = 3;
+  string contact_phone = 4;
+  string province = 5;
+  string city = 6;
+  string district = 7;
+  string detail = 8;
+  string tag = 9;
+  bool is_default = 10;
+  string created_at = 11;
+}
+
+message ListAddressesResp {
+  repeated AddressInfo list = 1;
+}
+
+message GetCommunityReq {
+  int64 id = 1;
+}
+
+message CommunityInfo {
+  int64 id = 1;
+  string name = 2;
+  string address = 3;
+  double longitude = 4;
+  double latitude = 5;
+  string contact_phone = 6;
+  string pickup_address = 7;
+  double delivery_fee = 8;
+  double min_order_amount = 9;
+  double delivery_range_km = 10;
+  int32 status = 11;
+  string business_hours = 12;
+  int32 sort = 13;
+}
+
+message ListCommunitiesResp {
+  repeated CommunityInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetAdminByUsernameReq {
+  string username = 1;
+}
+
+message AdminInfo {
+  int64 id = 1;
+  string username = 2;
+  string password = 3;
+  string real_name = 4;
+  string phone = 5;
+  int64 role_id = 6;
+  string role_code = 7;
+  int64 community_id = 8;
+  int32 status = 9;
+}
+
+message ListAdminsReq {
+  int64 community_id = 1;
+  common.Pagination pagination = 2;
+}
+
+message ListAdminsResp {
+  repeated AdminInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message CreateAdminReq {
+  string username = 1;
+  string password = 2;
+  string real_name = 3;
+  string phone = 4;
+  int64 role_id = 5;
+  int64 community_id = 6;
+}
+
+message UpdateAdminReq {
+  int64 id = 1;
+  string real_name = 2;
+  string phone = 3;
+  int64 role_id = 4;
+  int64 community_id = 5;
+  int32 status = 6;
+}
+
+message DeleteAdminReq {
+  int64 id = 1;
+}
+
+message RoleInfo {
+  int64 id = 1;
+  string name = 2;
+  string code = 3;
+  repeated string permissions = 4;
+  string description = 5;
+}
+
+message ListRolesResp {
+  repeated RoleInfo list = 1;
+}
+```
