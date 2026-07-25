@@ -20,13 +20,16 @@ function removeDir(dir) {
 }
 
 // 递归移动目录（跨平台替代 mv）
+// Windows 下 fs.renameSync 跨目录移动非空目录容易因权限/非空限制失败，
+// 因此采用"复制到目标 + 删除源目录"的安全实现。
 function moveDir(src, dest) {
   if (!fs.existsSync(src)) {
     throw new Error(`源目录不存在: ${src}`)
   }
   removeDir(dest)
   fs.mkdirSync(path.dirname(dest), { recursive: true })
-  fs.renameSync(src, dest)
+  fs.cpSync(src, dest, { recursive: true, force: true })
+  removeDir(src)
 }
 
 // 1. 清理旧产物

@@ -71,8 +71,9 @@ async function onLogin() {
     await authStore.login(formData.value)
     message.success('登录成功')
     router.push('/dashboard')
-  } catch (error) {
-    console.error(error)
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : '登录失败，请重试'
+    message.error(errMsg)
   } finally {
     loading.value = false
   }

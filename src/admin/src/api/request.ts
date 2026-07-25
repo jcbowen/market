@@ -1,6 +1,9 @@
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig, type AxiosResponse } from 'axios'
 import Cookies from 'js-cookie'
-import { useMessage } from 'naive-ui'
+import { createDiscreteApi } from 'naive-ui'
+
+// 在响应拦截器等非 setup 上下文也能安全弹出错误提示
+const { message: discreteMessage } = createDiscreteApi(['message'])
 
 /**
  * 创建 axios 实例
@@ -62,17 +65,12 @@ service.interceptors.response.use(
 )
 
 /**
- * 尝试使用 naive-ui message 显示错误提示
- * 当不在 setup 上下文时可能获取不到，降级为 console.error
+ * 使用 naive-ui 离散 API 显示错误提示
+ * 响应拦截器不在 setup 上下文，createDiscreteApi 可安全创建 message 实例
  * @param msg 错误信息
  */
 function tryShowError(msg: string) {
-  try {
-    const message = useMessage()
-    message.error(msg)
-  } catch {
-    console.error(msg)
-  }
+  discreteMessage.error(msg)
 }
 
 /**
