@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"google.golang.org/grpc"
 
@@ -10,6 +16,7 @@ import (
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/order/model"
+	"github.com/jcbowen/market/src/backend/services/order/service"
 )
 
 /**
@@ -38,15 +45,54 @@ func main() {
 	if err := autoMigrate(db); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
-	_ = bootstrap.InitRedis(cfg)
+	rds := bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer()
 	order.RegisterOrderServiceServer(srv, newServer(db, grpcclient.PaymentClient))
 	bootstrap.RegisterHealth(srv)
 
-	if err := bootstrap.RunGRPCServer(srv, cfg.OrderService.GrpcPort); err != nil {
+	// 启动订单定时任务调度器（超时取消 + 自动收货）
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	go service.NewScheduler(db, rds.GetClient()).Start(
+		schedulerCtx,
+		cfg.Business.OrderTimeout,
+		cfg.Business.AutoCompleteDays,
+	)
+
+	// 监听退出信号，优雅关闭定时任务与 gRPC 服务
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		log.Println("正在优雅关闭 order-service...")
+		schedulerCancel()
+		srv.GracefulStop()
+	}()
+
+	if err := runGRPCServer(srv, cfg.OrderService.GrpcPort); err != nil {
 		log.Fatalf("启动失败: %v", err)
 	}
+}
+
+// runGRPCServer 启动 gRPC 服务并阻塞，直到服务停止
+// 参数：
+//   - server: gRPC 服务端实例
+//   - port: 监听端口
+//
+// 返回值：
+//   - error: 启动或关闭过程中的错误信息
+func runGRPCServer(server *grpc.Server, port int) error {
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return fmt.Errorf("监听端口 %d 失败: %w", port, err)
+	}
+
+	log.Printf("gRPC 服务启动于 :%d", port)
+	if err := server.Serve(lis); err != nil {
+		return fmt.Errorf("gRPC 服务异常: %w", err)
+	}
+	return nil
 }
 
 // autoMigrate 自动迁移订单服务相关数据表
@@ -56,10 +102,6 @@ func main() {
 // 返回值：
 //   - error: 迁移错误信息
 func autoMigrate(db *mysql.Instance) error {
-	return db.GetDb().AutoMigrate(
-		&model.Order{},
-		&model.OrderItem{},
-		&model.OrderStatusLog{},
-		&model.Refund{},
-	)
+	// 仅迁移新增表，避免 GORM 对已有表的索引/外键变更产生误判
+	return db.GetDb().AutoMigrate(&model.SchedulerFailure{})
 }
