@@ -30,6 +30,7 @@ bin/release/
 # === IDE ===
 .idea/
 .vscode/
+.workbuddy/
 *.swp
 *.swo
 *~

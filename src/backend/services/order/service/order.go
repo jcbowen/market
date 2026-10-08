@@ -44,6 +44,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	if len(req.Items) == 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "订单商品不能为空")
 	}
+	if req.DeliveryType != 1 && req.DeliveryType != 2 {
+		return nil, bizerr.New(codes.InvalidArgument, "配送类型不合法，仅支持 1（自提）或 2（配送）")
+	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
 	var totalAmount float64
@@ -85,7 +88,8 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		})
 	}
 
-	// 配送订单需满足社区起送金额（按商品总额校验，优惠不影响起送门槛）
+	// 配送订单需计算配送费并校验起送金额（按商品总额校验，优惠不影响起送门槛）
+	var deliveryFee float64
 	if req.DeliveryType == 2 {
 		community, err := grpcclient.UserClient.GetCommunity(ctx, &user.GetCommunityReq{Id: req.CommunityId})
 		if err != nil {
@@ -94,6 +98,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		if community.MinOrderAmount > 0 && totalAmount < community.MinOrderAmount {
 			return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单金额未满 %.2f 元起送金额", community.MinOrderAmount))
 		}
+		deliveryFee = community.DeliveryFee
 	}
 
 	// 分别计算满减与优惠券优惠，两者均按商品总价校验门槛并可叠加
@@ -109,7 +114,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		}
 	}
 
-	payAmount := totalAmount - fullReductionAmount - discountAmount
+	payAmount := totalAmount + deliveryFee - fullReductionAmount - discountAmount
 	if payAmount < 0 {
 		payAmount = 0
 	}
@@ -134,7 +139,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		Status:         1,
 		TotalAmount:    totalAmount,
 		DiscountAmount: fullReductionAmount + discountAmount,
-		DeliveryFee:    0,
+		DeliveryFee:    deliveryFee,
 		PayAmount:      payAmount,
 		DeliveryType:   req.DeliveryType,
 		DeliveryTime:   req.DeliveryTime,

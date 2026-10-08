@@ -321,10 +321,14 @@ func clientOrderStatusText(status int32) string {
 		return "待支付"
 	case 2:
 		return "待发货"
+	case 3:
+		return "备货中"
 	case 4:
 		return "待收货"
 	case 5:
 		return "已完成"
+	case 6:
+		return "已取消"
 	case 7:
 		return "退款中"
 	case 8:

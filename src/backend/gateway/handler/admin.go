@@ -1213,7 +1213,27 @@ func (h *AdminHandler) GetStockWarnings(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-	response.SuccessWithList(c, resp.List)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+
+	total := len(resp.List)
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	response.SuccessWithPage(c, resp.List[start:end], total, page, pageSize)
 }
 
 // ListSkuStock 获取当前社区 SKU 库存列表
@@ -2145,6 +2165,8 @@ func orderStatusText(status int32) string {
 		return "待支付"
 	case 2:
 		return "待发货"
+	case 3:
+		return "备货中"
 	case 4:
 		return "已发货"
 	case 5:

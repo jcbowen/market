@@ -18,6 +18,47 @@ type UserHandler struct {
 	userClient user.UserServiceClient
 }
 
+// addressItem 地址视图对象
+// 用于向前端统一返回地址数据，避免 proto 的 omitempty 导致 bool 字段被省略
+type addressItem struct {
+	ID           int64  `json:"id"`
+	UserID       int64  `json:"user_id"`
+	ContactName  string `json:"contact_name"`
+	ContactPhone string `json:"contact_phone"`
+	Province     string `json:"province"`
+	City         string `json:"city"`
+	District     string `json:"district"`
+	Detail       string `json:"detail"`
+	Tag          string `json:"tag"`
+	IsDefault    bool   `json:"is_default"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// toAddressItem 将 proto 地址信息转换为前端视图对象
+// 参数：
+//   - addr: proto 地址信息
+//
+// 返回值：
+//   - addressItem: 前端视图对象
+func toAddressItem(addr *user.AddressInfo) addressItem {
+	if addr == nil {
+		return addressItem{}
+	}
+	return addressItem{
+		ID:           addr.Id,
+		UserID:       addr.UserId,
+		ContactName:  addr.ContactName,
+		ContactPhone: addr.ContactPhone,
+		Province:     addr.Province,
+		City:         addr.City,
+		District:     addr.District,
+		Detail:       addr.Detail,
+		Tag:          addr.Tag,
+		IsDefault:    addr.IsDefault,
+		CreatedAt:    addr.CreatedAt,
+	}
+}
+
 // NewUserHandler 创建 C 端用户处理器
 // 参数：
 //   - userClient: user-service gRPC 客户端
@@ -103,7 +144,7 @@ func (h *UserHandler) UpdateUserProfile(c *gin.Context) {
 }
 
 // ListAddresses 获取当前用户地址列表
-// 调用 user.ListAddresses
+// 调用 user.ListAddresses 并按通用分页格式返回
 // 参数：
 //   - c: gin 上下文
 func (h *UserHandler) ListAddresses(c *gin.Context) {
@@ -113,7 +154,31 @@ func (h *UserHandler) ListAddresses(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-	response.SuccessWithList(c, resp.List)
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+
+	total := len(resp.List)
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	list := make([]addressItem, 0, end-start)
+	for _, addr := range resp.List[start:end] {
+		list = append(list, toAddressItem(addr))
+	}
+	response.SuccessWithPage(c, list, total, page, pageSize)
 }
 
 // CreateAddressReq 创建地址请求
@@ -155,7 +220,7 @@ func (h *UserHandler) CreateAddress(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-	response.Success(c, resp)
+	response.Success(c, toAddressItem(resp))
 }
 
 // UpdateAddressReq 更新地址请求
@@ -204,7 +269,30 @@ func (h *UserHandler) UpdateAddress(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-	response.Success(c, resp)
+	response.Success(c, toAddressItem(resp))
+}
+
+// SetDefaultAddress 设置默认地址
+// 调用 user.SetDefaultAddress
+// 参数：
+//   - c: gin 上下文
+func (h *UserHandler) SetDefaultAddress(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	_, err = h.userClient.SetDefaultAddress(c.Request.Context(), &user.SetDefaultAddressReq{
+		Id:     id,
+		UserId: uc.UserID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id})
 }
 
 // DeleteAddress 删除收货地址
