@@ -1,0 +1,114 @@
+# Docker 外部数据库部署配置
+#
+# 使用外部 MySQL / Redis 时，使用此文件替代默认 docker-compose.yml。
+# 使用前务必将 bin/config.docker.yaml 中的 db.host / db.password 和
+# redis.host / redis.password 修改为外部实例地址与密码。
+#
+# 启动命令：
+#   docker compose -f docker-compose.external-db.yml up -d
+
+services:
+  # ===== 微服务 =====
+  user-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: user
+    container_name: market-user
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  product-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: product
+    container_name: market-product
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  order-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: order
+    container_name: market-order
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  cart-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: cart
+    container_name: market-cart
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      product-service:
+        condition: service_started
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.service
+      args:
+        SERVICE_NAME: payment
+    container_name: market-payment
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      order-service:
+        condition: service_started
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/backend/deploy/Dockerfile.gateway
+    container_name: market-gateway
+    environment:
+      TZ: Asia/Shanghai
+    depends_on:
+      user-service:
+        condition: service_started
+      product-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      cart-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./bin/config.docker.yaml:/app/config.yaml:ro
+      # 开发阶段挂载宿主机前端编译产物，避免每次修改都重新构建 gateway 镜像
+      - ./bin/static/admin:/app/static/admin:ro
+      - ./bin/static/h5:/app/static/h5:ro
+    command: >
+      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./gateway"

@@ -13,7 +13,7 @@ import (
 type Order struct {
 	base.MysqlBaseModel
 	ID            int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	OrderNo       string  `gorm:"column:order_no;type:varchar(50);not null;unique" json:"order_no"`
+	OrderNo       string  `gorm:"column:order_no;type:varchar(50);not null;uniqueIndex:idx_orders_order_no" json:"order_no"`
 	CommunityID   int64   `gorm:"column:community_id;type:bigint;not null;index" json:"community_id"`
 	UserID        int64   `gorm:"column:user_id;type:bigint;not null;index" json:"user_id"`
 	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款" json:"status"`
@@ -103,7 +103,7 @@ func (OrderStatusLog) TableName() string {
 type Refund struct {
 	base.MysqlBaseModel
 	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	RefundNo     string  `gorm:"column:refund_no;type:varchar(50);not null;unique" json:"refund_no"`
+	RefundNo     string  `gorm:"column:refund_no;type:varchar(50);not null;uniqueIndex" json:"refund_no"`
 	OrderID      int64   `gorm:"column:order_id;type:bigint;not null;index" json:"order_id"`
 	UserID       int64   `gorm:"column:user_id;type:bigint;not null;index" json:"user_id"`
 	PaymentNo    string  `gorm:"column:payment_no;type:varchar(50)" json:"payment_no"`
