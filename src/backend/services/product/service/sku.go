@@ -70,12 +70,17 @@ func (s *SkuService) GetSkuByID(ctx context.Context, id int64) (*model.Sku, erro
 //   - *model.Sku: SKU 模型
 //   - error: 错误信息
 func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (*model.Sku, error) {
+	// spec_json 为 JSON 列，空字符串非法，归一化为空对象
+	specJSON := req.SpecJson
+	if specJSON == "" {
+		specJSON = "{}"
+	}
 	sku := &model.Sku{
 		ProductID:   req.ProductId,
 		CommunityID: req.CommunityId,
 		SkuCode:     req.SkuCode,
 		SpecName:    req.SpecName,
-		SpecJSON:    req.SpecJson,
+		SpecJSON:    specJSON,
 		Price:       req.Price,
 		CostPrice:   req.CostPrice,
 		Stock:       req.Stock,

@@ -126,6 +126,7 @@ message ListProductsReq {
   string keyword = 3;
   string sort = 4;
   common.Pagination pagination = 5;
+  int32 status = 6; // 商品状态过滤：0 不过滤（默认排除已删除），大于 0 时精确匹配（1 上架）
 }
 
 message GetProductReq {

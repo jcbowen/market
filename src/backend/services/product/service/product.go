@@ -49,7 +49,12 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 		pageSize = 10
 	}
 
-	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{}).Where("status != ?", 2)
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{})
+	if req.Status > 0 {
+		db = db.Where("status = ?", req.Status)
+	} else {
+		db = db.Where("status != ?", 2)
+	}
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
 	}
@@ -182,6 +187,7 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 // CreateProduct 创建商品
 // 创建商品主记录的同时，将请求中的图片 URL 按顺序写入 `product_images` 表，
 // 并继续保留 `products.images` JSON 字段作为过渡兼容。
+// 请求携带的 SKU 在同一事务内创建，任一 SKU 创建失败则整体回滚。
 //
 // 参数：
 //   - ctx: 上下文
@@ -211,7 +217,32 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 			return err
 		}
 		if len(req.Images) > 0 {
-			return s.saveProductImages(tx, p.ID, req.Images)
+			if err := s.saveProductImages(tx, p.ID, req.Images); err != nil {
+				return err
+			}
+		}
+		for _, skuReq := range req.Skus {
+			// spec_json 为 JSON 列，空字符串非法，归一化为空对象
+			specJSON := skuReq.SpecJson
+			if specJSON == "" {
+				specJSON = "{}"
+			}
+			sku := &model.Sku{
+				ProductID:   p.ID,
+				CommunityID: p.CommunityID,
+				SkuCode:     skuReq.SkuCode,
+				SpecName:    skuReq.SpecName,
+				SpecJSON:    specJSON,
+				Price:       skuReq.Price,
+				CostPrice:   skuReq.CostPrice,
+				Stock:       skuReq.Stock,
+				SafetyStock: skuReq.SafetyStock,
+				Image:       skuReq.Image,
+				Status:      1,
+			}
+			if err := tx.Create(sku).Error; err != nil {
+				return err
+			}
 		}
 		return nil
 	})

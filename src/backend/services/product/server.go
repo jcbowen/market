@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -50,7 +51,7 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 func (s *server) ListCategories(ctx stdctx.Context, req *product.ListCategoriesReq) (*product.ListCategoriesResp, error) {
 	list, err := s.categoryService.ListCategories(ctx, req.CommunityId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &product.ListCategoriesResp{List: service.BuildCategoryTree(list)}, nil
 }
@@ -59,7 +60,7 @@ func (s *server) ListCategories(ctx stdctx.Context, req *product.ListCategoriesR
 func (s *server) GetCategory(ctx stdctx.Context, req *product.GetCategoryReq) (*product.CategoryInfo, error) {
 	c, err := s.categoryService.GetCategory(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToCategoryInfo(c), nil
 }
@@ -68,7 +69,7 @@ func (s *server) GetCategory(ctx stdctx.Context, req *product.GetCategoryReq) (*
 func (s *server) CreateCategory(ctx stdctx.Context, req *product.CreateCategoryReq) (*product.CategoryInfo, error) {
 	c, err := s.categoryService.CreateCategory(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToCategoryInfo(c), nil
 }
@@ -77,7 +78,7 @@ func (s *server) CreateCategory(ctx stdctx.Context, req *product.CreateCategoryR
 func (s *server) UpdateCategory(ctx stdctx.Context, req *product.UpdateCategoryReq) (*product.CategoryInfo, error) {
 	c, err := s.categoryService.UpdateCategory(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToCategoryInfo(c), nil
 }
@@ -85,7 +86,7 @@ func (s *server) UpdateCategory(ctx stdctx.Context, req *product.UpdateCategoryR
 // DeleteCategory 删除分类
 func (s *server) DeleteCategory(ctx stdctx.Context, req *product.DeleteCategoryReq) (*common.CommonResponse, error) {
 	if err := s.categoryService.DeleteCategory(ctx, req.Id); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -94,12 +95,12 @@ func (s *server) DeleteCategory(ctx stdctx.Context, req *product.DeleteCategoryR
 func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) (*product.ListProductsResp, error) {
 	list, total, err := s.productService.ListProducts(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	categoryNames, prices, stocks, err := s.productService.BuildProductExtras(ctx, list)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	productIDs := make([]int64, 0, len(list))
@@ -108,7 +109,7 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 	}
 	imageMap, err := s.productService.BuildProductImages(ctx, productIDs)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	page, pageSize := 1, 10
@@ -136,16 +137,16 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*product.ProductDetail, error) {
 	p, err := s.productService.GetProduct(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	skus, err := s.productService.ListSkusByProductID(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	images, err := s.productService.ListProductImages(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	imageURLs := make([]string, 0, len(images))
 	for _, img := range images {
@@ -180,16 +181,11 @@ func (s *server) SearchProducts(ctx stdctx.Context, req *product.SearchProductsR
 }
 
 // CreateProduct 创建商品
+// SKU 由 ProductService.CreateProduct 在同一事务内创建
 func (s *server) CreateProduct(ctx stdctx.Context, req *product.CreateProductReq) (*product.ProductDetail, error) {
 	p, err := s.productService.CreateProduct(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
-	}
-
-	for _, skuReq := range req.Skus {
-		skuReq.ProductId = p.ID
-		skuReq.CommunityId = p.CommunityID
-		_, _ = s.skuService.CreateSku(ctx, skuReq)
+		return nil, bizerr.ToStatus(err)
 	}
 
 	return s.GetProduct(ctx, &product.GetProductReq{Id: p.ID})
@@ -198,7 +194,7 @@ func (s *server) CreateProduct(ctx stdctx.Context, req *product.CreateProductReq
 // UpdateProduct 更新商品
 func (s *server) UpdateProduct(ctx stdctx.Context, req *product.UpdateProductReq) (*product.ProductDetail, error) {
 	if _, err := s.productService.UpdateProduct(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return s.GetProduct(ctx, &product.GetProductReq{Id: req.Id})
 }
@@ -206,7 +202,7 @@ func (s *server) UpdateProduct(ctx stdctx.Context, req *product.UpdateProductReq
 // DeleteProduct 删除商品
 func (s *server) DeleteProduct(ctx stdctx.Context, req *product.DeleteProductReq) (*common.CommonResponse, error) {
 	if err := s.productService.DeleteProduct(ctx, req.Id); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -214,7 +210,7 @@ func (s *server) DeleteProduct(ctx stdctx.Context, req *product.DeleteProductReq
 // UpdateProductStatus 更新商品状态
 func (s *server) UpdateProductStatus(ctx stdctx.Context, req *product.UpdateProductStatusReq) (*common.CommonResponse, error) {
 	if err := s.productService.UpdateProductStatus(ctx, req.Id, req.Status); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -223,7 +219,7 @@ func (s *server) UpdateProductStatus(ctx stdctx.Context, req *product.UpdateProd
 func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*product.ListSkusResp, error) {
 	list, err := s.skuService.ListSkus(ctx, req.ProductId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListSkusResp{List: make([]*product.SkuInfo, 0, len(list))}
 	for _, sku := range list {
@@ -236,7 +232,7 @@ func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*produc
 func (s *server) CreateSku(ctx stdctx.Context, req *product.CreateSkuReq) (*product.SkuInfo, error) {
 	sku, err := s.skuService.CreateSku(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToSkuInfo(sku), nil
 }
@@ -245,7 +241,7 @@ func (s *server) CreateSku(ctx stdctx.Context, req *product.CreateSkuReq) (*prod
 func (s *server) UpdateSku(ctx stdctx.Context, req *product.UpdateSkuReq) (*product.SkuInfo, error) {
 	sku, err := s.skuService.UpdateSku(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToSkuInfo(sku), nil
 }
@@ -254,7 +250,7 @@ func (s *server) UpdateSku(ctx stdctx.Context, req *product.UpdateSkuReq) (*prod
 func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*product.SkuInfo, error) {
 	sku, err := s.skuService.GetSkuByID(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToSkuInfo(sku), nil
 }
@@ -262,7 +258,7 @@ func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*pr
 // SetCommunityPricing 设置社区定价
 func (s *server) SetCommunityPricing(ctx stdctx.Context, req *product.SetPricingReq) (*common.CommonResponse, error) {
 	if err := s.pricingService.SetCommunityPricing(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -271,7 +267,7 @@ func (s *server) SetCommunityPricing(ctx stdctx.Context, req *product.SetPricing
 func (s *server) ListCommunityPricing(ctx stdctx.Context, req *product.ListPricingReq) (*product.ListPricingResp, error) {
 	list, err := s.pricingService.ListCommunityPricing(ctx, req.SkuId, req.CommunityId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListPricingResp{List: make([]*product.PricingInfo, 0, len(list))}
 	for _, p := range list {
@@ -284,7 +280,7 @@ func (s *server) ListCommunityPricing(ctx stdctx.Context, req *product.ListPrici
 func (s *server) GetReferencePricing(ctx stdctx.Context, req *product.GetReferencePricingReq) (*product.ListPricingResp, error) {
 	list, err := s.pricingService.GetReferencePricing(ctx, req.SkuId, req.ExcludeCommunityId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListPricingResp{List: make([]*product.PricingInfo, 0, len(list))}
 	for _, p := range list {
@@ -297,7 +293,7 @@ func (s *server) GetReferencePricing(ctx stdctx.Context, req *product.GetReferen
 func (s *server) DeductStock(ctx stdctx.Context, req *product.DeductStockReq) (*product.DeductStockResp, error) {
 	success, remain, err := s.stockService.DeductStock(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &product.DeductStockResp{Success: success, RemainStock: remain}, nil
 }
@@ -305,7 +301,7 @@ func (s *server) DeductStock(ctx stdctx.Context, req *product.DeductStockReq) (*
 // ReleaseStock 释放库存
 func (s *server) ReleaseStock(ctx stdctx.Context, req *product.ReleaseStockReq) (*common.CommonResponse, error) {
 	if err := s.stockService.ReleaseStock(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -313,7 +309,7 @@ func (s *server) ReleaseStock(ctx stdctx.Context, req *product.ReleaseStockReq) 
 // StockEntry 入库
 func (s *server) StockEntry(ctx stdctx.Context, req *product.StockEntryReq) (*common.CommonResponse, error) {
 	if err := s.stockService.StockEntry(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -322,7 +318,7 @@ func (s *server) StockEntry(ctx stdctx.Context, req *product.StockEntryReq) (*co
 func (s *server) ListStockRecords(ctx stdctx.Context, req *product.ListStockRecordsReq) (*product.ListStockRecordsResp, error) {
 	list, total, err := s.stockService.ListStockRecords(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	page, pageSize := 1, 10
@@ -348,7 +344,7 @@ func (s *server) ListStockRecords(ctx stdctx.Context, req *product.ListStockReco
 func (s *server) GetStockWarnings(ctx stdctx.Context, req *product.GetStockWarningsReq) (*product.ListStockWarningsResp, error) {
 	list, err := s.stockService.GetStockWarnings(ctx, req.CommunityId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &product.ListStockWarningsResp{List: list}, nil
 }
@@ -356,7 +352,7 @@ func (s *server) GetStockWarnings(ctx stdctx.Context, req *product.GetStockWarni
 // StockOut 库存出库
 func (s *server) StockOut(ctx stdctx.Context, req *product.StockOutReq) (*common.CommonResponse, error) {
 	if err := s.stockService.StockOut(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -365,7 +361,7 @@ func (s *server) StockOut(ctx stdctx.Context, req *product.StockOutReq) (*common
 func (s *server) GeneratePurchaseOrder(ctx stdctx.Context, req *product.GeneratePurchaseOrderReq) (*product.GeneratePurchaseOrderResp, error) {
 	items, err := s.stockService.GeneratePurchaseOrder(ctx, req.CommunityId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &product.GeneratePurchaseOrderResp{Items: items}, nil
 }
@@ -374,7 +370,7 @@ func (s *server) GeneratePurchaseOrder(ctx stdctx.Context, req *product.Generate
 func (s *server) CreateStockCheck(ctx stdctx.Context, req *product.CreateStockCheckReq) (*product.StockCheckInfo, error) {
 	check, err := s.stockCheckService.CreateStockCheck(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToStockCheckInfo(check), nil
 }
@@ -382,7 +378,7 @@ func (s *server) CreateStockCheck(ctx stdctx.Context, req *product.CreateStockCh
 // SubmitStockCheck 提交盘点单
 func (s *server) SubmitStockCheck(ctx stdctx.Context, req *product.SubmitStockCheckReq) (*common.CommonResponse, error) {
 	if err := s.stockCheckService.SubmitStockCheck(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -391,7 +387,7 @@ func (s *server) SubmitStockCheck(ctx stdctx.Context, req *product.SubmitStockCh
 func (s *server) ListStockChecks(ctx stdctx.Context, req *product.ListStockChecksReq) (*product.ListStockChecksResp, error) {
 	list, total, err := s.stockCheckService.ListStockChecks(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	page, pageSize := 1, 10
@@ -417,7 +413,7 @@ func (s *server) ListStockChecks(ctx stdctx.Context, req *product.ListStockCheck
 func (s *server) GetStockCheck(ctx stdctx.Context, req *product.GetStockCheckReq) (*product.StockCheckDetail, error) {
 	detail, err := s.stockCheckService.GetStockCheck(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return detail, nil
 }
@@ -428,7 +424,7 @@ func (s *server) GetStockCheck(ctx stdctx.Context, req *product.GetStockCheckReq
 func (s *server) ListCoupons(ctx stdctx.Context, req *product.ListCouponsReq) (*product.ListCouponsResp, error) {
 	list, err := s.marketingService.ListCoupons(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListCouponsResp{List: make([]*product.CouponInfo, 0, len(list))}
 	for _, c := range list {
@@ -441,7 +437,7 @@ func (s *server) ListCoupons(ctx stdctx.Context, req *product.ListCouponsReq) (*
 func (s *server) GetCoupon(ctx stdctx.Context, req *product.GetCouponReq) (*product.CouponInfo, error) {
 	c, err := s.marketingService.GetCoupon(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToCouponInfo(c), nil
 }
@@ -450,7 +446,7 @@ func (s *server) GetCoupon(ctx stdctx.Context, req *product.GetCouponReq) (*prod
 func (s *server) CreateCoupon(ctx stdctx.Context, req *product.CreateCouponReq) (*product.CouponInfo, error) {
 	c, err := s.marketingService.CreateCoupon(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToCouponInfo(c), nil
 }
@@ -459,7 +455,7 @@ func (s *server) CreateCoupon(ctx stdctx.Context, req *product.CreateCouponReq) 
 func (s *server) UpdateCoupon(ctx stdctx.Context, req *product.UpdateCouponReq) (*product.CouponInfo, error) {
 	c, err := s.marketingService.UpdateCoupon(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToCouponInfo(c), nil
 }
@@ -467,7 +463,7 @@ func (s *server) UpdateCoupon(ctx stdctx.Context, req *product.UpdateCouponReq) 
 // DeleteCoupon 删除优惠券
 func (s *server) DeleteCoupon(ctx stdctx.Context, req *product.DeleteCouponReq) (*common.CommonResponse, error) {
 	if err := s.marketingService.DeleteCoupon(ctx, req.Id); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -475,7 +471,7 @@ func (s *server) DeleteCoupon(ctx stdctx.Context, req *product.DeleteCouponReq) 
 // ReceiveCoupon 领取优惠券
 func (s *server) ReceiveCoupon(ctx stdctx.Context, req *product.ReceiveCouponReq) (*common.CommonResponse, error) {
 	if err := s.marketingService.ReceiveCoupon(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -484,7 +480,7 @@ func (s *server) ReceiveCoupon(ctx stdctx.Context, req *product.ReceiveCouponReq
 func (s *server) ListUserCoupons(ctx stdctx.Context, req *product.ListUserCouponsReq) (*product.ListUserCouponsResp, error) {
 	list, err := s.marketingService.ListUserCoupons(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListUserCouponsResp{List: make([]*product.UserCouponInfo, 0, len(list))}
 	for _, uc := range list {
@@ -496,7 +492,7 @@ func (s *server) ListUserCoupons(ctx stdctx.Context, req *product.ListUserCoupon
 // UseCoupon 使用优惠券
 func (s *server) UseCoupon(ctx stdctx.Context, req *product.UseCouponReq) (*common.CommonResponse, error) {
 	if err := s.marketingService.UseCoupon(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -505,7 +501,7 @@ func (s *server) UseCoupon(ctx stdctx.Context, req *product.UseCouponReq) (*comm
 func (s *server) ListFlashSales(ctx stdctx.Context, req *product.ListFlashSalesReq) (*product.ListFlashSalesResp, error) {
 	list, err := s.marketingService.ListFlashSales(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListFlashSalesResp{List: make([]*product.FlashSaleInfo, 0, len(list))}
 	for _, fs := range list {
@@ -518,7 +514,7 @@ func (s *server) ListFlashSales(ctx stdctx.Context, req *product.ListFlashSalesR
 func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) (*product.FlashSaleDetail, error) {
 	fs, items, err := s.marketingService.GetFlashSale(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 
 	detail := &product.FlashSaleDetail{
@@ -543,7 +539,7 @@ func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) 
 func (s *server) CreateFlashSale(ctx stdctx.Context, req *product.CreateFlashSaleReq) (*product.FlashSaleInfo, error) {
 	fs, err := s.marketingService.CreateFlashSale(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToFlashSaleInfo(fs), nil
 }
@@ -552,7 +548,7 @@ func (s *server) CreateFlashSale(ctx stdctx.Context, req *product.CreateFlashSal
 func (s *server) UpdateFlashSale(ctx stdctx.Context, req *product.UpdateFlashSaleReq) (*product.FlashSaleInfo, error) {
 	fs, err := s.marketingService.UpdateFlashSale(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToFlashSaleInfo(fs), nil
 }
@@ -561,7 +557,7 @@ func (s *server) UpdateFlashSale(ctx stdctx.Context, req *product.UpdateFlashSal
 func (s *server) ListFullReductions(ctx stdctx.Context, req *product.ListFullReductionsReq) (*product.ListFullReductionsResp, error) {
 	list, err := s.marketingService.ListFullReductions(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListFullReductionsResp{List: make([]*product.FullReductionInfo, 0, len(list))}
 	for _, fr := range list {
@@ -574,7 +570,7 @@ func (s *server) ListFullReductions(ctx stdctx.Context, req *product.ListFullRed
 func (s *server) CreateFullReduction(ctx stdctx.Context, req *product.CreateFullReductionReq) (*product.FullReductionInfo, error) {
 	fr, err := s.marketingService.CreateFullReduction(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToFullReductionInfo(fr), nil
 }
@@ -583,7 +579,7 @@ func (s *server) CreateFullReduction(ctx stdctx.Context, req *product.CreateFull
 func (s *server) UpdateFullReduction(ctx stdctx.Context, req *product.UpdateFullReductionReq) (*product.FullReductionInfo, error) {
 	fr, err := s.marketingService.UpdateFullReduction(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToFullReductionInfo(fr), nil
 }
@@ -592,7 +588,7 @@ func (s *server) UpdateFullReduction(ctx stdctx.Context, req *product.UpdateFull
 func (s *server) ListBanners(ctx stdctx.Context, req *product.ListBannersReq) (*product.ListBannersResp, error) {
 	list, err := s.bannerService.ListBanners(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListBannersResp{List: make([]*product.BannerInfo, 0, len(list))}
 	for _, b := range list {
@@ -605,7 +601,7 @@ func (s *server) ListBanners(ctx stdctx.Context, req *product.ListBannersReq) (*
 func (s *server) CreateBanner(ctx stdctx.Context, req *product.CreateBannerReq) (*product.BannerInfo, error) {
 	b, err := s.bannerService.CreateBanner(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToBannerInfo(b), nil
 }
@@ -614,7 +610,7 @@ func (s *server) CreateBanner(ctx stdctx.Context, req *product.CreateBannerReq) 
 func (s *server) UpdateBanner(ctx stdctx.Context, req *product.UpdateBannerReq) (*product.BannerInfo, error) {
 	b, err := s.bannerService.UpdateBanner(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToBannerInfo(b), nil
 }
@@ -622,7 +618,7 @@ func (s *server) UpdateBanner(ctx stdctx.Context, req *product.UpdateBannerReq) 
 // DeleteBanner 删除 Banner
 func (s *server) DeleteBanner(ctx stdctx.Context, req *product.DeleteBannerReq) (*common.CommonResponse, error) {
 	if err := s.bannerService.DeleteBanner(ctx, req.Id); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{}, nil
 }

@@ -26,7 +26,7 @@ func main() {
 		log.Fatalf("初始化 MySQL 失败: %v", err)
 	}
 	if err := autoMigrate(db); err != nil {
-		log.Printf("警告: 数据库迁移失败: %v", err)
+		log.Fatalf("数据库迁移失败: %v", err)
 	}
 
 	// 连接商品服务，用于加购时补齐商品名称、价格、库存等展示字段

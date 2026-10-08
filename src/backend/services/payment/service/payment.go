@@ -248,8 +248,9 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 		}
 
 		refund.Status = 2
-		refund.RefundTime = time.Now().Format("2006-01-02 15:04:05")
-		refund.UpdatedAt = refund.RefundTime
+		refundTime := time.Now().Format("2006-01-02 15:04:05")
+		refund.RefundTime = &refundTime
+		refund.UpdatedAt = refundTime
 		if err := tx.Save(refund).Error; err != nil {
 			return err
 		}
@@ -259,7 +260,7 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 			return err
 		} else if totalRefunded >= p.Amount {
 			p.Status = 4
-			p.UpdatedAt = refund.RefundTime
+			p.UpdatedAt = refundTime
 			if err := tx.Save(p).Error; err != nil {
 				return err
 			}
@@ -312,7 +313,7 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 		Amount:        req.Amount,
 		Status:        2,
 		TransactionID: "CASH_REFUND",
-		RefundTime:    now,
+		RefundTime:    &now,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}

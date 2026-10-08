@@ -69,8 +69,8 @@ func (s *BannerService) CreateBanner(ctx context.Context, req *product.CreateBan
 		Position:    req.Position,
 		Sort:        req.Sort,
 		Status:      1,
-		StartTime:   req.StartTime,
-		EndTime:     req.EndTime,
+		StartTime:   strPtr(req.StartTime),
+		EndTime:     strPtr(req.EndTime),
 	}
 	err := s.db.GetDb().WithContext(ctx).Create(banner).Error
 	return banner, err
@@ -96,8 +96,8 @@ func (s *BannerService) UpdateBanner(ctx context.Context, req *product.UpdateBan
 		"position":  req.Position,
 		"sort":      req.Sort,
 		"status":    req.Status,
-		"start_time": req.StartTime,
-		"end_time":   req.EndTime,
+		"start_time": strPtr(req.StartTime),
+		"end_time":   strPtr(req.EndTime),
 	}
 	if err := s.db.GetDb().WithContext(ctx).Model(&banner).Updates(updates).Error; err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func ToBannerInfo(b *model.Banner) *product.BannerInfo {
 		Position:    b.Position,
 		Sort:        b.Sort,
 		Status:      b.Status,
-		StartTime:   b.StartTime,
-		EndTime:     b.EndTime,
+		StartTime:   ptrString(b.StartTime),
+		EndTime:     ptrString(b.EndTime),
 	}
 }

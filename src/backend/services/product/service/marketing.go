@@ -83,8 +83,8 @@ func (s *MarketingService) CreateCoupon(ctx context.Context, req *product.Create
 		DiscountValue: req.DiscountValue,
 		TotalCount:    req.TotalCount,
 		PerUserLimit:  req.PerUserLimit,
-		StartTime:     req.StartTime,
-		EndTime:       req.EndTime,
+		StartTime:     strPtr(req.StartTime),
+		EndTime:       strPtr(req.EndTime),
 		ValidDays:     req.ValidDays,
 		Status:        1,
 		CreatedAt:     now,
@@ -153,7 +153,9 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 			return fmt.Errorf("优惠券已领完")
 		}
 		now := time.Now()
-		if now.Before(parseTime(c.StartTime)) || now.After(parseTime(c.EndTime)) {
+		// 未配置时间窗口（nil）时不限制领取时间
+		if (c.StartTime != nil && now.Before(parseTime(*c.StartTime))) ||
+			(c.EndTime != nil && now.After(parseTime(*c.EndTime))) {
 			return fmt.Errorf("不在领取时间范围内")
 		}
 
@@ -167,7 +169,8 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 
 		expireAt := c.EndTime
 		if c.ValidDays > 0 {
-			expireAt = now.AddDate(0, 0, int(c.ValidDays)).Format("2006-01-02 15:04:05")
+			validUntil := now.AddDate(0, 0, int(c.ValidDays)).Format("2006-01-02 15:04:05")
+			expireAt = &validUntil
 		}
 		uc := &model.UserCoupon{
 			UserID:        req.UserId,
@@ -226,7 +229,7 @@ func (s *MarketingService) UseCoupon(ctx context.Context, req *product.UseCoupon
 			return fmt.Errorf("优惠券状态不可使用")
 		}
 		now := time.Now().Format("2006-01-02 15:04:05")
-		if uc.ExpireAt != "" && uc.ExpireAt < now {
+		if uc.ExpireAt != nil && *uc.ExpireAt < now {
 			return fmt.Errorf("优惠券已过期")
 		}
 
@@ -398,8 +401,8 @@ func (s *MarketingService) CreateFullReduction(ctx context.Context, req *product
 		Name:         req.Name,
 		Threshold:    req.Threshold,
 		ReduceAmount: req.ReduceAmount,
-		StartTime:    req.StartTime,
-		EndTime:      req.EndTime,
+		StartTime:    strPtr(req.StartTime),
+		EndTime:      strPtr(req.EndTime),
 		Status:       1,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -433,10 +436,10 @@ func (s *MarketingService) UpdateFullReduction(ctx context.Context, req *product
 		fr.ReduceAmount = req.ReduceAmount
 	}
 	if req.StartTime != "" {
-		fr.StartTime = req.StartTime
+		fr.StartTime = strPtr(req.StartTime)
 	}
 	if req.EndTime != "" {
-		fr.EndTime = req.EndTime
+		fr.EndTime = strPtr(req.EndTime)
 	}
 	if req.Status >= 0 {
 		fr.Status = req.Status
@@ -471,8 +474,8 @@ func ToCouponInfo(c *model.Coupon) *product.CouponInfo {
 		ReceivedCount: c.ReceivedCount,
 		UsedCount:     c.UsedCount,
 		PerUserLimit:  c.PerUserLimit,
-		StartTime:     c.StartTime,
-		EndTime:       c.EndTime,
+		StartTime:     ptrString(c.StartTime),
+		EndTime:       ptrString(c.EndTime),
 		ValidDays:     c.ValidDays,
 		Status:        c.Status,
 	}
@@ -496,7 +499,7 @@ func ToUserCouponInfo(uc *model.UserCoupon) *product.UserCouponInfo {
 		Threshold:     uc.Threshold,
 		DiscountValue: uc.DiscountValue,
 		Status:        uc.Status,
-		ExpireAt:      uc.ExpireAt,
+		ExpireAt:      ptrString(uc.ExpireAt),
 	}
 }
 
@@ -563,8 +566,8 @@ func ToFullReductionInfo(fr *model.FullReduction) *product.FullReductionInfo {
 		Name:         fr.Name,
 		Threshold:    fr.Threshold,
 		ReduceAmount: fr.ReduceAmount,
-		StartTime:    fr.StartTime,
-		EndTime:      fr.EndTime,
+		StartTime:    ptrString(fr.StartTime),
+		EndTime:      ptrString(fr.EndTime),
 		Status:       fr.Status,
 	}
 }

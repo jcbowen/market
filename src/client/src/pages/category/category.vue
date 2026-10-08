@@ -231,6 +231,7 @@ import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
 import { getBanners, getCategories, getProducts, getProductDetail, searchProducts } from '@/api/product'
 import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart'
+import { getCommunityList } from '@/api/user'
 import { formatPrice } from '@/utils/format'
 import { goOrderConfirm, goLogin } from '@/utils/navigate'
 import {
@@ -397,12 +398,23 @@ function onBannerClick(index: number) {
 
 /**
  * 确保当前社区信息存在
- * 未登录或无本地缓存时，不再自动选择第一个社区，提示用户手动选择并缓存
+ * 本地未选中社区时，获取社区列表并默认选中第一个；已登录时同步服务端，同步失败降级为本地选中
+ * @throws 无可选社区时抛出错误，由调用方终止加载
  */
 async function ensureCommunity() {
   if (userStore.communityInfo?.id) return
-  uni.showToast({ title: '请先选择社区', icon: 'none' })
-  throw new Error('no community')
+  const res = await getCommunityList({ page: 1, page_size: 1 })
+  const first = res.data?.list?.[0]
+  if (!first) {
+    uni.showToast({ title: '暂无可选社区', icon: 'none' })
+    throw new Error('no community')
+  }
+  try {
+    await userStore.switchCommunity(first)
+  } catch {
+    // 同步服务端失败时降级为本地选中，保证页面仍可浏览
+    userStore.setCommunity(first)
+  }
 }
 
 /**

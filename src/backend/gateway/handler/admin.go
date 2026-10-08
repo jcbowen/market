@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"time"
 
@@ -101,12 +102,12 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		admin.Id, jwt.TokenTypeAdmin, admin.Phone, admin.RoleCode, communityID, permissions,
 	)
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	refreshToken, refreshExpire, err := h.jwtManager.GenerateRefreshToken(admin.Id, jwt.TokenTypeAdmin)
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -196,7 +197,7 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
@@ -232,7 +233,7 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		CommunityId: req.CommunityID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, h.toAdminVO(admin))
@@ -280,7 +281,7 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 		Status:      req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, h.toAdminVO(admin))
@@ -298,7 +299,7 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 
 	_, err = h.userClient.DeleteAdmin(c.Request.Context(), &user.DeleteAdminReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -336,7 +337,7 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 			response.Error(c, errcode.ParamError, grpcErr.Message())
 			return
 		}
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -348,7 +349,7 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 func (h *AdminHandler) ListRoles(c *gin.Context) {
 	resp, err := h.userClient.ListRoles(c.Request.Context(), &common.Empty{})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -379,7 +380,7 @@ func (h *AdminHandler) CreateRole(c *gin.Context) {
 		Description: req.Description,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -417,7 +418,7 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 		Description: req.Description,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -435,7 +436,7 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 
 	_, err = h.userClient.DeleteRole(c.Request.Context(), &user.DeleteRoleReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -468,7 +469,7 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		claims.UserID, jwt.TokenTypeAdmin, claims.Phone, claims.Role, claims.CommunityID, claims.Permissions,
 	)
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	now := time.Now()
@@ -489,7 +490,7 @@ func (h *AdminHandler) ListCategories(c *gin.Context) {
 		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -521,7 +522,7 @@ func (h *AdminHandler) CreateCategory(c *gin.Context) {
 		Sort:        req.Sort,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -559,7 +560,7 @@ func (h *AdminHandler) UpdateCategory(c *gin.Context) {
 		Status: req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -577,7 +578,7 @@ func (h *AdminHandler) DeleteCategory(c *gin.Context) {
 
 	_, err = h.productClient.DeleteCategory(c.Request.Context(), &product.DeleteCategoryReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -604,7 +605,7 @@ func (h *AdminHandler) ListAdminProducts(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
@@ -648,7 +649,7 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 		Skus:        req.Skus,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -696,7 +697,7 @@ func (h *AdminHandler) UpdateProduct(c *gin.Context) {
 		MinBuy:      req.MinBuy,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -714,7 +715,7 @@ func (h *AdminHandler) DeleteProduct(c *gin.Context) {
 
 	_, err = h.productClient.DeleteProduct(c.Request.Context(), &product.DeleteProductReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -746,7 +747,7 @@ func (h *AdminHandler) UpdateProductStatus(c *gin.Context) {
 		Status: req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id, "status": req.Status})
@@ -771,7 +772,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -814,7 +815,7 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 
 	resp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -899,7 +900,7 @@ func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
 		Remark:       req.Remark,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id, "status": req.Status})
@@ -956,7 +957,7 @@ func (h *AdminHandler) ShipOrder(c *gin.Context) {
 		Remark:       remark,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id, "status": 4})
@@ -992,10 +993,70 @@ func (h *AdminHandler) CompleteOrder(c *gin.Context) {
 		Remark:       "订单完成",
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id, "status": 5})
+}
+
+// --- 仪表盘与统计报表 ---
+
+// GetDashboard 获取仪表盘聚合数据
+// 聚合今日订单数、今日销售额、注册用户数、在售商品数、待发货订单数、待处理退款数
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GetDashboard(c *gin.Context) {
+	ctx := c.Request.Context()
+	communityID := h.getAdminCommunityID(c)
+	today := time.Now().Format("2006-01-02")
+
+	orderStats, err := h.orderClient.GetOrderStatistics(ctx, &order.GetOrderStatisticsReq{
+		CommunityId: communityID,
+		StartDate:   today,
+		EndDate:     today,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	salesStats, err := h.orderClient.GetSalesStatistics(ctx, &order.GetSalesStatisticsReq{
+		CommunityId: communityID,
+		StartDate:   today,
+		EndDate:     today,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	userResp, err := h.userClient.ListUsers(ctx, &user.ListUsersReq{
+		CommunityId: communityID,
+		Pagination:  &common.Pagination{Page: 1, PageSize: 1},
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	productResp, err := h.productClient.ListProducts(ctx, &product.ListProductsReq{
+		CommunityId: communityID,
+		Status:      1,
+		Pagination:  &common.Pagination{Page: 1, PageSize: 1},
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{
+		"order_count":   orderStats.TotalOrders,
+		"sale_amount":   salesStats.PayAmount,
+		"user_count":    userResp.Pagination.Total,
+		"product_count": productResp.Pagination.Total,
+		"pending_ship":  orderStats.PendingShip,
+		"refunding":     orderStats.Refunding,
+	})
 }
 
 // GetOrderStatistics 获取订单状态统计
@@ -1011,7 +1072,7 @@ func (h *AdminHandler) GetOrderStatistics(c *gin.Context) {
 		EndDate:     endDate,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1030,7 +1091,7 @@ func (h *AdminHandler) GetSalesStatistics(c *gin.Context) {
 		EndDate:     endDate,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1051,7 +1112,7 @@ func (h *AdminHandler) GetProductRankings(c *gin.Context) {
 		Limit:       int32(limit),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -1072,7 +1133,7 @@ func (h *AdminHandler) GetRevenueReport(c *gin.Context) {
 		GroupBy:     groupBy,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -1103,7 +1164,7 @@ func (h *AdminHandler) ListStockRecords(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
@@ -1135,7 +1196,7 @@ func (h *AdminHandler) StockEntry(c *gin.Context) {
 		Remark:      req.Remark,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -1149,7 +1210,7 @@ func (h *AdminHandler) GetStockWarnings(c *gin.Context) {
 		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -1173,7 +1234,7 @@ func (h *AdminHandler) ListSkuStock(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -1218,7 +1279,7 @@ func (h *AdminHandler) ListStockChecks(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
@@ -1238,7 +1299,7 @@ func (h *AdminHandler) GetStockCheckDetail(c *gin.Context) {
 		Id: id,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1263,7 +1324,7 @@ func (h *AdminHandler) CreateStockCheck(c *gin.Context) {
 		Remark:      req.Remark,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, check)
@@ -1295,7 +1356,7 @@ func (h *AdminHandler) StockOut(c *gin.Context) {
 		Remark:      req.Remark,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"success": true})
@@ -1309,7 +1370,7 @@ func (h *AdminHandler) GeneratePurchaseOrder(c *gin.Context) {
 		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.Items)
@@ -1352,7 +1413,7 @@ func (h *AdminHandler) SubmitStockCheck(c *gin.Context) {
 		Items: items,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -1372,7 +1433,7 @@ func (h *AdminHandler) ListAdminCoupons(c *gin.Context) {
 		Status:      int32(status),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, len(resp.List), page, pageSize)
@@ -1414,7 +1475,7 @@ func (h *AdminHandler) CreateCoupon(c *gin.Context) {
 		ValidDays:     req.ValidDays,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1448,7 +1509,7 @@ func (h *AdminHandler) UpdateCoupon(c *gin.Context) {
 		Status: req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1466,7 +1527,7 @@ func (h *AdminHandler) DeleteCoupon(c *gin.Context) {
 
 	_, err = h.productClient.DeleteCoupon(c.Request.Context(), &product.DeleteCouponReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -1482,7 +1543,7 @@ func (h *AdminHandler) ListAdminFlashSales(c *gin.Context) {
 		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, len(resp.List), page, pageSize)
@@ -1514,7 +1575,7 @@ func (h *AdminHandler) CreateFlashSale(c *gin.Context) {
 		Items:       req.Items,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1552,7 +1613,7 @@ func (h *AdminHandler) UpdateFlashSale(c *gin.Context) {
 		Status:    req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1568,7 +1629,7 @@ func (h *AdminHandler) ListFullReductions(c *gin.Context) {
 		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, len(resp.List), page, pageSize)
@@ -1602,7 +1663,7 @@ func (h *AdminHandler) CreateFullReduction(c *gin.Context) {
 		EndTime:      req.EndTime,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1644,7 +1705,7 @@ func (h *AdminHandler) UpdateFullReduction(c *gin.Context) {
 		Status:       req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1666,7 +1727,7 @@ func (h *AdminHandler) ListAdminBanners(c *gin.Context) {
 		IsAdmin:     true,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -1704,7 +1765,7 @@ func (h *AdminHandler) CreateBanner(c *gin.Context) {
 		EndTime:     req.EndTime,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1750,7 +1811,7 @@ func (h *AdminHandler) UpdateBanner(c *gin.Context) {
 		EndTime:   req.EndTime,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1768,7 +1829,7 @@ func (h *AdminHandler) DeleteBanner(c *gin.Context) {
 
 	_, err = h.productClient.DeleteBanner(c.Request.Context(), &product.DeleteBannerReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -1796,7 +1857,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -1831,7 +1892,7 @@ func (h *AdminHandler) ListAdminCommunities(c *gin.Context) {
 		PageSize: int32(pageSize),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
@@ -1878,7 +1939,7 @@ func (h *AdminHandler) CreateCommunity(c *gin.Context) {
 		Status:          req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1932,7 +1993,7 @@ func (h *AdminHandler) UpdateCommunity(c *gin.Context) {
 		Status:          req.Status,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -1950,7 +2011,7 @@ func (h *AdminHandler) DeleteCommunity(c *gin.Context) {
 
 	_, err = h.userClient.DeleteCommunity(c.Request.Context(), &user.DeleteCommunityReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -1975,7 +2036,7 @@ func (h *AdminHandler) ListRefunds(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
@@ -2007,7 +2068,7 @@ func (h *AdminHandler) ApproveRefund(c *gin.Context) {
 		PaymentNo:  req.PaymentNo,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -2041,7 +2102,7 @@ func (h *AdminHandler) RejectRefund(c *gin.Context) {
 		RejectReason: req.RejectReason,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -2153,7 +2214,8 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 	h.cfg.Alipay = req.Alipay
 
 	if err := config.Save(h.cfg); err != nil {
-		response.Error(c, errcode.InternalServerError, err.Error())
+		log.Printf("保存支付设置失败: %v", err)
+		response.Error(c, errcode.InternalServerError, "保存支付设置失败")
 		return
 	}
 

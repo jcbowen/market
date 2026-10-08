@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -41,7 +42,7 @@ func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient) *
 func (s *server) CreateOrder(ctx stdctx.Context, req *order.CreateOrderReq) (*order.OrderInfo, error) {
 	o, err := s.orderService.CreateOrder(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return ToOrderInfo(o), nil
 }
@@ -50,7 +51,7 @@ func (s *server) CreateOrder(ctx stdctx.Context, req *order.CreateOrderReq) (*or
 func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.OrderDetail, error) {
 	o, items, logs, err := s.orderService.GetOrder(ctx, req.Id, req.UserId)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 
 	detail := &order.OrderDetail{
@@ -71,7 +72,7 @@ func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.Or
 func (s *server) ListOrders(ctx stdctx.Context, req *order.ListOrdersReq) (*order.ListOrdersResp, error) {
 	list, total, err := s.orderService.ListOrders(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	page, pageSize := 1, 10
@@ -96,7 +97,7 @@ func (s *server) ListOrders(ctx stdctx.Context, req *order.ListOrdersReq) (*orde
 // CancelOrder 取消订单
 func (s *server) CancelOrder(ctx stdctx.Context, req *order.CancelOrderReq) (*common.CommonResponse, error) {
 	if err := s.orderService.CancelOrder(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -104,7 +105,7 @@ func (s *server) CancelOrder(ctx stdctx.Context, req *order.CancelOrderReq) (*co
 // UpdateOrderStatus 更新订单状态
 func (s *server) UpdateOrderStatus(ctx stdctx.Context, req *order.UpdateOrderStatusReq) (*common.CommonResponse, error) {
 	if err := s.orderService.UpdateOrderStatus(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -113,7 +114,7 @@ func (s *server) UpdateOrderStatus(ctx stdctx.Context, req *order.UpdateOrderSta
 func (s *server) GetOrderStatistics(ctx stdctx.Context, req *order.GetOrderStatisticsReq) (*order.OrderStatisticsResp, error) {
 	resp, err := s.orderService.GetOrderStatistics(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return resp, nil
 }
@@ -122,7 +123,7 @@ func (s *server) GetOrderStatistics(ctx stdctx.Context, req *order.GetOrderStati
 func (s *server) GetSalesStatistics(ctx stdctx.Context, req *order.GetSalesStatisticsReq) (*order.SalesStatisticsResp, error) {
 	resp, err := s.orderService.GetSalesStatistics(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return resp, nil
 }
@@ -131,7 +132,7 @@ func (s *server) GetSalesStatistics(ctx stdctx.Context, req *order.GetSalesStati
 func (s *server) GetProductRankings(ctx stdctx.Context, req *order.GetProductRankingsReq) (*order.ProductRankingsResp, error) {
 	list, err := s.orderService.GetProductRankings(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &order.ProductRankingsResp{List: list}, nil
 }
@@ -140,7 +141,7 @@ func (s *server) GetProductRankings(ctx stdctx.Context, req *order.GetProductRan
 func (s *server) GetRevenueReport(ctx stdctx.Context, req *order.GetRevenueReportReq) (*order.RevenueReportResp, error) {
 	list, err := s.orderService.GetRevenueReport(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &order.RevenueReportResp{List: list}, nil
 }
@@ -149,7 +150,7 @@ func (s *server) GetRevenueReport(ctx stdctx.Context, req *order.GetRevenueRepor
 func (s *server) ApplyRefund(ctx stdctx.Context, req *order.ApplyRefundReq) (*order.RefundInfo, error) {
 	refund, err := s.refundService.ApplyRefund(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return ToRefundInfo(refund), nil
 }
@@ -158,7 +159,7 @@ func (s *server) ApplyRefund(ctx stdctx.Context, req *order.ApplyRefundReq) (*or
 func (s *server) ListRefunds(ctx stdctx.Context, req *order.ListRefundsReq) (*order.ListRefundsResp, error) {
 	list, total, err := s.refundService.ListRefunds(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	page, pageSize := 1, 10
@@ -183,7 +184,7 @@ func (s *server) ListRefunds(ctx stdctx.Context, req *order.ListRefundsReq) (*or
 // ApproveRefund 同意退款
 func (s *server) ApproveRefund(ctx stdctx.Context, req *order.ApproveRefundReq) (*common.CommonResponse, error) {
 	if err := s.refundService.ApproveRefund(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -191,7 +192,7 @@ func (s *server) ApproveRefund(ctx stdctx.Context, req *order.ApproveRefundReq) 
 // RejectRefund 拒绝退款
 func (s *server) RejectRefund(ctx stdctx.Context, req *order.RejectRefundReq) (*common.CommonResponse, error) {
 	if err := s.refundService.RejectRefund(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }

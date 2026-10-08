@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/service"
@@ -41,7 +42,7 @@ func newServer(db *mysql.Instance) *server {
 func (s *server) GetUserById(ctx stdctx.Context, req *user.GetUserByIdReq) (*user.UserInfo, error) {
 	u, err := s.userService.GetUserById(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToUserInfo(u), nil
 }
@@ -50,7 +51,7 @@ func (s *server) GetUserById(ctx stdctx.Context, req *user.GetUserByIdReq) (*use
 func (s *server) GetUserByPhone(ctx stdctx.Context, req *user.GetUserByPhoneReq) (*user.UserInfo, error) {
 	u, err := s.userService.GetUserByPhone(ctx, req.Phone)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToUserInfo(u), nil
 }
@@ -59,7 +60,7 @@ func (s *server) GetUserByPhone(ctx stdctx.Context, req *user.GetUserByPhoneReq)
 func (s *server) CreateOrUpdateUser(ctx stdctx.Context, req *user.CreateUserReq) (*user.UserInfo, error) {
 	u, err := s.userService.CreateOrUpdateUser(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToUserInfo(u), nil
 }
@@ -67,7 +68,7 @@ func (s *server) CreateOrUpdateUser(ctx stdctx.Context, req *user.CreateUserReq)
 // UpdateUserCommunity 更新用户所属社区
 func (s *server) UpdateUserCommunity(ctx stdctx.Context, req *user.UpdateCommunityReq) (*common.CommonResponse, error) {
 	if err := s.userService.UpdateUserCommunity(ctx, req.UserId, req.CommunityId); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -76,7 +77,7 @@ func (s *server) UpdateUserCommunity(ctx stdctx.Context, req *user.UpdateCommuni
 func (s *server) UpdateUserProfile(ctx stdctx.Context, req *user.UpdateUserProfileReq) (*user.UserInfo, error) {
 	u, err := s.userService.UpdateUserProfile(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToUserInfo(u), nil
 }
@@ -90,7 +91,7 @@ func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.Li
 	}
 	list, total, err := s.userService.ListUsers(ctx, req.CommunityId, req.Keyword, req.Status, page, pageSize)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	resp := &user.ListUsersResp{
@@ -111,7 +112,7 @@ func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.Li
 func (s *server) ListAddresses(ctx stdctx.Context, req *user.ListAddressesReq) (*user.ListAddressesResp, error) {
 	list, err := s.addressService.ListAddresses(ctx, req.UserId)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &user.ListAddressesResp{List: make([]*user.AddressInfo, 0, len(list))}
 	for _, addr := range list {
@@ -124,7 +125,7 @@ func (s *server) ListAddresses(ctx stdctx.Context, req *user.ListAddressesReq) (
 func (s *server) GetAddress(ctx stdctx.Context, req *user.GetAddressReq) (*user.AddressInfo, error) {
 	addr, err := s.addressService.GetAddress(ctx, req.Id, req.UserId)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToAddressInfo(addr), nil
 }
@@ -133,7 +134,7 @@ func (s *server) GetAddress(ctx stdctx.Context, req *user.GetAddressReq) (*user.
 func (s *server) CreateAddress(ctx stdctx.Context, req *user.CreateAddressReq) (*user.AddressInfo, error) {
 	addr, err := s.addressService.CreateAddress(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToAddressInfo(addr), nil
 }
@@ -142,7 +143,7 @@ func (s *server) CreateAddress(ctx stdctx.Context, req *user.CreateAddressReq) (
 func (s *server) UpdateAddress(ctx stdctx.Context, req *user.UpdateAddressReq) (*user.AddressInfo, error) {
 	addr, err := s.addressService.UpdateAddress(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToAddressInfo(addr), nil
 }
@@ -150,7 +151,7 @@ func (s *server) UpdateAddress(ctx stdctx.Context, req *user.UpdateAddressReq) (
 // DeleteAddress 删除地址
 func (s *server) DeleteAddress(ctx stdctx.Context, req *user.DeleteAddressReq) (*common.CommonResponse, error) {
 	if err := s.addressService.DeleteAddress(ctx, req.Id, req.UserId); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -158,7 +159,7 @@ func (s *server) DeleteAddress(ctx stdctx.Context, req *user.DeleteAddressReq) (
 // SetDefaultAddress 设置默认地址
 func (s *server) SetDefaultAddress(ctx stdctx.Context, req *user.SetDefaultAddressReq) (*common.CommonResponse, error) {
 	if err := s.addressService.SetDefaultAddress(ctx, req.Id, req.UserId); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -174,7 +175,7 @@ func (s *server) ListCommunities(ctx stdctx.Context, req *common.Pagination) (*u
 	}
 	list, total, err := s.communityService.ListCommunities(ctx, page, pageSize)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &user.ListCommunitiesResp{
 		List: make([]*user.CommunityInfo, 0, len(list)),
@@ -194,7 +195,7 @@ func (s *server) ListCommunities(ctx stdctx.Context, req *common.Pagination) (*u
 func (s *server) GetCommunity(ctx stdctx.Context, req *user.GetCommunityReq) (*user.CommunityInfo, error) {
 	c, err := s.communityService.GetCommunity(ctx, req.Id)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToCommunityInfo(c), nil
 }
@@ -208,7 +209,7 @@ func (s *server) ListNearbyCommunities(ctx stdctx.Context, req *user.ListNearbyC
 	}
 	list, total, err := s.communityService.ListNearbyCommunities(ctx, req.Longitude, req.Latitude, page, pageSize)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &user.ListCommunitiesResp{
 		List: make([]*user.CommunityInfo, 0, len(list)),
@@ -228,7 +229,7 @@ func (s *server) ListNearbyCommunities(ctx stdctx.Context, req *user.ListNearbyC
 func (s *server) CreateCommunity(ctx stdctx.Context, req *user.CreateCommunityReq) (*user.CommunityInfo, error) {
 	c, err := s.communityService.CreateCommunity(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToCommunityInfo(c), nil
 }
@@ -238,9 +239,9 @@ func (s *server) UpdateCommunity(ctx stdctx.Context, req *user.UpdateCommunityIn
 	c, err := s.communityService.UpdateCommunity(ctx, req)
 	if err != nil {
 		if err.Error() == "社区不存在" {
-			return nil, status.Errorf(codes.NotFound, err.Error())
+			return nil, status.Error(codes.NotFound, err.Error())
 		}
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToCommunityInfo(c), nil
 }
@@ -248,7 +249,7 @@ func (s *server) UpdateCommunity(ctx stdctx.Context, req *user.UpdateCommunityIn
 // DeleteCommunity 删除社区
 func (s *server) DeleteCommunity(ctx stdctx.Context, req *user.DeleteCommunityReq) (*common.CommonResponse, error) {
 	if err := s.communityService.DeleteCommunity(ctx, req.Id); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -257,7 +258,7 @@ func (s *server) DeleteCommunity(ctx stdctx.Context, req *user.DeleteCommunityRe
 func (s *server) GetAdminByUsername(ctx stdctx.Context, req *user.GetAdminByUsernameReq) (*user.AdminInfo, error) {
 	admin, err := s.adminService.GetAdminByUsername(ctx, req.Username)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
 	isSuperAdmin := role != nil && role.Code == "super_admin"
@@ -274,7 +275,7 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 	}
 	list, total, err := s.adminService.ListAdmins(ctx, req.CommunityId, page, pageSize)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	resp := &user.ListAdminsResp{
@@ -296,7 +297,7 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 func (s *server) CreateAdmin(ctx stdctx.Context, req *user.CreateAdminReq) (*user.AdminInfo, error) {
 	admin, err := s.adminService.CreateAdmin(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
 	return service.ToAdminInfo(admin, role, nil), nil
@@ -306,7 +307,7 @@ func (s *server) CreateAdmin(ctx stdctx.Context, req *user.CreateAdminReq) (*use
 func (s *server) UpdateAdmin(ctx stdctx.Context, req *user.UpdateAdminReq) (*user.AdminInfo, error) {
 	admin, err := s.adminService.UpdateAdmin(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
 	return service.ToAdminInfo(admin, role, nil), nil
@@ -315,7 +316,7 @@ func (s *server) UpdateAdmin(ctx stdctx.Context, req *user.UpdateAdminReq) (*use
 // DeleteAdmin 删除管理员
 func (s *server) DeleteAdmin(ctx stdctx.Context, req *user.DeleteAdminReq) (*common.CommonResponse, error) {
 	if err := s.adminService.DeleteAdmin(ctx, req.Id); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -324,9 +325,9 @@ func (s *server) DeleteAdmin(ctx stdctx.Context, req *user.DeleteAdminReq) (*com
 func (s *server) ChangeAdminPassword(ctx stdctx.Context, req *user.ChangeAdminPasswordReq) (*common.CommonResponse, error) {
 	if err := s.adminService.ChangeAdminPassword(ctx, req.Id, req.OldPassword, req.NewPassword); err != nil {
 		if err.Error() == "旧密码错误" || err.Error() == "管理员不存在" {
-			return nil, status.Errorf(codes.InvalidArgument, err.Error())
+			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -335,7 +336,7 @@ func (s *server) ChangeAdminPassword(ctx stdctx.Context, req *user.ChangeAdminPa
 func (s *server) ListRoles(ctx stdctx.Context, req *common.Empty) (*user.ListRolesResp, error) {
 	list, err := s.roleService.ListRoles(ctx)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	resp := &user.ListRolesResp{List: make([]*user.RoleInfo, 0, len(list))}
 	for _, r := range list {
@@ -348,7 +349,7 @@ func (s *server) ListRoles(ctx stdctx.Context, req *common.Empty) (*user.ListRol
 func (s *server) CreateRole(ctx stdctx.Context, req *user.CreateRoleReq) (*user.RoleInfo, error) {
 	r, err := s.roleService.CreateRole(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToRoleInfo(r), nil
 }
@@ -358,9 +359,9 @@ func (s *server) UpdateRole(ctx stdctx.Context, req *user.UpdateRoleReq) (*user.
 	r, err := s.roleService.UpdateRole(ctx, req)
 	if err != nil {
 		if err.Error() == "角色不存在" {
-			return nil, status.Errorf(codes.NotFound, err.Error())
+			return nil, status.Error(codes.NotFound, err.Error())
 		}
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return service.ToRoleInfo(r), nil
 }
@@ -368,7 +369,7 @@ func (s *server) UpdateRole(ctx stdctx.Context, req *user.UpdateRoleReq) (*user.
 // DeleteRole 删除角色
 func (s *server) DeleteRole(ctx stdctx.Context, req *user.DeleteRoleReq) (*common.CommonResponse, error) {
 	if err := s.roleService.DeleteRole(ctx, req.Id); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }

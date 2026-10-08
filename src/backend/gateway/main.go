@@ -192,7 +192,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		authAdmin := admin.Group("")
 		authAdmin.Use(gwMiddleware.AuthMiddleware(jwtManager, jwt.TokenTypeAdmin))
 		{
-			authAdmin.GET("/dashboard", stub("adminDashboard"))
+			authAdmin.GET("/dashboard", gwMiddleware.RequirePermission("dashboard:view"), adminHandler.GetDashboard)
 			authAdmin.GET("/roles", gwMiddleware.RequirePermission("role:view"), adminHandler.ListRoles)
 			authAdmin.POST("/roles", gwMiddleware.RequirePermission("role:create"), adminHandler.CreateRole)
 			authAdmin.PUT("/roles/:id", gwMiddleware.RequirePermission("role:update"), adminHandler.UpdateRole)
@@ -221,10 +221,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/orders/:id/ship", gwMiddleware.RequirePermission("order:update"), adminHandler.ShipOrder)
 			authAdmin.PUT("/orders/:id/complete", gwMiddleware.RequirePermission("order:update"), adminHandler.CompleteOrder)
 
-			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view"), adminHandler.GetOrderStatistics)
-			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view"), adminHandler.GetSalesStatistics)
-			authAdmin.GET("/statistics/rankings", gwMiddleware.RequirePermission("order:view"), adminHandler.GetProductRankings)
-			authAdmin.GET("/statistics/revenue", gwMiddleware.RequirePermission("order:view"), adminHandler.GetRevenueReport)
+			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetOrderStatistics)
+			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetSalesStatistics)
+			authAdmin.GET("/statistics/rankings", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetProductRankings)
+			authAdmin.GET("/statistics/revenue", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetRevenueReport)
 
 			authAdmin.GET("/inventory/entries", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListStockRecords)
 			authAdmin.POST("/inventory/entries", gwMiddleware.RequirePermission("inventory:create"), adminHandler.StockEntry)
@@ -316,18 +316,6 @@ func getBinDir() string {
 		return "."
 	}
 	return filepath.Dir(exe)
-}
-
-// stub 返回一个统一的占位处理器，后续接入 gRPC 客户端时替换
-// 参数：
-//   - name: 接口标识名
-//
-// 返回：
-//   - gin.HandlerFunc: 返回固定成功占位数据的处理器
-func stub(name string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		response.Success(c, gin.H{"stub": true, "handler": name})
-	}
 }
 
 // _ 占位，避免 errcode 未使用告警

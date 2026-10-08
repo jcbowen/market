@@ -65,7 +65,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	})
 	if err != nil {
 		log.Printf("创建订单失败: %v", err)
-		response.Error(c, errcode.InternalServerError, err.Error())
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -96,7 +96,7 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		UserId: uc.UserID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -229,13 +229,14 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 		Reason: req.Reason,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
 }
 
 // ConfirmReceive 确认收货
+// 仅配送中（status=4）或自提已支付（status=2 且 delivery_type=1）订单可确认收货
 // 参数：
 //   - c: gin 上下文
 func (h *OrderHandler) ConfirmReceive(c *gin.Context) {
@@ -246,6 +247,18 @@ func (h *OrderHandler) ConfirmReceive(c *gin.Context) {
 	}
 
 	uc := appcontext.GetUserContext(c)
+	orderResp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: id, UserId: uc.UserID})
+	if err != nil || orderResp.Order == nil {
+		response.Error(c, errcode.NotFound, "订单不存在")
+		return
+	}
+	o := orderResp.Order
+	canReceive := o.Status == 4 || (o.Status == 2 && o.DeliveryType == 1)
+	if !canReceive {
+		response.Error(c, errcode.ParamError, "订单状态不允许确认收货")
+		return
+	}
+
 	_, err = h.orderClient.UpdateOrderStatus(c.Request.Context(), &order.UpdateOrderStatusReq{
 		Id:           id,
 		Status:       5,
@@ -254,7 +267,7 @@ func (h *OrderHandler) ConfirmReceive(c *gin.Context) {
 		Remark:       "用户确认收货",
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id, "status": 5})
@@ -290,7 +303,7 @@ func (h *OrderHandler) ApplyRefund(c *gin.Context) {
 		Reason:  req.Reason,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)

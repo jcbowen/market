@@ -21,8 +21,8 @@ type Banner struct {
 	Position    int32   `gorm:"column:position;type:tinyint;not null;comment:1首页 2分类页" json:"position"`
 	Sort        int32   `gorm:"column:sort;type:int;default:0" json:"sort"`
 	Status      int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
-	StartTime   string  `gorm:"column:start_time;type:datetime" json:"start_time"`
-	EndTime     string  `gorm:"column:end_time;type:datetime" json:"end_time"`
+	StartTime   *string `gorm:"column:start_time;type:datetime" json:"start_time"`
+	EndTime     *string `gorm:"column:end_time;type:datetime" json:"end_time"`
 	CreatedAt   string  `gorm:"column:created_at;type:datetime" json:"created_at"`
 	UpdatedAt   string  `gorm:"column:updated_at;type:datetime" json:"updated_at"`
 }

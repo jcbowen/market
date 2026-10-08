@@ -36,7 +36,7 @@ func (h *UserHandler) Profile(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
 	resp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -64,7 +64,7 @@ func (h *UserHandler) UpdateCommunity(c *gin.Context) {
 		CommunityId: req.CommunityID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"community_id": req.CommunityID})
@@ -96,7 +96,7 @@ func (h *UserHandler) UpdateUserProfile(c *gin.Context) {
 		Gender:   req.Gender,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -110,7 +110,7 @@ func (h *UserHandler) ListAddresses(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
 	resp, err := h.userClient.ListAddresses(c.Request.Context(), &user.ListAddressesReq{UserId: uc.UserID})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -152,7 +152,7 @@ func (h *UserHandler) CreateAddress(c *gin.Context) {
 		IsDefault:    req.IsDefault,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -201,7 +201,7 @@ func (h *UserHandler) UpdateAddress(c *gin.Context) {
 		IsDefault:    req.IsDefault,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -224,7 +224,7 @@ func (h *UserHandler) DeleteAddress(c *gin.Context) {
 		UserId: uc.UserID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
@@ -259,7 +259,7 @@ func (h *UserHandler) ListCommunities(c *gin.Context) {
 		})
 	}
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 

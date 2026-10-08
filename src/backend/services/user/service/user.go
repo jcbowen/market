@@ -86,7 +86,8 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 	if req.CommunityId > 0 {
 		u.CommunityID = req.CommunityId
 	}
-	u.LastLoginAt = time.Now().Format("2006-01-02 15:04:05")
+	lastLoginAt := time.Now().Format("2006-01-02 15:04:05")
+	u.LastLoginAt = &lastLoginAt
 
 	if u.ID > 0 {
 		if err := s.db.GetDb().WithContext(ctx).Save(u).Error; err != nil {
@@ -209,7 +210,7 @@ func ToUserInfo(u *model.User) *user.UserInfo {
 		Gender:       u.Gender,
 		CommunityId:  u.CommunityID,
 		Status:       u.Status,
-		LastLoginAt:  u.LastLoginAt,
+		LastLoginAt:  ptrString(u.LastLoginAt),
 		CreatedAt:    u.CreatedAt,
 	}
 }

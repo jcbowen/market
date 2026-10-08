@@ -50,7 +50,7 @@ func (h *CartHandler) GetCart(c *gin.Context) {
 		CommunityId: getCartCommunityID(c),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -98,7 +98,7 @@ func (h *CartHandler) AddItem(c *gin.Context) {
 		Quantity:    req.Quantity,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -134,7 +134,7 @@ func (h *CartHandler) UpdateItem(c *gin.Context) {
 		Selected: req.Selected,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -156,7 +156,7 @@ func (h *CartHandler) RemoveItem(c *gin.Context) {
 		UserId: uc.UserID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -183,7 +183,7 @@ func (h *CartHandler) SelectAll(c *gin.Context) {
 		Selected: req.Selected,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)

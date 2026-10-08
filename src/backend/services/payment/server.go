@@ -6,6 +6,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/service"
@@ -31,7 +32,7 @@ func newServer(paymentService *service.PaymentService) *server {
 func (s *server) CreatePayment(ctx stdctx.Context, req *payment.CreatePaymentReq) (*payment.CreatePaymentResp, error) {
 	p, payParams, err := s.paymentService.CreatePayment(ctx, req)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 
 	resp := &payment.CreatePaymentResp{
@@ -51,7 +52,7 @@ func (s *server) CreatePayment(ctx stdctx.Context, req *payment.CreatePaymentReq
 func (s *server) GetPayment(ctx stdctx.Context, req *payment.GetPaymentReq) (*payment.PaymentInfo, error) {
 	p, err := s.paymentService.GetPayment(ctx, req.OrderId)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	return service.ToPaymentInfo(p), nil
 }
@@ -59,7 +60,7 @@ func (s *server) GetPayment(ctx stdctx.Context, req *payment.GetPaymentReq) (*pa
 // HandleWechatCallback 处理微信支付回调
 func (s *server) HandleWechatCallback(ctx stdctx.Context, req *payment.WechatCallbackReq) (*common.CommonResponse, error) {
 	if err := s.paymentService.HandleWechatCallback(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -67,7 +68,7 @@ func (s *server) HandleWechatCallback(ctx stdctx.Context, req *payment.WechatCal
 // HandleAlipayCallback 处理支付宝支付回调
 func (s *server) HandleAlipayCallback(ctx stdctx.Context, req *payment.AlipayCallbackReq) (*common.CommonResponse, error) {
 	if err := s.paymentService.HandleAlipayCallback(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
@@ -75,7 +76,7 @@ func (s *server) HandleAlipayCallback(ctx stdctx.Context, req *payment.AlipayCal
 // ProcessRefund 处理退款
 func (s *server) ProcessRefund(ctx stdctx.Context, req *payment.ProcessRefundReq) (*common.CommonResponse, error) {
 	if err := s.paymentService.ProcessRefund(ctx, req); err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }

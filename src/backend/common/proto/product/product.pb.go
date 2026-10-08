@@ -459,6 +459,7 @@ type ListProductsReq struct {
 	Keyword       string                 `protobuf:"bytes,3,opt,name=keyword,proto3" json:"keyword,omitempty"`
 	Sort          string                 `protobuf:"bytes,4,opt,name=sort,proto3" json:"sort,omitempty"`
 	Pagination    *common.Pagination     `protobuf:"bytes,5,opt,name=pagination,proto3" json:"pagination,omitempty"`
+	Status        int32                  `protobuf:"varint,6,opt,name=status,proto3" json:"status,omitempty"` // 商品状态过滤：0 不过滤（默认排除已删除），大于 0 时精确匹配（1 上架）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -526,6 +527,13 @@ func (x *ListProductsReq) GetPagination() *common.Pagination {
 		return x.Pagination
 	}
 	return nil
+}
+
+func (x *ListProductsReq) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
 }
 
 type GetProductReq struct {
@@ -5955,7 +5963,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\x06status\x18\a \x01(\x05R\x06status\x121\n" +
 	"\bchildren\x18\b \x03(\v2\x15.product.CategoryInfoR\bchildren\"?\n" +
 	"\x12ListCategoriesResp\x12)\n" +
-	"\x04list\x18\x01 \x03(\v2\x15.product.CategoryInfoR\x04list\"\xb7\x01\n" +
+	"\x04list\x18\x01 \x03(\v2\x15.product.CategoryInfoR\x04list\"\xcf\x01\n" +
 	"\x0fListProductsReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x1f\n" +
 	"\vcategory_id\x18\x02 \x01(\x03R\n" +
@@ -5964,7 +5972,8 @@ const file_product_product_proto_rawDesc = "" +
 	"\x04sort\x18\x04 \x01(\tR\x04sort\x122\n" +
 	"\n" +
 	"pagination\x18\x05 \x01(\v2\x12.common.PaginationR\n" +
-	"pagination\"B\n" +
+	"pagination\x12\x16\n" +
+	"\x06status\x18\x06 \x01(\x05R\x06status\"B\n" +
 	"\rGetProductReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"\x84\x01\n" +

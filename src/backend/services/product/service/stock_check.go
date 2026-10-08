@@ -158,7 +158,7 @@ func (s *StockCheckService) GetStockCheck(ctx context.Context, req *product.GetS
 			sci.diff_quantity,
 			sci.created_at
 		FROM stock_check_items sci
-		INNER JOIN skus s ON s.id = sci.sku_id
+		INNER JOIN product_skus s ON s.id = sci.sku_id
 		INNER JOIN products p ON p.id = s.product_id
 		WHERE sci.check_id = ?
 		ORDER BY sci.id ASC

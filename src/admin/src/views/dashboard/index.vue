@@ -54,7 +54,7 @@
 import { onMounted, reactive } from 'vue'
 import { useMessage } from 'naive-ui'
 import { CartOutline, PeopleOutline, CubeOutline } from '@vicons/ionicons5'
-import { getOrderStatistics, getSalesStatistics } from '@/api/statistics'
+import { getDashboardStatistics } from '@/api/statistics'
 
 const message = useMessage()
 
@@ -71,35 +71,23 @@ const statistics = reactive({
 })
 
 /**
- * 获取今日日期字符串（YYYY-MM-DD）
- * @returns 日期字符串
- */
-function getToday(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-/**
  * 加载仪表盘统计数据
- * 组合订单统计与销售统计的今日数据
+ * 调用后端聚合接口一次性获取今日订单、销售额、用户数、商品数及待处理事项
  */
 async function loadStatistics() {
-  const today = getToday()
   try {
-    const [orderRes, salesRes] = await Promise.all([
-      getOrderStatistics({ start_date: today, end_date: today }),
-      getSalesStatistics({ start_date: today, end_date: today }),
-    ])
-    if (orderRes.data.code === 0) {
-      const orderData = orderRes.data.data
-      statistics.order_count = orderData.total_orders
-      statistics.pending_ship = orderData.pending_ship
-      statistics.refunding = orderData.refunding
+    const res = await getDashboardStatistics()
+    if (res.data.code !== 0) {
+      message.error('加载统计数据失败')
+      return
     }
-    if (salesRes.data.code === 0) {
-      const salesData = salesRes.data.data
-      statistics.sale_amount = salesData.pay_amount
-    }
+    const data = res.data.data
+    statistics.order_count = data.order_count
+    statistics.sale_amount = data.sale_amount
+    statistics.user_count = data.user_count
+    statistics.product_count = data.product_count
+    statistics.pending_ship = data.pending_ship
+    statistics.refunding = data.refunding
   } catch (error) {
     message.error('加载统计数据失败')
   }

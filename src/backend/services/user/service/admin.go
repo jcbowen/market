@@ -303,7 +303,7 @@ func ToAdminInfo(a *model.Admin, role *model.Role, communityIDs []int64) *user.A
 		CommunityId:  a.CommunityID,
 		CommunityIds: communityIDs,
 		Status:       a.Status,
-		LastLoginAt:  a.LastLoginAt,
+		LastLoginAt:  ptrString(a.LastLoginAt),
 		LastLoginIp:  a.LastLoginIP,
 	}
 	if role != nil {

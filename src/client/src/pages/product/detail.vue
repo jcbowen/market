@@ -14,7 +14,7 @@
     <view class="info-card">
       <view class="price-row">
         <text class="price">{{ formatPrice(product.price) }}</text>
-        <text class="original">{{ formatPrice(product.original_price) }}</text>
+        <text v-if="product.original_price > 0" class="original">{{ formatPrice(product.original_price) }}</text>
       </view>
       <text class="name">{{ product.name }}</text>
       <text class="sales">已售 {{ product.sales || 0 }}</text>

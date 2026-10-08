@@ -124,7 +124,7 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 		Gender:   0,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -173,7 +173,7 @@ func (h *AuthHandler) PhoneLogin(c *gin.Context) {
 		Phone:  req.Phone,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -204,7 +204,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 	u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: claims.UserID})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 

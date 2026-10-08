@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -40,7 +42,7 @@ func NewOrderService(db *mysql.Instance) *OrderService {
 //   - error: 错误信息
 func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderReq) (*model.Order, error) {
 	if len(req.Items) == 0 {
-		return nil, fmt.Errorf("订单商品不能为空")
+		return nil, bizerr.New(codes.InvalidArgument, "订单商品不能为空")
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -53,7 +55,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 			return nil, fmt.Errorf("获取 SKU 失败: %w", err)
 		}
 		if skuInfo.Stock < item.Quantity {
-			return nil, fmt.Errorf("商品 %s 库存不足", skuInfo.SkuCode)
+			return nil, bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足", skuInfo.SkuCode))
 		}
 
 		productInfo, err := grpcclient.ProductClient.GetProduct(ctx, &product.GetProductReq{Id: skuInfo.ProductId})
@@ -81,6 +83,17 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 			TotalPrice:   totalPrice,
 			CreatedAt:    now,
 		})
+	}
+
+	// 配送订单需满足社区起送金额（按商品总额校验，优惠不影响起送门槛）
+	if req.DeliveryType == 2 {
+		community, err := grpcclient.UserClient.GetCommunity(ctx, &user.GetCommunityReq{Id: req.CommunityId})
+		if err != nil {
+			return nil, fmt.Errorf("获取社区信息失败: %w", err)
+		}
+		if community.MinOrderAmount > 0 && totalAmount < community.MinOrderAmount {
+			return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单金额未满 %.2f 元起送金额", community.MinOrderAmount))
+		}
 	}
 
 	// 分别计算满减与优惠券优惠，两者均按商品总价校验门槛并可叠加
@@ -470,9 +483,10 @@ func (s *OrderService) calculateFullReduction(ctx context.Context, communityID i
 		if fr.Status != 1 {
 			continue
 		}
-		start := parseTime(fr.StartTime)
-		end := parseTime(fr.EndTime)
-		if now.Before(start) || now.After(end) {
+		if fr.StartTime != "" && now.Before(parseTime(fr.StartTime)) {
+			continue
+		}
+		if fr.EndTime != "" && now.After(parseTime(fr.EndTime)) {
 			continue
 		}
 		if totalAmount >= fr.Threshold && fr.ReduceAmount > best {

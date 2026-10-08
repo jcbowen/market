@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -51,7 +53,7 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 			return err
 		}
 		if sku.Stock < req.Quantity {
-			return fmt.Errorf("库存不足")
+			return bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足", sku.SkuCode))
 		}
 		before := sku.Stock
 		sku.Stock -= req.Quantity

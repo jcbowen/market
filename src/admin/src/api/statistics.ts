@@ -51,11 +51,13 @@ export interface DashboardStatistics {
   sale_amount: number
   user_count: number
   product_count: number
+  pending_ship: number
+  refunding: number
 }
 
 /**
  * 获取仪表盘统计数据
- * 由于后端 /dashboard 为占位接口，此处组合今日订单与销售统计返回
+ * 聚合今日订单数、今日销售额、注册用户数、在售商品数、待发货订单数、待处理退款数
  * @returns 仪表盘统计数据
  */
 export function getDashboardStatistics() {

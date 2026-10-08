@@ -50,7 +50,7 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 		},
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
@@ -72,7 +72,7 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 		CommunityId: communityID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -90,7 +90,7 @@ func (h *ProductHandler) ListSkus(c *gin.Context) {
 
 	resp, err := h.productClient.ListSkus(c.Request.Context(), &product.ListSkusReq{ProductId: productID})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -108,7 +108,7 @@ func (h *ProductHandler) GetSkuById(c *gin.Context) {
 
 	resp, err := h.productClient.GetSkuById(c.Request.Context(), &product.GetSkuByIdReq{Id: id})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -123,7 +123,7 @@ func (h *ProductHandler) ListCategories(c *gin.Context) {
 		CommunityId: communityID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -141,7 +141,7 @@ func (h *ProductHandler) ListCoupons(c *gin.Context) {
 		Status:      int32(status),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -168,7 +168,7 @@ func (h *ProductHandler) ReceiveCoupon(c *gin.Context) {
 		UserId:   uc.UserID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"coupon_id": req.CouponID})
@@ -186,7 +186,7 @@ func (h *ProductHandler) ListUserCoupons(c *gin.Context) {
 		Status: int32(status),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -202,7 +202,7 @@ func (h *ProductHandler) ListFlashSales(c *gin.Context) {
 		CommunityId: communityID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 
@@ -256,7 +256,7 @@ func (h *ProductHandler) ListFullReductions(c *gin.Context) {
 		CommunityId: communityID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)
@@ -274,7 +274,7 @@ func (h *ProductHandler) ListBanners(c *gin.Context) {
 		Position:    int32(position),
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.SuccessWithList(c, resp.List)

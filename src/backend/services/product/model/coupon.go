@@ -25,8 +25,8 @@ type Coupon struct {
 	ReceivedCount int32   `gorm:"column:received_count;type:int;default:0" json:"received_count"`
 	UsedCount     int32   `gorm:"column:used_count;type:int;default:0" json:"used_count"`
 	PerUserLimit  int32   `gorm:"column:per_user_limit;type:int;default:1" json:"per_user_limit"`
-	StartTime     string  `gorm:"column:start_time;type:datetime" json:"start_time"`
-	EndTime       string  `gorm:"column:end_time;type:datetime" json:"end_time"`
+	StartTime     *string `gorm:"column:start_time;type:datetime" json:"start_time"`
+	EndTime       *string `gorm:"column:end_time;type:datetime" json:"end_time"`
 	ValidDays     int32   `gorm:"column:valid_days;type:int;default:0;comment:0表示固定 end_time" json:"valid_days"`
 	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
 	CreatedAt     string  `gorm:"column:created_at;type:datetime" json:"created_at"`
@@ -57,7 +57,7 @@ type UserCoupon struct {
 	DiscountValue float64 `gorm:"column:discount_value;type:decimal(10,2);default:0" json:"discount_value"`
 	Status     int32   `gorm:"column:status;type:tinyint;default:1;comment:1未使用 2已使用 3已过期" json:"status"`
 	OrderID    int64   `gorm:"column:order_id;type:bigint;default:0" json:"order_id"`
-	ExpireAt   string  `gorm:"column:expire_at;type:datetime" json:"expire_at"`
+	ExpireAt   *string `gorm:"column:expire_at;type:datetime" json:"expire_at"`
 	CreatedAt  string  `gorm:"column:created_at;type:datetime" json:"created_at"`
 	UpdatedAt  string  `gorm:"column:updated_at;type:datetime" json:"updated_at"`
 }

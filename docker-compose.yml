@@ -150,11 +150,13 @@ services:
       - "18080:18080"
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
+      # 运行时配置持久化：支付设置等写回 ./bin/runtime/config.yaml，容器重启不丢失
+      - ./bin/runtime:/app/runtime
       # 开发阶段挂载宿主机前端编译产物，避免每次修改都重新构建 gateway 镜像
       - ./bin/static/admin:/app/static/admin:ro
       - ./bin/static/h5:/app/static/h5:ro
     command: >
-      sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./gateway"
+      sh -c "[ -f /app/runtime/config.yaml ] || cp -f /app/config.yaml /app/runtime/config.yaml; CONFIG_FILE=/app/runtime/config.yaml ./gateway"
 
 volumes:
   mysql_data:

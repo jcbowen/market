@@ -10,7 +10,7 @@ type Role struct {
 	base.MysqlBaseModel
 	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
 	Name        string `gorm:"column:name;type:varchar(50);not null" json:"name"`
-	Code        string `gorm:"column:code;type:varchar(50);not null;uniqueIndex" json:"code"`
+	Code        string `gorm:"column:code;type:varchar(50);not null;unique" json:"code"`
 	Permissions string `gorm:"column:permissions;type:json" json:"permissions"`
 	Description string `gorm:"column:description;type:varchar(255)" json:"description"`
 	CreatedAt   string `gorm:"column:created_at;type:datetime" json:"created_at"`

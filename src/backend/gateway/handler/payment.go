@@ -103,7 +103,7 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		UserId: uc.UserID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError, err.Error())
+		response.GRPCError(c, err)
 		return
 	}
 	if orderResp.Order == nil || orderResp.Order.Id == 0 {
@@ -125,7 +125,7 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		Openid:  req.Openid,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError, err.Error())
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
@@ -199,7 +199,7 @@ func (h *PaymentHandler) GetPayment(c *gin.Context) {
 		OrderId: orderID,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError)
+		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)

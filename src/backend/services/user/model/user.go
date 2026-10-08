@@ -9,16 +9,16 @@ import (
 type User struct {
 	base.MysqlBaseModel
 	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	Openid       string  `gorm:"column:openid;type:varchar(64);uniqueIndex:idx_user_openid" json:"openid"`
-	AlipayUserID *string `gorm:"column:alipay_user_id;type:varchar(64);uniqueIndex:idx_user_alipay" json:"alipay_user_id"`
-	Unionid      *string `gorm:"column:union_id;type:varchar(64);uniqueIndex:idx_user_union" json:"union_id"`
-	Phone        string  `gorm:"column:phone;type:varchar(20);uniqueIndex:idx_user_phone" json:"phone"`
+	Openid       string  `gorm:"column:openid;type:varchar(64);unique" json:"openid"`
+	AlipayUserID *string `gorm:"column:alipay_user_id;type:varchar(64);unique" json:"alipay_user_id"`
+	Unionid      *string `gorm:"column:union_id;type:varchar(64);unique" json:"union_id"`
+	Phone        string  `gorm:"column:phone;type:varchar(20);unique" json:"phone"`
 	Nickname     string `gorm:"column:nickname;type:varchar(100)" json:"nickname"`
 	Avatar       string `gorm:"column:avatar;type:varchar(255)" json:"avatar"`
 	Gender       int32  `gorm:"column:gender;type:tinyint;default:0" json:"gender"`
 	CommunityID  int64  `gorm:"column:community_id;type:bigint;default:0;index" json:"community_id"`
 	Status       int32  `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
-	LastLoginAt  string `gorm:"column:last_login_at;type:datetime" json:"last_login_at"`
+	LastLoginAt  *string `gorm:"column:last_login_at;type:datetime" json:"last_login_at"`
 	CreatedAt    string `gorm:"column:created_at;type:datetime" json:"created_at"`
 	UpdatedAt    string `gorm:"column:updated_at;type:datetime" json:"updated_at"`
 }
