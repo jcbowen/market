@@ -1,23 +1,22 @@
-# 非 Docker / 本地部署配置文件
-# 部署前请根据实际情况修改 db、redis、jwt、支付、短信等敏感配置
 web_server:
     port: 18080
-    enable_ssl: false
-    cert_path: ""
-    key_path: ""
+    enablessl: false
+    certpath: ""
+    keypath: ""
 db:
-    driverName: mysql
+    drivername: mysql
     protocol: tcp
     host: localhost
     port: "3306"
     dbname: market
     username: root
-    password: "market123"
+    password: market123
     charset: utf8mb4
-    tablePrefix: ""
-    parseTime: "True"
-    singularTable: true
-    disableForeignKeyConstraintWhenMigrating: true
+    tableprefix: ""
+    parsetime: "False"
+    loc: Local
+    singulartable: true
+    disableforeignkeyconstraintwhenmigrating: false
 redis:
     host: localhost
     port: "6379"
@@ -54,19 +53,13 @@ upload:
     storage: local
     local_path: static/uploads/
 wechat:
-    app_id: "wx_test_appid"
+    app_id: wx_test_appid
     app_secret: ""
     mch_id: "1234567890"
     api_v3_key: ""
     cert_serial_no: ""
     private_key: ""
-    notify_url: "http://localhost:18080/api/v1/payments/callback/wechat"
-alipay:
-    app_id: "2024test_appid"
-    private_key: "test_private_key"
-    alipay_public_key: "test_public_key"
-    notify_url: "http://localhost:18080/api/v1/payments/callback/alipay"
-    return_url: "http://localhost:18080/s/order"
+    notify_url: http://localhost:18080/api/v1/payments/callback/wechat
 sms:
     provider: aliyun
     access_key: ""
@@ -89,11 +82,3 @@ cart_service:
     grpc_port: 50054
 payment_service:
     grpc_port: 50055
-
-# ========== 支付方式开关 ==========
-# enabled_channels 控制当前可用的支付渠道，同时决定 C 端展示顺序
-# 可选值：wechat（微信支付）、alipay（支付宝支付）、cash（货到付款/现金）
-# 微信支付是否实际展示还会校验微信 V3 配置是否完整
-payment:
-    enabled_channels:
-        - cash

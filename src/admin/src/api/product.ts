@@ -1,5 +1,14 @@
 import { request } from './request'
-import type { ApiResult, Category, PageParams, PageResult, Product, Sku } from './types'
+import type {
+  ApiResult,
+  Category,
+  PageParams,
+  PageResult,
+  Product,
+  ProductDetail,
+  ProductSavePayload,
+  Sku,
+} from './types'
 
 /**
  * 商品管理相关 API
@@ -73,12 +82,12 @@ export function getProductList(params: PageParams & { keyword?: string; category
 }
 
 /**
- * 获取商品详情
+ * 获取商品详情（含 SKU 列表与规格树）
  * @param id 商品 ID
  * @returns 商品详情
  */
 export function getProductDetail(id: number) {
-  return request<ApiResult<Product>>({
+  return request<ApiResult<ProductDetail>>({
     url: `/api/v1/admin/products/${id}`,
     method: 'GET',
   })
@@ -86,11 +95,11 @@ export function getProductDetail(id: number) {
 
 /**
  * 创建商品
- * @param data 商品数据
+ * @param data 商品数据（含规格树与 SKU 列表）
  * @returns 创建结果
  */
-export function createProduct(data: Partial<Product>) {
-  return request<ApiResult<Product>>({
+export function createProduct(data: ProductSavePayload) {
+  return request<ApiResult<ProductDetail>>({
     url: '/api/v1/admin/products',
     method: 'POST',
     data,
@@ -100,11 +109,11 @@ export function createProduct(data: Partial<Product>) {
 /**
  * 更新商品
  * @param id 商品 ID
- * @param data 商品数据
+ * @param data 商品数据（含规格树与 SKU 列表，全量提交）
  * @returns 更新结果
  */
-export function updateProduct(id: number, data: Partial<Product>) {
-  return request<ApiResult<Product>>({
+export function updateProduct(id: number, data: ProductSavePayload) {
+  return request<ApiResult<ProductDetail>>({
     url: `/api/v1/admin/products/${id}`,
     method: 'PUT',
     data,

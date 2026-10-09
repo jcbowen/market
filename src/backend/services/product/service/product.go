@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
@@ -76,8 +77,7 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 	return list, int(total), err
 }
 
-// BuildProductExtras 批量查询商品列表的分类名称与默认 SKU 价格/库存
-// 默认 SKU 取 status=1 且 id 最小的 SKU
+// BuildCategoryNames 批量查询商品列表的分类名称
 //
 // 参数：
 //   - ctx: 上下文
@@ -85,56 +85,33 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 //
 // 返回值：
 //   - map[int64]string: 分类 ID -> 分类名称
-//   - map[int64]float64: 商品 ID -> 默认 SKU 售价
-//   - map[int64]int32: 商品 ID -> 默认 SKU 库存
 //   - error: 错误信息
-func (s *ProductService) BuildProductExtras(ctx context.Context, products []*model.Product) (map[int64]string, map[int64]float64, map[int64]int32, error) {
+func (s *ProductService) BuildCategoryNames(ctx context.Context, products []*model.Product) (map[int64]string, error) {
 	categoryNames := make(map[int64]string)
-	prices := make(map[int64]float64)
-	stocks := make(map[int64]int32)
 	if len(products) == 0 {
-		return categoryNames, prices, stocks, nil
+		return categoryNames, nil
 	}
 
 	categoryIDs := make([]int64, 0, len(products))
-	productIDs := make([]int64, 0, len(products))
 	seenCategory := make(map[int64]struct{})
 	for _, p := range products {
-		productIDs = append(productIDs, p.ID)
 		if _, ok := seenCategory[p.CategoryID]; !ok && p.CategoryID > 0 {
 			seenCategory[p.CategoryID] = struct{}{}
 			categoryIDs = append(categoryIDs, p.CategoryID)
 		}
 	}
-
-	if len(categoryIDs) > 0 {
-		var categories []*model.Category
-		if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", categoryIDs).Find(&categories).Error; err != nil {
-			return nil, nil, nil, err
-		}
-		for _, c := range categories {
-			categoryNames[c.ID] = c.Name
-		}
+	if len(categoryIDs) == 0 {
+		return categoryNames, nil
 	}
 
-	if len(productIDs) > 0 {
-		var skus []*model.Sku
-		if err := s.db.GetDb().WithContext(ctx).
-			Where("product_id IN ?", productIDs).
-			Where("status = ?", 1).
-			Order("id asc").
-			Find(&skus).Error; err != nil {
-			return nil, nil, nil, err
-		}
-		for _, sku := range skus {
-			if _, ok := prices[sku.ProductID]; !ok {
-				prices[sku.ProductID] = sku.Price
-				stocks[sku.ProductID] = sku.Stock
-			}
-		}
+	var categories []*model.Category
+	if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", categoryIDs).Find(&categories).Error; err != nil {
+		return nil, err
 	}
-
-	return categoryNames, prices, stocks, nil
+	for _, c := range categories {
+		categoryNames[c.ID] = c.Name
+	}
+	return categoryNames, nil
 }
 
 // BuildProductImages 批量查询商品对应的图片 URL 列表
@@ -187,7 +164,8 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 // CreateProduct 创建商品
 // 创建商品主记录的同时，将请求中的图片 URL 按顺序写入 `product_images` 表，
 // 并继续保留 `products.images` JSON 字段作为过渡兼容。
-// 请求携带的 SKU 在同一事务内创建，任一 SKU 创建失败则整体回滚。
+// 规格树与 SKU 组合由 saveSpecsAndSkus 在同一事务内保存：
+// 单规格维护唯一默认 SKU，多规格按规格树全量落库并回写汇总字段。
 //
 // 参数：
 //   - ctx: 上下文
@@ -197,6 +175,10 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 //   - *model.Product: 商品模型
 //   - error: 错误信息
 func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateProductReq) (*model.Product, error) {
+	if len(req.SkuItems) == 0 {
+		return nil, fmt.Errorf("请填写商品价格与库存")
+	}
+
 	imagesJSON, _ := json.Marshal(req.Images)
 	p := &model.Product{
 		CommunityID: req.CommunityId,
@@ -221,37 +203,18 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 				return err
 			}
 		}
-		for _, skuReq := range req.Skus {
-			// spec_json 为 JSON 列，空字符串非法，归一化为空对象
-			specJSON := skuReq.SpecJson
-			if specJSON == "" {
-				specJSON = "{}"
-			}
-			sku := &model.Sku{
-				ProductID:   p.ID,
-				CommunityID: p.CommunityID,
-				SkuCode:     skuReq.SkuCode,
-				SpecName:    skuReq.SpecName,
-				SpecJSON:    specJSON,
-				Price:       skuReq.Price,
-				CostPrice:   skuReq.CostPrice,
-				Stock:       skuReq.Stock,
-				SafetyStock: skuReq.SafetyStock,
-				Image:       skuReq.Image,
-				Status:      1,
-			}
-			if err := tx.Create(sku).Error; err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.saveSpecsAndSkus(tx, p, req.Specs, req.SkuItems)
 	})
-	return p, err
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // UpdateProduct 更新商品
-// 更新商品主记录后，删除该商品在 `product_images` 表中的全部旧记录，
-// 再按请求中的新图片顺序重新插入，同时同步更新 `products.images` JSON 字段。
+// 请求 images 非空时，删除该商品在 `product_images` 表中的全部旧记录并按新顺序重新插入，
+// 同时同步更新 `products.images` JSON 字段；images 为空数组时保留现有图片不变更。
+// 规格树与 SKU 组合由 saveSpecsAndSkus 在同一事务内全量保存（含 diff 软删除）。
 //
 // 参数：
 //   - ctx: 上下文
@@ -290,23 +253,32 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	if req.MinBuy > 0 {
 		p.MinBuy = req.MinBuy
 	}
+	p.IsMultiSpec = req.IsMultiSpec
 
-	imagesJSON, _ := json.Marshal(req.Images)
-	p.Images = string(imagesJSON)
+	// images 为空数组时视为"不变更"，保留商品现有图片，避免编辑接口意外清空图片
+	if len(req.Images) > 0 {
+		imagesJSON, _ := json.Marshal(req.Images)
+		p.Images = string(imagesJSON)
+	}
 
 	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(p).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("product_id = ?", req.Id).Delete(&model.ProductImage{}).Error; err != nil {
-			return err
-		}
 		if len(req.Images) > 0 {
-			return s.saveProductImages(tx, req.Id, req.Images)
+			if err := tx.Where("product_id = ?", req.Id).Delete(&model.ProductImage{}).Error; err != nil {
+				return err
+			}
+			if err := s.saveProductImages(tx, req.Id, req.Images); err != nil {
+				return err
+			}
 		}
-		return nil
+		return s.saveSpecsAndSkus(tx, p, req.Specs, req.SkuItems)
 	})
-	return p, err
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // DeleteProduct 删除商品（软删除：状态置为 2）
@@ -386,40 +358,32 @@ func (s *ProductService) ListProductImages(ctx context.Context, productID int64)
 // 返回值：
 //   - error: 错误信息
 func (s *ProductService) saveProductImages(tx *gorm.DB, productID int64, images []string) error {
+	// 批量插入时基类 BeforeCreate 钩子（SetFieldIfExist）不作用于切片，需显式填充时间，
+	// 否则 created_at 以空串写入 strict 模式的 datetime 列会报 Error 1292
+	now := time.Now().Format("2006-01-02 15:04:05")
 	records := make([]model.ProductImage, 0, len(images))
 	for i, url := range images {
 		records = append(records, model.ProductImage{
 			ProductID: productID,
 			URL:       url,
 			Sort:      int32(i),
+			CreatedAt: now,
 		})
 	}
 	return tx.Create(&records).Error
 }
 
 // ToProductInfo 将商品模型转换为 proto 商品信息
-// 参数：
-//   - p: 商品模型
-//   - images: 商品图片 URL 列表
-//
-// 返回值：
-//   - *product.ProductInfo: proto 商品信息
-func ToProductInfo(p *model.Product, images []string) *product.ProductInfo {
-	return ToProductInfoWithExtra(p, "", 0, 0, images)
-}
-
-// ToProductInfoWithExtra 将商品模型转换为 proto 商品信息，并附加分类名称与默认 SKU 价格/库存
+// 价格/库存取自商品表汇总字段（由规格保存流程回写维护）
 //
 // 参数：
 //   - p: 商品模型
 //   - categoryName: 分类名称
-//   - price: 默认 SKU 售价
-//   - stock: 默认 SKU 库存
 //   - images: 商品图片 URL 列表
 //
 // 返回值：
 //   - *product.ProductInfo: proto 商品信息
-func ToProductInfoWithExtra(p *model.Product, categoryName string, price float64, stock int32, images []string) *product.ProductInfo {
+func ToProductInfo(p *model.Product, categoryName string, images []string) *product.ProductInfo {
 	if p == nil {
 		return nil
 	}
@@ -437,8 +401,10 @@ func ToProductInfoWithExtra(p *model.Product, categoryName string, price float64
 		Status:       p.Status,
 		Sort:         p.Sort,
 		SalesCount:   p.SalesCount,
-		Price:        price,
-		Stock:        stock,
+		Price:        p.MinPrice,
+		Stock:        p.Stock,
+		MinPrice:     p.MinPrice,
+		MaxPrice:     p.MaxPrice,
 		CategoryName: categoryName,
 	}
 }

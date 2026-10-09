@@ -93,6 +93,8 @@ export interface Product {
   category_name: string
   price: number
   original_price?: number
+  min_price?: number
+  max_price?: number
   stock: number
   status: number
   cover_image?: string
@@ -106,16 +108,102 @@ export interface Product {
 }
 
 /**
+ * 规格值信息
+ */
+export interface SpecValue {
+  id: number
+  name: string
+  sort: number
+}
+
+/**
+ * 规格名信息（含层级规格值）
+ */
+export interface Spec {
+  id: number
+  name: string
+  sort: number
+  values: SpecValue[]
+}
+
+/**
  * SKU 信息
  */
 export interface Sku {
   id: number
   product_id: number
   sku_code: string
+  /** 逗号分隔的规格值 ID（多规格组合键，单规格为空） */
+  spec_value_ids: string
   spec_name: string
+  spec_json: string
   price: number
+  cost_price: number
   stock: number
-  attrs: Record<string, string>
+  safety_stock: number
+  image: string
+  status: number
+}
+
+/**
+ * 规格名保存项（新增节点 temp_id 非空，编辑节点携带真实 id）
+ */
+export interface SpecSaveItem {
+  id: number
+  temp_id: string
+  name: string
+  sort: number
+  values: SpecValueSaveItem[]
+}
+
+/**
+ * 规格值保存项
+ */
+export interface SpecValueSaveItem {
+  id: number
+  temp_id: string
+  name: string
+  sort: number
+}
+
+/**
+ * SKU 保存项（spec_value_ids 为规格值 ID 列表，真实数字 ID 或临时 ID）
+ */
+export interface SkuSaveItem {
+  id: number
+  spec_value_ids: string[]
+  sku_code: string
+  price: number
+  cost_price: number
+  stock: number
+  safety_stock: number
+  image: string
+}
+
+/**
+ * 商品保存载荷
+ */
+export interface ProductSavePayload {
+  name: string
+  category_id: number
+  description: string
+  cover_image: string
+  images: string[]
+  unit: string
+  is_multi_spec: boolean
+  min_buy: number
+  sort: number
+  specs: SpecSaveItem[]
+  sku_items: SkuSaveItem[]
+}
+
+/**
+ * 商品详情（含 SKU 列表与规格树）
+ */
+export interface ProductDetail {
+  product: Product
+  skus: Sku[]
+  specs: Spec[]
 }
 
 /**

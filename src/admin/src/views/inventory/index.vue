@@ -220,7 +220,7 @@ async function onProductChange(productId: number | null) {
     const res = await getSkuList(productId)
     const list: Sku[] = res.data.data || []
     skuOptions.value = list.map((sku) => ({
-      label: `${sku.sku_code || sku.id} ${sku.attrs ? JSON.stringify(sku.attrs) : ''}`.trim(),
+      label: `${sku.sku_code || sku.id} ${sku.spec_name || ''}`.trim(),
       value: sku.id,
     }))
   } catch {

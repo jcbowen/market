@@ -5,13 +5,30 @@
 
 import { get } from './request'
 import type { PageData } from './request'
-import type { Banner, Category, FullReduction, Product, Sku } from './types'
+import type { Banner, Category, FullReduction, Product, Sku, Spec } from './types'
+
+/** 后端规格值原始字段 */
+interface RawSpecValue {
+  id?: number
+  name?: string
+  sort?: number
+}
+
+/** 后端规格原始字段 */
+interface RawSpec {
+  id?: number
+  name?: string
+  sort?: number
+  values?: RawSpecValue[]
+}
 
 /** 后端 SKU 原始字段 */
 interface RawSku {
   id?: number
   product_id?: number
   spec_name?: string
+  spec_json?: string
+  spec_value_ids?: string
   price?: number
   original_price?: number
   stock?: number
@@ -34,6 +51,25 @@ interface RawProduct {
   is_multi_spec?: boolean
   min_buy?: number
   skus?: RawSku[]
+  specs?: RawSpec[]
+}
+
+/**
+ * 将后端规格字段映射为前端 Spec 类型
+ * @param spec 后端规格对象
+ * @returns 前端规格对象
+ */
+function normalizeSpec(spec: RawSpec): Spec {
+  return {
+    id: spec.id || 0,
+    name: spec.name || '',
+    sort: spec.sort || 0,
+    values: (spec.values || []).map((v) => ({
+      id: v.id || 0,
+      name: v.name || '',
+      sort: v.sort || 0,
+    })),
+  }
 }
 
 /**
@@ -50,6 +86,9 @@ function normalizeSku(sku: RawSku): Sku {
     original_price: sku.original_price || 0,
     stock: sku.stock || 0,
     image: sku.image || '',
+    spec_name: sku.spec_name || '',
+    spec_json: sku.spec_json || '{}',
+    spec_value_ids: sku.spec_value_ids || '',
   }
 }
 
@@ -74,6 +113,7 @@ function normalizeProduct(p: RawProduct): Product {
     is_multi_spec: p.is_multi_spec || false,
     min_buy: p.min_buy || 1,
     skus: (p.skus || []).map(normalizeSku),
+    specs: (p.specs || []).map(normalizeSpec),
   }
 }
 
@@ -110,9 +150,10 @@ export function getProducts(params?: {
  * @param communityId 社区 ID（可选）
  */
 export function getProductDetail(id: number, communityId?: number) {
-  return get<{ product: RawProduct; skus: RawSku[] }>(`/products/${id}`, { community_id: communityId }).then((res) => {
+  return get<{ product: RawProduct; skus: RawSku[]; specs?: RawSpec[] }>(`/products/${id}`, { community_id: communityId }).then((res) => {
     const raw = res.data?.product || {}
     raw.skus = res.data?.skus || []
+    raw.specs = res.data?.specs || []
     return {
       code: res.code,
       message: res.message,

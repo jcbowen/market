@@ -25,6 +25,7 @@ func main() {
 	if err := autoMigrate(db); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
+	backfillProductSummary(db)
 	_ = bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer()
@@ -47,6 +48,8 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.Category{},
 		&model.Product{},
 		&model.ProductImage{},
+		&model.ProductSpec{},
+		&model.ProductSpecValue{},
 		&model.Sku{},
 		&model.CommunityPricing{},
 		&model.StockRecord{},
@@ -59,4 +62,34 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.FullReduction{},
 		&model.Banner{},
 	)
+}
+
+// backfillProductSummary 回填商品汇总字段的存量数据
+// min_price/max_price/stock 列由规格保存流程回写维护；历史上线前存量的商品
+// 这三列均为默认值 0，此处按启用 SKU 一次性回填（价格必须大于 0，故以
+// min_price = 0 作为"未回写过"的判断条件，回填后不会重复执行）。
+// 仅记录日志不中断启动：回填失败不影响服务运行，可重新启动重试。
+//
+// 参数：
+//   - db: MySQL 实例
+func backfillProductSummary(db *mysql.Instance) {
+	const sql = `
+UPDATE products p
+JOIN (
+    SELECT product_id, MIN(price) AS min_p, MAX(price) AS max_p, SUM(stock) AS total
+    FROM product_skus
+    WHERE status = 1
+    GROUP BY product_id
+) s ON s.product_id = p.id
+SET p.min_price = s.min_p, p.max_price = s.max_p, p.stock = s.total
+WHERE p.min_price = 0`
+
+	result := db.GetDb().Exec(sql)
+	if result.Error != nil {
+		log.Printf("回填商品汇总字段失败: %v", result.Error)
+		return
+	}
+	if result.RowsAffected > 0 {
+		log.Printf("已回填 %d 个商品的汇总价格与库存", result.RowsAffected)
+	}
 }

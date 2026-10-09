@@ -294,6 +294,7 @@ const currentProduct = ref<Product>({
   category_name: '',
   description: '',
   skus: [],
+  specs: [],
   sales: 0,
   is_multi_spec: false,
   min_buy: 1,
@@ -306,6 +307,9 @@ const selectedSku = ref<Sku>({
   original_price: 0,
   stock: 0,
   image: '',
+  spec_name: '',
+  spec_json: '{}',
+  spec_value_ids: '',
 })
 const popupQuantity = ref(1)
 
@@ -745,7 +749,7 @@ function openSkuPopup(product: Product) {
   if (product.skus.length) {
     selectedSku.value = product.skus.find((s) => s.stock > 0) || product.skus[0]
   } else {
-    selectedSku.value = { id: 0, product_id: 0, name: '', price: 0, original_price: 0, stock: 0, image: '' }
+    selectedSku.value = { id: 0, product_id: 0, name: '', price: 0, original_price: 0, stock: 0, image: '', spec_name: '', spec_json: '{}', spec_value_ids: '' }
   }
   popupQuantity.value = product.min_buy || 1
   showSkuPopup.value = true

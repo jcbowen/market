@@ -141,6 +141,7 @@ message SearchProductsReq {
 }
 
 message CreateProductReq {
+  reserved 10; // 原 repeated CreateSkuReq skus 字段，已被 specs + sku_items 取代
   int64 community_id = 1;
   int64 category_id = 2;
   string name = 3;
@@ -150,7 +151,8 @@ message CreateProductReq {
   string unit = 7;
   bool is_multi_spec = 8;
   int32 sort = 9;
-  repeated CreateSkuReq skus = 10;
+  repeated SpecReq specs = 12;         // 规格树（多规格时必填）
+  repeated SkuItemReq sku_items = 13; // SKU 组合列表（单规格时仅一条，不带规格值）
   int32 min_buy = 11;
 }
 
@@ -165,6 +167,9 @@ message UpdateProductReq {
   int32 sort = 8;
   int32 status = 9;
   int32 min_buy = 10;
+  bool is_multi_spec = 11;
+  repeated SpecReq specs = 12;         // 规格树（多规格时必填，全量提交）
+  repeated SkuItemReq sku_items = 13; // SKU 组合列表（全量提交）
 }
 
 message DeleteProductReq {
@@ -193,16 +198,64 @@ message ProductInfo {
   int32 stock = 14;
   string category_name = 15;
   int32 min_buy = 16;
+  double min_price = 17; // 价格区间下限（汇总字段）
+  double max_price = 18; // 价格区间上限（汇总字段）
 }
 
 message ProductDetail {
   ProductInfo product = 1;
   repeated SkuInfo skus = 2;
+  repeated SpecInfo specs = 3; // 规格树（单规格时为空）
 }
 
 message ListProductsResp {
   repeated ProductInfo list = 1;
   common.PaginationResponse pagination = 2;
+}
+
+// --- 规格 ---
+// SpecValueReq 规格值保存项（商品保存流程内嵌）
+message SpecValueReq {
+  int64 id = 1;       // 已存在的规格值 ID，新增时为 0
+  string temp_id = 2; // 前端临时 ID（如 new_value_1），新增时必填，供 SKU 组合引用替换
+  string name = 3;
+  int32 sort = 4;
+}
+
+// SpecReq 规格名保存项（商品保存流程内嵌）
+message SpecReq {
+  int64 id = 1;       // 已存在的规格 ID，新增时为 0
+  string temp_id = 2; // 前端临时 ID（如 new_spec_1），新增时必填
+  string name = 3;
+  int32 sort = 4;
+  repeated SpecValueReq values = 5;
+}
+
+// SkuItemReq SKU 保存项（商品保存流程内嵌）
+message SkuItemReq {
+  int64 id = 1;                        // 已存在的 SKU ID，新增时为 0
+  repeated string spec_value_ids = 2; // 规格值 ID 列表（真实数字 ID 或前端临时 ID）
+  string sku_code = 3;                // 为空时服务端自动生成
+  double price = 4;
+  double cost_price = 5;
+  int32 stock = 6;
+  int32 safety_stock = 7;
+  string image = 8;
+}
+
+// SpecValueInfo 规格值信息（详情返回）
+message SpecValueInfo {
+  int64 id = 1;
+  string name = 2;
+  int32 sort = 3;
+}
+
+// SpecInfo 规格名信息（详情返回，含层级规格值）
+message SpecInfo {
+  int64 id = 1;
+  string name = 2;
+  int32 sort = 3;
+  repeated SpecValueInfo values = 4;
 }
 
 // --- SKU ---
@@ -251,6 +304,7 @@ message SkuInfo {
   int32 safety_stock = 10;
   string image = 11;
   int32 status = 12;
+  string spec_value_ids = 13; // 逗号分隔的规格值 ID（多规格组合键，单规格为空）
 }
 
 message ListSkusResp {

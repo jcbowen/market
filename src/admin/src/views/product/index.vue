@@ -79,12 +79,12 @@
             <n-input-number v-model:value="productForm.sort" placeholder="排序" style="width: 100%;" />
           </n-form-item>
         </n-space>
-        <n-form-item label="是否多规格">
-          <n-switch v-model:value="productForm.is_multi_spec" />
-        </n-form-item>
         <n-form-item label="商品描述">
           <n-input v-model:value="productForm.description" type="textarea" placeholder="商品描述" />
         </n-form-item>
+        <n-alert type="info" :show-icon="false">
+          此处仅支持快速创建单规格商品；多规格商品请使用「新增商品」页面进行编辑。
+        </n-alert>
       </n-form>
       <template #footer>
         <n-space justify="end">
@@ -109,7 +109,7 @@ import {
   updateProduct,
   updateProductStatus,
 } from '@/api/product'
-import type { Category, Product } from '@/api/types'
+import type { Category, Product, ProductSavePayload } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 
 const message = useMessage()
@@ -305,27 +305,43 @@ function openProductModal(row?: Product) {
 }
 
 /**
- * 保存商品
+ * 保存商品（快速创建/编辑，固定单规格）
+ * 多规格商品的规格编辑请使用商品编辑页
  */
 async function saveProduct() {
   if (!productForm.name || !productForm.category_id || productForm.price === undefined) {
     message.warning('请填写完整商品信息')
     return
   }
+  if (productForm.stock === undefined || productForm.stock < 0) {
+    message.warning('请填写库存')
+    return
+  }
   productModalLoading.value = true
   try {
-    const payload: Partial<Product> = {
+    const payload: ProductSavePayload = {
       name: productForm.name,
       category_id: productForm.category_id,
-      cover_image: productForm.cover_image,
-      price: productForm.price,
-      original_price: productForm.original_price,
-      stock: productForm.stock,
-      unit: productForm.unit,
-      description: productForm.description,
-      is_multi_spec: productForm.is_multi_spec,
-      min_buy: productForm.min_buy,
-      sort: productForm.sort,
+      cover_image: productForm.cover_image ?? '',
+      images: [],
+      unit: productForm.unit ?? '',
+      description: productForm.description ?? '',
+      is_multi_spec: false,
+      min_buy: productForm.min_buy ?? 1,
+      sort: productForm.sort ?? 0,
+      specs: [],
+      sku_items: [
+        {
+          id: 0,
+          spec_value_ids: [],
+          sku_code: '',
+          price: productForm.price,
+          cost_price: 0,
+          stock: productForm.stock,
+          safety_stock: 0,
+          image: '',
+        },
+      ],
     }
     if (productForm.id) {
       await updateProduct(productForm.id, payload)

@@ -43,6 +43,21 @@ export interface Category {
   sort: number
 }
 
+/** 规格值 */
+export interface SpecValue {
+  id: number
+  name: string
+  sort: number
+}
+
+/** 规格（含规格值列表） */
+export interface Spec {
+  id: number
+  name: string
+  sort: number
+  values: SpecValue[]
+}
+
 /** SKU */
 export interface Sku {
   id: number
@@ -52,6 +67,12 @@ export interface Sku {
   original_price: number
   stock: number
   image: string
+  /** 规格名称（如 "红色 / 大号"） */
+  spec_name: string
+  /** 规格 JSON（如 {"颜色":"红色"}），单规格为 "{}" */
+  spec_json: string
+  /** 逗号分隔的规格值 ID 组合键（多规格用，单规格为空） */
+  spec_value_ids: string
 }
 
 /** 商品 */
@@ -67,6 +88,8 @@ export interface Product {
   category_name: string
   description: string
   skus: Sku[]
+  /** 规格树（多规格时非空） */
+  specs: Spec[]
   sales: number
   is_multi_spec: boolean
   min_buy: number

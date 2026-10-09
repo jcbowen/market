@@ -112,7 +112,7 @@ async function onAddProductChange(productId: number | null) {
     const list: Sku[] = res.data.data || []
     addSkuMap.value = Object.fromEntries(list.map((sku) => [sku.id, sku]))
     addSkuOptions.value = list.map((sku) => ({
-      label: `${sku.sku_code || sku.id} ${sku.attrs ? JSON.stringify(sku.attrs) : ''}`.trim(),
+      label: `${sku.sku_code || sku.id} ${sku.spec_name || ''}`.trim(),
       value: sku.id,
     }))
   } catch {

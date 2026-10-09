@@ -591,6 +591,24 @@ func (h *AdminHandler) DeleteCategory(c *gin.Context) {
 
 // --- 商品管理 ---
 
+// GetAdminProduct 获取管理端商品详情（含 SKU 列表与规格树）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GetAdminProduct(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	resp, err := h.productClient.GetProduct(c.Request.Context(), &product.GetProductReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
 // ListAdminProducts 获取管理端商品列表
 // 参数：
 //   - c: gin 上下文
@@ -616,18 +634,106 @@ func (h *AdminHandler) ListAdminProducts(c *gin.Context) {
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
 }
 
+// SpecValueReqItem 规格值保存项（前端临时 ID 或真实 ID）
+type SpecValueReqItem struct {
+	ID     int64  `json:"id"`
+	TempID string `json:"temp_id"`
+	Name   string `json:"name"`
+	Sort   int32  `json:"sort"`
+}
+
+// SpecReqItem 规格名保存项（含层级规格值）
+type SpecReqItem struct {
+	ID     int64               `json:"id"`
+	TempID string              `json:"temp_id"`
+	Name   string              `json:"name"`
+	Sort   int32               `json:"sort"`
+	Values []*SpecValueReqItem `json:"values"`
+}
+
+// SkuItemReqItem SKU 保存项（spec_value_ids 为规格值 ID 列表，真实数字 ID 或临时 ID）
+type SkuItemReqItem struct {
+	ID           int64    `json:"id"`
+	SpecValueIDs []string `json:"spec_value_ids"`
+	SkuCode      string   `json:"sku_code"`
+	Price        float64  `json:"price"`
+	CostPrice    float64  `json:"cost_price"`
+	Stock        int32    `json:"stock"`
+	SafetyStock  int32    `json:"safety_stock"`
+	Image        string   `json:"image"`
+}
+
 // CreateProductReq 创建商品请求
 type CreateProductReq struct {
-	CategoryID  int64                   `json:"category_id" binding:"required"`
-	Name        string                  `json:"name" binding:"required"`
-	Description string                  `json:"description"`
-	CoverImage  string                  `json:"cover_image"`
-	Images      []string                `json:"images"`
-	Unit        string                  `json:"unit"`
-	IsMultiSpec bool                    `json:"is_multi_spec"`
-	MinBuy      int32                   `json:"min_buy"`
-	Sort        int32                   `json:"sort"`
-	Skus        []*product.CreateSkuReq `json:"skus"`
+	CategoryID  int64            `json:"category_id" binding:"required"`
+	Name        string           `json:"name" binding:"required"`
+	Description string           `json:"description"`
+	CoverImage  string           `json:"cover_image"`
+	Images      []string         `json:"images"`
+	Unit        string           `json:"unit"`
+	IsMultiSpec bool             `json:"is_multi_spec"`
+	MinBuy      int32            `json:"min_buy"`
+	Sort        int32            `json:"sort"`
+	Specs       []*SpecReqItem   `json:"specs"`
+	SkuItems    []*SkuItemReqItem `json:"sku_items"`
+}
+
+// toProtoSpecs 转换规格树为 proto 结构
+// 参数：
+//   - specs: 网关层规格树列表
+//
+// 返回值：
+//   - []*product.SpecReq: proto 规格树
+func toProtoSpecs(specs []*SpecReqItem) []*product.SpecReq {
+	if len(specs) == 0 {
+		return nil
+	}
+	list := make([]*product.SpecReq, 0, len(specs))
+	for _, sp := range specs {
+		values := make([]*product.SpecValueReq, 0, len(sp.Values))
+		for _, v := range sp.Values {
+			values = append(values, &product.SpecValueReq{
+				Id:     v.ID,
+				TempId: v.TempID,
+				Name:   v.Name,
+				Sort:   v.Sort,
+			})
+		}
+		list = append(list, &product.SpecReq{
+			Id:     sp.ID,
+			TempId: sp.TempID,
+			Name:   sp.Name,
+			Sort:   sp.Sort,
+			Values: values,
+		})
+	}
+	return list
+}
+
+// toProtoSkuItems 转换 SKU 列表为 proto 结构
+// 参数：
+//   - items: 网关层 SKU 列表
+//
+// 返回值：
+//   - []*product.SkuItemReq: proto SKU 列表
+func toProtoSkuItems(items []*SkuItemReqItem) []*product.SkuItemReq {
+	if len(items) == 0 {
+		return nil
+	}
+	list := make([]*product.SkuItemReq, 0, len(items))
+	for _, it := range items {
+		list = append(list, &product.SkuItemReq{
+			Id:           it.ID,
+			SpecValueIds: it.SpecValueIDs,
+			SkuCode:      it.SkuCode,
+			Price:        it.Price,
+			CostPrice:    it.CostPrice,
+			Stock:        it.Stock,
+			SafetyStock:  it.SafetyStock,
+			Image:        it.Image,
+		})
+	}
+	return list
 }
 
 // CreateProduct 创建商品
@@ -651,7 +757,8 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 		IsMultiSpec: req.IsMultiSpec,
 		MinBuy:      req.MinBuy,
 		Sort:        req.Sort,
-		Skus:        req.Skus,
+		Specs:       toProtoSpecs(req.Specs),
+		SkuItems:    toProtoSkuItems(req.SkuItems),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -662,15 +769,18 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 
 // UpdateProductReq 更新商品请求
 type UpdateProductReq struct {
-	CategoryID  int64    `json:"category_id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	CoverImage  string   `json:"cover_image"`
-	Images      []string `json:"images"`
-	Unit        string   `json:"unit"`
-	Sort        int32    `json:"sort"`
-	Status      int32    `json:"status"`
-	MinBuy      int32    `json:"min_buy"`
+	CategoryID  int64             `json:"category_id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	CoverImage  string            `json:"cover_image"`
+	Images      []string          `json:"images"`
+	Unit        string            `json:"unit"`
+	Sort        int32             `json:"sort"`
+	Status      int32             `json:"status"`
+	MinBuy      int32             `json:"min_buy"`
+	IsMultiSpec bool              `json:"is_multi_spec"`
+	Specs       []*SpecReqItem    `json:"specs"`
+	SkuItems    []*SkuItemReqItem `json:"sku_items"`
 }
 
 // UpdateProduct 更新商品
@@ -700,6 +810,9 @@ func (h *AdminHandler) UpdateProduct(c *gin.Context) {
 		Sort:        req.Sort,
 		Status:      req.Status,
 		MinBuy:      req.MinBuy,
+		IsMultiSpec: req.IsMultiSpec,
+		Specs:       toProtoSpecs(req.Specs),
+		SkuItems:    toProtoSkuItems(req.SkuItems),
 	})
 	if err != nil {
 		response.GRPCError(c, err)

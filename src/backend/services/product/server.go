@@ -98,7 +98,7 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 		return nil, bizerr.ToStatus(err)
 	}
 
-	categoryNames, prices, stocks, err := s.productService.BuildProductExtras(ctx, list)
+	categoryNames, err := s.productService.BuildCategoryNames(ctx, list)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -126,20 +126,23 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 		},
 	}
 	for _, p := range list {
-		resp.List = append(resp.List, service.ToProductInfoWithExtra(
-			p, categoryNames[p.CategoryID], prices[p.ID], stocks[p.ID], imageMap[p.ID],
-		))
+		resp.List = append(resp.List, service.ToProductInfo(p, categoryNames[p.CategoryID], imageMap[p.ID]))
 	}
 	return resp, nil
 }
 
 // GetProduct 获取商品详情
+// 返回商品基础信息、SKU 列表与规格树（单规格时规格树为空）
 func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*product.ProductDetail, error) {
 	p, err := s.productService.GetProduct(ctx, req.Id)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	skus, err := s.productService.ListSkusByProductID(ctx, req.Id)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	specs, err := s.productService.ListSpecs(ctx, req.Id)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -153,16 +156,10 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 		imageURLs = append(imageURLs, img.URL)
 	}
 
-	var price float64
-	var stock int32
-	if len(skus) > 0 {
-		price = skus[0].Price
-		stock = skus[0].Stock
-	}
-
 	detail := &product.ProductDetail{
-		Product: service.ToProductInfoWithExtra(p, "", price, stock, imageURLs),
+		Product: service.ToProductInfo(p, "", imageURLs),
 		Skus:    make([]*product.SkuInfo, 0, len(skus)),
+		Specs:   specs,
 	}
 	for _, sku := range skus {
 		detail.Skus = append(detail.Skus, service.ToSkuInfo(sku))
