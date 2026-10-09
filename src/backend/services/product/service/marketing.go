@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -144,6 +147,10 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var c model.Coupon
 		if err := tx.Clauses(lockClause()).First(&c, req.CouponId).Error; err != nil {
+			// 优惠券不存在时返回业务文案，避免 GORM 原始错误透出到客户端
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return bizerr.New(codes.NotFound, "优惠券不存在")
+			}
 			return err
 		}
 		if c.Status != 1 {

@@ -307,7 +307,41 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 	})
 }
 
+// orderTransitions 订单状态合法流转表
+// key 为目标状态，value 为允许的来源状态集合
+// 1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款
+var orderTransitions = map[int32][]int32{
+	2: {1},       // 待支付 -> 已支付（支付成功）
+	3: {2},       // 已支付 -> 备货中
+	4: {2, 3},    // 已支付/备货中 -> 配送中（发货）
+	5: {2, 4},    // 已支付(自提)/配送中 -> 已完成（确认收货）
+	6: {1},       // 待支付 -> 已取消
+	7: {2, 3, 4}, // 已支付/备货中/配送中 -> 退款中
+	8: {7},       // 退款中 -> 已退款
+}
+
+// isTransitionAllowed 校验订单状态流转是否合法
+// 参数：
+//   - from: 当前状态
+//   - to: 目标状态
+//
+// 返回值：
+//   - bool: 是否允许流转
+func isTransitionAllowed(from, to int32) bool {
+	allowed, ok := orderTransitions[to]
+	if !ok {
+		return false
+	}
+	for _, s := range allowed {
+		if s == from {
+			return true
+		}
+	}
+	return false
+}
+
 // UpdateOrderStatus 更新订单状态
+// 带状态机校验：仅允许合法流转，退款中/已退款/已取消等状态不可再发货、完成或重新支付
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新请求
@@ -319,6 +353,9 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 		var o model.Order
 		if err := tx.First(&o, req.Id).Error; err != nil {
 			return err
+		}
+		if !isTransitionAllowed(o.Status, req.Status) {
+			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许流转: %d -> %d", o.Status, req.Status))
 		}
 		fromStatus := o.Status
 		now := time.Now().Format("2006-01-02 15:04:05")

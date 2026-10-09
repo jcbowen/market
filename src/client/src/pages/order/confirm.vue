@@ -85,9 +85,10 @@ import { getAddressList } from '@/api/user'
 import { getCart } from '@/api/cart'
 import { getFullReductions, getProductDetail, getSkuById } from '@/api/product'
 import { createOrder } from '@/api/order'
-import { getPaymentChannels, createPayment } from '@/api/payment'
+import { getPaymentChannels } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
 import { formatPrice } from '@/utils/format'
+import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goAddressList, goOrderDetail, goLogin } from '@/utils/navigate'
 import type { Address, FullReduction, OrderItem, PaymentChannel, UserCoupon } from '@/api/types'
 
@@ -362,7 +363,9 @@ function onSelectChannel() {
 }
 
 /**
- * 提交订单并自动完成支付
+ * 提交订单并按所选渠道拉起支付
+ * 仅支付真实完成才提示支付成功；用户取消或渠道未开通时不提示成功，
+ * 统一跳转订单详情，便于用户在待支付状态下重新支付
  */
 async function onSubmit() {
   if (!selectedAddress.value) {
@@ -393,8 +396,8 @@ async function onSubmit() {
       uni.showToast({ title: '下单失败', icon: 'none' })
       return
     }
-    await createPayment(res.data.id, selectedChannel.value.channel)
-    uni.showToast({ title: '支付成功', icon: 'success' })
+    const outcome = await payOrder(res.data.id, selectedChannel.value.channel)
+    notifyPayOutcome(outcome)
     goOrderDetail(res.data.id)
   } catch {
     // 下单或支付失败已由 request 统一提示

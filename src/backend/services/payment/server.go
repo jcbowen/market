@@ -40,9 +40,11 @@ func (s *server) CreatePayment(ctx stdctx.Context, req *payment.CreatePaymentReq
 		PayType:   p.PayType,
 		Amount:    p.Amount,
 	}
-	if p.PayType == 1 {
+	// 调起参数按支付方式归属字段，现金支付无需第三方调起参数
+	switch p.PayType {
+	case 1:
 		resp.WechatPayParams = payParams
-	} else {
+	case 2:
 		resp.AlipayPayParams = payParams
 	}
 	return resp, nil

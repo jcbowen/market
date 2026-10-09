@@ -4,7 +4,7 @@
  */
 
 import { get, post } from './request'
-import type { Payment, PaymentChannel } from './types'
+import type { CreatePaymentResult, Payment, PaymentChannel } from './types'
 
 /**
  * 获取当前启用的支付渠道列表
@@ -16,17 +16,20 @@ export function getPaymentChannels() {
 
 /**
  * 创建支付单
+ * 微信 openid 由服务端从用户资料取得，无需前端传入
  * @param orderId 订单 ID
  * @param channel 支付渠道：wechat、alipay、cash（货到付款）
+ * @returns 支付单号与对应渠道的调起参数
  */
-export function createPayment(orderId: number, channel: 'wechat' | 'alipay' | 'cash') {
-  return post<Payment>('/payments', { order_id: orderId, channel })
+export function createPayment(orderId: number, channel: PaymentChannel['channel']) {
+  return post<CreatePaymentResult>('/payments', { order_id: orderId, channel })
 }
 
 /**
- * 查询支付单详情
- * @param id 支付单 ID
+ * 查询订单的支付单详情
+ * 后端按订单 ID 查询已支付记录
+ * @param orderId 订单 ID
  */
-export function getPaymentDetail(id: number) {
-  return get<Payment>(`/payments/${id}`)
+export function getPaymentDetail(orderId: number) {
+  return get<Payment>(`/payments/${orderId}`)
 }

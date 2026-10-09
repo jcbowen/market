@@ -194,10 +194,23 @@ export interface PaymentChannel {
 /** 支付单 */
 export interface Payment {
   id: number
+  payment_no: string
   order_id: number
+  user_id: number
+  pay_type: number
   amount: number
   status: number
+  transaction_id: string
+  pay_time: string
+}
+
+/** 创建支付单响应 */
+export interface CreatePaymentResult {
+  payment_no: string
   pay_type: number
-  pay_url: string
-  pay_params: Record<string, string>
+  amount: number
+  /** 微信调起参数 JSON：小程序 JSAPI 为签名参数，H5 为 { h5_url } */
+  wechat_pay_params?: string
+  /** 支付宝调起参数 JSON，当前渠道未开放 */
+  alipay_pay_params?: string
 }

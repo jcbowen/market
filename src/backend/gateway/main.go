@@ -120,8 +120,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	userHandler := handler.NewUserHandler(clients.UserClient)
 	productHandler := handler.NewProductHandler(clients.ProductClient)
 	cartHandler := handler.NewCartHandler(clients.CartClient)
-	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient)
-	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, cfg)
+	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient)
+	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient, cfg)
 	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat)
 
 	apiV1 := r.Group("/api/v1")

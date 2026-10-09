@@ -75,8 +75,9 @@
 import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { getOrderDetail, cancelOrder, confirmReceive, applyRefund } from '@/api/order'
-import { createPayment, getPaymentChannels, getPaymentDetail } from '@/api/payment'
+import { getPaymentChannels, getPaymentDetail } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
+import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderList } from '@/utils/navigate'
 import type { Order, PaymentChannel } from '@/api/types'
 
@@ -164,7 +165,9 @@ async function loadPayTypeText() {
 
 /**
  * 支付订单
- * 获取可用支付渠道，货到付款直接完成支付，第三方支付提示暂未开通
+ * 获取可用支付渠道后创建支付单并拉起支付：货到付款直接完成，
+ * 微信支付在小程序端调起 JSAPI、H5 端跳转支付页面，未开通渠道提示暂未开通；
+ * 仅在支付真实完成时提示支付成功
  */
 async function onPay() {
   try {
@@ -184,12 +187,8 @@ async function onPay() {
       channel = channels[res.tapIndex]
     }
     if (!channel) return
-    if (channel.channel !== 'cash') {
-      uni.showToast({ title: '该支付方式暂未开通', icon: 'none' })
-      return
-    }
-    await createPayment(order.value.id, channel.channel)
-    uni.showToast({ title: '支付成功', icon: 'success' })
+    const outcome = await payOrder(order.value.id, channel.channel)
+    notifyPayOutcome(outcome)
     loadOrder()
   } catch {
     // request 已统一提示错误

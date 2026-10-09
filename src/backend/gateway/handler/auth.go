@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"time"
 
@@ -15,6 +14,11 @@ import (
 	"github.com/jcbowen/market/src/backend/common/response"
 	"github.com/jcbowen/wego/miniprogram"
 )
+
+// phoneOpenidPrefix 手机号登录用户的 openid 占位前缀
+// 手机号登录没有微信 openid，用 phone_<手机号> 占位以满足用户表 openid 唯一索引，
+// 该值不是微信真实 openid，不可用于微信 JSAPI 支付
+const phoneOpenidPrefix = "phone_"
 
 // AuthHandler C 端认证处理器
 // 负责微信小程序登录、手机号验证码登录、token 刷新
@@ -226,7 +230,7 @@ func (h *AuthHandler) phoneOpenid(ctx context.Context, phone string) string {
 	if err == nil && existing != nil && existing.Openid != "" {
 		return existing.Openid
 	}
-	return fmt.Sprintf("phone_%s", phone)
+	return phoneOpenidPrefix + phone
 }
 
 // successResponse 登录成功后统一返回 token 与用户信息

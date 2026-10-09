@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,8 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
@@ -61,6 +64,7 @@ func NewPaymentService(db *mysql.Instance, cfg *config.Config) *PaymentService {
 
 // CreatePayment 创建支付单并生成第三方支付调起参数
 // 现金/货到付款无需第三方调起参数，创建成功后直接同步订单状态为已支付
+// 幂等策略：订单已有支付成功记录时拒绝创建；已有同方式同金额的待支付单时直接复用该记录
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建支付请求
@@ -75,6 +79,24 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	}
 	if req.PayType != 1 && req.PayType != 2 && req.PayType != 3 {
 		return nil, "", fmt.Errorf("不支持的支付方式")
+	}
+
+	// 幂等校验：订单已存在支付成功的记录时拒绝再次创建支付单；
+	// 查询异常（非"记录不存在"）时同样拒绝，避免 DB 故障让幂等保护失效而产生重复支付
+	if _, err := s.GetPayment(ctx, req.OrderId); err == nil {
+		return nil, "", bizerr.New(codes.AlreadyExists, "订单已支付，请勿重复支付")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("查询订单支付状态失败 order_id=%d: %v", req.OrderId, err)
+		return nil, "", bizerr.New(codes.Internal, "支付状态查询失败，请稍后重试")
+	}
+
+	// 复用待支付单，避免重复向第三方下单
+	pending, err := s.findReusablePendingPayment(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+	if pending != nil {
+		return pending, pending.PayParams, nil
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -92,7 +114,6 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	}
 
 	var payParams string
-	var err error
 	switch req.PayType {
 	case 1:
 		payParams, err = s.buildWechatPayParams(ctx, p, req.Openid)
@@ -128,6 +149,35 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		return nil, "", err
 	}
 	return p, payParams, nil
+}
+
+// findReusablePendingPayment 查找可复用的待支付支付单
+// 仅微信/支付宝这类需要第三方调起参数的渠道才复用，避免重复向第三方下单产生多笔可实际扣款的支付单；
+// 现金支付创建时即置为已支付并同步订单状态，不复用异常遗留的待支付现金单，否则会跳过该副作用导致订单停留在待支付
+// 参数：
+//   - ctx: 上下文
+//   - req: 创建支付请求
+//
+// 返回值：
+//   - *model.Payment: 可复用的待支付单，渠道不支持复用或不存在时返回 nil
+//   - error: 查询异常时返回内部错误（不含"记录不存在"），避免故障被当作无待支付单而重复下单
+func (s *PaymentService) findReusablePendingPayment(ctx context.Context, req *payment.CreatePaymentReq) (*model.Payment, error) {
+	if req.PayType != 1 && req.PayType != 2 {
+		return nil, nil
+	}
+
+	var pending model.Payment
+	err := s.db.GetDb().WithContext(ctx).
+		Where("order_id = ? AND pay_type = ? AND amount = ? AND status = ?", req.OrderId, req.PayType, req.Amount, 1).
+		Order("id desc").First(&pending).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		log.Printf("查询可复用待支付单失败 order_id=%d: %v", req.OrderId, err)
+		return nil, bizerr.New(codes.Internal, "支付单查询失败，请稍后重试")
+	}
+	return &pending, nil
 }
 
 // GetPayment 根据订单 ID 查询最新成功支付记录

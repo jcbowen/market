@@ -72,6 +72,7 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	fromStatus := o.Status
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(refund).Error; err != nil {
 			return err
@@ -81,7 +82,7 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		if err := tx.Save(&o).Error; err != nil {
 			return err
 		}
-		return createStatusLogTx(tx, o.ID, o.Status, 7, "user", req.UserId, "申请退款: "+req.Reason)
+		return createStatusLogTx(tx, o.ID, fromStatus, 7, "user", req.UserId, "申请退款: "+req.Reason)
 	}); err != nil {
 		return nil, err
 	}

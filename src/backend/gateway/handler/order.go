@@ -10,25 +10,28 @@ import (
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
+	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
 )
 
 // OrderHandler 订单接口处理器
 type OrderHandler struct {
-	orderClient order.OrderServiceClient
-	userClient  user.UserServiceClient
+	orderClient   order.OrderServiceClient
+	userClient    user.UserServiceClient
+	paymentClient payment.PaymentServiceClient
 }
 
 // NewOrderHandler 创建订单处理器
 // 参数：
 //   - orderClient: order-service gRPC 客户端
 //   - userClient: user-service gRPC 客户端
+//   - paymentClient: payment-service gRPC 客户端，用于订单详情展示支付方式
 //
 // 返回值：
 //   - *OrderHandler: 订单处理器实例
-func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient) *OrderHandler {
-	return &OrderHandler{orderClient: orderClient, userClient: userClient}
+func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient, paymentClient payment.PaymentServiceClient) *OrderHandler {
+	return &OrderHandler{orderClient: orderClient, userClient: userClient, paymentClient: paymentClient}
 }
 
 // CreateOrderReq 创建订单请求
@@ -192,7 +195,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"status_text":   clientOrderStatusText(o.Status),
 		"total_amount":  o.TotalAmount,
 		"pay_amount":    o.PayAmount,
-		"pay_type_text": "",
+		"pay_type_text": h.orderPayTypeText(c, o.Id),
 		"items":         items,
 		"address":       address,
 		"remark":        o.Remark,
@@ -202,6 +205,31 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"received_at":   o.CompleteTime,
 	}
 	response.Success(c, data)
+}
+
+// orderPayTypeText 查询订单支付方式文案
+// 未支付或查询不到支付记录时返回空字符串
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - string: 支付方式文案
+func (h *OrderHandler) orderPayTypeText(c *gin.Context, orderID int64) string {
+	resp, err := h.paymentClient.GetPayment(c.Request.Context(), &payment.GetPaymentReq{OrderId: orderID})
+	if err != nil || resp == nil {
+		return ""
+	}
+	switch resp.PayType {
+	case 1:
+		return "微信支付"
+	case 2:
+		return "支付宝支付"
+	case 3:
+		return "货到付款"
+	default:
+		return ""
+	}
 }
 
 // CancelOrderReq 取消订单请求

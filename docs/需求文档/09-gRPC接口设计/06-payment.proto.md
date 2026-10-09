@@ -22,15 +22,15 @@ message CreatePaymentReq {
   int64 user_id = 2;
   int32 pay_type = 3;       // 1微信 2支付宝 3现金
   double amount = 4;
-  string openid = 5;        // 微信支付需要
+  string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
 }
 
 message CreatePaymentResp {
   string payment_no = 1;
   int32 pay_type = 2;
   double amount = 3;
-  string wechat_pay_params = 4;   // JSON string
-  string alipay_pay_params = 5;   // JSON string
+  string wechat_pay_params = 4;   // JSON string，仅 pay_type=1 时填充
+  string alipay_pay_params = 5;   // JSON string，仅 pay_type=2 时填充；现金支付两者均为空
 }
 
 message GetPaymentReq {

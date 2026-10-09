@@ -73,8 +73,9 @@ import { ref } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getOrders, cancelOrder, confirmReceive, applyRefund } from '@/api/order'
-import { getPaymentChannels, createPayment } from '@/api/payment'
+import { getPaymentChannels } from '@/api/payment'
 import { formatPrice } from '@/utils/format'
+import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderDetail, goLogin } from '@/utils/navigate'
 import type { Order, PaymentChannel } from '@/api/types'
 
@@ -160,6 +161,8 @@ function loadMore() {
 
 /**
  * 支付订单
+ * 选择渠道后创建支付单并拉起支付，货到付款直接完成，微信按运行端拉起，
+ * 仅在支付真实完成时提示支付成功
  * @param order 订单对象
  */
 async function onPay(order: Order) {
@@ -180,12 +183,8 @@ async function onPay(order: Order) {
       channel = channels[res.tapIndex]
     }
     if (!channel) return
-    if (channel.channel !== 'cash') {
-      uni.showToast({ title: '该支付方式暂未开通', icon: 'none' })
-      return
-    }
-    await createPayment(order.id, channel.channel)
-    uni.showToast({ title: '支付成功', icon: 'success' })
+    const outcome = await payOrder(order.id, channel.channel)
+    notifyPayOutcome(outcome)
     page.value = 1
     orders.value = []
     loadOrders()

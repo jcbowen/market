@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,13 +13,22 @@ import (
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
+	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
+)
+
+// 支付类型：1=微信，2=支付宝，3=现金/货到付款
+const (
+	payTypeWechat int32 = 1
+	payTypeAlipay int32 = 2
+	payTypeCash   int32 = 3
 )
 
 // PaymentHandler 支付接口处理器
 type PaymentHandler struct {
 	paymentClient payment.PaymentServiceClient
 	orderClient   order.OrderServiceClient
+	userClient    user.UserServiceClient
 	cfg           *config.Config
 }
 
@@ -25,19 +36,20 @@ type PaymentHandler struct {
 // 参数：
 //   - paymentClient: payment-service gRPC 客户端
 //   - orderClient: order-service gRPC 客户端
+//   - userClient: user-service gRPC 客户端，用于查询用户微信 openid
 //   - cfg: 全局配置
 //
 // 返回值：
 //   - *PaymentHandler: 支付处理器实例
-func NewPaymentHandler(paymentClient payment.PaymentServiceClient, orderClient order.OrderServiceClient, cfg *config.Config) *PaymentHandler {
-	return &PaymentHandler{paymentClient: paymentClient, orderClient: orderClient, cfg: cfg}
+func NewPaymentHandler(paymentClient payment.PaymentServiceClient, orderClient order.OrderServiceClient, userClient user.UserServiceClient, cfg *config.Config) *PaymentHandler {
+	return &PaymentHandler{paymentClient: paymentClient, orderClient: orderClient, userClient: userClient, cfg: cfg}
 }
 
 // CreatePaymentReq 创建支付请求
+// 微信 openid 不接受前端传入，统一由服务端从用户资料取得，避免伪造
 type CreatePaymentReq struct {
 	OrderID int64  `json:"order_id" binding:"required"`
 	Channel string `json:"channel" binding:"required,oneof=wechat alipay cash"`
-	Openid  string `json:"openid"`
 }
 
 // channelToPayType 将支付渠道字符串转换为内部支付类型
@@ -50,11 +62,11 @@ type CreatePaymentReq struct {
 func channelToPayType(channel string) (int32, bool) {
 	switch channel {
 	case "wechat":
-		return 1, true
+		return payTypeWechat, true
 	case "alipay":
-		return 2, true
+		return payTypeAlipay, true
 	case "cash":
-		return 3, true
+		return payTypeCash, true
 	default:
 		return 0, false
 	}
@@ -110,6 +122,11 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		response.Error(c, errcode.NotFound, "订单不存在")
 		return
 	}
+	// 仅待支付订单可发起支付，防止对已支付/已完成订单重复创建支付单
+	if orderResp.Order.Status != 1 {
+		response.Error(c, errcode.OperationNotAllowed, "订单当前状态不可支付")
+		return
+	}
 
 	payType, ok := channelToPayType(req.Channel)
 	if !ok {
@@ -117,18 +134,44 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 
+	// 微信支付需按 openid 有无区分 JSAPI / H5，openid 由服务端解析
+	var openid string
+	if payType == payTypeWechat {
+		openid = h.resolveWechatOpenid(c.Request.Context(), uc.UserID)
+	}
+
 	resp, err := h.paymentClient.CreatePayment(c.Request.Context(), &payment.CreatePaymentReq{
 		OrderId: req.OrderID,
 		UserId:  uc.UserID,
 		PayType: payType,
 		Amount:  orderResp.Order.PayAmount,
-		Openid:  req.Openid,
+		Openid:  openid,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
+}
+
+// resolveWechatOpenid 解析用户可用于微信 JSAPI 支付的 openid
+// 手机号登录用户的 openid 是 phone_<手机号> 占位值，并非微信真实 openid，返回空串使支付回落 H5 通道；
+// 查询失败同样返回空串，保证支付流程不被 openid 缺失阻断
+// 参数：
+//   - ctx: 上下文
+//   - userID: 用户 ID
+//
+// 返回值：
+//   - string: 微信 openid，不可用时为空串
+func (h *PaymentHandler) resolveWechatOpenid(ctx context.Context, userID int64) string {
+	resp, err := h.userClient.GetUserById(ctx, &user.GetUserByIdReq{Id: userID})
+	if err != nil || resp == nil {
+		return ""
+	}
+	if resp.Openid == "" || strings.HasPrefix(resp.Openid, phoneOpenidPrefix) {
+		return ""
+	}
+	return resp.Openid
 }
 
 // PaymentChannel 支付渠道信息
