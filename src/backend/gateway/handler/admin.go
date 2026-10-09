@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"io"
 	"log"
 	"strconv"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
+	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
@@ -29,6 +31,7 @@ type AdminHandler struct {
 	userClient    user.UserServiceClient
 	productClient product.ProductServiceClient
 	orderClient   order.OrderServiceClient
+	paymentClient payment.PaymentServiceClient
 	cfg           *config.Config
 }
 
@@ -38,16 +41,18 @@ type AdminHandler struct {
 //   - userClient: user-service gRPC 客户端
 //   - productClient: product-service gRPC 客户端
 //   - orderClient: order-service gRPC 客户端
+//   - paymentClient: payment-service gRPC 客户端，用于支付配置读写
 //   - cfg: 全局配置指针
 //
 // 返回值：
 //   - *AdminHandler: 管理员处理器实例
-func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, productClient product.ProductServiceClient, orderClient order.OrderServiceClient, cfg *config.Config) *AdminHandler {
+func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, productClient product.ProductServiceClient, orderClient order.OrderServiceClient, paymentClient payment.PaymentServiceClient, cfg *config.Config) *AdminHandler {
 	return &AdminHandler{
 		jwtManager:    jwtManager,
 		userClient:    userClient,
 		productClient: productClient,
 		orderClient:   orderClient,
+		paymentClient: paymentClient,
 		cfg:           cfg,
 	}
 }
@@ -2183,34 +2188,68 @@ func orderStatusText(status int32) string {
 }
 
 // PaymentSetting 支付配置视图对象
-// 同时用于 GET 响应与 PUT 请求
+// 同时用于 GET 响应与 PUT 请求；配置持久化在数据库 pay_config 表，由 payment 服务管理
 type PaymentSetting struct {
-	EnabledChannels    []string             `json:"enabled_channels"`
-	Wechat             config.WechatConfig  `json:"wechat"`
-	Alipay             config.AlipayConfig  `json:"alipay"`
-	WechatPaymentReady bool                 `json:"wechat_payment_ready"`
-	AlipayReady        bool                 `json:"alipay_ready"`
+	EnabledChannels    []string            `json:"enabled_channels"`
+	Wechat             config.WechatConfig `json:"wechat"`
+	Alipay             config.AlipayConfig `json:"alipay"`
+	WechatPaymentReady bool                `json:"wechat_payment_ready"`
+	AlipayReady        bool                `json:"alipay_ready"`
+	WechatCertUploaded bool                `json:"wechat_cert_uploaded"`
+	AlipayCertUploaded bool                `json:"alipay_cert_uploaded"`
+	UpdatedAt          string              `json:"updated_at"`
+	SuggestedURLs      PaymentSuggestedURLs `json:"suggested_urls"`
+}
+
+// PaymentSuggestedURLs 回调 URL 配置引导
+// 根据后台当前访问域名自动生成，引导使用人将回调地址配置到对应支付平台
+type PaymentSuggestedURLs struct {
+	BaseURL         string `json:"base_url"`
+	WechatNotifyURL string `json:"wechat_notify_url"`
+	AlipayNotifyURL string `json:"alipay_notify_url"`
 }
 
 // GetPaymentSetting 获取支付配置
-// 返回当前支付渠道开关、顺序以及微信/支付宝配置
+// 从数据库读取支付渠道开关与微信/支付宝配置，并返回根据当前请求域名生成的回调 URL 建议
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
-	config.CfgMu.RLock()
-	defer config.CfgMu.RUnlock()
+	resp, err := h.paymentClient.GetPayConfig(c.Request.Context(), &payment.GetPayConfigReq{})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
 
-	response.Success(c, PaymentSetting{
-		EnabledChannels:    h.cfg.Payment.EnabledChannels,
-		Wechat:             h.cfg.Wechat,
-		Alipay:             h.cfg.Alipay,
-		WechatPaymentReady: h.cfg.Wechat.IsPaymentConfigured(),
-		AlipayReady:        h.cfg.Alipay.IsConfigured(),
-	})
+	// 私钥不回传明文，仅通过 cert_uploaded 标志告知前端上传状态
+	setting := PaymentSetting{
+		EnabledChannels: resp.EnabledChannels,
+		Wechat: config.WechatConfig{
+			AppID:        resp.WechatAppId,
+			AppSecret:    resp.WechatAppSecret,
+			MchID:        resp.WechatMchId,
+			APIV3Key:     resp.WechatApiV3Key,
+			CertSerialNo: resp.WechatCertSerialNo,
+			NotifyURL:    resp.WechatNotifyUrl,
+		},
+		Alipay: config.AlipayConfig{
+			AppID:           resp.AlipayAppId,
+			AlipayPublicKey: resp.AlipayPublicKey,
+			NotifyURL:       resp.AlipayNotifyUrl,
+			ReturnURL:       resp.AlipayReturnUrl,
+		},
+		WechatPaymentReady: resp.WechatPaymentReady,
+		AlipayReady:        resp.AlipayReady,
+		WechatCertUploaded: resp.WechatCertUploaded,
+		AlipayCertUploaded: resp.AlipayCertUploaded,
+		UpdatedAt:          resp.UpdatedAt,
+		SuggestedURLs:      buildSuggestedURLs(c),
+	}
+
+	response.Success(c, setting)
 }
 
 // UpdatePaymentSetting 更新支付配置
-// 保存后会回写到配置文件，支付渠道列表即时生效；微信支付密钥等修改后需重启服务生效
+// 配置写入数据库，payment 服务即时热更新，无需重启
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
@@ -2228,18 +2267,103 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 		}
 	}
 
-	config.CfgMu.Lock()
-	defer config.CfgMu.Unlock()
-
-	h.cfg.Payment.EnabledChannels = filtered
-	h.cfg.Wechat = req.Wechat
-	h.cfg.Alipay = req.Alipay
-
-	if err := config.Save(h.cfg); err != nil {
+	_, err := h.paymentClient.SavePayConfig(c.Request.Context(), &payment.PayConfig{
+		EnabledChannels:    filtered,
+		WechatAppId:        req.Wechat.AppID,
+		WechatAppSecret:    req.Wechat.AppSecret,
+		WechatMchId:        req.Wechat.MchID,
+		WechatApiV3Key:     req.Wechat.APIV3Key,
+		WechatCertSerialNo: req.Wechat.CertSerialNo,
+		// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
+		WechatPrivateKey: "",
+		WechatNotifyUrl:  req.Wechat.NotifyURL,
+		AlipayAppId:      req.Alipay.AppID,
+		AlipayPrivateKey: "",
+		AlipayPublicKey:  req.Alipay.AlipayPublicKey,
+		AlipayNotifyUrl:  req.Alipay.NotifyURL,
+		AlipayReturnUrl:  req.Alipay.ReturnURL,
+	})
+	if err != nil {
 		log.Printf("保存支付设置失败: %v", err)
-		response.Error(c, errcode.InternalServerError, "保存支付设置失败")
+		response.GRPCError(c, err)
 		return
 	}
 
 	response.Success(c, gin.H{"success": true})
+}
+
+// UploadPaymentCert 上传支付证书文件
+// 接收 multipart 文件，校验通过后转发给 payment 服务存入数据库
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
+	channel := c.PostForm("channel")
+	certType := c.PostForm("cert_type")
+	if channel != "wechat" && channel != "alipay" {
+		response.Error(c, errcode.ParamError, "不支持的支付渠道")
+		return
+	}
+	if certType == "" {
+		certType = "private_key"
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		response.Error(c, errcode.ParamError, "请选择要上传的证书文件")
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		response.Error(c, errcode.InternalServerError, "读取证书文件失败")
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		response.Error(c, errcode.InternalServerError, "读取证书文件内容失败")
+		return
+	}
+
+	resp, err := h.paymentClient.UploadPayCert(c.Request.Context(), &payment.UploadPayCertReq{
+		Channel:  channel,
+		CertType: certType,
+		Filename: fileHeader.Filename,
+		Content:  content,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	if !resp.Success {
+		response.Error(c, errcode.ParamError, resp.Message)
+		return
+	}
+
+	response.Success(c, gin.H{"success": true, "message": resp.Message})
+}
+
+// buildSuggestedURLs 根据当前请求生成支付平台回调地址建议
+// 优先取反向代理透传的 X-Forwarded-Proto，兼容 HTTPS 部署场景
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - PaymentSuggestedURLs: 回调地址建议
+func buildSuggestedURLs(c *gin.Context) PaymentSuggestedURLs {
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+
+	base := scheme + "://" + c.Request.Host
+	return PaymentSuggestedURLs{
+		BaseURL:         base,
+		WechatNotifyURL: base + "/api/v1/payments/callback/wechat",
+		AlipayNotifyURL: base + "/api/v1/payments/callback/alipay",
+	}
 }

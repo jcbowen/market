@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,13 +27,19 @@ import (
 
 // PaymentService 支付业务服务
 type PaymentService struct {
-	db              *mysql.Instance
-	cfg             *config.Config
+	db  *mysql.Instance
+	cfg *config.Config
+
+	// payMu 保护以下支付配置缓存字段的并发读写
+	payMu sync.RWMutex
+	// payCfg 数据库支付配置的内存副本（pay_config 单行），updated_at 兼作版本号
+	payCfg *model.PayConfig
+
 	wechatPayClient *wegopayment.Client
 }
 
 // NewPaymentService 创建支付业务服务
-// 若微信支付 V3 配置完整，则自动初始化 wego 微信支付客户端
+// 支付配置从数据库 pay_config 表加载（配置变更后各实例按版本号自动热更新，无需重启）
 // 参数：
 //   - db: MySQL 实例
 //   - cfg: 全局配置
@@ -41,25 +48,23 @@ type PaymentService struct {
 //   - *PaymentService: 支付业务服务实例
 func NewPaymentService(db *mysql.Instance, cfg *config.Config) *PaymentService {
 	s := &PaymentService{db: db, cfg: cfg}
-	if cfg.Wechat.IsPaymentConfigured() {
-		// wego NewClient 在配置异常时会 panic，使用 recover 避免影响服务启动
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("初始化微信支付客户端失败: %v", r)
-				}
-			}()
-			s.wechatPayClient = wegopayment.NewClient(&wegopayment.Config{
-				AppID:        cfg.Wechat.AppID,
-				MchID:        cfg.Wechat.MchID,
-				APIV3Key:     cfg.Wechat.APIV3Key,
-				CertSerialNo: cfg.Wechat.CertSerialNo,
-				PrivateKey:   cfg.Wechat.PrivateKey,
-				NotifyURL:    cfg.Wechat.NotifyURL,
-			})
-		}()
+	if err := s.EnsureDefaultPayConfig(); err != nil {
+		log.Printf("初始化支付配置失败: %v", err)
 	}
+	s.reloadPayConfig()
 	return s
+}
+
+// reloadPayConfig 启动时从数据库加载支付配置并构建支付客户端
+func (s *PaymentService) reloadPayConfig() {
+	var row model.PayConfig
+	if err := s.db.GetDb().First(&row, payConfigID).Error; err != nil {
+		log.Printf("加载数据库支付配置失败（支付功能将不可用，可在后台配置后自动生效）: %v", err)
+		return
+	}
+	s.payMu.Lock()
+	defer s.payMu.Unlock()
+	s.applyPayConfig(&row)
 }
 
 // CreatePayment 创建支付单并生成第三方支付调起参数

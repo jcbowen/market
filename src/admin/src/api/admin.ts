@@ -142,6 +142,20 @@ export interface PaymentSetting {
   alipay: AlipayPayConfig
   wechat_payment_ready: boolean
   alipay_ready: boolean
+  wechat_cert_uploaded: boolean
+  alipay_cert_uploaded: boolean
+  updated_at: string
+  suggested_urls: PaymentSuggestedURLs
+}
+
+/**
+ * 回调 URL 配置引导
+ * 由后端根据当前访问域名自动生成
+ */
+export interface PaymentSuggestedURLs {
+  base_url: string
+  wechat_notify_url: string
+  alipay_notify_url: string
 }
 
 /**
@@ -189,5 +203,26 @@ export function updatePaymentSetting(data: PaymentSetting) {
     url: '/api/v1/admin/settings/payment',
     method: 'PUT',
     data,
+  })
+}
+
+/**
+ * 上传支付证书文件
+ * 文件内容存入数据库，上传后支付配置即时热更新
+ * @param channel 支付渠道：wechat / alipay
+ * @param certType 证书类型：private_key
+ * @param file 证书文件（.pem 等）
+ * @returns 上传结果
+ */
+export function uploadPaymentCert(channel: string, certType: string, file: File) {
+  const formData = new FormData()
+  formData.append('channel', channel)
+  formData.append('cert_type', certType)
+  formData.append('file', file)
+  return request<ApiResult<{ success: boolean; message: string }>>({
+    url: '/api/v1/admin/settings/payment/cert',
+    method: 'POST',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data' },
   })
 }

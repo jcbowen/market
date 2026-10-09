@@ -12,6 +12,9 @@ service PaymentService {
   rpc HandleWechatCallback(WechatCallbackReq) returns (common.CommonResponse);
   rpc HandleAlipayCallback(AlipayCallbackReq) returns (common.CommonResponse);
   rpc ProcessRefund(ProcessRefundReq) returns (common.CommonResponse);
+  rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
+  rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
+  rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
 }
 
 message CreatePaymentReq {
@@ -60,4 +63,45 @@ message ProcessRefundReq {
   string refund_no = 2;
   double amount = 3;
   string payment_no = 4;
+}
+
+message GetPayConfigReq {}
+
+// PayConfig 支付配置（数据库单行存储）
+// 读写均通过 payment 服务，gateway 不直接访问数据库
+message PayConfig {
+  repeated string enabled_channels = 1;
+  // 微信支付 V3
+  string wechat_app_id = 2;
+  string wechat_app_secret = 3;
+  string wechat_mch_id = 4;
+  string wechat_api_v3_key = 5;
+  string wechat_cert_serial_no = 6;
+  string wechat_private_key = 7;
+  string wechat_notify_url = 8;
+  // 支付宝
+  string alipay_app_id = 9;
+  string alipay_private_key = 10;
+  string alipay_public_key = 11;
+  string alipay_notify_url = 12;
+  string alipay_return_url = 13;
+  // 证书上传状态（上传后内容存库，此处仅回传标志）
+  bool wechat_cert_uploaded = 14;
+  bool alipay_cert_uploaded = 15;
+  // 版本与就绪状态
+  string updated_at = 16;
+  bool wechat_payment_ready = 17;
+  bool alipay_ready = 18;
+}
+
+message UploadPayCertReq {
+  string channel = 1;    // 渠道：wechat / alipay
+  string cert_type = 2;  // 证书类型：private_key（商户/应用私钥）等
+  string filename = 3;   // 原始文件名，用于校验扩展名
+  bytes content = 4;     // 证书文件内容
+}
+
+message UploadPayCertResp {
+  bool success = 1;
+  string message = 2;
 }

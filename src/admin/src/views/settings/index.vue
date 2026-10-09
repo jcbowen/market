@@ -43,6 +43,26 @@
                 </n-dynamic-input>
               </n-form-item>
 
+              <n-divider>回调 URL 配置引导</n-divider>
+              <n-alert type="info" style="margin-bottom: 16px;">
+                请将下方回调地址配置到对应支付平台，配置后支付结果才能通知到本系统。
+                地址由当前后台访问域名自动生成；若通过反向代理部署，请确认地址对外可访问。
+              </n-alert>
+              <n-descriptions label-placement="top" bordered :columns="1" style="margin-bottom: 24px;">
+                <n-descriptions-item label="微信支付回调地址（配置到微信商户平台 → API安全 / 支付通知 URL）">
+                  <div class="url-guide-row">
+                    <n-text code>{{ paymentForm.suggested_urls.wechat_notify_url }}</n-text>
+                    <n-button size="small" type="primary" secondary @click="copyURL(paymentForm.suggested_urls.wechat_notify_url)">复制</n-button>
+                  </div>
+                </n-descriptions-item>
+                <n-descriptions-item label="支付宝支付回调地址（配置到支付宝开放平台 → 应用网关 / 异步通知地址）">
+                  <div class="url-guide-row">
+                    <n-text code>{{ paymentForm.suggested_urls.alipay_notify_url }}</n-text>
+                    <n-button size="small" type="primary" secondary @click="copyURL(paymentForm.suggested_urls.alipay_notify_url)">复制</n-button>
+                  </div>
+                </n-descriptions-item>
+              </n-descriptions>
+
               <n-divider>微信支付配置</n-divider>
               <n-alert v-if="!paymentForm.wechat_payment_ready" type="warning" title="微信支付未就绪" style="margin-bottom: 16px;">
                 当前微信支付配置不完整，C 端不会展示微信支付选项
@@ -78,12 +98,22 @@
                 </n-grid-item>
                 <n-grid-item>
                   <n-form-item label="通知 URL">
-                    <n-input v-model:value="paymentForm.wechat.notify_url" placeholder="微信支付结果通知 URL" />
+                    <n-input v-model:value="paymentForm.wechat.notify_url" placeholder="微信支付结果通知 URL，建议使用上方生成的回调地址" />
                   </n-form-item>
                 </n-grid-item>
                 <n-grid-item :span="2">
-                  <n-form-item label="商户私钥 PEM">
-                    <n-input v-model:value="paymentForm.wechat.private_key" type="textarea" :rows="6" placeholder="-----BEGIN PRIVATE KEY----- ..." />
+                  <n-form-item label="商户私钥证书（apiclient_key.pem）">
+                    <div class="cert-upload-row">
+                      <n-upload
+                        :show-file-list="false"
+                        accept=".pem,.key,.txt,.crt"
+                        :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('wechat', options)"
+                      >
+                        <n-button type="primary" secondary :loading="wechatCertUploading">上传证书文件</n-button>
+                      </n-upload>
+                      <n-tag v-if="paymentForm.wechat_cert_uploaded" type="success" size="small">已上传商户私钥</n-tag>
+                      <n-tag v-else type="warning" size="small">未上传</n-tag>
+                    </div>
                   </n-form-item>
                 </n-grid-item>
               </n-grid>
@@ -100,12 +130,7 @@
                 </n-grid-item>
                 <n-grid-item>
                   <n-form-item label="通知 URL">
-                    <n-input v-model:value="paymentForm.alipay.notify_url" placeholder="支付宝支付结果通知 URL" disabled />
-                  </n-form-item>
-                </n-grid-item>
-                <n-grid-item :span="2">
-                  <n-form-item label="应用私钥">
-                    <n-input v-model:value="paymentForm.alipay.private_key" type="textarea" :rows="4" placeholder="支付宝应用私钥" disabled />
+                    <n-input v-model:value="paymentForm.alipay.notify_url" placeholder="支付宝支付结果通知 URL，建议使用上方生成的回调地址" disabled />
                   </n-form-item>
                 </n-grid-item>
                 <n-grid-item :span="2">
@@ -178,9 +203,9 @@
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import type { DataTableColumns } from 'naive-ui'
-import { getRoleList, createRole, updateRole, deleteRole, changeAdminPassword, getPaymentSetting, updatePaymentSetting } from '@/api/admin'
-import type { PaymentSetting } from '@/api/admin'
+import type { DataTableColumns, UploadCustomRequestOptions } from 'naive-ui'
+import { getRoleList, createRole, updateRole, deleteRole, changeAdminPassword, getPaymentSetting, updatePaymentSetting, uploadPaymentCert } from '@/api/admin'
+import type { PaymentSetting, PaymentSuggestedURLs } from '@/api/admin'
 import type { Role } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 
@@ -211,6 +236,7 @@ const passwordForm = reactive({
 
 const paymentLoading = ref(false)
 const paymentSaving = ref(false)
+const wechatCertUploading = ref(false)
 interface PaymentChannelItem {
   channel: string
 }
@@ -235,6 +261,14 @@ const paymentForm = reactive({
   },
   wechat_payment_ready: false,
   alipay_ready: false,
+  wechat_cert_uploaded: false,
+  alipay_cert_uploaded: false,
+  updated_at: '',
+  suggested_urls: {
+    base_url: '',
+    wechat_notify_url: '',
+    alipay_notify_url: '',
+  } as PaymentSuggestedURLs,
 })
 
 /** 支付渠道可选项，支付宝保持关闭 */
@@ -457,8 +491,51 @@ async function loadPaymentSetting() {
     paymentForm.alipay = data.alipay
     paymentForm.wechat_payment_ready = data.wechat_payment_ready
     paymentForm.alipay_ready = data.alipay_ready
+    paymentForm.wechat_cert_uploaded = data.wechat_cert_uploaded
+    paymentForm.alipay_cert_uploaded = data.alipay_cert_uploaded
+    paymentForm.updated_at = data.updated_at
+    paymentForm.suggested_urls = data.suggested_urls
   } finally {
     paymentLoading.value = false
+  }
+}
+
+/**
+ * 上传支付证书文件
+ * 上传成功后刷新配置以更新证书上传状态
+ * @param channel 支付渠道：wechat / alipay
+ * @param options naive-ui 自定义上传请求参数
+ */
+async function handleCertUpload(channel: string, options: UploadCustomRequestOptions) {
+  const file = options.file.file
+  if (!file) {
+    return
+  }
+
+  wechatCertUploading.value = true
+  try {
+    const res = await uploadPaymentCert(channel, 'private_key', file)
+    message.success(res.data.message || '证书上传成功')
+    options.onFinish()
+    await loadPaymentSetting()
+  } catch (err) {
+    options.onError()
+    throw err
+  } finally {
+    wechatCertUploading.value = false
+  }
+}
+
+/**
+ * 复制回调地址到剪贴板
+ * @param url 回调地址
+ */
+async function copyURL(url: string) {
+  try {
+    await navigator.clipboard.writeText(url)
+    message.success('已复制到剪贴板')
+  } catch {
+    message.error('复制失败，请手动复制')
   }
 }
 
@@ -474,9 +551,14 @@ async function savePaymentSetting() {
       alipay: paymentForm.alipay,
       wechat_payment_ready: paymentForm.wechat_payment_ready,
       alipay_ready: paymentForm.alipay_ready,
+      wechat_cert_uploaded: paymentForm.wechat_cert_uploaded,
+      alipay_cert_uploaded: paymentForm.alipay_cert_uploaded,
+      updated_at: paymentForm.updated_at,
+      suggested_urls: paymentForm.suggested_urls,
     }
     await updatePaymentSetting(payload)
-    message.success('支付配置已保存，微信支付密钥等修改需重启后端服务生效')
+    message.success('支付配置已保存，保存后即时生效，无需重启服务')
+    await loadPaymentSetting()
   } finally {
     paymentSaving.value = false
   }
@@ -491,5 +573,24 @@ onMounted(() => {
 <style lang="scss" scoped>
 .settings-page {
   max-width: 100%;
+}
+
+.url-guide-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+
+  .n-text {
+    flex: 1;
+    word-break: break-all;
+  }
+}
+
+.cert-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
 }
 </style>

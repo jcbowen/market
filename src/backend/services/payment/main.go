@@ -54,5 +54,6 @@ func autoMigrate(db *mysql.Instance) error {
 	return db.GetDb().AutoMigrate(
 		&model.Payment{},
 		&model.RefundPayment{},
+		&model.PayConfig{},
 	)
 }

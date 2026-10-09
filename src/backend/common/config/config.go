@@ -1,16 +1,13 @@
 package config
 
 import (
-	"fmt"
-	"os"
-	"sync"
-
 	"github.com/jcbowen/jcbaseGo"
-	"gopkg.in/yaml.v3"
 )
 
 // Config 全局配置结构体
 // 用于 gateway 及各微服务加载 bin/config.yaml
+// 注意：支付配置（微信支付/支付宝/渠道开关）已迁移至数据库 pay_config 表，由后台配置管理，
+// 此处仅保留微信小程序登录配置（AppID/AppSecret）
 type Config struct {
 	WebServer jcbaseGo.WebServer `json:"web_server" yaml:"web_server"`
 	Db        jcbaseGo.DbStruct  `json:"db" yaml:"db"`
@@ -46,7 +43,6 @@ type Config struct {
 		LocalPath    string   `json:"local_path" yaml:"local_path" default:"static/uploads/"`
 	} `json:"upload" yaml:"upload"`
 	Wechat WechatConfig `json:"wechat" yaml:"wechat"`
-	Alipay AlipayConfig `json:"alipay" yaml:"alipay"`
 	SMS struct {
 		Provider     string `json:"provider" yaml:"provider" default:"aliyun"`
 		AccessKey    string `json:"access_key" yaml:"access_key"`
@@ -68,9 +64,6 @@ type Config struct {
 	OrderService   ServiceConfig `json:"order_service" yaml:"order_service"`
 	CartService    ServiceConfig `json:"cart_service" yaml:"cart_service"`
 	PaymentService ServiceConfig `json:"payment_service" yaml:"payment_service"`
-
-	// 支付开关配置
-	Payment PaymentConfig `json:"payment" yaml:"payment"`
 }
 
 // ServiceConfig 微服务通用配置
@@ -78,23 +71,17 @@ type ServiceConfig struct {
 	GrpcPort int `json:"grpc_port" yaml:"grpc_port"`
 }
 
-// PaymentConfig 支付方式开关配置
-// enabled_channels 控制当前可用的支付渠道，同时决定 C 端展示顺序
-// 可选值：wechat（微信支付）、alipay（支付宝支付）、cash（货到付款/现金）
-type PaymentConfig struct {
-	EnabledChannels []string `json:"enabled_channels" yaml:"enabled_channels"`
-}
-
-// WechatConfig 微信相关配置
-// 同时用于微信小程序登录与微信支付 V3
+// WechatConfig 微信小程序登录配置
+// 注意：微信支付 V3 的 AppID/商户号/密钥/证书等支付配置已迁移至数据库 pay_config 表，
+// 此结构体仅保留小程序登录所需字段；支付侧使用 WechatConfig 作为数据载体传递
 type WechatConfig struct {
 	AppID        string `json:"app_id" yaml:"app_id"`                 // 小程序/公众号 AppID
 	AppSecret    string `json:"app_secret" yaml:"app_secret"`         // 小程序/公众号 AppSecret
-	MchID        string `json:"mch_id" yaml:"mch_id"`                 // 微信支付商户号
-	APIV3Key     string `json:"api_v3_key" yaml:"api_v3_key"`         // 微信支付 V3 API 密钥
-	CertSerialNo string `json:"cert_serial_no" yaml:"cert_serial_no"` // 微信支付商户证书序列号
-	PrivateKey   string `json:"private_key" yaml:"private_key"`       // 微信支付商户私钥 PEM
-	NotifyURL    string `json:"notify_url" yaml:"notify_url"`         // 微信支付结果通知 URL
+	MchID        string `json:"mch_id" yaml:"mch_id"`                 // 微信支付商户号（仅支付载体使用）
+	APIV3Key     string `json:"api_v3_key" yaml:"api_v3_key"`         // 微信支付 V3 API 密钥（仅支付载体使用）
+	CertSerialNo string `json:"cert_serial_no" yaml:"cert_serial_no"` // 微信支付商户证书序列号（仅支付载体使用）
+	PrivateKey   string `json:"private_key" yaml:"private_key"`       // 微信支付商户私钥 PEM（仅支付载体使用）
+	NotifyURL    string `json:"notify_url" yaml:"notify_url"`         // 微信支付结果通知 URL（仅支付载体使用）
 }
 
 // IsMiniprogramConfigured 判断微信小程序登录配置是否完整
@@ -119,8 +106,8 @@ func (w *WechatConfig) IsPaymentConfigured() bool {
 		w.NotifyURL != ""
 }
 
-// AlipayConfig 支付宝支付配置
-// 当前项目仅做配置保存与开关控制，实际支付仍为模拟实现
+// AlipayConfig 支付宝支付配置数据载体
+// 支付配置实际存储于数据库 pay_config 表，此结构体仅作为服务间传递的数据载体
 type AlipayConfig struct {
 	AppID           string `json:"app_id" yaml:"app_id"`                     // 支付宝 AppID
 	PrivateKey      string `json:"private_key" yaml:"private_key"`           // 支付宝应用私钥
@@ -144,10 +131,6 @@ func (a *AlipayConfig) IsConfigured() bool {
 // 由 gateway 启动时通过 SetConfigPath 设置
 var currentConfigPath string
 
-// CfgMu 配置读写锁
-// 用于保护运行时的配置并发读写（如 Admin 修改支付配置时与 PaymentChannels 读取）
-var CfgMu sync.RWMutex
-
 // SetConfigPath 设置配置文件保存路径
 // 参数：
 //   - path: 配置文件绝对路径
@@ -161,60 +144,4 @@ func SetConfigPath(path string) {
 //   - string: 配置文件路径
 func GetConfigPath() string {
 	return currentConfigPath
-}
-
-// Save 将支付相关配置增量写回配置文件
-// 只更新 wechat、alipay、payment 节点，保留其他配置不变
-// 写回后 Gateway 内存中的配置对象会同步更新，底层微信支付相关密钥修改后需要重启服务生效
-// 参数：
-//   - cfg: 要保存的配置
-//
-// 返回值：
-//   - error: 保存失败时返回错误
-func Save(cfg *Config) error {
-	if currentConfigPath == "" {
-		return fmt.Errorf("配置文件路径未设置")
-	}
-
-	data, err := os.ReadFile(currentConfigPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("读取配置文件失败: %w", err)
-	}
-
-	var root map[string]interface{}
-	if len(data) > 0 {
-		if err := yaml.Unmarshal(data, &root); err != nil {
-			return fmt.Errorf("解析配置文件失败: %w", err)
-		}
-	}
-	if root == nil {
-		root = make(map[string]interface{})
-	}
-
-	newData, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("序列化配置失败: %w", err)
-	}
-
-	var partial map[string]interface{}
-	if err := yaml.Unmarshal(newData, &partial); err != nil {
-		return fmt.Errorf("解析新配置失败: %w", err)
-	}
-
-	for _, key := range []string{"wechat", "alipay", "payment"} {
-		if v, ok := partial[key]; ok {
-			root[key] = v
-		}
-	}
-
-	updated, err := yaml.Marshal(root)
-	if err != nil {
-		return fmt.Errorf("序列化合并后配置失败: %w", err)
-	}
-
-	if err := os.WriteFile(currentConfigPath, updated, 0644); err != nil {
-		return fmt.Errorf("写入配置文件失败: %w", err)
-	}
-
-	return nil
 }

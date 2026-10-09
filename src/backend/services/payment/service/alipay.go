@@ -37,7 +37,9 @@ type alipayParams struct {
 //   - string: 调起参数 JSON 字符串
 //   - error: 错误信息
 func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment) (string, error) {
-	cfg := s.cfg.Alipay
+	// 支付前检测数据库配置版本，后台修改配置后无需重启即可生效
+	s.getPayConfigCached(ctx)
+	cfg := s.getAlipayPayConfig()
 	if cfg.AppID == "" || cfg.PrivateKey == "" {
 		return "", fmt.Errorf("支付宝支付配置缺失")
 	}
@@ -80,7 +82,8 @@ func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) alipayRefund(ctx context.Context, p *model.Payment, refund *model.RefundPayment) error {
-	cfg := s.cfg.Alipay
+	s.getPayConfigCached(ctx)
+	cfg := s.getAlipayPayConfig()
 	if cfg.AppID == "" || cfg.PrivateKey == "" {
 		return fmt.Errorf("支付宝支付配置缺失")
 	}

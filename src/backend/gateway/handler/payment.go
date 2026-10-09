@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
-	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -29,7 +28,6 @@ type PaymentHandler struct {
 	paymentClient payment.PaymentServiceClient
 	orderClient   order.OrderServiceClient
 	userClient    user.UserServiceClient
-	cfg           *config.Config
 }
 
 // NewPaymentHandler 创建支付处理器
@@ -37,12 +35,11 @@ type PaymentHandler struct {
 //   - paymentClient: payment-service gRPC 客户端
 //   - orderClient: order-service gRPC 客户端
 //   - userClient: user-service gRPC 客户端，用于查询用户微信 openid
-//   - cfg: 全局配置
 //
 // 返回值：
 //   - *PaymentHandler: 支付处理器实例
-func NewPaymentHandler(paymentClient payment.PaymentServiceClient, orderClient order.OrderServiceClient, userClient user.UserServiceClient, cfg *config.Config) *PaymentHandler {
-	return &PaymentHandler{paymentClient: paymentClient, orderClient: orderClient, userClient: userClient, cfg: cfg}
+func NewPaymentHandler(paymentClient payment.PaymentServiceClient, orderClient order.OrderServiceClient, userClient user.UserServiceClient) *PaymentHandler {
+	return &PaymentHandler{paymentClient: paymentClient, orderClient: orderClient, userClient: userClient}
 }
 
 // CreatePaymentReq 创建支付请求
@@ -88,6 +85,41 @@ func isChannelEnabled(channel string, enabled []string) bool {
 	return false
 }
 
+// getPayConfigRuntime 获取支付配置运行时信息
+// 从 payment 服务读取数据库中的支付渠道开关与渠道就绪状态
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - *payment.PayConfig: 支付配置，读取失败时返回 nil
+//   - error: 读取失败错误
+func (h *PaymentHandler) getPayConfigRuntime(ctx context.Context) (*payment.PayConfig, error) {
+	return h.paymentClient.GetPayConfig(ctx, &payment.GetPayConfigReq{})
+}
+
+// isChannelUsable 判断渠道在配置开关中开启且实际配置完整
+// 参数：
+//   - channel: 支付渠道
+//   - cfg: 支付配置
+//
+// 返回值：
+//   - bool: 是否可用
+func isChannelUsable(channel string, cfg *payment.PayConfig) bool {
+	if cfg == nil || !isChannelEnabled(channel, cfg.EnabledChannels) {
+		return false
+	}
+	switch channel {
+	case "wechat":
+		return cfg.WechatPaymentReady
+	case "alipay":
+		return false
+	case "cash":
+		return true
+	default:
+		return false
+	}
+}
+
 // CreatePayment 创建支付单
 // 根据 order_id 查询订单金额，channel 转换为 pay_type，再调用 payment-service 创建支付单
 // 会校验当前渠道是否在后台支付开关配置中开启
@@ -100,9 +132,12 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 
-	config.CfgMu.RLock()
-	defer config.CfgMu.RUnlock()
-	if !isChannelEnabled(req.Channel, h.cfg.Payment.EnabledChannels) || !h.isChannelAvailable(req.Channel) {
+	payCfg, err := h.getPayConfigRuntime(c.Request.Context())
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	if !isChannelUsable(req.Channel, payCfg) {
 		response.Error(c, errcode.ParamError, "当前支付方式未开启或配置不完整")
 		return
 	}
@@ -182,7 +217,7 @@ type PaymentChannel struct {
 }
 
 // PaymentChannels 获取当前启用的支付方式列表
-// 根据后台配置 payment.enabled_channels 与渠道实际配置完整性返回可用渠道
+// 根据数据库支付配置中的渠道开关与渠道实际配置完整性返回可用渠道
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) PaymentChannels(c *gin.Context) {
@@ -192,12 +227,15 @@ func (h *PaymentHandler) PaymentChannels(c *gin.Context) {
 		"cash":   "货到付款",
 	}
 
-	config.CfgMu.RLock()
-	defer config.CfgMu.RUnlock()
+	payCfg, err := h.getPayConfigRuntime(c.Request.Context())
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
 
 	var list []PaymentChannel
-	for _, ch := range h.cfg.Payment.EnabledChannels {
-		if !h.isChannelAvailable(ch) {
+	for _, ch := range payCfg.EnabledChannels {
+		if !isChannelUsable(ch, payCfg) {
 			continue
 		}
 		list = append(list, PaymentChannel{
@@ -206,26 +244,6 @@ func (h *PaymentHandler) PaymentChannels(c *gin.Context) {
 		})
 	}
 	response.Success(c, gin.H{"channels": list})
-}
-
-// isChannelAvailable 判断支付渠道是否真正可用
-// 微信支付还需校验 V3 配置完整性，支付宝保持关闭
-// 参数：
-//   - channel: 支付渠道
-//
-// 返回值：
-//   - bool: 是否可用
-func (h *PaymentHandler) isChannelAvailable(channel string) bool {
-	switch channel {
-	case "wechat":
-		return h.cfg.Wechat.IsPaymentConfigured()
-	case "alipay":
-		return false
-	case "cash":
-		return true
-	default:
-		return false
-	}
 }
 
 // GetPayment 根据订单 ID 查询支付单

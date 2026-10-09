@@ -64,3 +64,60 @@ message ProcessRefundReq {
 }
 ```
 
+
+### 配置管理（2026-10 新增）
+
+支付配置存储于数据库 pay_config 表，由 payment 服务统一管理，gateway 通过以下 RPC 读写：
+
+```protobuf
+service PaymentService {
+  // ...原有支付接口...
+
+  rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
+  rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
+  rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
+}
+
+message GetPayConfigReq {}
+
+// PayConfig 支付配置（数据库单行存储）
+// 读写均通过 payment 服务，gateway 不直接访问数据库
+message PayConfig {
+  repeated string enabled_channels = 1;
+  // 微信支付 V3
+  string wechat_app_id = 2;
+  string wechat_app_secret = 3;
+  string wechat_mch_id = 4;
+  string wechat_api_v3_key = 5;
+  string wechat_cert_serial_no = 6;
+  string wechat_private_key = 7;
+  string wechat_notify_url = 8;
+  // 支付宝
+  string alipay_app_id = 9;
+  string alipay_private_key = 10;
+  string alipay_public_key = 11;
+  string alipay_notify_url = 12;
+  string alipay_return_url = 13;
+  // 证书上传状态（上传后内容存库，此处仅回传标志）
+  bool wechat_cert_uploaded = 14;
+  bool alipay_cert_uploaded = 15;
+  // 版本与就绪状态
+  string updated_at = 16;
+  bool wechat_payment_ready = 17;
+  bool alipay_ready = 18;
+}
+
+message UploadPayCertReq {
+  string channel = 1;    // 渠道：wechat / alipay
+  string cert_type = 2;  // 证书类型：private_key（商户/应用私钥）等
+  string filename = 3;   // 原始文件名，用于校验扩展名
+  bytes content = 4;     // 证书文件内容
+}
+
+message UploadPayCertResp {
+  bool success = 1;
+  string message = 2;
+}
+```
+
+热更新机制：payment 服务进程内缓存配置副本，每次支付链路调用时对比数据库 `updated_at` 版本号——版本一致时直接复用已构建的微信支付客户端（零重建开销），版本变更时才刷新缓存并重建客户端。后台保存配置后即时生效，无需重启。

@@ -25,6 +25,9 @@ const (
 	PaymentService_HandleWechatCallback_FullMethodName = "/payment.PaymentService/HandleWechatCallback"
 	PaymentService_HandleAlipayCallback_FullMethodName = "/payment.PaymentService/HandleAlipayCallback"
 	PaymentService_ProcessRefund_FullMethodName        = "/payment.PaymentService/ProcessRefund"
+	PaymentService_GetPayConfig_FullMethodName         = "/payment.PaymentService/GetPayConfig"
+	PaymentService_SavePayConfig_FullMethodName        = "/payment.PaymentService/SavePayConfig"
+	PaymentService_UploadPayCert_FullMethodName        = "/payment.PaymentService/UploadPayCert"
 )
 
 // PaymentServiceClient is the client API for PaymentService service.
@@ -36,6 +39,9 @@ type PaymentServiceClient interface {
 	HandleWechatCallback(ctx context.Context, in *WechatCallbackReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	HandleAlipayCallback(ctx context.Context, in *AlipayCallbackReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ProcessRefund(ctx context.Context, in *ProcessRefundReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	GetPayConfig(ctx context.Context, in *GetPayConfigReq, opts ...grpc.CallOption) (*PayConfig, error)
+	SavePayConfig(ctx context.Context, in *PayConfig, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	UploadPayCert(ctx context.Context, in *UploadPayCertReq, opts ...grpc.CallOption) (*UploadPayCertResp, error)
 }
 
 type paymentServiceClient struct {
@@ -96,6 +102,36 @@ func (c *paymentServiceClient) ProcessRefund(ctx context.Context, in *ProcessRef
 	return out, nil
 }
 
+func (c *paymentServiceClient) GetPayConfig(ctx context.Context, in *GetPayConfigReq, opts ...grpc.CallOption) (*PayConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PayConfig)
+	err := c.cc.Invoke(ctx, PaymentService_GetPayConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *paymentServiceClient) SavePayConfig(ctx context.Context, in *PayConfig, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, PaymentService_SavePayConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *paymentServiceClient) UploadPayCert(ctx context.Context, in *UploadPayCertReq, opts ...grpc.CallOption) (*UploadPayCertResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UploadPayCertResp)
+	err := c.cc.Invoke(ctx, PaymentService_UploadPayCert_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaymentServiceServer is the server API for PaymentService service.
 // All implementations must embed UnimplementedPaymentServiceServer
 // for forward compatibility.
@@ -105,6 +141,9 @@ type PaymentServiceServer interface {
 	HandleWechatCallback(context.Context, *WechatCallbackReq) (*common.CommonResponse, error)
 	HandleAlipayCallback(context.Context, *AlipayCallbackReq) (*common.CommonResponse, error)
 	ProcessRefund(context.Context, *ProcessRefundReq) (*common.CommonResponse, error)
+	GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error)
+	SavePayConfig(context.Context, *PayConfig) (*common.CommonResponse, error)
+	UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error)
 	mustEmbedUnimplementedPaymentServiceServer()
 }
 
@@ -129,6 +168,15 @@ func (UnimplementedPaymentServiceServer) HandleAlipayCallback(context.Context, *
 }
 func (UnimplementedPaymentServiceServer) ProcessRefund(context.Context, *ProcessRefundReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProcessRefund not implemented")
+}
+func (UnimplementedPaymentServiceServer) GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPayConfig not implemented")
+}
+func (UnimplementedPaymentServiceServer) SavePayConfig(context.Context, *PayConfig) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SavePayConfig not implemented")
+}
+func (UnimplementedPaymentServiceServer) UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method UploadPayCert not implemented")
 }
 func (UnimplementedPaymentServiceServer) mustEmbedUnimplementedPaymentServiceServer() {}
 func (UnimplementedPaymentServiceServer) testEmbeddedByValue()                        {}
@@ -241,6 +289,60 @@ func _PaymentService_ProcessRefund_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PaymentService_GetPayConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPayConfigReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).GetPayConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_GetPayConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).GetPayConfig(ctx, req.(*GetPayConfigReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PaymentService_SavePayConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PayConfig)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).SavePayConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_SavePayConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).SavePayConfig(ctx, req.(*PayConfig))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PaymentService_UploadPayCert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UploadPayCertReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).UploadPayCert(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_UploadPayCert_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).UploadPayCert(ctx, req.(*UploadPayCertReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PaymentService_ServiceDesc is the grpc.ServiceDesc for PaymentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -267,6 +369,18 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ProcessRefund",
 			Handler:    _PaymentService_ProcessRefund_Handler,
+		},
+		{
+			MethodName: "GetPayConfig",
+			Handler:    _PaymentService_GetPayConfig_Handler,
+		},
+		{
+			MethodName: "SavePayConfig",
+			Handler:    _PaymentService_SavePayConfig_Handler,
+		},
+		{
+			MethodName: "UploadPayCert",
+			Handler:    _PaymentService_UploadPayCert_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

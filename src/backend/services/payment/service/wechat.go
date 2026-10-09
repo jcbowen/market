@@ -45,11 +45,13 @@ type wechatPayParams struct {
 //   - string: 调起参数 JSON 字符串（JSAPI）或包含 h5_url 的 JSON（H5）
 //   - error: 错误信息
 func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Payment, openid string) (string, error) {
-	if s.wechatPayClient == nil {
+	// 支付前检测数据库配置版本，后台修改配置后无需重启即可生效
+	s.getPayConfigCached(ctx)
+	client := s.getWechatPayClient()
+	if client == nil {
 		return "", fmt.Errorf("微信支付未配置或配置不完整")
 	}
-
-	cfg := s.cfg.Wechat
+	cfg := s.getWechatPayConfig()
 	description := "社区商超订单"
 	amountTotal := yuanToFen(p.Amount)
 
@@ -63,7 +65,7 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 	}
 
 	if openid != "" {
-		resp, err := s.wechatPayClient.JSAPIPay(ctx, &wegopayment.JSAPIRequest{
+		resp, err := client.JSAPIPay(ctx, &wegopayment.JSAPIRequest{
 			Description: description,
 			OutTradeNo:  p.PaymentNo,
 			Amount: wegopayment.Amount{
@@ -98,7 +100,7 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 		return string(data), nil
 	}
 
-	resp, err := s.wechatPayClient.H5Pay(ctx, &wegopayment.H5Request{
+	resp, err := client.H5Pay(ctx, &wegopayment.H5Request{
 		Description: description,
 		OutTradeNo:  p.PaymentNo,
 		Amount: wegopayment.Amount{
@@ -134,11 +136,12 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) wechatRefund(ctx context.Context, p *model.Payment, refund *model.RefundPayment) error {
-	if s.wechatPayClient == nil {
+	client := s.getWechatPayClient()
+	if client == nil {
 		return fmt.Errorf("微信支付未配置或配置不完整")
 	}
 
-	resp, err := s.wechatPayClient.Refund(ctx, &wegopayment.RefundRequest{
+	resp, err := client.Refund(ctx, &wegopayment.RefundRequest{
 		OutTradeNo:  p.PaymentNo,
 		OutRefundNo: refund.RefundNo,
 		Amount: wegopayment.RefundAmount{
@@ -165,14 +168,15 @@ func (s *PaymentService) wechatRefund(ctx context.Context, p *model.Payment, ref
 //   - *payCallbackParams: 解析后的通用参数
 //   - error: 错误信息
 func parseWechatCallback(s *PaymentService, body []byte, headers http.Header) (*payCallbackParams, error) {
-	if s.wechatPayClient == nil {
+	client := s.getWechatPayClient()
+	if client == nil {
 		return nil, fmt.Errorf("微信支付未配置或配置不完整")
 	}
 	if len(body) == 0 {
 		return nil, fmt.Errorf("回调体为空")
 	}
 
-	notification, plainBytes, err := s.wechatPayClient.VerifyNotification(context.Background(), headers, body)
+	notification, plainBytes, err := client.VerifyNotification(context.Background(), headers, body)
 	if err != nil {
 		return nil, fmt.Errorf("微信支付回调验签解密失败: %w", err)
 	}
