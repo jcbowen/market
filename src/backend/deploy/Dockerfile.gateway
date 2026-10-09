@@ -6,8 +6,8 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-# 复制预编译的 gateway 二进制
-COPY bin/gateway ./gateway
+# 复制预编译的 gateway 二进制（Linux 交叉编译产物）
+COPY bin/linux/gateway ./gateway
 
 # 复制前端编译产物（非源码）
 COPY bin/static ./static
