@@ -41,6 +41,22 @@ build_one() {
   (cd "${BACKEND_DIR}" && GOPATH="${ROOT_DIR}" CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build -o "${out}" "$(src_dir_of "${svc}")")
 }
 
+# safe_clean_dir 安全删除指定的平台构建目录。
+# 仅当目标路径严格位于 ${BUILD_DIR} 内时才执行 rm -rf，
+# 避免构建目录变量异常（为空或被指向项目外）时误删系统文件。
+# 参数:
+#   $1 - 待删除目录的绝对路径，如 "${BUILD_DIR}/linux"
+# 返回值: 无
+# 异常: 目标路径不在构建输出目录内时，输出错误信息并以状态码 1 退出脚本
+# 示例: safe_clean_dir "${BUILD_DIR:?}/linux"
+safe_clean_dir() {
+  local target="$1"
+  case "${target}" in
+    "${BUILD_DIR}"/*) rm -rf "${target}" ;;
+    *) echo "错误：拒绝删除构建目录之外的路径: ${target}" >&2; exit 1 ;;
+  esac
+}
+
 mkdir -p "${BUILD_DIR}/static"
 
 # 逐平台编译
@@ -48,7 +64,7 @@ for platform in "${PLATFORMS[@]}"; do
   os="${platform%%/*}"
   arch="${platform##*/}"
   echo "==> 构建 ${os}/${arch} ..."
-  rm -rf "${BUILD_DIR:?}/${os}"
+  safe_clean_dir "${BUILD_DIR:?}/${os}"
   mkdir -p "${BUILD_DIR}/${os}"
   for svc in "${SERVICES[@]}"; do
     echo "    构建 ${svc} ..."
