@@ -46,7 +46,7 @@
         <n-alert v-else type="success" title="微信支付已就绪" style="margin-bottom: 16px;">
           微信支付配置完整，C 端可正常展示
         </n-alert>
-        <n-grid :cols="{ xs: 1, m: 2 }" :x-gap="16" responsive="screen">
+        <n-grid cols="1 m:2" :x-gap="16" responsive="screen">
           <n-grid-item>
             <n-form-item label="AppID">
               <n-input v-model:value="paymentForm.wechat.app_id" placeholder="小程序/公众号 AppID" />
@@ -98,7 +98,7 @@
         <n-alert type="info" title="支付宝支付保持关闭" style="margin-bottom: 16px;">
           支付宝支付当前仅保存配置，不会对外启用
         </n-alert>
-        <n-grid :cols="{ xs: 1, m: 2 }" :x-gap="16" responsive="screen">
+        <n-grid cols="1 m:2" :x-gap="16" responsive="screen">
           <n-grid-item>
             <n-form-item label="AppID">
               <n-input v-model:value="paymentForm.alipay.app_id" placeholder="支付宝 AppID" disabled />

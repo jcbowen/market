@@ -22,7 +22,7 @@
 
         <template v-if="form.storage_type === 'oss'">
           <n-divider title-placement="left">阿里云 OSS 配置</n-divider>
-          <n-grid :cols="{ xs: 1, m: 2 }" :x-gap="16" responsive="screen">
+          <n-grid cols="1 m:2" :x-gap="16" responsive="screen">
             <n-grid-item>
               <n-form-item label="AccessKey ID" required>
                 <n-input v-model:value="form.oss_access_key_id" placeholder="阿里云 RAM 访问密钥 ID" />

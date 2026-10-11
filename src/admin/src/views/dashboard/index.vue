@@ -1,6 +1,6 @@
 <template>
   <div class="dashboard-page">
-    <n-grid :cols="{ xs: 1, s: 2, m: 4, xl: 4 }" :x-gap="16" :y-gap="16" responsive="screen">
+    <n-grid cols="1 s:2 m:4 l:4 xl:4 xxl:4" :x-gap="16" :y-gap="16" responsive="screen">
       <n-grid-item>
         <n-card>
           <n-statistic class="dashboard-statistic" label="今日订单数" :value="statistics.order_count">
