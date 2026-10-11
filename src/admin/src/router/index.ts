@@ -201,12 +201,24 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/system/roles.vue'),
         meta: { title: '角色管理', permission: 'role:view', group: '系统管理' },
       },
-      // 设置
+      {
+        path: 'system/payment',
+        name: 'PaymentSetting',
+        component: () => import('@/views/settings/payment.vue'),
+        meta: { title: '支付配置', permission: 'settings:view', group: '系统管理' },
+      },
+      {
+        path: 'system/attachment',
+        name: 'AttachmentSetting',
+        component: () => import('@/views/settings/attachment.vue'),
+        meta: { title: '附件配置', permission: 'settings:view', group: '系统管理' },
+      },
+      // 个人设置：入口在右上角头像下拉，不在左侧菜单展示
       {
         path: 'settings/profile',
         name: 'Profile',
         component: () => import('@/views/settings/profile.vue'),
-        meta: { title: '个人设置', permission: 'dashboard:view', group: '设置' },
+        meta: { title: '个人设置', permission: 'dashboard:view', hidden: true },
       },
     ],
   },

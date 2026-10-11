@@ -11,7 +11,7 @@
         <n-input v-model:value="form.unit" placeholder="如：件 / 斤 / 箱" />
       </n-form-item>
       <n-form-item label="封面图">
-        <n-input v-model:value="form.cover_image" placeholder="图片 URL" />
+        <ImageUploadInput v-model:value="form.cover_image" placeholder="图片 URL 或点击上传" />
       </n-form-item>
       <n-form-item label="是否多规格">
         <n-switch v-model:value="form.is_multi_spec" />
@@ -135,6 +135,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
+import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import { getProductDetail, createProduct, updateProduct, getCategoryList } from '@/api/product'
 import type {
   Category,

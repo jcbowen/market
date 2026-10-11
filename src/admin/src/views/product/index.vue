@@ -52,8 +52,8 @@
         <n-form-item label="所属分类">
           <n-select v-model:value="productForm.category_id" :options="categoryOptions" placeholder="请选择分类" />
         </n-form-item>
-        <n-form-item label="封面图 URL">
-          <n-input v-model:value="productForm.cover_image" placeholder="请输入商品封面图地址" />
+        <n-form-item label="封面图">
+          <ImageUploadInput v-model:value="productForm.cover_image" placeholder="图片 URL 或点击上传" />
         </n-form-item>
         <n-space>
           <n-form-item label="售价" style="width: 240px;">
@@ -100,6 +100,7 @@
 import { h, onMounted, reactive, ref, computed } from 'vue'
 import { useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
+import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import {
   getCategoryList,
   createCategory,

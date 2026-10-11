@@ -57,7 +57,7 @@ import { computed, h, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, AlbumsOutline, PeopleOutline, GiftOutline, BarChartOutline, SettingsOutline, FileTrayOutline, StorefrontOutline, OptionsOutline } from '@vicons/ionicons5'
+import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
@@ -205,16 +205,10 @@ const menuOptions = computed<MenuOption[]>(() => {
       permission: 'community:view',
       children: [
         { label: '社区管理', key: '/system/communities', permission: 'community:view' },
+        { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
+        { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
         { label: '管理员', key: '/system/admins', permission: 'admin:view' },
         { label: '角色管理', key: '/system/roles', permission: 'role:view' },
-      ],
-    },
-    {
-      label: '设置',
-      key: '/settings',
-      icon: renderIcon(OptionsOutline),
-      children: [
-        { label: '个人设置', key: '/settings/profile', permission: 'dashboard:view' },
       ],
     },
   ]
@@ -244,6 +238,7 @@ function onMenuChange(key: string) {
 
 /** 用户操作下拉选项 */
 const userOptions = [
+  { label: '个人设置', key: 'profile' },
   { label: '退出登录', key: 'logout' },
 ]
 
@@ -252,6 +247,10 @@ const userOptions = [
  * @param key 操作标识
  */
 function onUserAction(key: string) {
+  if (key === 'profile') {
+    router.push('/settings/profile')
+    return
+  }
   if (key === 'logout') {
     authStore.logout()
     message.success('已退出登录')

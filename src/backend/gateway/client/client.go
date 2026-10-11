@@ -69,6 +69,8 @@ func initClients(cfg *config.Config) (*ServiceClients, error) {
 		conn, cErr := grpc.NewClient(addr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
+			// 本地上传模式图片经 gateway 转发，单条消息可达数 MB，需放宽客户端发送上限
+			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(10*1024*1024), grpc.MaxCallRecvMsgSize(10*1024*1024)),
 		)
 		if cErr != nil {
 			_ = clients.Close()

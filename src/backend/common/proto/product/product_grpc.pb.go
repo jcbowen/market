@@ -69,6 +69,11 @@ const (
 	ProductService_CreateBanner_FullMethodName          = "/product.ProductService/CreateBanner"
 	ProductService_UpdateBanner_FullMethodName          = "/product.ProductService/UpdateBanner"
 	ProductService_DeleteBanner_FullMethodName          = "/product.ProductService/DeleteBanner"
+	ProductService_GetAttachmentConfig_FullMethodName   = "/product.ProductService/GetAttachmentConfig"
+	ProductService_SaveAttachmentConfig_FullMethodName  = "/product.ProductService/SaveAttachmentConfig"
+	ProductService_UploadImageLocal_FullMethodName      = "/product.ProductService/UploadImageLocal"
+	ProductService_AttachmentPresign_FullMethodName     = "/product.ProductService/AttachmentPresign"
+	ProductService_AttachmentConfirm_FullMethodName     = "/product.ProductService/AttachmentConfirm"
 )
 
 // ProductServiceClient is the client API for ProductService service.
@@ -132,6 +137,12 @@ type ProductServiceClient interface {
 	CreateBanner(ctx context.Context, in *CreateBannerReq, opts ...grpc.CallOption) (*BannerInfo, error)
 	UpdateBanner(ctx context.Context, in *UpdateBannerReq, opts ...grpc.CallOption) (*BannerInfo, error)
 	DeleteBanner(ctx context.Context, in *DeleteBannerReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 附件
+	GetAttachmentConfig(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentConfig, error)
+	SaveAttachmentConfig(ctx context.Context, in *AttachmentConfig, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	UploadImageLocal(ctx context.Context, in *UploadImageLocalReq, opts ...grpc.CallOption) (*AttachmentInfo, error)
+	AttachmentPresign(ctx context.Context, in *AttachmentPresignReq, opts ...grpc.CallOption) (*AttachmentPresignResp, error)
+	AttachmentConfirm(ctx context.Context, in *AttachmentConfirmReq, opts ...grpc.CallOption) (*AttachmentInfo, error)
 }
 
 type productServiceClient struct {
@@ -632,6 +643,56 @@ func (c *productServiceClient) DeleteBanner(ctx context.Context, in *DeleteBanne
 	return out, nil
 }
 
+func (c *productServiceClient) GetAttachmentConfig(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentConfig)
+	err := c.cc.Invoke(ctx, ProductService_GetAttachmentConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) SaveAttachmentConfig(ctx context.Context, in *AttachmentConfig, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_SaveAttachmentConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) UploadImageLocal(ctx context.Context, in *UploadImageLocalReq, opts ...grpc.CallOption) (*AttachmentInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentInfo)
+	err := c.cc.Invoke(ctx, ProductService_UploadImageLocal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) AttachmentPresign(ctx context.Context, in *AttachmentPresignReq, opts ...grpc.CallOption) (*AttachmentPresignResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentPresignResp)
+	err := c.cc.Invoke(ctx, ProductService_AttachmentPresign_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) AttachmentConfirm(ctx context.Context, in *AttachmentConfirmReq, opts ...grpc.CallOption) (*AttachmentInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentInfo)
+	err := c.cc.Invoke(ctx, ProductService_AttachmentConfirm_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProductServiceServer is the server API for ProductService service.
 // All implementations must embed UnimplementedProductServiceServer
 // for forward compatibility.
@@ -693,6 +754,12 @@ type ProductServiceServer interface {
 	CreateBanner(context.Context, *CreateBannerReq) (*BannerInfo, error)
 	UpdateBanner(context.Context, *UpdateBannerReq) (*BannerInfo, error)
 	DeleteBanner(context.Context, *DeleteBannerReq) (*common.CommonResponse, error)
+	// 附件
+	GetAttachmentConfig(context.Context, *common.Empty) (*AttachmentConfig, error)
+	SaveAttachmentConfig(context.Context, *AttachmentConfig) (*common.CommonResponse, error)
+	UploadImageLocal(context.Context, *UploadImageLocalReq) (*AttachmentInfo, error)
+	AttachmentPresign(context.Context, *AttachmentPresignReq) (*AttachmentPresignResp, error)
+	AttachmentConfirm(context.Context, *AttachmentConfirmReq) (*AttachmentInfo, error)
 	mustEmbedUnimplementedProductServiceServer()
 }
 
@@ -849,6 +916,21 @@ func (UnimplementedProductServiceServer) UpdateBanner(context.Context, *UpdateBa
 }
 func (UnimplementedProductServiceServer) DeleteBanner(context.Context, *DeleteBannerReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteBanner not implemented")
+}
+func (UnimplementedProductServiceServer) GetAttachmentConfig(context.Context, *common.Empty) (*AttachmentConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAttachmentConfig not implemented")
+}
+func (UnimplementedProductServiceServer) SaveAttachmentConfig(context.Context, *AttachmentConfig) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveAttachmentConfig not implemented")
+}
+func (UnimplementedProductServiceServer) UploadImageLocal(context.Context, *UploadImageLocalReq) (*AttachmentInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method UploadImageLocal not implemented")
+}
+func (UnimplementedProductServiceServer) AttachmentPresign(context.Context, *AttachmentPresignReq) (*AttachmentPresignResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method AttachmentPresign not implemented")
+}
+func (UnimplementedProductServiceServer) AttachmentConfirm(context.Context, *AttachmentConfirmReq) (*AttachmentInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method AttachmentConfirm not implemented")
 }
 func (UnimplementedProductServiceServer) mustEmbedUnimplementedProductServiceServer() {}
 func (UnimplementedProductServiceServer) testEmbeddedByValue()                        {}
@@ -1753,6 +1835,96 @@ func _ProductService_DeleteBanner_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_GetAttachmentConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(common.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetAttachmentConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetAttachmentConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetAttachmentConfig(ctx, req.(*common.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_SaveAttachmentConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachmentConfig)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).SaveAttachmentConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_SaveAttachmentConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).SaveAttachmentConfig(ctx, req.(*AttachmentConfig))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_UploadImageLocal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UploadImageLocalReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).UploadImageLocal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_UploadImageLocal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).UploadImageLocal(ctx, req.(*UploadImageLocalReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_AttachmentPresign_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachmentPresignReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).AttachmentPresign(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_AttachmentPresign_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).AttachmentPresign(ctx, req.(*AttachmentPresignReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_AttachmentConfirm_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachmentConfirmReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).AttachmentConfirm(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_AttachmentConfirm_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).AttachmentConfirm(ctx, req.(*AttachmentConfirmReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ProductService_ServiceDesc is the grpc.ServiceDesc for ProductService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1955,6 +2127,26 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteBanner",
 			Handler:    _ProductService_DeleteBanner_Handler,
+		},
+		{
+			MethodName: "GetAttachmentConfig",
+			Handler:    _ProductService_GetAttachmentConfig_Handler,
+		},
+		{
+			MethodName: "SaveAttachmentConfig",
+			Handler:    _ProductService_SaveAttachmentConfig_Handler,
+		},
+		{
+			MethodName: "UploadImageLocal",
+			Handler:    _ProductService_UploadImageLocal_Handler,
+		},
+		{
+			MethodName: "AttachmentPresign",
+			Handler:    _ProductService_AttachmentPresign_Handler,
+		},
+		{
+			MethodName: "AttachmentConfirm",
+			Handler:    _ProductService_AttachmentConfirm_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

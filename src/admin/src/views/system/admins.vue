@@ -10,7 +10,7 @@
     </n-space>
   </n-card>
 
-  <n-modal v-model:show="showModal" title="新增管理员" preset="card" style="width: 500px">
+  <n-modal v-model:show="showModal" title="新增管理员" preset="card" style="width: 500px; max-width: 90vw">
     <n-space vertical>
       <n-input v-model:value="form.username" placeholder="用户名" />
       <n-input v-model:value="form.password" type="password" placeholder="密码" />

@@ -52,10 +52,10 @@
       </n-form-item>
     </n-form>
 
-    <n-modal v-model:show="mapVisible" title="选择经纬度" style="width: 80%; max-width: 900px" preset="card">
+    <n-modal v-model:show="mapVisible" title="选择经纬度（点击地图选点后自动回填）" style="width: 80%; max-width: 900px" preset="card">
       <iframe
-        src="https://lbs.amap.com/console/show/picker"
-        style="width: 100%; height: 500px; border: 0"
+        src="https://lbs.amap.com/tools/picker"
+        style="width: 100%; height: 600px; border: 0"
         allow="geolocation"
       />
     </n-modal>
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { createCommunity, updateCommunity, getCommunityList } from '@/api/user'
 import type { Community } from '@/api/types'
@@ -113,6 +113,54 @@ const latitudeText = computed({
 function openMapPicker() {
   mapVisible.value = true
 }
+
+// 高德坐标拾取器 iframe 的合法来源，postMessage 消息必须来自该域名才被处理
+const AMAP_PICKER_ORIGIN = 'https://lbs.amap.com'
+
+/**
+ * 处理高德坐标拾取器回传的选点消息
+ * 高德官方拾取器（lbs.amap.com/tools/picker）通过 postMessage 向父窗口回传结果，
+ * data 为 JSON 字符串或对象，坐标字段为 lnglat（[经度, 纬度]）或 lnglat 字符串
+ * 仅处理 event.origin 为高德官方域名的消息，防止其他来源伪造选点数据
+ * @param event message 事件
+ */
+function onMapMessage(event: MessageEvent) {
+  if (event.origin !== AMAP_PICKER_ORIGIN || !mapVisible.value || !event.data) {
+    return
+  }
+
+  let payload: { lnglat?: string | [string | number, string | number] } | null = null
+  try {
+    payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+  } catch {
+    // 非坐标类消息（如高德页面自身的日志）直接忽略
+    return
+  }
+
+  const lnglat = payload?.lnglat
+  if (!lnglat) {
+    return
+  }
+
+  const [lng, lat] = Array.isArray(lnglat) ? lnglat : String(lnglat).split(',')
+  const lngValue = parseFloat(String(lng))
+  const latValue = parseFloat(String(lat))
+  if (Number.isNaN(lngValue) || Number.isNaN(latValue)) {
+    return
+  }
+
+  form.value.longitude = lngValue
+  form.value.latitude = latValue
+  mapVisible.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('message', onMapMessage)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('message', onMapMessage)
+})
 
 async function loadDetail() {
   const id = Number(route.params.id)

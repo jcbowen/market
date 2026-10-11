@@ -261,6 +261,14 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdatePaymentSetting)
 			authAdmin.POST("/settings/payment/cert", gwMiddleware.RequirePermission("settings:update"), adminHandler.UploadPaymentCert)
 
+			// 附件：配置管理、本地上传与 OSS 预签名直传
+			attachmentHandler := handler.NewAttachmentHandler(clients.ProductClient)
+			authAdmin.GET("/settings/attachment", gwMiddleware.RequirePermission("settings:view"), attachmentHandler.GetAttachmentSetting)
+			authAdmin.PUT("/settings/attachment", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.UpdateAttachmentSetting)
+			authAdmin.POST("/upload/image", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.UploadImage)
+			authAdmin.POST("/attachment/presign", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.AttachmentPresign)
+			authAdmin.POST("/attachment/confirm", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.AttachmentConfirm)
+
 			authAdmin.GET("/users", gwMiddleware.RequirePermission("user:view"), adminHandler.ListUsers)
 
 			authAdmin.GET("/communities", gwMiddleware.RequirePermission("community:view"), adminHandler.ListAdminCommunities)
@@ -285,6 +293,11 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 	adminPath := filepath.Join(getBinDir(), "static", "admin")
 	r.Static("/b", adminPath)
+
+	// 本地附件静态服务：与 product 服务落盘目录（<bin>/attachment/）保持一致，
+	// URL 形如 /uploads/images/{Ymd}/{dd}/xxx.jpg
+	attachmentPath := filepath.Join(getBinDir(), "attachment")
+	r.Static("/uploads", attachmentPath)
 
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/b/") {

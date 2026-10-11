@@ -1,6 +1,6 @@
 <template>
   <div class="statistics-page">
-    <n-grid :cols="{ xs: 1, s: 2, m: 3, l: 3, xl: 3 }" :x-gap="16" :y-gap="16" responsive="screen">
+    <n-grid :cols="{ xs: 1, s: 2, m: 3, xl: 3 }" :x-gap="16" :y-gap="16" responsive="screen">
       <n-grid-item v-for="item in summaryList" :key="item.label">
         <n-card>
           <n-statistic :label="item.label" :value="item.value" :precision="item.precision">

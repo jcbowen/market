@@ -8,7 +8,7 @@
     </n-space>
   </n-card>
 
-  <n-modal v-model:show="showModal" title="角色" preset="card" style="width: 500px">
+  <n-modal v-model:show="showModal" title="角色" preset="card" style="width: 500px; max-width: 90vw">
     <n-space vertical>
       <n-input v-model:value="form.name" placeholder="角色名称" />
       <n-input v-model:value="form.code" placeholder="角色编码" />

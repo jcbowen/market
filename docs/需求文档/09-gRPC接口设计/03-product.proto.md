@@ -610,4 +610,72 @@ message FullReductionInfo {
 message ListFullReductionsResp {
   repeated FullReductionInfo list = 1;
 }
+
+// --- 附件 ---
+// 附件服务（config 读写、本地上传、OSS 预签名直传与 MD5 秒传）
+service 追加：
+  rpc GetAttachmentConfig(common.Empty) returns (AttachmentConfig);
+  rpc SaveAttachmentConfig(AttachmentConfig) returns (common.CommonResponse);
+  rpc UploadImageLocal(UploadImageLocalReq) returns (AttachmentInfo);
+  rpc AttachmentPresign(AttachmentPresignReq) returns (AttachmentPresignResp);
+  rpc AttachmentConfirm(AttachmentConfirmReq) returns (AttachmentInfo);
+
+// AttachmentConfig 附件存储配置（数据库单行存储，id 固定为 1）
+// oss_access_key_secret 写入时空或掩码值表示保留原值，读取时服务端脱敏
+message AttachmentConfig {
+  string storage_type = 1;             // local / oss（预留 cos）
+  string visit_domain = 2;
+  string oss_access_key_id = 3;
+  string oss_access_key_secret = 4;
+  string oss_endpoint = 5;
+  string oss_bucket_name = 6;
+  string oss_custom_visit_domain = 7;
+  int64 max_size = 8;                  // 图片上限（字节），0 默认 5MB
+  string updated_at = 9;               // 兼作版本号
+}
+
+message UploadImageLocalReq {
+  int64 admin_id = 1;
+  string filename = 2;
+  string content_type = 3;
+  bytes content = 4;
+}
+
+message AttachmentPresignReq {
+  int64 admin_id = 1;
+  string filename = 2;
+  string md5 = 3;          // 32 位十六进制，用于秒传
+  string content_type = 4;
+  int64 size = 5;
+  int32 width = 6;
+  int32 height = 7;
+}
+
+message AttachmentPresignResp {
+  string attach_id = 1;
+  bool hit = 2;                    // true 表示秒传命中，直接用 final_url
+  string url = 3;                  // 预签名上传 URL
+  string method = 4;               // PUT
+  map<string, string> headers = 5;
+  string final_url = 6;
+  string remote_path = 7;
+}
+
+message AttachmentConfirmReq {
+  int64 admin_id = 1;              // 须与记录归属一致
+  string attach_id = 2;
+  string md5 = 3;                  // confirm 补写，激活秒传
+  int64 size = 4;
+  int32 width = 5;
+  int32 height = 6;
+}
+
+message AttachmentInfo {
+  string attach_id = 1;
+  string url = 2;                  // local 模式为空，gateway 按请求域名拼接
+  string remote_path = 3;
+  int64 size = 4;
+  int32 width = 5;
+  int32 height = 6;
+}
 ```

@@ -2,6 +2,7 @@ package main
 
 import (
 	stdctx "context"
+	"log"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
@@ -25,6 +26,7 @@ type server struct {
 	stockCheckService *service.StockCheckService
 	marketingService  *service.MarketingService
 	bannerService     *service.BannerService
+	attachmentService *service.AttachmentService
 }
 
 // newServer 创建商品服务 gRPC 实现
@@ -35,6 +37,10 @@ type server struct {
 // 返回值：
 //   - *server: gRPC 服务实现
 func newServer(db *mysql.Instance, cfg *config.Config) *server {
+	attachmentService := service.NewAttachmentService(db)
+	if err := attachmentService.EnsureDefaultAttachmentConfig(); err != nil {
+		log.Printf("初始化默认附件配置失败: %v", err)
+	}
 	return &server{
 		categoryService:   service.NewCategoryService(db),
 		productService:    service.NewProductService(db),
@@ -44,6 +50,7 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 		stockCheckService: service.NewStockCheckService(db),
 		marketingService:  service.NewMarketingService(db),
 		bannerService:     service.NewBannerService(db),
+		attachmentService: attachmentService,
 	}
 }
 
@@ -618,4 +625,48 @@ func (s *server) DeleteBanner(ctx stdctx.Context, req *product.DeleteBannerReq) 
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{}, nil
+}
+
+// GetAttachmentConfig 获取附件配置（AccessKeySecret 脱敏）
+func (s *server) GetAttachmentConfig(ctx stdctx.Context, req *common.Empty) (*product.AttachmentConfig, error) {
+	cfg, err := s.attachmentService.GetConfigMasked(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return cfg, nil
+}
+
+// SaveAttachmentConfig 保存附件配置（Secret 为空或掩码时保留原值）
+func (s *server) SaveAttachmentConfig(ctx stdctx.Context, req *product.AttachmentConfig) (*common.CommonResponse, error) {
+	if err := s.attachmentService.SaveConfig(ctx, req); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &common.CommonResponse{}, nil
+}
+
+// UploadImageLocal 本地模式图片上传（gateway 转发文件内容）
+func (s *server) UploadImageLocal(ctx stdctx.Context, req *product.UploadImageLocalReq) (*product.AttachmentInfo, error) {
+	info, err := s.attachmentService.UploadImageLocal(ctx, req)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return info, nil
+}
+
+// AttachmentPresign 获取预签名上传 URL（OSS 直传模式）
+func (s *server) AttachmentPresign(ctx stdctx.Context, req *product.AttachmentPresignReq) (*product.AttachmentPresignResp, error) {
+	resp, err := s.attachmentService.AttachmentPresign(ctx, req)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return resp, nil
+}
+
+// AttachmentConfirm 确认上传完成（补写 md5 与尺寸，激活秒传）
+func (s *server) AttachmentConfirm(ctx stdctx.Context, req *product.AttachmentConfirmReq) (*product.AttachmentInfo, error) {
+	info, err := s.attachmentService.AttachmentConfirm(ctx, req)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return info, nil
 }

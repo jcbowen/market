@@ -28,7 +28,11 @@ func main() {
 	backfillProductSummary(db)
 	_ = bootstrap.InitRedis(cfg)
 
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(
+		// 图片经 gateway 转发（本地上传模式）时单条消息可达数 MB，默认 4MB 上限不够用
+		grpc.MaxRecvMsgSize(10*1024*1024),
+		grpc.MaxSendMsgSize(10*1024*1024),
+	)
 	product.RegisterProductServiceServer(srv, newServer(db, cfg))
 	bootstrap.RegisterHealth(srv)
 
@@ -61,6 +65,8 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.FlashSaleItem{},
 		&model.FullReduction{},
 		&model.Banner{},
+		&model.AttachmentConfig{},
+		&model.Attachment{},
 	)
 }
 

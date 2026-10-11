@@ -48,4 +48,25 @@ html, body, #app {
   height: 100%;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
+
+/**
+ * 全局响应式适配
+ * 窄屏（笔记本半屏 / 系统缩放 / 平板）下，左右布局的表单自动切换为标签置顶，
+ * 避免固定 label 宽度挤压输入框；宽屏不受影响
+ */
+@media (max-width: 768px) {
+  .n-form.n-form--label-left .n-form-item {
+    display: block;
+  }
+  .n-form.n-form--label-left .n-form-item-label {
+    width: auto !important;
+    min-width: 0 !important;
+    text-align: left;
+    padding-bottom: 4px;
+  }
+  // 弹窗在窄屏下占满可视宽度，避免固定 px 宽度溢出
+  .n-card.n-modal {
+    width: 94vw !important;
+  }
+}
 </style>

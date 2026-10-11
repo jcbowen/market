@@ -12,7 +12,7 @@
     </n-space>
   </n-card>
 
-  <n-modal v-model:show="showInModal" title="商品入库" preset="card" style="width: 500px">
+  <n-modal v-model:show="showInModal" title="商品入库" preset="card" style="width: 500px; max-width: 90vw">
     <n-space vertical>
       <n-input-number v-model:value="inForm.sku_id" placeholder="SKU ID" />
       <n-input-number v-model:value="inForm.quantity" placeholder="数量" />
@@ -24,7 +24,7 @@
     </n-space>
   </n-modal>
 
-  <n-modal v-model:show="showOutModal" title="库存出库" preset="card" style="width: 500px">
+  <n-modal v-model:show="showOutModal" title="库存出库" preset="card" style="width: 500px; max-width: 90vw">
     <n-space vertical>
       <n-select v-model:value="outForm.type" :options="outTypeOptions" />
       <n-input-number v-model:value="outForm.sku_id" placeholder="SKU ID" />
