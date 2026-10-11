@@ -47,6 +47,11 @@ install_deps_if_needed() {
   fi
 }
 
+# 本地附件共享目录（Docker bind mount 挂载点）：
+# product-service 落盘与 gateway /uploads 静态服务共用，宿主目录不存在时先创建，
+# 避免首次部署或目录被清理后挂载异常
+mkdir -p "${ROOT_DIR}/bin/attachment"
+
 # 构建阶段
 if [ "$SKIP_BUILD" = false ]; then
   echo "==> 构建管理端..."

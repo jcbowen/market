@@ -48,6 +48,9 @@ echo "==> 构建后端二进制（Linux arm64 交叉编译）..."
 cd "${ROOT_DIR}"
 bash "${ROOT_DIR}/build.sh"
 
+echo "==> 准备本地附件共享目录（不存在时自动创建）..."
+mkdir -p "${ROOT_DIR}/bin/attachment"
+
 echo "==> 构建 Docker 镜像..."
 cd "${ROOT_DIR}"
 docker compose build ${NO_CACHE}

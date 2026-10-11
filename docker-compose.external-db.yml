@@ -34,6 +34,9 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
+      # 本地附件共享目录：product 落盘与 gateway /uploads 静态服务共用同一宿主目录，
+      # 目录不存在时由启动脚本或 Docker 自动创建
+      - ./bin/attachment:/app/attachment
     command: >
       sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
 
@@ -107,6 +110,9 @@ services:
       - "18080:18080"
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
+      # 本地附件共享目录：与 product-service 挂载同一宿主目录，
+      # /uploads 静态路由（<exe 同级>/attachment）读取 product 落盘的附件
+      - ./bin/attachment:/app/attachment
       # 开发阶段挂载宿主机前端编译产物，避免每次修改都重新构建 gateway 镜像
       - ./bin/static/admin:/app/static/admin:ro
       - ./bin/static/h5:/app/static/h5:ro
