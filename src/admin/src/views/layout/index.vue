@@ -32,7 +32,10 @@
               <menu-outline />
             </n-icon>
           </n-button>
-          <span class="page-title">{{ route.meta.title }}</span>
+          <n-breadcrumb>
+            <n-breadcrumb-item v-if="route.meta.group">{{ route.meta.group }}</n-breadcrumb-item>
+            <n-breadcrumb-item>{{ route.meta.title }}</n-breadcrumb-item>
+          </n-breadcrumb>
         </div>
         <div class="header-right">
           <span class="admin-name">{{ authStore.admin?.nickname || authStore.admin?.username || '管理员' }}</span>
@@ -45,30 +48,118 @@
           </n-dropdown>
         </div>
       </n-layout-header>
+      <!-- 标签栏：访问过的页面形成标签，支持切换、关闭与批量关闭 -->
+      <div class="tabs-bar">
+        <n-tabs
+          type="card"
+          size="small"
+          :value="tabsStore.activePath"
+          @update:value="onTabSwitch"
+          @close="onTabClose"
+        >
+          <n-tab v-for="tab in tabsStore.tabs" :key="tab.path" :name="tab.path" :closable="!tab.affix">
+            {{ tab.title }}
+          </n-tab>
+        </n-tabs>
+        <n-dropdown trigger="click" :options="tabMoreOptions" @select="onTabMoreAction">
+          <n-button text class="tabs-more">
+            <n-icon size="16">
+              <ellipsis-horizontal />
+            </n-icon>
+          </n-button>
+        </n-dropdown>
+      </div>
       <n-layout-content class="content">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <keep-alive :include="tabsStore.cachedNames">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
       </n-layout-content>
     </n-layout>
   </n-layout>
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted } from 'vue'
+import { computed, h, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline } from '@vicons/ionicons5'
+import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import { useTabsStore } from '@/stores/tabs'
+import { resolveHomePath } from '@/router'
 
 const router = useRouter()
 const route = useRoute()
 const message = useMessage()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const tabsStore = useTabsStore()
 
 const collapsed = computed(() => appStore.collapsed)
 const activeKey = computed(() => route.path)
+
+// Layout 挂载即按账号兜底首页初始化固定标签（登录切换账号时随 Layout 重建天然重置）
+const homePath = resolveHomePath(authStore) ?? '/dashboard'
+const homeResolved = router.resolve(homePath)
+tabsStore.init(
+  homePath,
+  (homeResolved.meta.title as string) || '首页',
+  typeof homeResolved.name === 'string' ? homeResolved.name : undefined,
+)
+
+/**
+ * 路由变化同步标签页
+ * 403 无权限提示页不进标签栏
+ */
+watch(
+  () => route.fullPath,
+  () => {
+    if (route.path === '/403') return
+    tabsStore.syncWithRoute(route.fullPath, route.meta.title as string, route.name, route.meta.hidden === true)
+  },
+  { immediate: true },
+)
+
+/**
+ * 标签切换
+ * @param key 目标标签路径
+ */
+function onTabSwitch(key: string | number) {
+  router.push(String(key))
+}
+
+/**
+ * 关闭标签：关闭的是激活标签时跳转到相邻标签
+ * @param key 被关闭标签的路径
+ */
+function onTabClose(key: string | number) {
+  const target = tabsStore.closeTab(String(key))
+  if (target) router.push(target)
+}
+
+/** 标签栏更多操作选项 */
+const tabMoreOptions = [
+  { label: '关闭其他标签', key: 'closeOthers' },
+  { label: '关闭全部标签', key: 'closeAll' },
+]
+
+/**
+ * 标签栏更多操作处理
+ * @param key 操作标识
+ */
+function onTabMoreAction(key: string) {
+  if (key === 'closeOthers') {
+    tabsStore.closeOthers()
+    return
+  }
+  if (key === 'closeAll') {
+    const target = tabsStore.closeAll()
+    if (target) router.push(target)
+  }
+}
 
 /**
  * 根据窗口宽度自动折叠侧边栏
@@ -285,17 +376,28 @@ function onUserAction(key: string) {
     gap: 12px;
   }
 }
-.page-title {
-  font-size: 16px;
-  font-weight: 500;
-}
 .admin-name {
   font-size: 14px;
   color: #666;
 }
+.tabs-bar {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  background: #fff;
+  border-bottom: 1px solid #efeff5;
+  :deep(.n-tabs) {
+    flex: 1;
+  }
+  .tabs-more {
+    flex-shrink: 0;
+  }
+}
 .content {
   padding: 16px;
   background: #f5f5f5;
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - 96px);
 }
 </style>

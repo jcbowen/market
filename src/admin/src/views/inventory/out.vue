@@ -37,6 +37,8 @@
 </template>
 
 <script setup lang="ts">
+// 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
+defineOptions({ name: 'StockOut' })
 import { ref, computed, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'

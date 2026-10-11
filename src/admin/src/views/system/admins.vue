@@ -23,6 +23,8 @@
 </template>
 
 <script setup lang="ts">
+// 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
+defineOptions({ name: 'AdminList' })
 import { ref, onMounted, h } from 'vue'
 import { NButton, NSpace, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import Cookies from 'js-cookie'
 import { login as loginApi, getAdminInfo, refreshToken as refreshTokenApi } from '@/api/auth'
+import { useTabsStore } from '@/stores/tabs'
 import type { AdminInfo, LoginParams } from '@/api/types'
 
 /**
@@ -79,7 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * 登出：清空 token 与管理员信息，状态机转移至 unauthenticated
+   * 登出：清空 token 与管理员信息，状态机转移至 unauthenticated，并同步清空标签页
    */
   function logout() {
     Cookies.remove('access_token', { path: '/' })
@@ -89,6 +90,8 @@ export const useAuthStore = defineStore('auth', () => {
     admin.value = null
     permissions.value = []
     status.value = 'unauthenticated'
+    // 清空标签页，避免残留上一个账号的标签与页面缓存
+    useTabsStore().reset()
   }
 
   /**

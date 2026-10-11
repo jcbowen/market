@@ -7,6 +7,8 @@
 </template>
 
 <script setup lang="ts">
+// 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
+defineOptions({ name: 'StockList' })
 import { ref, onMounted } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { getSkuStockList } from '@/api/inventory'
