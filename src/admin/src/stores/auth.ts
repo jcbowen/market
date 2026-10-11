@@ -5,8 +5,16 @@ import { login as loginApi, getAdminInfo, refreshToken as refreshTokenApi } from
 import type { AdminInfo, LoginParams } from '@/api/types'
 
 /**
+ * 认证状态机状态
+ * - unauthenticated: 无有效登录态
+ * - restoring: 存在 token，正在恢复管理员信息（刷新页面后的瞬态）
+ * - ready: 登录态完整（token + 管理员信息 + 权限列表）
+ */
+export type AuthStatus = 'unauthenticated' | 'restoring' | 'ready'
+
+/**
  * 认证状态管理 Store
- * 存储 token、管理员信息、权限列表，提供登录、登出、刷新 token 等方法
+ * 存储 token、管理员信息、权限列表与认证状态，提供登录、登出、状态恢复等方法
  */
 export const useAuthStore = defineStore('auth', () => {
   /** 访问 token */
@@ -17,11 +25,18 @@ export const useAuthStore = defineStore('auth', () => {
   const admin = ref<AdminInfo | null>(null)
   /** 权限列表 */
   const permissions = ref<string[]>([])
+  /** 认证状态机当前状态：有 token 说明是刷新页面进入，需要先恢复信息 */
+  const status = ref<AuthStatus>(accessToken.value ? 'restoring' : 'unauthenticated')
 
   /** 是否已登录 */
   const isAuthenticated = computed(() => !!accessToken.value)
+  /** 登录态是否完整就绪（信息与权限已加载） */
+  const isReady = computed(() => status.value === 'ready')
   /** 是否为超管 */
   const isSuperAdmin = computed(() => admin.value?.role_code === 'super_admin' || admin.value?.role_name === '超级管理员')
+
+  /** 进行中的恢复请求单例，保证并发调用幂等（只发一次请求） */
+  let restorePromise: Promise<boolean> | null = null
 
   /**
    * 设置 token 到 cookie 和响应式状态
@@ -38,12 +53,16 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * 设置管理员信息和权限
+   * 设置管理员信息和权限，状态机转移至 ready
+   * 仅在仍持有 token 时转移，避免登出与恢复请求并发时状态回跳
    * @param info 管理员信息
    */
   function setAdminInfo(info: AdminInfo) {
     admin.value = info
     permissions.value = info.permissions || []
+    if (isAuthenticated.value) {
+      status.value = 'ready'
+    }
   }
 
   /**
@@ -60,8 +79,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * 登出
-   * 清除 token 和管理员信息
+   * 登出：清空 token 与管理员信息，状态机转移至 unauthenticated
    */
   function logout() {
     Cookies.remove('access_token', { path: '/' })
@@ -70,6 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
     refreshTokenValue.value = ''
     admin.value = null
     permissions.value = []
+    status.value = 'unauthenticated'
   }
 
   /**
@@ -86,7 +105,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * 拉取当前管理员信息
+   * 拉取当前管理员信息，成功后状态机转移至 ready
    * @returns 是否获取成功
    */
   async function fetchAdminInfo() {
@@ -94,6 +113,28 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await getAdminInfo()
     setAdminInfo(res.data.data)
     return true
+  }
+
+  /**
+   * 确保登录态完整就绪（状态机转移至 ready）
+   * - ready：直接成功
+   * - restoring：发起（或复用进行中的）恢复请求，失败时自动登出转移至 unauthenticated
+   * 并发调用共享同一请求，保证幂等
+   * @returns 是否就绪
+   */
+  async function ensureReady(): Promise<boolean> {
+    if (status.value === 'ready') return true
+    restorePromise ??= fetchAdminInfo()
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => {
+        restorePromise = null
+      })
+    const ok = await restorePromise
+    if (!ok) {
+      logout()
+    }
+    return ok
   }
 
   /**
@@ -111,12 +152,15 @@ export const useAuthStore = defineStore('auth', () => {
     refreshTokenValue,
     admin,
     permissions,
+    status,
     isAuthenticated,
+    isReady,
     isSuperAdmin,
     login,
     logout,
     refreshToken,
     fetchAdminInfo,
+    ensureReady,
     hasPermission,
   }
 })

@@ -1,6 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
-import Cookies from 'js-cookie'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -220,6 +219,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/settings/profile.vue'),
         meta: { title: '个人设置', permission: 'dashboard:view', hidden: true },
       },
+      // 无权限提示页：守卫重定向目标，不设 permission 字段避免被循环拦截
+      {
+        path: '403',
+        name: 'Forbidden',
+        component: () => import('@/views/error/403.vue'),
+        meta: { title: '无权限', hidden: true },
+      },
     ],
   },
   {
@@ -236,48 +242,61 @@ const router = createRouter({
 })
 
 /**
- * 路由守卫
- * - 未登录且访问非公开页面时跳转登录
- * - 已登录访问登录页时跳转工作台
- * - 已登录但管理员信息尚未加载（如刷新页面后 store 状态重置）时，先拉取信息恢复权限列表，
- *   避免权限为空导致需要权限的路由被守卫重定向到自身形成无限循环（表现为页面一直白屏加载）
- * - 拉取失败（token 失效等）或仍无权限时清空登录态兜底跳转登录页
+ * 解析当前管理员的兜底首页路径
+ * 优先工作台，无 dashboard:view 权限时按路径长度与字母序取路由表中第一个有权限的可见页面
+ * @param authStore 认证 store，用于权限判定
+ * @returns 可访问的首页路径；当前管理员无任何可用页面时返回 null
  */
-router.beforeEach(async (to, from, next) => {
+export function resolveHomePath(authStore: ReturnType<typeof useAuthStore>): string | null {
+  if (authStore.hasPermission('dashboard:view')) return '/dashboard'
+  const route = router
+    .getRoutes()
+    .filter((r) => r.meta.permission && !r.meta.hidden && authStore.hasPermission(r.meta.permission as string))
+    .sort((a, b) => a.path.length - b.path.length || a.path.localeCompare(b.path))
+  return route[0]?.path ?? null
+}
+
+/**
+ * 路由守卫（认证状态机决策表）
+ * 状态：unauthenticated（无登录态）→ restoring（刷新后恢复中）→ ready（token+权限就绪）
+ * 转移规则：
+ * - unauthenticated：公开页放行，受保护页去登录
+ * - 已认证访问登录页：回兜底首页
+ * - restoring：ensureReady() 幂等恢复；失败（token 失效）已自动登出，去登录
+ * - ready：按权限判定；无权限时保留登录态跳转 /403 提示页，
+ *   仅当当前管理员无任何可用页面（权限为空）时才登出兜底
+ */
+router.beforeEach(async (to) => {
   const authStore = useAuthStore()
-  const token = Cookies.get('access_token')
-  const isLoginPage = to.path === '/login'
 
-  if (!token && !to.meta.public) {
-    next('/login')
-    return
+  // unauthenticated：公开页放行，其余去登录
+  if (!authStore.isAuthenticated) {
+    return to.meta.public ? true : { path: '/login' }
   }
 
-  if (token && isLoginPage) {
-    next('/dashboard')
-    return
+  // 已认证访问登录页：回兜底首页
+  if (to.path === '/login') {
+    return { path: resolveHomePath(authStore) ?? '/dashboard' }
   }
 
+  // restoring：幂等恢复登录态，失败时 ensureReady 已登出
+  if (!(await authStore.ensureReady())) {
+    return { path: '/login' }
+  }
+
+  // ready：权限判定；无权限时保留登录态跳转无权限提示页
   const permission = to.meta.permission as string | undefined
-  // 权限未就绪时先拉取管理员信息；失败说明 token 已失效，清空登录态回登录页
-  if (token && permission && !authStore.hasPermission(permission) && !authStore.admin) {
-    const loaded = await authStore.fetchAdminInfo().catch(() => false)
-    if (!loaded) {
+  if (permission && !authStore.hasPermission(permission)) {
+    const home = resolveHomePath(authStore)
+    if (!home) {
+      // 无任何可用页面，登录态已无意义，登出兜底
       authStore.logout()
-      next('/login')
-      return
+      return { path: '/login' }
     }
+    return { path: '/403', query: { from: to.fullPath } }
   }
 
-  if (token && permission && !authStore.hasPermission(permission)) {
-    // 注意：此处不能重定向到同样需要权限的 /dashboard，否则会再次进入守卫形成无限重定向；
-    // 清空登录态跳转登录页是安全兜底
-    authStore.logout()
-    next('/login')
-    return
-  }
-
-  next()
+  return true
 })
 
 export default router

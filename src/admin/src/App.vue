@@ -7,12 +7,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
 import { zhCN, dateZhCN } from 'naive-ui'
 import type { GlobalThemeOverrides } from 'naive-ui'
-import { useAuthStore } from '@/stores/auth'
-
-const authStore = useAuthStore()
 
 /**
  * 全局主题配置
@@ -26,17 +22,6 @@ const themeOverrides: GlobalThemeOverrides = {
     primaryColorSuppl: '#07c160',
   },
 }
-
-/**
- * 应用启动时，若本地存在 token 且管理员信息尚未加载，则拉取管理员信息恢复权限列表。
- * 正常情况下路由守卫在首次导航时已完成加载（含刷新页面场景），此处仅作兜底，
- * 通过判断 admin 为空避免重复请求。
- */
-onMounted(() => {
-  if (authStore.isAuthenticated && !authStore.admin) {
-    authStore.fetchAdminInfo()
-  }
-})
 </script>
 
 <style lang="scss">

@@ -32,6 +32,7 @@ import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
+import { resolveHomePath } from '@/router'
 
 const router = useRouter()
 const message = useMessage()
@@ -56,7 +57,7 @@ const rules: FormRules = {
 
 /**
  * 登录提交
- * 校验表单后调用登录接口，成功后跳转工作台
+ * 校验表单后调用登录接口，成功后按权限跳转兜底首页（无任何权限时落在无权限提示页）
  */
 async function onLogin() {
   if (!formRef.value) return
@@ -70,7 +71,7 @@ async function onLogin() {
   try {
     await authStore.login(formData.value)
     message.success('登录成功')
-    router.push('/dashboard')
+    router.push(resolveHomePath(authStore) ?? '/403')
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : '登录失败，请重试'
     message.error(errMsg)
