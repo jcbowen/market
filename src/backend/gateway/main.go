@@ -55,6 +55,7 @@ func main() {
 	r.Use(baseMw.Cors())
 	r.Use(baseMw.SetRealIP(true))
 	r.Use(baseMw.SetGPC(r))
+	r.Use(staticCacheMiddleware())
 
 	registerRoutes(r, jwtManager, clients, cfg)
 
@@ -193,6 +194,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		authAdmin := admin.Group("")
 		authAdmin.Use(gwMiddleware.AuthMiddleware(jwtManager, jwt.TokenTypeAdmin))
 		{
+			// 当前管理员信息：仅要求登录，不要求具体权限（前端刷新页面后恢复状态使用）
+			authAdmin.GET("/auth/info", adminHandler.Info)
 			authAdmin.GET("/dashboard", gwMiddleware.RequirePermission("dashboard:view"), adminHandler.GetDashboard)
 			authAdmin.GET("/roles", gwMiddleware.RequirePermission("role:view"), adminHandler.ListRoles)
 			authAdmin.POST("/roles", gwMiddleware.RequirePermission("role:create"), adminHandler.CreateRole)
@@ -332,6 +335,31 @@ func getBinDir() string {
 		return "."
 	}
 	return filepath.Dir(exe)
+}
+
+// staticCacheMiddleware 静态资源缓存策略中间件
+// - 带 hash 文件名的 /b/assets/、/s/assets/ 资源内容不可变，允许一年长缓存（immutable），
+//   避免重复下载大体积 JS/CSS
+// - 前端 HTML 入口与路由兜底页（/b、/s 前缀其余路径）禁止缓存（no-cache），
+//   确保重新构建后浏览器立即获取引用新 hash 资源的最新 HTML，
+//   避免旧 HTML 引用已被构建删除的旧 hash 资源导致 404 白屏
+// 使用示例：r.Use(staticCacheMiddleware())
+// 参数：
+//   - 无
+// 返回：
+//   - gin.HandlerFunc: 中间件处理函数
+func staticCacheMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		p := c.Request.URL.Path
+		switch {
+		case strings.HasPrefix(p, "/b/assets/"), strings.HasPrefix(p, "/s/assets/"):
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		case p == "/b" || strings.HasPrefix(p, "/b/"),
+			p == "/s" || strings.HasPrefix(p, "/s/"):
+			c.Header("Cache-Control", "no-cache")
+		}
+		c.Next()
+	}
 }
 
 // _ 占位，避免 errcode 未使用告警

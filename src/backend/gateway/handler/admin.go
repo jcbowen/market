@@ -103,8 +103,8 @@ func (h *AdminHandler) Login(c *gin.Context) {
 
 	permissions := h.getAdminPermissions(c.Request.Context(), admin.RoleId)
 	communityID := h.getAdminDefaultCommunityID(admin)
-	accessToken, accessExpire, err := h.jwtManager.GenerateAccessToken(
-		admin.Id, jwt.TokenTypeAdmin, admin.Phone, admin.RoleCode, communityID, permissions,
+	accessToken, accessExpire, err := h.jwtManager.GenerateAdminAccessToken(
+		admin.Id, admin.Phone, admin.RoleCode, communityID, permissions, admin.Username, admin.RealName,
 	)
 	if err != nil {
 		response.GRPCError(c, err)
@@ -125,17 +125,66 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		ExpiresAt:        accessExpire.Unix(),
 		RefreshExpiresAt: refreshExpire.Unix(),
 		Admin: gin.H{
-			"id":             admin.Id,
-			"username":       admin.Username,
-			"real_name":      admin.RealName,
-			"phone":          admin.Phone,
-			"role_id":        admin.RoleId,
-			"role_code":      admin.RoleCode,
-			"role_name":      admin.RoleName,
-			"community_id":   communityID,
-			"community_ids":  admin.CommunityIds,
+			"id":            admin.Id,
+			"username":      admin.Username,
+			"real_name":     admin.RealName,
+			"phone":         admin.Phone,
+			"role_id":       admin.RoleId,
+			"role_code":     admin.RoleCode,
+			"role_name":     admin.RoleName,
+			"community_id":  communityID,
+			"community_ids": admin.CommunityIds,
+			"permissions":   permissions,
 		},
 	})
+}
+
+// Info 获取当前登录管理员信息
+// 供前端在刷新页面（store 状态重置）后恢复管理员资料与权限列表；
+// 管理员基础资料通过 token 中的 username 反查 user 服务获取，
+// 权限列表直接取自鉴权中间件写入的 token 内权限快照，与接口鉴权口径保持一致
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) Info(c *gin.Context) {
+	uc := appcontext.GetUserContext(c)
+	permissions, _ := c.Get("admin_permissions")
+	permList, _ := permissions.([]string)
+	if permList == nil {
+		permList = []string{}
+	}
+
+	var admin *user.AdminInfo
+	if uc.Phone != "" || uc.UserID > 0 {
+		// token 携带 username 时按用户名反查完整资料（含 community_ids）
+		if username, ok := c.Get("admin_username"); ok {
+			if name, _ := username.(string); name != "" {
+				if a, err := h.userClient.GetAdminByUsername(c.Request.Context(), &user.GetAdminByUsernameReq{Username: name}); err == nil {
+					admin = a
+				}
+			}
+		}
+	}
+
+	resp := gin.H{
+		"id":          uc.UserID,
+		"phone":       uc.Phone,
+		"role_code":   uc.Role,
+		"permissions": permList,
+	}
+	if admin != nil {
+		resp["id"] = admin.Id
+		resp["username"] = admin.Username
+		resp["real_name"] = admin.RealName
+		resp["phone"] = admin.Phone
+		resp["role_id"] = admin.RoleId
+		resp["role_code"] = admin.RoleCode
+		resp["role_name"] = admin.RoleName
+		resp["community_id"] = h.getAdminDefaultCommunityID(admin)
+		resp["community_ids"] = admin.CommunityIds
+		resp["status"] = admin.Status
+	}
+
+	response.Success(c, resp)
 }
 
 // getAdminDefaultCommunityID 获取管理员默认社区 ID
@@ -470,8 +519,8 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	accessToken, accessExpire, err := h.jwtManager.GenerateAccessToken(
-		claims.UserID, jwt.TokenTypeAdmin, claims.Phone, claims.Role, claims.CommunityID, claims.Permissions,
+	accessToken, accessExpire, err := h.jwtManager.GenerateAdminAccessToken(
+		claims.UserID, claims.Phone, claims.Role, claims.CommunityID, claims.Permissions, claims.Username, claims.RealName,
 	)
 	if err != nil {
 		response.GRPCError(c, err)

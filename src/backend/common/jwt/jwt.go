@@ -23,6 +23,8 @@ type Claims struct {
 	Role        string   `json:"role,omitempty"`
 	CommunityID int64    `json:"community_id,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
+	Username    string   `json:"username,omitempty"`
+	RealName    string   `json:"real_name,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -65,7 +67,25 @@ func NewManager(cfg Config) *Manager {
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateAccessToken(userID int64, tokenType, phone, role string, communityID int64, permissions []string) (string, time.Time, error) {
-	return m.generateToken(userID, tokenType, phone, role, communityID, permissions, m.config.AccessTokenTTL)
+	return m.generateToken(userID, tokenType, phone, role, communityID, permissions, "", "", m.config.AccessTokenTTL)
+}
+
+// GenerateAdminAccessToken 生成管理员 access token
+// 在用户 token 基础上额外携带用户名与真实姓名，供 /auth/info 端点在刷新页面后还原管理员资料
+// 参数：
+//   - userID: 管理员 ID
+//   - phone: 手机号
+//   - role: 角色编码
+//   - communityID: 社区 ID
+//   - permissions: 权限列表
+//   - username: 登录用户名
+//   - realName: 真实姓名
+// 返回：
+//   - token 字符串
+//   - 过期时间
+//   - 错误
+func (m *Manager) GenerateAdminAccessToken(userID int64, phone, role string, communityID int64, permissions []string, username, realName string) (string, time.Time, error) {
+	return m.generateToken(userID, TokenTypeAdmin, phone, role, communityID, permissions, username, realName, m.config.AccessTokenTTL)
 }
 
 // GenerateRefreshToken 生成 refresh token
@@ -77,11 +97,11 @@ func (m *Manager) GenerateAccessToken(userID int64, tokenType, phone, role strin
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateRefreshToken(userID int64, tokenType string) (string, time.Time, error) {
-	return m.generateToken(userID, tokenType, "", "", 0, nil, m.config.RefreshTokenTTL)
+	return m.generateToken(userID, tokenType, "", "", 0, nil, "", "", m.config.RefreshTokenTTL)
 }
 
 // generateToken 统一生成 token
-func (m *Manager) generateToken(userID int64, tokenType, phone, role string, communityID int64, permissions []string, ttl time.Duration) (string, time.Time, error) {
+func (m *Manager) generateToken(userID int64, tokenType, phone, role string, communityID int64, permissions []string, username, realName string, ttl time.Duration) (string, time.Time, error) {
 	now := time.Now()
 	expireAt := now.Add(ttl)
 
@@ -92,6 +112,8 @@ func (m *Manager) generateToken(userID int64, tokenType, phone, role string, com
 		Role:        role,
 		CommunityID: communityID,
 		Permissions: permissions,
+		Username:    username,
+		RealName:    realName,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   int64ToString(userID),
 			IssuedAt:  jwt.NewNumericDate(now),

@@ -55,6 +55,7 @@ func AuthMiddleware(manager *jwt.Manager, allowedTypes ...string) gin.HandlerFun
 			RealIP:      c.GetString(string(appcontext.KeyRealIP)),
 		})
 		c.Set("admin_permissions", claims.Permissions)
+		c.Set("admin_username", claims.Username)
 		c.Next()
 	}
 }

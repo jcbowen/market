@@ -28,11 +28,12 @@ const themeOverrides: GlobalThemeOverrides = {
 }
 
 /**
- * 应用启动时，若本地存在 token，则拉取管理员信息并恢复权限列表。
- * 避免页面刷新后路由守卫因权限为空而将合法路由误判为无权限。
+ * 应用启动时，若本地存在 token 且管理员信息尚未加载，则拉取管理员信息恢复权限列表。
+ * 正常情况下路由守卫在首次导航时已完成加载（含刷新页面场景），此处仅作兜底，
+ * 通过判断 admin 为空避免重复请求。
  */
 onMounted(() => {
-  if (authStore.isAuthenticated) {
+  if (authStore.isAuthenticated && !authStore.admin) {
     authStore.fetchAdminInfo()
   }
 })

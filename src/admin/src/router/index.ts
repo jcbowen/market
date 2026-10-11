@@ -239,9 +239,12 @@ const router = createRouter({
  * 路由守卫
  * - 未登录且访问非公开页面时跳转登录
  * - 已登录访问登录页时跳转工作台
- * - 无权限访问页面时跳转工作台
+ * - 已登录但管理员信息尚未加载（如刷新页面后 store 状态重置）时，先拉取信息恢复权限列表，
+ *   避免权限为空导致需要权限的路由被守卫重定向到自身形成无限循环（表现为页面一直白屏加载）
+ * - 拉取失败（token 失效等）或仍无权限时清空登录态兜底跳转登录页
  */
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
+  const authStore = useAuthStore()
   const token = Cookies.get('access_token')
   const isLoginPage = to.path === '/login'
 
@@ -255,10 +258,22 @@ router.beforeEach((to, from, next) => {
     return
   }
 
-  const authStore = useAuthStore()
   const permission = to.meta.permission as string | undefined
+  // 权限未就绪时先拉取管理员信息；失败说明 token 已失效，清空登录态回登录页
+  if (token && permission && !authStore.hasPermission(permission) && !authStore.admin) {
+    const loaded = await authStore.fetchAdminInfo().catch(() => false)
+    if (!loaded) {
+      authStore.logout()
+      next('/login')
+      return
+    }
+  }
+
   if (token && permission && !authStore.hasPermission(permission)) {
-    next('/dashboard')
+    // 注意：此处不能重定向到同样需要权限的 /dashboard，否则会再次进入守卫形成无限重定向；
+    // 清空登录态跳转登录页是安全兜底
+    authStore.logout()
+    next('/login')
     return
   }
 
