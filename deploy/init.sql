@@ -1,5 +1,11 @@
 -- 项目基础测试数据初始化脚本
 -- 用于 docker compose 首次启动后填充示例数据，确保核心链路可跑通
+--
+-- 前提：本脚本只有 INSERT、不含任何建表语句，表结构一律由各微服务启动时经 GORM
+-- AutoMigrate 生成（见 src/backend/services/*/main.go 的 autoMigrate），因此必须
+-- 在服务建表完成之后执行；start-all.sh 已按「等待表就绪 → 导入本脚本（库中已有
+-- 数据则跳过）」的顺序自动处理，无需手工执行。
+-- 禁止：生产环境不要导入本脚本，其中含弱口令管理员与测试业务数据。
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -36,6 +42,13 @@ VALUES
   (1, 1, 1, '西红柿', '现摘自然熟西红柿，酸甜多汁', 'https://placehold.co/300x300/red/white?text=Tomato', '["https://placehold.co/300x300/red/white?text=Tomato"]', '500g', 0, 1, 1, 0, NOW(), NOW()),
   (2, 1, 2, '红富士苹果', '山东烟台红富士，脆甜可口', 'https://placehold.co/300x300/red/white?text=Apple', '["https://placehold.co/300x300/red/white?text=Apple"]', '个', 0, 1, 2, 0, NOW(), NOW()),
   (3, 1, 2, '海南香蕉', '软糯香甜，老少皆宜', 'https://placehold.co/300x300/yellow/black?text=Banana', '["https://placehold.co/300x300/yellow/black?text=Banana"]', '把', 0, 1, 3, 0, NOW(), NOW());
+
+-- 商品图集：商品详情/列表的图集由 product_images 表提供，需与上面的 products.images 对应
+INSERT INTO `product_images` (`id`, `product_id`, `url`, `sort`, `created_at`)
+VALUES
+  (1, 1, 'https://placehold.co/300x300/red/white?text=Tomato', 0, NOW()),
+  (2, 2, 'https://placehold.co/300x300/red/white?text=Apple', 0, NOW()),
+  (3, 3, 'https://placehold.co/300x300/yellow/black?text=Banana', 0, NOW());
 
 -- SKU
 INSERT INTO `product_skus` (`id`, `product_id`, `community_id`, `sku_code`, `spec_name`, `spec_json`, `price`, `cost_price`, `stock`, `safety_stock`, `image`, `status`, `created_at`, `updated_at`)
