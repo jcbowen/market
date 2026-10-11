@@ -275,6 +275,9 @@ router.beforeEach(async (to) => {
   }
 
   // 已认证访问登录页：回兜底首页
+  // 兜底值不可用 '/login'：本分支即「已认证访问 /login」，跳 /login 会无限重定向。
+  // resolveHomePath 返回 null（无任何可用页面）时落到 /dashboard，
+  // 由下游权限判定接管送至 /403 提示页，全程不会产生 { path: null }
   if (to.path === '/login') {
     return { path: resolveHomePath(authStore) ?? '/dashboard' }
   }

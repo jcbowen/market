@@ -20,10 +20,22 @@
         <n-input v-model:value="form.pickup_address" />
       </n-form-item>
       <n-form-item label="经纬度">
-        <n-space>
-          <n-input v-model:value="longitudeText" placeholder="经度" style="width: 140px" />
-          <n-input v-model:value="latitudeText" placeholder="纬度" style="width: 140px" />
-          <n-button @click="openMapPicker">在地图中选择</n-button>
+        <n-space vertical>
+          <n-space>
+            <n-input v-model:value="longitudeText" placeholder="经度" style="width: 140px" />
+            <n-input v-model:value="latitudeText" placeholder="纬度" style="width: 140px" />
+            <n-button @click="openMapPicker">在地图中选择</n-button>
+          </n-space>
+          <n-space>
+            <n-input
+              v-model:value="coordPasteText"
+              placeholder="粘贴坐标后回填，如 116.397428,39.90923"
+              style="width: 300px"
+              clearable
+              @keyup.enter="applyPastedCoords"
+            />
+            <n-button @click="applyPastedCoords">解析回填</n-button>
+          </n-space>
         </n-space>
       </n-form-item>
       <n-form-item label="配送费">
@@ -52,19 +64,13 @@
       </n-form-item>
     </n-form>
 
-    <n-modal v-model:show="mapVisible" title="选择经纬度（点击地图选点后自动回填）" style="width: 80%; max-width: 900px" preset="card">
-      <iframe
-        src="https://lbs.amap.com/tools/picker"
-        style="width: 100%; height: 600px; border: 0"
-        allow="geolocation"
-      />
-    </n-modal>
   </n-card>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useMessage } from 'naive-ui'
 import { createCommunity, updateCommunity, getCommunityList } from '@/api/user'
 import type { Community } from '@/api/types'
 
@@ -73,8 +79,8 @@ import type { Community } from '@/api/types'
  */
 const route = useRoute()
 const router = useRouter()
+const message = useMessage()
 const isEdit = ref(false)
-const mapVisible = ref(false)
 const form = ref<Partial<Community>>({
   name: '',
   address: '',
@@ -110,57 +116,44 @@ const latitudeText = computed({
   },
 })
 
-function openMapPicker() {
-  mapVisible.value = true
-}
-
-// 高德坐标拾取器 iframe 的合法来源，postMessage 消息必须来自该域名才被处理
-const AMAP_PICKER_ORIGIN = 'https://lbs.amap.com'
+/** 粘贴坐标输入框内容，格式如 "116.397428,39.90923" */
+const coordPasteText = ref('')
 
 /**
- * 处理高德坐标拾取器回传的选点消息
- * 高德官方拾取器（lbs.amap.com/tools/picker）通过 postMessage 向父窗口回传结果，
- * data 为 JSON 字符串或对象，坐标字段为 lnglat（[经度, 纬度]）或 lnglat 字符串
- * 仅处理 event.origin 为高德官方域名的消息，防止其他来源伪造选点数据
- * @param event message 事件
+ * 新标签页打开高德官方坐标拾取页
+ * 高德拾取页有反嵌套限制，无法 iframe 内嵌，改为新窗口打开，
+ * 用户选点后复制坐标，回到本页通过"解析回填"粘贴回填
  */
-function onMapMessage(event: MessageEvent) {
-  if (event.origin !== AMAP_PICKER_ORIGIN || !mapVisible.value || !event.data) {
+function openMapPicker() {
+  window.open('https://lbs.amap.com/tools/picker', '_blank', 'noopener')
+}
+
+/**
+ * 解析粘贴的坐标文本并回填经纬度
+ * 支持 "经度,纬度" 格式，分隔符兼容中英文逗号、空格、制表符，
+ * 例如高德拾取页复制的 "116.397428,39.90923"
+ * 校验经度范围 [-180, 180]、纬度范围 [-90, 90]
+ * @throws 无合法坐标时不抛异常，通过 message.warning 提示后保持原值
+ */
+function applyPastedCoords() {
+  const parts = coordPasteText.value.trim().split(/[,，\s]+/).filter(Boolean)
+  if (parts.length < 2) {
+    message.warning('请粘贴 "经度,纬度" 格式的坐标，如 116.397428,39.90923')
     return
   }
 
-  let payload: { lnglat?: string | [string | number, string | number] } | null = null
-  try {
-    payload = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-  } catch {
-    // 非坐标类消息（如高德页面自身的日志）直接忽略
-    return
-  }
-
-  const lnglat = payload?.lnglat
-  if (!lnglat) {
-    return
-  }
-
-  const [lng, lat] = Array.isArray(lnglat) ? lnglat : String(lnglat).split(',')
-  const lngValue = parseFloat(String(lng))
-  const latValue = parseFloat(String(lat))
-  if (Number.isNaN(lngValue) || Number.isNaN(latValue)) {
+  const lngValue = parseFloat(parts[0])
+  const latValue = parseFloat(parts[1])
+  if (Number.isNaN(lngValue) || Number.isNaN(latValue) || Math.abs(lngValue) > 180 || Math.abs(latValue) > 90) {
+    message.warning('坐标解析失败，请确认经度在前、纬度在后且数值在有效范围内')
     return
   }
 
   form.value.longitude = lngValue
   form.value.latitude = latValue
-  mapVisible.value = false
+  coordPasteText.value = ''
+  message.success('坐标已回填')
 }
-
-onMounted(() => {
-  window.addEventListener('message', onMapMessage)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('message', onMapMessage)
-})
 
 async function loadDetail() {
   const id = Number(route.params.id)
