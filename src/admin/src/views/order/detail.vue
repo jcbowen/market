@@ -24,6 +24,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { DataTableColumns } from 'naive-ui'
 import { getOrderDetail, shipOrder, completeOrder } from '@/api/order'
+import { useTabsStore } from '@/stores/tabs'
 import type { OrderDetail, OrderItem } from '@/api/types'
 
 /**
@@ -32,6 +33,7 @@ import type { OrderDetail, OrderItem } from '@/api/types'
  */
 const route = useRoute()
 const router = useRouter()
+const tabsStore = useTabsStore()
 const detail = ref<OrderDetail | null>(null)
 
 const itemColumns: DataTableColumns<OrderItem> = [
@@ -47,6 +49,8 @@ async function loadDetail() {
   const res = await getOrderDetail(id)
   if (res.data.code === 0) {
     detail.value = res.data.data
+    // 加载完成后用订单号区分标签页
+    tabsStore.rename(route.fullPath, `订单详情 · ${detail.value.order_no}`)
   }
 }
 

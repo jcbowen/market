@@ -72,6 +72,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { createCommunity, updateCommunity, getCommunityList } from '@/api/user'
+import { useTabsStore } from '@/stores/tabs'
 import type { Community } from '@/api/types'
 
 /**
@@ -80,6 +81,7 @@ import type { Community } from '@/api/types'
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const tabsStore = useTabsStore()
 const isEdit = ref(false)
 const form = ref<Partial<Community>>({
   name: '',
@@ -162,7 +164,11 @@ async function loadDetail() {
   const res = await getCommunityList({ page: 1, page_size: 100 })
   if (res.data.code === 0) {
     const item = res.data.data.list.find((c: Community) => c.id === id)
-    if (item) form.value = { ...item }
+    if (item) {
+      form.value = { ...item }
+      // 加载完成后用社区名区分标签页
+      tabsStore.rename(route.fullPath, `编辑社区 · ${item.name}`)
+    }
   }
 }
 

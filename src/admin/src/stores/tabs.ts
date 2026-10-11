@@ -62,6 +62,16 @@ export const useTabsStore = defineStore('tabs', () => {
   }
 
   /**
+   * 更新指定标签标题（参数页在业务数据加载后调用，让不同参数的标签可区分）
+   * @param path 标签路径
+   * @param title 新标题（如"编辑商品 · 商品名"）
+   */
+  function rename(path: string, title: string) {
+    const tab = tabs.value.find((t) => t.path === path)
+    if (tab) tab.title = title
+  }
+
+  /**
    * 关闭指定标签（固定标签不可关闭）
    * @param path 被关闭标签的路径
    * @returns 关闭的是激活标签时返回应跳转的目标路径，否则返回 null
@@ -100,5 +110,5 @@ export const useTabsStore = defineStore('tabs', () => {
     activePath.value = ''
   }
 
-  return { tabs, activePath, cachedNames, init, syncWithRoute, closeTab, closeOthers, closeAll, reset }
+  return { tabs, activePath, cachedNames, init, syncWithRoute, rename, closeTab, closeOthers, closeAll, reset }
 })

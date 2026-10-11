@@ -70,9 +70,10 @@
         </n-dropdown>
       </div>
       <n-layout-content class="content">
-        <router-view v-slot="{ Component }">
+        <router-view v-slot="{ Component, route: viewRoute }">
+          <!-- key 绑定 fullPath：路由参数变化时强制重建实例，避免详情/编辑页等参数页复用旧组件数据 -->
           <keep-alive :include="tabsStore.cachedNames">
-            <component :is="Component" />
+            <component :is="Component" :key="viewRoute.fullPath" />
           </keep-alive>
         </router-view>
       </n-layout-content>

@@ -136,6 +136,7 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
+import { useTabsStore } from '@/stores/tabs'
 import { getProductDetail, createProduct, updateProduct, getCategoryList } from '@/api/product'
 import type {
   Category,
@@ -174,6 +175,7 @@ interface SkuRow {
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const tabsStore = useTabsStore()
 
 const isEdit = ref(false)
 const saving = ref(false)
@@ -332,6 +334,9 @@ async function loadDetail(): Promise<void> {
     min_buy: p.min_buy ?? 1,
     sort: p.sort ?? 0,
   })
+
+  // 编辑态加载完成后用商品名区分标签页（create 模式不加载详情，不会执行到这里）
+  tabsStore.rename(route.fullPath, `编辑商品 · ${p.name}`)
 
   if (form.is_multi_spec) {
     // 回填规格树：已有节点携带真实 id，tempId 仅用于页面内 key

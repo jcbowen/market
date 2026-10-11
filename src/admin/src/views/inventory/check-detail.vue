@@ -30,6 +30,7 @@ import { useRoute } from 'vue-router'
 import { NButton, NInputNumber } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getInventoryCheckDetail, submitInventoryCheck, getSkuList } from '@/api/inventory'
+import { useTabsStore } from '@/stores/tabs'
 import type { Sku, StockCheckDetail, StockCheckItem } from '@/api/types'
 
 /**
@@ -37,6 +38,7 @@ import type { Sku, StockCheckDetail, StockCheckItem } from '@/api/types'
  * 展示盘点单基本信息及明细，支持待提交状态下录入/编辑盘点项后提交
  */
 const route = useRoute()
+const tabsStore = useTabsStore()
 const id = Number(route.params.id)
 const detail = ref<StockCheckDetail | null>(null)
 const submitting = ref(false)
@@ -98,6 +100,8 @@ async function loadDetail() {
   if (res.data.code === 0) {
     detail.value = res.data.data
     columns.value = createColumns()
+    // 加载完成后用盘点单号区分标签页
+    tabsStore.rename(route.fullPath, `盘点详情 · ${detail.value.info.check_no}`)
   }
 }
 
