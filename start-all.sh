@@ -71,13 +71,11 @@ else
   echo "==> 跳过构建阶段，使用已有镜像/二进制"
 fi
 
-# 停止并清理旧容器
+# 清理仅在 --clean 时执行；默认保留 MySQL/Redis 容器运行状态，
+# 业务服务容器由下方 up -d 依据镜像变化自动按需重建
 if [ "$CLEAN" = true ]; then
   echo "==> 清理旧容器与数据卷..."
   (cd "${ROOT_DIR}" && docker compose down -v)
-else
-  echo "==> 停止旧容器..."
-  (cd "${ROOT_DIR}" && docker compose down)
 fi
 
 # 启动服务
