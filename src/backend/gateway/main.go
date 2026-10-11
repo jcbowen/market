@@ -176,6 +176,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.PUT("/orders/:id/cancel", orderHandler.CancelOrder)
 			authUser.POST("/orders/:id/receive", orderHandler.ConfirmReceive)
 			authUser.POST("/orders/:id/refund", orderHandler.ApplyRefund)
+			authUser.GET("/refund/config", orderHandler.GetRefundConfig)
 
 			authUser.POST("/payments", paymentHandler.CreatePayment)
 			authUser.GET("/payments/:id", paymentHandler.GetPayment)
@@ -263,6 +264,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentSetting)
 			authAdmin.PUT("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdatePaymentSetting)
 			authAdmin.POST("/settings/payment/cert", gwMiddleware.RequirePermission("settings:update"), adminHandler.UploadPaymentCert)
+
+			// 退款配置（运费退还策略）
+			authAdmin.GET("/settings/refund", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetRefundSetting)
+			authAdmin.PUT("/settings/refund", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateRefundSetting)
 
 			// 附件：配置管理、本地上传与 OSS 预签名直传
 			attachmentHandler := handler.NewAttachmentHandler(clients.ProductClient)

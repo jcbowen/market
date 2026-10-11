@@ -53,14 +53,33 @@ export function cancelOrder(id: number) {
   return put<Order>(`/orders/${id}/cancel`)
 }
 
+/** 申请退款参数 */
+export interface ApplyRefundParams {
+  /** 退款原因 */
+  reason: string
+  /** 退款商品明细；为空表示整单退 */
+  items?: { order_item_id: number; quantity: number }[]
+  /** 手动调低后的退款金额（仅允许低于服务端汇算值，不传按汇算值全额退） */
+  amount?: number
+  /** 运费退还策略为 user_decide 时用户是否选择退运费 */
+  refund_freight?: boolean
+}
+
 /**
  * 申请退款
  * @param id 订单 ID
- * @param reason 退款原因
- * @param amount 退款金额（可选）
+ * @param data 退款参数
  */
-export function applyRefund(id: number, reason: string, amount?: number) {
-  return post(`/orders/${id}/refund`, { reason, amount })
+export function applyRefund(id: number, data: ApplyRefundParams) {
+  return post(`/orders/${id}/refund`, data as unknown as Record<string, unknown>)
+}
+
+/**
+ * 获取退款配置（运费退还策略）
+ * @returns refund_freight_policy: always/never/user_decide
+ */
+export function getRefundConfig() {
+  return get<{ refund_freight_policy: string }>('/refund/config')
 }
 
 /**

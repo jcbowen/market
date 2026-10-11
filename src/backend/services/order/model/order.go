@@ -97,24 +97,32 @@ func (OrderStatusLog) TableName() string {
 
 // Refund 退款申请模型
 // 状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
+// 类型：1整单退 2部分退
 //
 //nolint:lll
 //go:generate go tool gormgen -struct Refund
 type Refund struct {
 	base.MysqlBaseModel
-	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
-	RefundNo     string  `gorm:"column:refund_no;type:varchar(50);not null;uniqueIndex" json:"refund_no"`
-	OrderID      int64   `gorm:"column:order_id;type:bigint;not null;index" json:"order_id"`
-	UserID       int64   `gorm:"column:user_id;type:bigint;not null;index" json:"user_id"`
-	PaymentNo    string  `gorm:"column:payment_no;type:varchar(50)" json:"payment_no"`
-	Amount       float64 `gorm:"column:amount;type:decimal(10,2);not null" json:"amount"`
-	Reason       string  `gorm:"column:reason;type:varchar(255)" json:"reason"`
-	Status       int32   `gorm:"column:status;type:tinyint;default:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
-	RejectReason string  `gorm:"column:reject_reason;type:varchar(255)" json:"reject_reason"`
-	OperatorID   int64    `gorm:"column:operator_id;type:bigint;default:0" json:"operator_id"`
-	RefundTime   *string  `gorm:"column:refund_time;type:datetime" json:"refund_time"`
-	CreatedAt    string   `gorm:"column:created_at;type:datetime" json:"created_at"`
-	UpdatedAt    string   `gorm:"column:updated_at;type:datetime" json:"updated_at"`
+	ID            int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
+	RefundNo      string  `gorm:"column:refund_no;type:varchar(50);not null;uniqueIndex" json:"refund_no"`
+	OrderID       int64   `gorm:"column:order_id;type:bigint;not null;index" json:"order_id"`
+	UserID        int64   `gorm:"column:user_id;type:bigint;not null;index" json:"user_id"`
+	PaymentNo     string  `gorm:"column:payment_no;type:varchar(50)" json:"payment_no"`
+	Amount        float64 `gorm:"column:amount;type:decimal(10,2);not null" json:"amount"`
+	FreightAmount float64 `gorm:"column:freight_amount;type:decimal(10,2);default:0;comment:本单退还的运费金额" json:"freight_amount"`
+	Type          int32   `gorm:"column:type;type:tinyint;default:1;comment:1整单退 2部分退" json:"type"`
+	Reason        string  `gorm:"column:reason;type:varchar(255)" json:"reason"`
+	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
+	RejectReason  string  `gorm:"column:reject_reason;type:varchar(255)" json:"reject_reason"`
+	OperatorID    int64    `gorm:"column:operator_id;type:bigint;default:0" json:"operator_id"`
+	RefundTime    *string  `gorm:"column:refund_time;type:datetime" json:"refund_time"`
+	CreatedAt     string   `gorm:"column:created_at;type:datetime" json:"created_at"`
+	UpdatedAt     string   `gorm:"column:updated_at;type:datetime" json:"updated_at"`
+
+	// OrderNo 关联订单号（非表字段，列表查询时填充）
+	OrderNo string `gorm:"-" json:"order_no"`
+	// Items 退款商品明细（非表字段，查询时批量填充）
+	Items []*RefundItem `gorm:"-" json:"items"`
 }
 
 // TableName 返回退款申请表名
@@ -122,4 +130,29 @@ type Refund struct {
 //   - string: 表名
 func (Refund) TableName() string {
 	return "refunds"
+}
+
+// RefundItem 退款商品明细模型
+// 记录退款申请涉及的具体商品行及汇算后应退金额
+//
+//nolint:lll
+//go:generate go tool gormgen -struct RefundItem
+type RefundItem struct {
+	base.MysqlBaseModel
+	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
+	RefundID     int64   `gorm:"column:refund_id;type:bigint;not null;index:idx_refund_items_refund_id" json:"refund_id"`
+	OrderItemID  int64   `gorm:"column:order_item_id;type:bigint;not null;index" json:"order_item_id"`
+	SkuID        int64   `gorm:"column:sku_id;type:bigint;not null" json:"sku_id"`
+	ProductName  string  `gorm:"column:product_name;type:varchar(100);not null" json:"product_name"`
+	SpecName     string  `gorm:"column:spec_name;type:varchar(100)" json:"spec_name"`
+	Quantity     int32   `gorm:"column:quantity;type:int;not null;comment:退货数量" json:"quantity"`
+	RefundAmount float64 `gorm:"column:refund_amount;type:decimal(10,2);not null;comment:汇算后应退金额" json:"refund_amount"`
+	CreatedAt    string  `gorm:"column:created_at;type:datetime" json:"created_at"`
+}
+
+// TableName 返回退款商品明细表名
+// 返回值：
+//   - string: 表名
+func (RefundItem) TableName() string {
+	return "refund_items"
 }

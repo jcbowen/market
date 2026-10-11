@@ -101,16 +101,10 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '订单列表', permission: 'order:view', group: '订单管理' },
       },
       {
-        path: 'orders/:id',
-        name: 'OrderDetail',
-        component: () => import('@/views/order/detail.vue'),
-        meta: { title: '订单详情', permission: 'order:view', group: '订单管理', hidden: true },
-      },
-      {
         path: 'refunds',
         name: 'RefundList',
         component: () => import('@/views/order/refunds.vue'),
-        meta: { title: '退款管理', permission: 'refund:view', group: '订单管理' },
+        meta: { title: '售后管理', permission: 'refund:view', group: '订单管理' },
       },
       // 用户管理
       {
@@ -207,6 +201,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '支付配置', permission: 'settings:view', group: '系统管理' },
       },
       {
+        path: 'system/refund',
+        name: 'RefundSetting',
+        component: () => import('@/views/settings/refund.vue'),
+        meta: { title: '售后配置', permission: 'settings:view', group: '系统管理' },
+      },
+      {
         path: 'system/attachment',
         name: 'AttachmentSetting',
         component: () => import('@/views/settings/attachment.vue'),
@@ -276,9 +276,9 @@ export function resolveHomePath(authStore: ReturnType<typeof useAuthStore>): str
 router.beforeEach(async (to) => {
   const authStore = useAuthStore()
 
-  // unauthenticated：公开页放行，其余去登录
+  // unauthenticated：公开页放行，其余去登录（携带原始地址供登录成功后回跳）
   if (!authStore.isAuthenticated) {
-    return to.meta.public ? true : { path: '/login' }
+    return to.meta.public ? true : { path: '/login', query: { redirect: to.fullPath } }
   }
 
   // 已认证访问登录页：回兜底首页
@@ -291,7 +291,7 @@ router.beforeEach(async (to) => {
 
   // restoring：幂等恢复登录态，失败时 ensureReady 已登出
   if (!(await authStore.ensureReady())) {
-    return { path: '/login' }
+    return { path: '/login', query: { redirect: to.fullPath } }
   }
 
   // ready：权限判定；无权限时保留登录态跳转无权限提示页

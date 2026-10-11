@@ -714,16 +714,16 @@ type SkuItemReqItem struct {
 
 // CreateProductReq 创建商品请求
 type CreateProductReq struct {
-	CategoryID  int64            `json:"category_id" binding:"required"`
-	Name        string           `json:"name" binding:"required"`
-	Description string           `json:"description"`
-	CoverImage  string           `json:"cover_image"`
-	Images      []string         `json:"images"`
-	Unit        string           `json:"unit"`
-	IsMultiSpec bool             `json:"is_multi_spec"`
-	MinBuy      int32            `json:"min_buy"`
-	Sort        int32            `json:"sort"`
-	Specs       []*SpecReqItem   `json:"specs"`
+	CategoryID  int64             `json:"category_id" binding:"required"`
+	Name        string            `json:"name" binding:"required"`
+	Description string            `json:"description"`
+	CoverImage  string            `json:"cover_image"`
+	Images      []string          `json:"images"`
+	Unit        string            `json:"unit"`
+	IsMultiSpec bool              `json:"is_multi_spec"`
+	MinBuy      int32             `json:"min_buy"`
+	Sort        int32             `json:"sort"`
+	Specs       []*SpecReqItem    `json:"specs"`
 	SkuItems    []*SkuItemReqItem `json:"sku_items"`
 }
 
@@ -956,15 +956,18 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			}
 		}
 		list = append(list, gin.H{
-			"id":           o.Id,
-			"order_no":     o.OrderNo,
-			"user_id":      o.UserId,
-			"user_name":    userName,
-			"total_amount": o.TotalAmount,
-			"pay_amount":   o.PayAmount,
-			"status":       o.Status,
-			"status_text":  orderStatusText(o.Status),
-			"created_at":   o.CreatedAt,
+			"id":              o.Id,
+			"order_no":        o.OrderNo,
+			"user_id":         o.UserId,
+			"user_name":       userName,
+			"total_amount":    o.TotalAmount,
+			"discount_amount": o.DiscountAmount,
+			"delivery_fee":    o.DeliveryFee,
+			"pay_amount":      o.PayAmount,
+			"delivery_type":   o.DeliveryType,
+			"status":          o.Status,
+			"status_text":     orderStatusText(o.Status),
+			"created_at":      o.CreatedAt,
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
@@ -1008,30 +1011,52 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 	items := make([]gin.H, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		items = append(items, gin.H{
-			"id":           item.Id,
-			"product_id":   item.ProductId,
-			"sku_id":       item.SkuId,
-			"product_name": item.ProductName,
-			"sku_name":     item.SpecName,
+			"id":            item.Id,
+			"product_id":    item.ProductId,
+			"sku_id":        item.SkuId,
+			"product_name":  item.ProductName,
+			"sku_name":      item.SpecName,
 			"product_image": item.ProductImage,
-			"price":        item.Price,
-			"quantity":     item.Quantity,
-			"total_amount": item.TotalPrice,
+			"price":         item.Price,
+			"quantity":      item.Quantity,
+			"total_amount":  item.TotalPrice,
+		})
+	}
+
+	statusLogs := make([]gin.H, 0, len(resp.StatusLogs))
+	for _, log := range resp.StatusLogs {
+		statusLogs = append(statusLogs, gin.H{
+			"from_status":   log.FromStatus,
+			"to_status":     log.ToStatus,
+			"operator_type": log.OperatorType,
+			"remark":        log.Remark,
+			"created_at":    log.CreatedAt,
 		})
 	}
 
 	data := gin.H{
-		"id":           o.Id,
-		"order_no":     o.OrderNo,
-		"user_id":      o.UserId,
-		"user_name":    userName,
-		"total_amount": o.TotalAmount,
-		"pay_amount":   o.PayAmount,
-		"status":       o.Status,
-		"status_text":  orderStatusText(o.Status),
-		"created_at":   o.CreatedAt,
-		"items":        items,
-		"address":      address,
+		"id":              o.Id,
+		"order_no":        o.OrderNo,
+		"user_id":         o.UserId,
+		"user_name":       userName,
+		"total_amount":    o.TotalAmount,
+		"discount_amount": o.DiscountAmount,
+		"delivery_fee":    o.DeliveryFee,
+		"pay_amount":      o.PayAmount,
+		"delivery_type":   o.DeliveryType,
+		"delivery_time":   o.DeliveryTime,
+		"remark":          o.Remark,
+		"status":          o.Status,
+		"status_text":     orderStatusText(o.Status),
+		"pay_time":        o.PayTime,
+		"deliver_time":    o.DeliverTime,
+		"complete_time":   o.CompleteTime,
+		"cancel_time":     o.CancelTime,
+		"cancel_reason":   o.CancelReason,
+		"created_at":      o.CreatedAt,
+		"items":           items,
+		"address":         address,
+		"status_logs":     statusLogs,
 	}
 	response.Success(c, data)
 }
@@ -1519,9 +1544,9 @@ func (h *AdminHandler) CreateStockCheck(c *gin.Context) {
 
 // StockOutReq 库存出库请求
 type StockOutReq struct {
-	Type   int32                  `json:"type" binding:"required"`
+	Type   int32                   `json:"type" binding:"required"`
 	Items  []*product.StockOutItem `json:"items" binding:"required"`
-	Remark string                 `json:"remark"`
+	Remark string                  `json:"remark"`
 }
 
 // StockOut 库存出库（销售出库/报损出库）
@@ -2051,17 +2076,17 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	list := make([]gin.H, 0, len(resp.List))
 	for _, u := range resp.List {
 		list = append(list, gin.H{
-			"id":            u.Id,
-			"openid":        u.Openid,
-			"phone":         u.Phone,
-			"nickname":      u.Nickname,
-			"avatar":        u.Avatar,
-			"gender":        u.Gender,
-			"community_id":  u.CommunityId,
+			"id":             u.Id,
+			"openid":         u.Openid,
+			"phone":          u.Phone,
+			"nickname":       u.Nickname,
+			"avatar":         u.Avatar,
+			"gender":         u.Gender,
+			"community_id":   u.CommunityId,
 			"community_name": "",
-			"status":        u.Status,
-			"last_login_at": u.LastLoginAt,
-			"created_at":    u.CreatedAt,
+			"status":         u.Status,
+			"last_login_at":  u.LastLoginAt,
+			"created_at":     u.CreatedAt,
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
@@ -2206,7 +2231,49 @@ func (h *AdminHandler) DeleteCommunity(c *gin.Context) {
 
 // --- 退款管理 ---
 
-// ListRefunds 获取退款列表
+// GetRefundSetting 获取退款配置（运费退还策略）
+//
+// 接口: GET /api/v1/admin/settings/refund
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AdminHandler) GetRefundSetting(c *gin.Context) {
+	resp, err := h.orderClient.GetRefundConfig(c.Request.Context(), &order.GetRefundConfigReq{})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"refund_freight_policy": resp.RefundFreightPolicy,
+	})
+}
+
+// UpdateRefundSetting 更新退款配置（运费退还策略）
+//
+// 接口: PUT /api/v1/admin/settings/refund
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AdminHandler) UpdateRefundSetting(c *gin.Context) {
+	var req struct {
+		RefundFreightPolicy string `json:"refund_freight_policy" binding:"required,oneof=always never user_decide"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError, "运费退还策略仅支持 always / never / user_decide")
+		return
+	}
+
+	_, err := h.orderClient.SaveRefundConfig(c.Request.Context(), &order.SaveRefundConfigReq{
+		RefundFreightPolicy: req.RefundFreightPolicy,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"refund_freight_policy": req.RefundFreightPolicy})
+}
+
+// ListRefunds 查询退款列表（透传 order-service，含 order_no/明细等字段）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListRefunds(c *gin.Context) {
@@ -2352,14 +2419,14 @@ func orderStatusText(status int32) string {
 // PaymentSetting 支付配置视图对象
 // 同时用于 GET 响应与 PUT 请求；配置持久化在数据库 pay_config 表，由 payment 服务管理
 type PaymentSetting struct {
-	EnabledChannels    []string            `json:"enabled_channels"`
-	Wechat             config.WechatConfig `json:"wechat"`
-	Alipay             config.AlipayConfig `json:"alipay"`
-	WechatPaymentReady bool                `json:"wechat_payment_ready"`
-	AlipayReady        bool                `json:"alipay_ready"`
-	WechatCertUploaded bool                `json:"wechat_cert_uploaded"`
-	AlipayCertUploaded bool                `json:"alipay_cert_uploaded"`
-	UpdatedAt          string              `json:"updated_at"`
+	EnabledChannels    []string             `json:"enabled_channels"`
+	Wechat             config.WechatConfig  `json:"wechat"`
+	Alipay             config.AlipayConfig  `json:"alipay"`
+	WechatPaymentReady bool                 `json:"wechat_payment_ready"`
+	AlipayReady        bool                 `json:"alipay_ready"`
+	WechatCertUploaded bool                 `json:"wechat_cert_uploaded"`
+	AlipayCertUploaded bool                 `json:"alipay_cert_uploaded"`
+	UpdatedAt          string               `json:"updated_at"`
 	SuggestedURLs      PaymentSuggestedURLs `json:"suggested_urls"`
 }
 

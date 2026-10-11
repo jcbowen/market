@@ -274,7 +274,7 @@ func ToOrderStatusLog(log *model.OrderStatusLog) *order.OrderStatusLog {
 	}
 }
 
-// ToRefundInfo 将退款模型转换为 proto 信息
+// ToRefundInfo 将退款模型转换为 proto 信息（含关联订单号与商品明细）
 // 参数：
 //   - r: 退款模型
 //
@@ -284,19 +284,66 @@ func ToRefundInfo(r *model.Refund) *order.RefundInfo {
 	if r == nil {
 		return nil
 	}
-	return &order.RefundInfo{
-		Id:           r.ID,
-		RefundNo:     r.RefundNo,
-		OrderId:      r.OrderID,
-		UserId:       r.UserID,
-		PaymentNo:    r.PaymentNo,
-		Amount:       r.Amount,
-		Reason:       r.Reason,
-		Status:       r.Status,
-		RejectReason: r.RejectReason,
-		RefundTime:   ptrString(r.RefundTime),
-		CreatedAt:    r.CreatedAt,
+	info := &order.RefundInfo{
+		Id:            r.ID,
+		RefundNo:      r.RefundNo,
+		OrderId:       r.OrderID,
+		UserId:        r.UserID,
+		PaymentNo:     r.PaymentNo,
+		Amount:        r.Amount,
+		FreightAmount: r.FreightAmount,
+		Type:          r.Type,
+		Reason:        r.Reason,
+		Status:        r.Status,
+		RejectReason:  r.RejectReason,
+		RefundTime:    ptrString(r.RefundTime),
+		CreatedAt:     r.CreatedAt,
+		OrderNo:       r.OrderNo,
+		Items:         make([]*order.RefundItemInfo, 0, len(r.Items)),
 	}
+	for _, item := range r.Items {
+		info.Items = append(info.Items, ToRefundItemInfo(item))
+	}
+	return info
+}
+
+// ToRefundItemInfo 将退款商品明细模型转换为 proto 信息
+// 参数：
+//   - item: 退款商品明细模型
+//
+// 返回值：
+//   - *order.RefundItemInfo: proto 退款商品明细信息
+func ToRefundItemInfo(item *model.RefundItem) *order.RefundItemInfo {
+	if item == nil {
+		return nil
+	}
+	return &order.RefundItemInfo{
+		Id:           item.ID,
+		RefundId:     item.RefundID,
+		OrderItemId:  item.OrderItemID,
+		SkuId:        item.SkuID,
+		ProductName:  item.ProductName,
+		SpecName:     item.SpecName,
+		Quantity:     item.Quantity,
+		RefundAmount: item.RefundAmount,
+	}
+}
+
+// GetRefundConfig 查询退款配置
+func (s *server) GetRefundConfig(ctx stdctx.Context, req *order.GetRefundConfigReq) (*order.RefundConfig, error) {
+	row, err := s.refundService.GetRefundConfig(ctx)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &order.RefundConfig{RefundFreightPolicy: row.RefundFreightPolicy}, nil
+}
+
+// SaveRefundConfig 保存退款配置
+func (s *server) SaveRefundConfig(ctx stdctx.Context, req *order.SaveRefundConfigReq) (*common.CommonResponse, error) {
+	if err := s.refundService.SaveRefundConfig(ctx, req.RefundFreightPolicy); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
 // ptrString 将字符串指针安全转换为字符串

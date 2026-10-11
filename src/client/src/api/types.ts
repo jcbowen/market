@@ -114,12 +114,14 @@ export interface CartItem {
 
 /** 订单商品 */
 export interface OrderItem {
+  id: number
   product_id: number
   product_name: string
   sku_id: number
   sku_name: string
   price: number
   quantity: number
+  total_price: number
   image: string
 }
 
@@ -130,6 +132,9 @@ export interface Order {
   status: number
   status_text: string
   total_amount: number
+  discount_amount: number
+  delivery_fee: number
+  delivery_type: number
   pay_amount: number
   pay_type_text?: string
   items: OrderItem[]

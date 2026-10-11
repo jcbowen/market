@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, Order, OrderDetail, PageParams, PageResult } from './types'
+import type { ApiResult, Order, OrderDetail, PageParams, PageResult, Refund } from './types'
 
 /**
  * 订单管理相关 API
@@ -72,12 +72,12 @@ export function completeOrder(id: number) {
 }
 
 /**
- * 获取退款列表
+ * 获取退款（售后）列表
  * @param params 查询参数
- * @returns 分页退款列表
+ * @returns 分页售后单列表
  */
 export function getRefundList(params: PageParams & { status?: number }) {
-  return request<ApiResult<PageResult<Record<string, unknown>>>>({
+  return request<ApiResult<PageResult<Refund>>>({
     url: '/api/v1/admin/refunds',
     method: 'GET',
     params,
@@ -109,5 +109,29 @@ export function rejectRefund(id: number, reject_reason: string) {
     url: `/api/v1/admin/refunds/${id}/reject`,
     method: 'POST',
     data: { reject_reason },
+  })
+}
+
+/**
+ * 获取退款配置（运费退还策略）
+ * @returns 退款配置
+ */
+export function getRefundSetting() {
+  return request<ApiResult<{ refund_freight_policy: string }>>({
+    url: '/api/v1/admin/settings/refund',
+    method: 'GET',
+  })
+}
+
+/**
+ * 更新退款配置（运费退还策略）
+ * @param policy 运费退还策略：always 始终退运费 / never 不退运费 / user_decide 用户自行选择
+ * @returns 操作结果
+ */
+export function updateRefundSetting(policy: string) {
+  return request<ApiResult<{ refund_freight_policy: string }>>({
+    url: '/api/v1/admin/settings/refund',
+    method: 'PUT',
+    data: { refund_freight_policy: policy },
   })
 }

@@ -56,7 +56,7 @@
             @click.stop="onReceive(order.id)"
           />
           <u-button
-            v-if="[2, 4, 5].includes(order.status)"
+            v-if="[2, 3, 4].includes(order.status)"
             size="small"
             text="申请退款"
             @click.stop="onRefund(order.id)"
@@ -65,6 +65,9 @@
       </view>
       <u-loadmore :status="loadStatus" />
     </scroll-view>
+
+    <!-- 申请退款弹窗 -->
+    <RefundModal v-model:show="refundVisible" :order-id="refundOrderId" @success="refreshList" />
   </view>
 </template>
 
@@ -72,14 +75,17 @@
 import { ref } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getOrders, cancelOrder, confirmReceive, applyRefund } from '@/api/order'
+import { getOrders, cancelOrder, confirmReceive } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderDetail, goLogin } from '@/utils/navigate'
+import RefundModal from '@/components/RefundModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
 
 const userStore = useUserStore()
+const refundVisible = ref(false)
+const refundOrderId = ref(0)
 const tabs = ref([
   { name: '全部', value: 0 },
   { name: '待支付', value: 1 },
@@ -226,27 +232,21 @@ async function onReceive(id: number) {
 }
 
 /**
- * 申请退款
+ * 申请退款：打开金额确认弹窗（选商品/数量、运费策略、可调低金额）
  * @param id 订单 ID
  */
 function onRefund(id: number) {
-  uni.showModal({
-    title: '申请退款',
-    content: '确定要申请退款吗？',
-    success: async (res) => {
-      if (res.confirm) {
-        try {
-          await applyRefund(id, '用户申请退款')
-          uni.showToast({ title: '已提交退款申请', icon: 'success' })
-          page.value = 1
-          orders.value = []
-          loadOrders()
-        } catch {
-          // ignore
-        }
-      }
-    },
-  })
+  refundOrderId.value = id
+  refundVisible.value = true
+}
+
+/**
+ * 退款申请提交成功后回到第 1 页刷新列表
+ */
+function refreshList() {
+  page.value = 1
+  orders.value = []
+  loadOrders()
 }
 </script>
 

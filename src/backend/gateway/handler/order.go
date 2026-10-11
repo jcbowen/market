@@ -113,13 +113,13 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		if err == nil && detail != nil {
 			for _, item := range detail.Items {
 				items = append(items, gin.H{
-					"product_id":  item.ProductId,
+					"product_id":   item.ProductId,
 					"product_name": item.ProductName,
-					"sku_id":      item.SkuId,
-					"sku_name":    item.SpecName,
-					"price":       item.Price,
-					"quantity":    item.Quantity,
-					"image":       item.ProductImage,
+					"sku_id":       item.SkuId,
+					"sku_name":     item.SpecName,
+					"price":        item.Price,
+					"quantity":     item.Quantity,
+					"image":        item.ProductImage,
 				})
 			}
 		}
@@ -159,15 +159,15 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 	o := resp.Order
 	address := gin.H{
-		"id":           0,
-		"contact_name": "",
+		"id":            0,
+		"contact_name":  "",
 		"contact_phone": "",
-		"province":     "",
-		"city":         "",
-		"district":     "",
-		"detail":       "",
-		"tag":          "",
-		"is_default":   false,
+		"province":      "",
+		"city":          "",
+		"district":      "",
+		"detail":        "",
+		"tag":           "",
+		"is_default":    false,
 	}
 	if o != nil && o.ContactName != "" {
 		address["contact_name"] = o.ContactName
@@ -178,31 +178,36 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	items := make([]gin.H, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		items = append(items, gin.H{
-			"product_id":  item.ProductId,
+			"id":           item.Id,
+			"product_id":   item.ProductId,
 			"product_name": item.ProductName,
-			"sku_id":      item.SkuId,
-			"sku_name":    item.SpecName,
-			"price":       item.Price,
-			"quantity":    item.Quantity,
-			"image":       item.ProductImage,
+			"sku_id":       item.SkuId,
+			"sku_name":     item.SpecName,
+			"price":        item.Price,
+			"quantity":     item.Quantity,
+			"total_price":  item.TotalPrice,
+			"image":        item.ProductImage,
 		})
 	}
 
 	data := gin.H{
-		"id":            o.Id,
-		"order_no":      o.OrderNo,
-		"status":        o.Status,
-		"status_text":   clientOrderStatusText(o.Status),
-		"total_amount":  o.TotalAmount,
-		"pay_amount":    o.PayAmount,
-		"pay_type_text": h.orderPayTypeText(c, o.Id),
-		"items":         items,
-		"address":       address,
-		"remark":        o.Remark,
-		"created_at":    o.CreatedAt,
-		"paid_at":       o.PayTime,
-		"delivered_at":  o.DeliverTime,
-		"received_at":   o.CompleteTime,
+		"id":              o.Id,
+		"order_no":        o.OrderNo,
+		"status":          o.Status,
+		"status_text":     clientOrderStatusText(o.Status),
+		"total_amount":    o.TotalAmount,
+		"discount_amount": o.DiscountAmount,
+		"delivery_fee":    o.DeliveryFee,
+		"pay_amount":      o.PayAmount,
+		"delivery_type":   o.DeliveryType,
+		"pay_type_text":   h.orderPayTypeText(c, o.Id),
+		"items":           items,
+		"address":         address,
+		"remark":          o.Remark,
+		"created_at":      o.CreatedAt,
+		"paid_at":         o.PayTime,
+		"delivered_at":    o.DeliverTime,
+		"received_at":     o.CompleteTime,
 	}
 	response.Success(c, data)
 }
@@ -301,10 +306,19 @@ func (h *OrderHandler) ConfirmReceive(c *gin.Context) {
 	response.Success(c, gin.H{"id": id, "status": 5})
 }
 
+// ApplyRefundItemReq 申请退款商品明细项
+type ApplyRefundItemReq struct {
+	OrderItemID int64 `json:"order_item_id"`
+	Quantity    int32 `json:"quantity"`
+}
+
 // ApplyRefundReq 申请退款请求
+// items 为空表示整单退；amount 为客户端手动调低后的金额（仅允许低于服务端汇算值）
 type ApplyRefundReq struct {
-	Amount float64 `json:"amount" binding:"required"`
-	Reason string  `json:"reason" binding:"required"`
+	Amount        float64              `json:"amount"`
+	Reason        string               `json:"reason" binding:"required"`
+	Items         []ApplyRefundItemReq `json:"items"`
+	RefundFreight bool                 `json:"refund_freight"`
 }
 
 // ApplyRefund 申请订单退款
@@ -323,18 +337,57 @@ func (h *OrderHandler) ApplyRefund(c *gin.Context) {
 		return
 	}
 
-	uc := appcontext.GetUserContext(c)
-	resp, err := h.orderClient.ApplyRefund(c.Request.Context(), &order.ApplyRefundReq{
-		OrderId: id,
-		UserId:  uc.UserID,
-		Amount:  req.Amount,
-		Reason:  req.Reason,
-	})
+	pbReq := &order.ApplyRefundReq{
+		OrderId:       id,
+		UserId:        ucUserID(c),
+		Amount:        req.Amount,
+		Reason:        req.Reason,
+		RefundFreight: req.RefundFreight,
+	}
+	for _, item := range req.Items {
+		pbReq.Items = append(pbReq.Items, &order.ApplyRefundItem{
+			OrderItemId: item.OrderItemID,
+			Quantity:    item.Quantity,
+		})
+	}
+
+	resp, err := h.orderClient.ApplyRefund(c.Request.Context(), pbReq)
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
+}
+
+// ucUserID 从请求上下文安全取出当前登录用户 ID
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - int64: 用户 ID
+func ucUserID(c *gin.Context) int64 {
+	uc := appcontext.GetUserContext(c)
+	if uc == nil {
+		return 0
+	}
+	return uc.UserID
+}
+
+// GetRefundConfig 获取退款配置（C 端发起退款时展示运费策略用）
+//
+// 接口: GET /api/v1/refund/config
+//
+// 参数:
+//   - c: gin 上下文
+func (h *OrderHandler) GetRefundConfig(c *gin.Context) {
+	resp, err := h.orderClient.GetRefundConfig(c.Request.Context(), &order.GetRefundConfigReq{})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"refund_freight_policy": resp.RefundFreightPolicy,
+	})
 }
 
 // clientOrderStatusText 将订单状态码转换为 C 端展示文案

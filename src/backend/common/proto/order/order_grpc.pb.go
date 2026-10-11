@@ -29,6 +29,8 @@ const (
 	OrderService_ListRefunds_FullMethodName        = "/order.OrderService/ListRefunds"
 	OrderService_ApproveRefund_FullMethodName      = "/order.OrderService/ApproveRefund"
 	OrderService_RejectRefund_FullMethodName       = "/order.OrderService/RejectRefund"
+	OrderService_GetRefundConfig_FullMethodName    = "/order.OrderService/GetRefundConfig"
+	OrderService_SaveRefundConfig_FullMethodName   = "/order.OrderService/SaveRefundConfig"
 	OrderService_GetOrderStatistics_FullMethodName = "/order.OrderService/GetOrderStatistics"
 	OrderService_GetSalesStatistics_FullMethodName = "/order.OrderService/GetSalesStatistics"
 	OrderService_GetProductRankings_FullMethodName = "/order.OrderService/GetProductRankings"
@@ -49,6 +51,8 @@ type OrderServiceClient interface {
 	ListRefunds(ctx context.Context, in *ListRefundsReq, opts ...grpc.CallOption) (*ListRefundsResp, error)
 	ApproveRefund(ctx context.Context, in *ApproveRefundReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	RejectRefund(ctx context.Context, in *RejectRefundReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	GetRefundConfig(ctx context.Context, in *GetRefundConfigReq, opts ...grpc.CallOption) (*RefundConfig, error)
+	SaveRefundConfig(ctx context.Context, in *SaveRefundConfigReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 统计
 	GetOrderStatistics(ctx context.Context, in *GetOrderStatisticsReq, opts ...grpc.CallOption) (*OrderStatisticsResp, error)
 	GetSalesStatistics(ctx context.Context, in *GetSalesStatisticsReq, opts ...grpc.CallOption) (*SalesStatisticsResp, error)
@@ -154,6 +158,26 @@ func (c *orderServiceClient) RejectRefund(ctx context.Context, in *RejectRefundR
 	return out, nil
 }
 
+func (c *orderServiceClient) GetRefundConfig(ctx context.Context, in *GetRefundConfigReq, opts ...grpc.CallOption) (*RefundConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RefundConfig)
+	err := c.cc.Invoke(ctx, OrderService_GetRefundConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) SaveRefundConfig(ctx context.Context, in *SaveRefundConfigReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_SaveRefundConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orderServiceClient) GetOrderStatistics(ctx context.Context, in *GetOrderStatisticsReq, opts ...grpc.CallOption) (*OrderStatisticsResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(OrderStatisticsResp)
@@ -208,6 +232,8 @@ type OrderServiceServer interface {
 	ListRefunds(context.Context, *ListRefundsReq) (*ListRefundsResp, error)
 	ApproveRefund(context.Context, *ApproveRefundReq) (*common.CommonResponse, error)
 	RejectRefund(context.Context, *RejectRefundReq) (*common.CommonResponse, error)
+	GetRefundConfig(context.Context, *GetRefundConfigReq) (*RefundConfig, error)
+	SaveRefundConfig(context.Context, *SaveRefundConfigReq) (*common.CommonResponse, error)
 	// 统计
 	GetOrderStatistics(context.Context, *GetOrderStatisticsReq) (*OrderStatisticsResp, error)
 	GetSalesStatistics(context.Context, *GetSalesStatisticsReq) (*SalesStatisticsResp, error)
@@ -249,6 +275,12 @@ func (UnimplementedOrderServiceServer) ApproveRefund(context.Context, *ApproveRe
 }
 func (UnimplementedOrderServiceServer) RejectRefund(context.Context, *RejectRefundReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RejectRefund not implemented")
+}
+func (UnimplementedOrderServiceServer) GetRefundConfig(context.Context, *GetRefundConfigReq) (*RefundConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRefundConfig not implemented")
+}
+func (UnimplementedOrderServiceServer) SaveRefundConfig(context.Context, *SaveRefundConfigReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveRefundConfig not implemented")
 }
 func (UnimplementedOrderServiceServer) GetOrderStatistics(context.Context, *GetOrderStatisticsReq) (*OrderStatisticsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetOrderStatistics not implemented")
@@ -445,6 +477,42 @@ func _OrderService_RejectRefund_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_GetRefundConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRefundConfigReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).GetRefundConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_GetRefundConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).GetRefundConfig(ctx, req.(*GetRefundConfigReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_SaveRefundConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveRefundConfigReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).SaveRefundConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_SaveRefundConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).SaveRefundConfig(ctx, req.(*SaveRefundConfigReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrderService_GetOrderStatistics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetOrderStatisticsReq)
 	if err := dec(in); err != nil {
@@ -559,6 +627,14 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RejectRefund",
 			Handler:    _OrderService_RejectRefund_Handler,
+		},
+		{
+			MethodName: "GetRefundConfig",
+			Handler:    _OrderService_GetRefundConfig_Handler,
+		},
+		{
+			MethodName: "SaveRefundConfig",
+			Handler:    _OrderService_SaveRefundConfig_Handler,
 		},
 		{
 			MethodName: "GetOrderStatistics",

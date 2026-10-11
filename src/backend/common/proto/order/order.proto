@@ -18,6 +18,8 @@ service OrderService {
   rpc ListRefunds(ListRefundsReq) returns (ListRefundsResp);
   rpc ApproveRefund(ApproveRefundReq) returns (common.CommonResponse);
   rpc RejectRefund(RejectRefundReq) returns (common.CommonResponse);
+  rpc GetRefundConfig(GetRefundConfigReq) returns (RefundConfig);
+  rpc SaveRefundConfig(SaveRefundConfigReq) returns (common.CommonResponse);
 
   // 统计
   rpc GetOrderStatistics(GetOrderStatisticsReq) returns (OrderStatisticsResp);
@@ -123,11 +125,33 @@ message ListOrdersResp {
   common.PaginationResponse pagination = 2;
 }
 
+// ApplyRefundItem 申请退款商品明细项
+message ApplyRefundItem {
+  int64 order_item_id = 1;
+  int32 quantity = 2;
+}
+
 message ApplyRefundReq {
   int64 order_id = 1;
   int64 user_id = 2;
   double amount = 3;
   string reason = 4;
+  // 退款商品明细；为空表示整单退
+  repeated ApplyRefundItem items = 5;
+  // 运费退还策略为 user_decide 时用户是否选择退运费
+  bool refund_freight = 6;
+}
+
+// RefundItemInfo 退款商品明细信息
+message RefundItemInfo {
+  int64 id = 1;
+  int64 refund_id = 2;
+  int64 order_item_id = 3;
+  int64 sku_id = 4;
+  string product_name = 5;
+  string spec_name = 6;
+  int32 quantity = 7;
+  double refund_amount = 8;
 }
 
 message RefundInfo {
@@ -142,12 +166,34 @@ message RefundInfo {
   string refund_time = 9;
   string created_at = 10;
   string payment_no = 11;
+  // 关联订单号
+  string order_no = 12;
+  // 退款类型：1整单退 2部分退
+  int32 type = 13;
+  // 退款商品明细
+  repeated RefundItemInfo items = 14;
+  // 本单退还的运费金额
+  double freight_amount = 15;
 }
 
 message ListRefundsReq {
   int64 community_id = 1;
   int32 status = 2;
   common.Pagination pagination = 3;
+}
+
+// GetRefundConfigReq 查询退款配置请求
+message GetRefundConfigReq {}
+
+// RefundConfig 退款配置
+message RefundConfig {
+  // 运费退还策略：always始终退运费 never不退运费 user_decide用户自行选择
+  string refund_freight_policy = 1;
+}
+
+// SaveRefundConfigReq 保存退款配置请求
+message SaveRefundConfigReq {
+  string refund_freight_policy = 1;
 }
 
 message ListRefundsResp {

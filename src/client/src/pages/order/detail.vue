@@ -62,26 +62,31 @@
         <u-button type="success" text="确认收货" @click="onReceive" />
       </view>
       <view
-        v-if="[2, 4, 5].includes(order.status)"
+        v-if="[2, 3, 4].includes(order.status)"
         class="action-btn"
       >
         <u-button text="申请退款" @click="onRefund" />
       </view>
     </view>
+
+    <!-- 申请退款弹窗 -->
+    <RefundModal v-model:show="refundVisible" :order-id="orderId" @success="loadOrder" />
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { getOrderDetail, cancelOrder, confirmReceive, applyRefund } from '@/api/order'
+import { getOrderDetail, cancelOrder, confirmReceive } from '@/api/order'
 import { getPaymentChannels, getPaymentDetail } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderList } from '@/utils/navigate'
+import RefundModal from '@/components/RefundModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
 
 const orderId = ref(0)
+const refundVisible = ref(false)
 const order = ref<Order>({
   id: 0,
   order_no: '',
@@ -222,24 +227,10 @@ async function onReceive() {
 }
 
 /**
- * 申请退款
+ * 申请退款：打开金额确认弹窗（选商品/数量、运费策略、可调低金额）
  */
 function onRefund() {
-  uni.showModal({
-    title: '申请退款',
-    content: '确定要申请退款吗？',
-    success: async (res) => {
-      if (res.confirm) {
-        try {
-          await applyRefund(order.value.id, '用户申请退款', order.value.pay_amount)
-          uni.showToast({ title: '已提交退款申请', icon: 'success' })
-          loadOrder()
-        } catch {
-          // ignore
-        }
-      }
-    },
-  })
+  refundVisible.value = true
 }
 </script>
 

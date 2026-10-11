@@ -215,7 +215,10 @@ export interface Order {
   user_id: number
   user_name: string
   total_amount: number
+  discount_amount: number
+  delivery_fee: number
   pay_amount: number
+  delivery_type: number
   status: number
   status_text: string
   created_at: string
@@ -225,8 +228,16 @@ export interface Order {
  * 订单详情
  */
 export interface OrderDetail extends Order {
+  delivery_time: string
+  remark: string
+  pay_time: string
+  deliver_time: string
+  complete_time: string
+  cancel_time: string
+  cancel_reason: string
   items: OrderItem[]
   address: OrderAddress
+  status_logs: OrderStatusLog[]
 }
 
 /**
@@ -234,11 +245,60 @@ export interface OrderDetail extends Order {
  */
 export interface OrderItem {
   id: number
+  product_id: number
+  sku_id: number
   product_name: string
   sku_name: string
+  product_image: string
   price: number
   quantity: number
   total_amount: number
+}
+
+/**
+ * 订单状态流转日志
+ */
+export interface OrderStatusLog {
+  from_status: number
+  to_status: number
+  operator_type: string
+  remark: string
+  created_at: string
+}
+
+/**
+ * 售后单（退款单）
+ */
+export interface Refund {
+  id: number
+  refund_no: string
+  order_id: number
+  order_no: string
+  user_id: number
+  payment_no: string
+  amount: number
+  freight_amount: number
+  type: number
+  reason: string
+  status: number
+  reject_reason: string
+  refund_time: string
+  created_at: string
+  items: RefundItem[]
+}
+
+/**
+ * 售后单商品明细
+ */
+export interface RefundItem {
+  id: number
+  refund_id: number
+  order_item_id: number
+  sku_id: number
+  product_name: string
+  spec_name: string
+  quantity: number
+  refund_amount: number
 }
 
 /**

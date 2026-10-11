@@ -28,12 +28,13 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { resolveHomePath } from '@/router'
 
+const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const authStore = useAuthStore()
@@ -56,8 +57,22 @@ const rules: FormRules = {
 }
 
 /**
+ * 解析登录成功后的回跳地址
+ * 优先取守卫携带的 redirect 参数，校验合法性防止开放重定向；
+ * 无有效 redirect 时按权限解析兜底首页
+ * @returns 回跳目标路径
+ */
+function resolveRedirectPath(): string {
+  const redirect = route.query.redirect
+  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') && redirect !== '/login') {
+    return redirect
+  }
+  return resolveHomePath(authStore) ?? '/403'
+}
+
+/**
  * 登录提交
- * 校验表单后调用登录接口，成功后按权限跳转兜底首页（无任何权限时落在无权限提示页）
+ * 校验表单后调用登录接口，成功后优先回跳原访问页面（无 redirect 时按权限跳转兜底首页）
  */
 async function onLogin() {
   if (!formRef.value) return
@@ -71,7 +86,7 @@ async function onLogin() {
   try {
     await authStore.login(formData.value)
     message.success('登录成功')
-    router.push(resolveHomePath(authStore) ?? '/403')
+    router.push(resolveRedirectPath())
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : '登录失败，请重试'
     message.error(errMsg)
