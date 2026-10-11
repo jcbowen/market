@@ -1,27 +1,30 @@
 <template>
-  <div class="image-upload-input">
-    <n-input
-      :value="value"
-      :placeholder="placeholder"
-      clearable
-      @update:value="onInput"
-    />
-    <n-upload
-      :show-file-list="false"
-      accept="image/*"
-      :custom-request="handleUpload"
-    >
-      <n-button type="primary" secondary :loading="uploading">上传图片</n-button>
-    </n-upload>
-    <n-image
-      v-if="value"
-      :src="value"
-      class="preview"
-      fit="cover"
-      :img-props="{ style: { borderRadius: '4px' } }"
-      lazy
-    />
-  </div>
+  <n-input
+    :value="value"
+    :placeholder="placeholder"
+    clearable
+    @update:value="onInput"
+  >
+    <template #suffix>
+      <n-image
+        v-if="value"
+        :src="value"
+        class="preview"
+        fit="cover"
+        :img-props="{ style: { borderRadius: '3px' } }"
+        lazy
+      />
+      <n-upload
+        :show-file-list="false"
+        accept="image/*"
+        :custom-request="handleUpload"
+      >
+        <n-button type="primary" secondary size="tiny" :loading="uploading">
+          上传图片
+        </n-button>
+      </n-upload>
+    </template>
+  </n-input>
 </template>
 
 <script setup lang="ts">
@@ -31,7 +34,8 @@ import { uploadImage } from '@/api/attachment'
 
 /**
  * 图片上传输入框通用组件
- * URL 输入框 + 上传按钮 + 缩略图预览；上传成功后回填 URL
+ * 上传按钮与缩略图预览收在输入框 suffix 插槽内，宽度行为与普通 n-input 一致（默认 100%，支持外部设宽）
+ * 上传成功后回填接口返回的完整 URL 回显；入库值由后端统一剥离域名只存相对路径
  * 上传通道由后台附件配置自动分流：local 走 multipart 直传后端，oss 走预签名直传 OSS
  */
 
@@ -131,23 +135,14 @@ function isHandledRequestError(err: Error): boolean {
 </script>
 
 <style lang="scss" scoped>
-.image-upload-input {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-
-  .n-input {
-    flex: 1;
-  }
-
-  .preview {
-    width: 36px;
-    height: 36px;
-    flex-shrink: 0;
-    border-radius: 4px;
-    border: 1px solid #eee;
-    cursor: pointer;
-  }
+/* 上传按钮与缩略图收在 input 的 suffix 插槽内，
+   组件整体宽度行为与普通 n-input 一致（默认 100%，可由外部 style/class 设宽） */
+:deep(.preview) {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid #eee;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 </style>

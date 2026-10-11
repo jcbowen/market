@@ -2,6 +2,7 @@ package model
 
 import (
 	"github.com/jcbowen/jcbaseGo/component/orm/base"
+	"gorm.io/gorm"
 )
 
 // AttachmentConfig 附件存储配置模型（单行存储，id 固定为 1）
@@ -44,20 +45,24 @@ func (AttachmentConfig) TableName() string {
 }
 
 // Attachment 附件记录模型
-// 参考 iMe mat_file 口径：presign 阶段 md5 置空延迟写入，confirm 成功后补写，
+// 字段口径对齐 jcbaseGo sl_attachment 参考设计：admin_id 对应参考表 uid（上传管理员），
+// mid 预留客户端用户 ID；presign 阶段 md5 置空延迟写入，confirm 成功后补写，
 // 保证「md5 非空 ⇒ 对象已上传」的不变量，未完成记录天然从秒传查询中隔离
 type Attachment struct {
 	base.MysqlBaseModel
 	ID int64 `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
 
-	// 上传管理员 ID，0 表示系统上传
+	// 分组 ID，预留（参考口径 group_id）
+	GroupID int64 `gorm:"column:group_id;type:bigint;not null;default:0" json:"group_id"`
+
+	// 上传管理员 ID（参考口径 uid），0 表示系统上传
 	AdminID int64 `gorm:"column:admin_id;type:bigint;not null;default:0" json:"admin_id"`
+
+	// 客户端用户 ID（参考口径 mid），预留，当前仅后台管理员上传
+	Mid int64 `gorm:"column:mid;type:bigint;not null;default:0" json:"mid"`
 
 	// 文件 MIME 类型，如 image/png
 	Type string `gorm:"column:type;type:varchar(64);not null;default:''" json:"type"`
-
-	// 完整访问 URL：OSS 模式为 bucket/自定义域名 + path，local 模式为空（响应时按请求域名动态拼接）
-	URL string `gorm:"column:url;type:varchar(2048);not null;default:''" json:"url"`
 
 	// 对象相对路径：OSS 为对象 Key，本地为附件目录下相对路径
 	Path string `gorm:"column:path;type:varchar(512);not null;default:''" json:"path"`
@@ -75,8 +80,14 @@ type Attachment struct {
 	Width  int `gorm:"column:width;type:int;not null;default:0" json:"width"`
 	Height int `gorm:"column:height;type:int;not null;default:0" json:"height"`
 
+	// 是否在选择器中显示（参考口径 is_display），预留
+	IsDisplay int8 `gorm:"column:is_display;type:tinyint;not null;default:0" json:"is_display"`
+
 	CreatedAt string `gorm:"column:created_at;type:datetime" json:"created_at"`
 	UpdatedAt string `gorm:"column:updated_at;type:datetime" json:"updated_at"`
+
+	// 软删除时间，删除记录不参与秒传查询
+	DeletedAt gorm.DeletedAt `gorm:"column:deleted_at;type:datetime;index:idx_attachment_deleted_at" json:"deleted_at"`
 }
 
 // TableName 返回附件记录表名

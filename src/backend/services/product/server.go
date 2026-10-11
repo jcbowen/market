@@ -133,7 +133,11 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 		},
 	}
 	for _, p := range list {
-		resp.List = append(resp.List, service.ToProductInfo(p, categoryNames[p.CategoryID], imageMap[p.ID]))
+		info := service.ToProductInfo(p, categoryNames[p.CategoryID], imageMap[p.ID])
+		// 出库统一拼接完整访问 URL（库存相对路径）
+		info.CoverImage = s.attachmentService.ToMediaURL(ctx, p.CoverImage)
+		info.Images = s.attachmentService.ToMediaURLs(ctx, imageMap[p.ID])
+		resp.List = append(resp.List, info)
 	}
 	return resp, nil
 }
@@ -163,8 +167,13 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 		imageURLs = append(imageURLs, img.URL)
 	}
 
+	info := service.ToProductInfo(p, "", imageURLs)
+	// 出库统一拼接完整访问 URL（库存相对路径）
+	info.CoverImage = s.attachmentService.ToMediaURL(ctx, p.CoverImage)
+	info.Images = s.attachmentService.ToMediaURLs(ctx, imageURLs)
+
 	detail := &product.ProductDetail{
-		Product: service.ToProductInfo(p, "", imageURLs),
+		Product: info,
 		Skus:    make([]*product.SkuInfo, 0, len(skus)),
 		Specs:   specs,
 	}
@@ -187,6 +196,9 @@ func (s *server) SearchProducts(ctx stdctx.Context, req *product.SearchProductsR
 // CreateProduct 创建商品
 // SKU 由 ProductService.CreateProduct 在同一事务内创建
 func (s *server) CreateProduct(ctx stdctx.Context, req *product.CreateProductReq) (*product.ProductDetail, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.CoverImage = s.attachmentService.ToSourcePath(ctx, req.CoverImage)
+	req.Images = s.attachmentService.ToSourcePaths(ctx, req.Images)
 	p, err := s.productService.CreateProduct(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -197,6 +209,9 @@ func (s *server) CreateProduct(ctx stdctx.Context, req *product.CreateProductReq
 
 // UpdateProduct 更新商品
 func (s *server) UpdateProduct(ctx stdctx.Context, req *product.UpdateProductReq) (*product.ProductDetail, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.CoverImage = s.attachmentService.ToSourcePath(ctx, req.CoverImage)
+	req.Images = s.attachmentService.ToSourcePaths(ctx, req.Images)
 	if _, err := s.productService.UpdateProduct(ctx, req); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -596,27 +611,38 @@ func (s *server) ListBanners(ctx stdctx.Context, req *product.ListBannersReq) (*
 	}
 	resp := &product.ListBannersResp{List: make([]*product.BannerInfo, 0, len(list))}
 	for _, b := range list {
-		resp.List = append(resp.List, service.ToBannerInfo(b))
+		info := service.ToBannerInfo(b)
+		// 出库统一拼接完整访问 URL（库存相对路径）
+		info.ImageUrl = s.attachmentService.ToMediaURL(ctx, b.ImageURL)
+		resp.List = append(resp.List, info)
 	}
 	return resp, nil
 }
 
 // CreateBanner 创建 Banner
 func (s *server) CreateBanner(ctx stdctx.Context, req *product.CreateBannerReq) (*product.BannerInfo, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.ImageUrl = s.attachmentService.ToSourcePath(ctx, req.ImageUrl)
 	b, err := s.bannerService.CreateBanner(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToBannerInfo(b), nil
+	info := service.ToBannerInfo(b)
+	info.ImageUrl = s.attachmentService.ToMediaURL(ctx, b.ImageURL)
+	return info, nil
 }
 
 // UpdateBanner 更新 Banner
 func (s *server) UpdateBanner(ctx stdctx.Context, req *product.UpdateBannerReq) (*product.BannerInfo, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.ImageUrl = s.attachmentService.ToSourcePath(ctx, req.ImageUrl)
 	b, err := s.bannerService.UpdateBanner(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToBannerInfo(b), nil
+	info := service.ToBannerInfo(b)
+	info.ImageUrl = s.attachmentService.ToMediaURL(ctx, b.ImageURL)
+	return info, nil
 }
 
 // DeleteBanner 删除 Banner

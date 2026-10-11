@@ -1,6 +1,6 @@
 module github.com/jcbowen/market/src/backend
 
-go 1.25.0
+go 1.26.0
 
 replace github.com/jcbowen/jcbaseGo => ../../../jcbaseGo
 
@@ -14,6 +14,7 @@ require (
 	github.com/jcbowen/jcbaseGo v0.15.5
 	github.com/jcbowen/wego v0.0.0
 	golang.org/x/crypto v0.50.0
+	golang.org/x/image v0.47.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 	gorm.io/gorm v1.31.0
@@ -63,8 +64,8 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.6.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect

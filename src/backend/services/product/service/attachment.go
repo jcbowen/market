@@ -12,14 +12,20 @@ import (
 	_ "image/gif"  // 注册 GIF 解码器
 	_ "image/jpeg" // 注册 JPEG 解码器
 	_ "image/png"  // 注册 PNG 解码器
+
+	_ "golang.org/x/image/bmp"  // 注册 BMP 解码器
+	_ "golang.org/x/image/webp" // 注册 WebP 解码器
 	"log"
 	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jcbowen/jcbaseGo"
+	"github.com/jcbowen/jcbaseGo/component/attachment"
 	"github.com/jcbowen/jcbaseGo/component/attachment/remote"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
@@ -208,7 +214,8 @@ func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.Attachm
 }
 
 // UploadImageLocal 本地模式图片上传
-// 校验扩展名与大小后落盘至附件目录（可执行文件同级 attachment/），并写入附件记录
+// 校验扩展名与大小后先按内容 MD5 秒传查重（命中直接复用已有附件记录），
+// 未命中则落盘至附件目录（可执行文件同级 attachment/）并写入附件记录
 //
 // 参数:
 //   - ctx: 上下文
@@ -244,6 +251,23 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 
 	width, height := decodeImageSize(req.Content)
 	mimeType := resolveImageMime(req.ContentType, ext)
+	contentMD5 := fileMD5(req.Content)
+
+	// 秒传：内容 MD5 命中已有附件时直接复用，不重复落盘
+	// local 模式记录写入时 md5 立即非空且文件已落盘，天然满足「md5 非空 ⇒ 文件已上传」不变量
+	var hit model.Attachment
+	err := s.db.GetDb().WithContext(ctx).
+		Where("md5 = ? AND path <> ''", contentMD5).
+		Order("id DESC").First(&hit).Error
+	if err == nil {
+		return &product.AttachmentInfo{
+			AttachId:   fmt.Sprintf("%d", hit.ID),
+			RemotePath: hit.Path,
+			Size:       hit.Size,
+			Width:      int32(hit.Width),
+			Height:     int32(hit.Height),
+		}, nil
+	}
 
 	// 对象相对路径：images/{Ymd}/{dd}/mkt{HHmmss}{6位随机}.{ext}
 	relPath, err := buildObjectPath(ext, time.Now())
@@ -271,7 +295,7 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 		Path:      relPath,
 		Name:      filepath.Base(req.Filename),
 		Size:      int64(len(req.Content)),
-		MD5:       fileMD5(req.Content),
+		MD5:       contentMD5,
 		Width:     width,
 		Height:    height,
 		CreatedAt: now,
@@ -435,7 +459,6 @@ func (s *AttachmentService) createPresign(ctx context.Context, ossCfg *remote.OS
 	rec := &model.Attachment{
 		AdminID:   req.AdminId,
 		Type:      mimeType,
-		URL:       finalURL,
 		Path:      relPath,
 		Name:      filepath.Base(req.Filename),
 		Size:      req.Size,
@@ -525,9 +548,15 @@ func (s *AttachmentService) AttachmentConfirm(ctx context.Context, req *product.
 		height = int(req.Height)
 	}
 
+	// url 不落库，响应时按附件配置动态拼接（域名变更无需迁移记录）
+	finalURL := ""
+	if cfg := s.getConfigCached(ctx); cfg != nil {
+		finalURL = buildVisitURL(cfg, rec.Path)
+	}
+
 	return &product.AttachmentInfo{
 		AttachId:   req.AttachId,
-		Url:        rec.URL,
+		Url:        finalURL,
 		RemotePath: rec.Path,
 		Size:       size,
 		Width:      int32(width),
@@ -756,22 +785,56 @@ func checkImageMime(contentType, ext string) (string, error) {
 	return "image/jpeg", nil
 }
 
-// decodeImageSize 解析图片宽高
-// 解码失败（如 webp/heic 标准库不支持）时返回 0 值，不视为错误
+// decodeImageSize 探测图片宽高（像素），本地模式上传时由后端从文件内容计算
+// png/jpeg/gif 走标准库，bmp/webp 由 golang.org/x/image 注册解码器，
+// ico 走手写头解析（x/image 未提供）；heic 暂无纯 Go 轻量解码器，探测失败返回 0
 //
 // 参数:
-//   - content: 图片内容
+//   - content: 图片文件完整内容
 //
 // 返回值:
-//   - width: 图片宽度（像素），解析失败为 0
-//   - height: 图片高度（像素），解析失败为 0
+//   - width: 图片宽度（像素），探测失败为 0
+//   - height: 图片高度（像素），探测失败为 0
 func decodeImageSize(content []byte) (width, height int) {
+	if width, height, ok := decodeIcoSize(content); ok {
+		return width, height
+	}
 	img, _, err := image.Decode(bytes.NewReader(content))
 	if err != nil {
 		return 0, 0
 	}
 	bounds := img.Bounds()
 	return bounds.Dx(), bounds.Dy()
+}
+
+// decodeIcoSize 解析 ICO 文件头首个图标条目的宽高
+// 结构：6 字节 ICONDIR（reserved/type/count 各 2 字节小端）+ 16 字节 ICONDIRENTRY，
+// 条目首两字节为宽高，值为 0 表示 256
+//
+// 参数:
+//   - content: 文件内容
+//
+// 返回值:
+//   - width: 宽度（像素）
+//   - height: 高度（像素）
+//   - ok: 是否为合法 ICO 头
+func decodeIcoSize(content []byte) (width, height int, ok bool) {
+	if len(content) < 22 {
+		return 0, 0, false
+	}
+	// reserved=0、type=1(图标)、count>=1，小端
+	if content[0] != 0 || content[1] != 0 || content[2] != 1 || content[3] != 0 ||
+		content[4] == 0 || content[5] != 0 {
+		return 0, 0, false
+	}
+	width, height = int(content[6]), int(content[7])
+	if width == 0 {
+		width = 256
+	}
+	if height == 0 {
+		height = 256
+	}
+	return width, height, true
 }
 
 // randomNumeric 生成指定长度的随机数字字符串
@@ -803,4 +866,151 @@ func ensureTrailingSlash(domain string) string {
 		return ""
 	}
 	return strings.TrimSuffix(domain, "/") + "/"
+}
+
+// ==================== 图片 URL 统一转换 ====================
+// 数据库仅存附件相对路径（remote_path 形态，如 images/2026/10/11/xxx.jpg，不含 uploads 目录前缀）：
+// 入库前经 ToSourcePath 剥离域名，出库前经 ToMediaURL 拼接完整访问地址。
+// local 模式拼接为 <visit_domain>/uploads/<path>（与 gateway /uploads 静态路由一致），
+// oss 模式拼接为 <自定义 CDN 域名或 bucket 域名>/<path>
+
+// attachmentConverter 按附件配置构造 jcbaseGo 附件转换器
+// 直接以字面量构造 Attachment（不走 New），BaseConfig 字段由本方法保证规范性
+//
+// 参数:
+//   - cfg: 附件配置行，nil 时返回 nil（调用方需兜底原样返回）
+//
+// 返回值:
+//   - *attachment.Attachment: 附件转换器实例
+func attachmentConverter(cfg *model.AttachmentConfig) *attachment.Attachment {
+	if cfg == nil {
+		return nil
+	}
+	base := &jcbaseGo.AttachmentStruct{
+		StorageType:      cfg.StorageType,
+		LocalDir:         "uploads",
+		LocalVisitDomain: ensureTrailingSlash(cfg.VisitDomain),
+	}
+	if cfg.StorageType == "oss" {
+		domain := cfg.OssCustomVisitDomain
+		if domain == "" {
+			domain = fmt.Sprintf("https://%s.%s/", cfg.OssBucketName, cfg.OssEndpoint)
+		}
+		base.VisitDomain = ensureTrailingSlash(domain)
+	}
+	return &attachment.Attachment{BaseConfig: base}
+}
+
+// ToMediaURL 将入库相对路径补全为完整访问 URL
+// 空值与 http(s) 开头的存量完整 URL 原样返回；
+// local 模式未配置访问域名时拼不出可用地址，同样原样返回（需先在后台附件配置中填写）
+//
+// 参数:
+//   - ctx: 上下文
+//   - src: 相对路径（如 images/2026/10/11/xxx.jpg）或存量完整 URL
+//
+// 返回值:
+//   - string: 完整访问 URL
+func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
+	if src == "" {
+		return ""
+	}
+	conv := attachmentConverter(s.getConfigCached(ctx))
+	if conv == nil {
+		return src
+	}
+	if conv.BaseConfig.StorageType != "oss" && conv.BaseConfig.LocalVisitDomain == "" {
+		return src
+	}
+	return conv.ToMedia(src)
+}
+
+// ToMediaURLs ToMediaURL 的批量版本
+//
+// 参数:
+//   - ctx: 上下文
+//   - list: 相对路径列表
+//
+// 返回值:
+//   - []string: 完整访问 URL 列表
+func (s *AttachmentService) ToMediaURLs(ctx context.Context, list []string) []string {
+	if len(list) == 0 {
+		return list
+	}
+	out := make([]string, 0, len(list))
+	for _, src := range list {
+		out = append(out, s.ToMediaURL(ctx, src))
+	}
+	return out
+}
+
+// ToSourcePath 将图片地址归一化为入库相对路径（remote_path 形态，不含 uploads 前缀）
+// 规则：
+//   - 本站附件地址（path 以 /uploads/ 开头，或纯路径以 uploads/ 开头）→ 剥离为相对路径
+//   - OSS/CDN URL（域名命中附件配置候选）→ 剥离为对象 Key
+//   - 其他外链 URL（如 placehold.co 占位图）→ 原样保存，出库时同样原样返回，保证外链图可用
+//
+// 未复用 jcbaseGo ToSource 全量逻辑的原因：其域名候选依赖附件配置中的固定域名，
+// 剥不掉按请求域名动态拼接的存量 URL，本站路径改由 url.Parse 提取，配置候选仅用于 OSS 域名剥离
+//
+// 参数:
+//   - ctx: 上下文
+//   - src: 完整 URL、/uploads/... 纯路径或已是相对路径
+//
+// 返回值:
+//   - string: 入库相对路径或原样外链 URL
+//
+// 使用示例:
+//
+//	ToSourcePath("http://localhost:18080/uploads/images/2026/10/11/a.jpg") => "images/2026/10/11/a.jpg"
+//	ToSourcePath("/uploads/images/a.jpg")                                  => "images/a.jpg"
+//	ToSourcePath("https://cdn.example.com/images/a.jpg")（CDN 域名已配置）  => "images/a.jpg"
+//	ToSourcePath("https://placehold.co/300x300?text=Tomato")               => 原样返回
+func (s *AttachmentService) ToSourcePath(ctx context.Context, src string) string {
+	if src == "" {
+		return ""
+	}
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		// 本站附件：path 以 /uploads/ 开头，直接提取相对路径（query/锚点丢弃）
+		if u, err := url.Parse(src); err == nil {
+			if rel, ok := strings.CutPrefix(u.Path, "/uploads/"); ok {
+				return rel
+			}
+		}
+		// OSS/CDN：域名命中附件配置候选时剥离为对象 Key，未命中的外链原样保存
+		// （不用 ToSource：其未命中候选也会剥除查询参数，会破坏外链 URL）
+		if conv := attachmentConverter(s.getConfigCached(ctx)); conv != nil {
+			for _, domain := range []string{conv.BaseConfig.VisitDomain, conv.BaseConfig.LocalVisitDomain} {
+				if domain == "" || domain == "/" || !strings.HasPrefix(src, domain) {
+					continue
+				}
+				return strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(src, domain), "/"), "uploads/")
+			}
+		}
+		return src
+	}
+	// 纯路径形态：剥离开头的 / 与 uploads/ 目录前缀
+	if _, rest, ok := strings.Cut(strings.Trim(src, "/"), "uploads/"); ok {
+		return rest
+	}
+	return src
+}
+
+// ToSourcePaths ToSourcePath 的批量版本
+//
+// 参数:
+//   - ctx: 上下文
+//   - list: URL 或路径列表
+//
+// 返回值:
+//   - []string: 入库相对路径（或原样外链 URL）列表
+func (s *AttachmentService) ToSourcePaths(ctx context.Context, list []string) []string {
+	if len(list) == 0 {
+		return list
+	}
+	out := make([]string, 0, len(list))
+	for _, src := range list {
+		out = append(out, s.ToSourcePath(ctx, src))
+	}
+	return out
 }
