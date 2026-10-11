@@ -786,6 +786,7 @@ message UploadImageLocalReq {
   string filename = 2;     // 原始文件名，需含扩展名
   string content_type = 3; // 文件 MIME 类型
   bytes content = 4;       // 文件内容
+  bool is_display = 5;     // 是否在附件选择器中显示：后台上传传 true；客户端用户上传不传（默认 false 不显示）
 }
 
 // AttachmentPresignReq 预签名请求（OSS 直传模式）
@@ -797,6 +798,7 @@ message AttachmentPresignReq {
   int64 size = 5;          // 文件大小（字节）
   int32 width = 6;         // 图片宽度（像素）
   int32 height = 7;        // 图片高度（像素）
+  bool is_display = 8;     // 是否在附件选择器中显示：后台上传传 true；客户端用户上传不传（默认 false 不显示）
 }
 
 // AttachmentPresignResp 预签名响应

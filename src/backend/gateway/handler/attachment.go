@@ -104,6 +104,7 @@ func (h *AttachmentHandler) UploadImage(c *gin.Context) {
 		Filename:    fileHeader.Filename,
 		ContentType: fileHeader.Header.Get("Content-Type"),
 		Content:     content,
+		IsDisplay:   true, // 后台管理员上传：进入附件选择器；客户端用户上传默认 false 不进入
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -140,6 +141,7 @@ func (h *AttachmentHandler) AttachmentPresign(c *gin.Context) {
 		return
 	}
 	req.AdminId = appcontext.GetUserContext(c).UserID
+	req.IsDisplay = true // 后台管理员上传：进入附件选择器；客户端用户上传默认 false 不进入
 
 	resp, err := h.productClient.AttachmentPresign(c.Request.Context(), &req)
 	if err != nil {

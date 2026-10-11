@@ -6492,6 +6492,7 @@ type UploadImageLocalReq struct {
 	Filename      string                 `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"`                          // 原始文件名，需含扩展名
 	ContentType   string                 `protobuf:"bytes,3,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"` // 文件 MIME 类型
 	Content       []byte                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`                            // 文件内容
+	IsDisplay     bool                   `protobuf:"varint,5,opt,name=is_display,json=isDisplay,proto3" json:"is_display,omitempty"`      // 是否在附件选择器中显示：后台上传传 true；客户端用户上传不传（默认 false 不显示）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6554,6 +6555,13 @@ func (x *UploadImageLocalReq) GetContent() []byte {
 	return nil
 }
 
+func (x *UploadImageLocalReq) GetIsDisplay() bool {
+	if x != nil {
+		return x.IsDisplay
+	}
+	return false
+}
+
 // AttachmentPresignReq 预签名请求（OSS 直传模式）
 type AttachmentPresignReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -6564,6 +6572,7 @@ type AttachmentPresignReq struct {
 	Size          int64                  `protobuf:"varint,5,opt,name=size,proto3" json:"size,omitempty"`                                 // 文件大小（字节）
 	Width         int32                  `protobuf:"varint,6,opt,name=width,proto3" json:"width,omitempty"`                               // 图片宽度（像素）
 	Height        int32                  `protobuf:"varint,7,opt,name=height,proto3" json:"height,omitempty"`                             // 图片高度（像素）
+	IsDisplay     bool                   `protobuf:"varint,8,opt,name=is_display,json=isDisplay,proto3" json:"is_display,omitempty"`      // 是否在附件选择器中显示：后台上传传 true；客户端用户上传不传（默认 false 不显示）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6645,6 +6654,13 @@ func (x *AttachmentPresignReq) GetHeight() int32 {
 		return x.Height
 	}
 	return 0
+}
+
+func (x *AttachmentPresignReq) GetIsDisplay() bool {
+	if x != nil {
+		return x.IsDisplay
+	}
+	return false
 }
 
 // AttachmentPresignResp 预签名响应
@@ -8121,12 +8137,14 @@ const file_product_product_proto_rawDesc = "" +
 	"\x17oss_custom_visit_domain\x18\a \x01(\tR\x14ossCustomVisitDomain\x12\x19\n" +
 	"\bmax_size\x18\b \x01(\x03R\amaxSize\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\tR\tupdatedAt\"\x89\x01\n" +
+	"updated_at\x18\t \x01(\tR\tupdatedAt\"\xa8\x01\n" +
 	"\x13UploadImageLocalReq\x12\x19\n" +
 	"\badmin_id\x18\x01 \x01(\x03R\aadminId\x12\x1a\n" +
 	"\bfilename\x18\x02 \x01(\tR\bfilename\x12!\n" +
 	"\fcontent_type\x18\x03 \x01(\tR\vcontentType\x12\x18\n" +
-	"\acontent\x18\x04 \x01(\fR\acontent\"\xc4\x01\n" +
+	"\acontent\x18\x04 \x01(\fR\acontent\x12\x1d\n" +
+	"\n" +
+	"is_display\x18\x05 \x01(\bR\tisDisplay\"\xe3\x01\n" +
 	"\x14AttachmentPresignReq\x12\x19\n" +
 	"\badmin_id\x18\x01 \x01(\x03R\aadminId\x12\x1a\n" +
 	"\bfilename\x18\x02 \x01(\tR\bfilename\x12\x10\n" +
@@ -8134,7 +8152,9 @@ const file_product_product_proto_rawDesc = "" +
 	"\fcontent_type\x18\x04 \x01(\tR\vcontentType\x12\x12\n" +
 	"\x04size\x18\x05 \x01(\x03R\x04size\x12\x14\n" +
 	"\x05width\x18\x06 \x01(\x05R\x05width\x12\x16\n" +
-	"\x06height\x18\a \x01(\x05R\x06height\"\xb1\x02\n" +
+	"\x06height\x18\a \x01(\x05R\x06height\x12\x1d\n" +
+	"\n" +
+	"is_display\x18\b \x01(\bR\tisDisplay\"\xb1\x02\n" +
 	"\x15AttachmentPresignResp\x12\x1b\n" +
 	"\tattach_id\x18\x01 \x01(\tR\battachId\x12\x10\n" +
 	"\x03hit\x18\x02 \x01(\bR\x03hit\x12\x10\n" +

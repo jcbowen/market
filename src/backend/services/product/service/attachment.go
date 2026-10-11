@@ -301,7 +301,7 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 		MD5:       contentMD5,
 		Width:     width,
 		Height:    height,
-		IsDisplay: 1, // 上传即进入附件选择器（按上传人隔离展示）
+		IsDisplay: boolToInt8(req.IsDisplay), // 后台上传 true 进选择器；客户端用户上传默认 false 不进入
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -469,7 +469,7 @@ func (s *AttachmentService) createPresign(ctx context.Context, ossCfg *remote.OS
 		MD5:       "", // 延迟写入：confirm 成功后补写
 		Width:     int(req.Width),
 		Height:    int(req.Height),
-		IsDisplay: 1, // 上传即进入附件选择器（按上传人隔离展示）
+		IsDisplay: boolToInt8(req.IsDisplay), // 后台上传 true 进选择器；客户端用户上传默认 false 不进入
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -943,6 +943,20 @@ func randomNumeric(length int) (string, error) {
 func escapeLike(value string) string {
 	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return replacer.Replace(value)
+}
+
+// boolToInt8 布尔值转 tinyint 存储（proto3 bool 默认 false，对应客户端上传不进选择器）
+//
+// 参数:
+//   - v: 布尔值
+//
+// 返回值:
+//   - int8: true 为 1，false 为 0
+func boolToInt8(v bool) int8 {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 // ensureTrailingSlash 确保域名以 / 结尾

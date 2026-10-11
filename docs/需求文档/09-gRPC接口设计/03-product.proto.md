@@ -640,6 +640,7 @@ message UploadImageLocalReq {
   string filename = 2;
   string content_type = 3;
   bytes content = 4;
+  bool is_display = 5; // 是否进附件选择器：后台上传传 true；客户端用户上传不传（默认 false 不显示）
 }
 
 message AttachmentPresignReq {
@@ -650,6 +651,7 @@ message AttachmentPresignReq {
   int64 size = 5;
   int32 width = 6;
   int32 height = 7;
+  bool is_display = 8; // 同 UploadImageLocalReq：后台 true，客户端默认 false
 }
 
 message AttachmentPresignResp {
