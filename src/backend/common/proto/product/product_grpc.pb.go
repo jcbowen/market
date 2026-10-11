@@ -20,60 +20,66 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ProductService_ListCategories_FullMethodName        = "/product.ProductService/ListCategories"
-	ProductService_GetCategory_FullMethodName           = "/product.ProductService/GetCategory"
-	ProductService_CreateCategory_FullMethodName        = "/product.ProductService/CreateCategory"
-	ProductService_UpdateCategory_FullMethodName        = "/product.ProductService/UpdateCategory"
-	ProductService_DeleteCategory_FullMethodName        = "/product.ProductService/DeleteCategory"
-	ProductService_ListProducts_FullMethodName          = "/product.ProductService/ListProducts"
-	ProductService_GetProduct_FullMethodName            = "/product.ProductService/GetProduct"
-	ProductService_SearchProducts_FullMethodName        = "/product.ProductService/SearchProducts"
-	ProductService_CreateProduct_FullMethodName         = "/product.ProductService/CreateProduct"
-	ProductService_UpdateProduct_FullMethodName         = "/product.ProductService/UpdateProduct"
-	ProductService_DeleteProduct_FullMethodName         = "/product.ProductService/DeleteProduct"
-	ProductService_UpdateProductStatus_FullMethodName   = "/product.ProductService/UpdateProductStatus"
-	ProductService_ListSkus_FullMethodName              = "/product.ProductService/ListSkus"
-	ProductService_CreateSku_FullMethodName             = "/product.ProductService/CreateSku"
-	ProductService_UpdateSku_FullMethodName             = "/product.ProductService/UpdateSku"
-	ProductService_GetSkuById_FullMethodName            = "/product.ProductService/GetSkuById"
-	ProductService_DeductStock_FullMethodName           = "/product.ProductService/DeductStock"
-	ProductService_ReleaseStock_FullMethodName          = "/product.ProductService/ReleaseStock"
-	ProductService_StockEntry_FullMethodName            = "/product.ProductService/StockEntry"
-	ProductService_StockOut_FullMethodName              = "/product.ProductService/StockOut"
-	ProductService_ListStockRecords_FullMethodName      = "/product.ProductService/ListStockRecords"
-	ProductService_GetStockWarnings_FullMethodName      = "/product.ProductService/GetStockWarnings"
-	ProductService_GeneratePurchaseOrder_FullMethodName = "/product.ProductService/GeneratePurchaseOrder"
-	ProductService_CreateStockCheck_FullMethodName      = "/product.ProductService/CreateStockCheck"
-	ProductService_SubmitStockCheck_FullMethodName      = "/product.ProductService/SubmitStockCheck"
-	ProductService_ListStockChecks_FullMethodName       = "/product.ProductService/ListStockChecks"
-	ProductService_GetStockCheck_FullMethodName         = "/product.ProductService/GetStockCheck"
-	ProductService_SetCommunityPricing_FullMethodName   = "/product.ProductService/SetCommunityPricing"
-	ProductService_ListCommunityPricing_FullMethodName  = "/product.ProductService/ListCommunityPricing"
-	ProductService_GetReferencePricing_FullMethodName   = "/product.ProductService/GetReferencePricing"
-	ProductService_ListCoupons_FullMethodName           = "/product.ProductService/ListCoupons"
-	ProductService_GetCoupon_FullMethodName             = "/product.ProductService/GetCoupon"
-	ProductService_CreateCoupon_FullMethodName          = "/product.ProductService/CreateCoupon"
-	ProductService_UpdateCoupon_FullMethodName          = "/product.ProductService/UpdateCoupon"
-	ProductService_DeleteCoupon_FullMethodName          = "/product.ProductService/DeleteCoupon"
-	ProductService_ReceiveCoupon_FullMethodName         = "/product.ProductService/ReceiveCoupon"
-	ProductService_ListUserCoupons_FullMethodName       = "/product.ProductService/ListUserCoupons"
-	ProductService_UseCoupon_FullMethodName             = "/product.ProductService/UseCoupon"
-	ProductService_ListFlashSales_FullMethodName        = "/product.ProductService/ListFlashSales"
-	ProductService_GetFlashSale_FullMethodName          = "/product.ProductService/GetFlashSale"
-	ProductService_CreateFlashSale_FullMethodName       = "/product.ProductService/CreateFlashSale"
-	ProductService_UpdateFlashSale_FullMethodName       = "/product.ProductService/UpdateFlashSale"
-	ProductService_ListFullReductions_FullMethodName    = "/product.ProductService/ListFullReductions"
-	ProductService_CreateFullReduction_FullMethodName   = "/product.ProductService/CreateFullReduction"
-	ProductService_UpdateFullReduction_FullMethodName   = "/product.ProductService/UpdateFullReduction"
-	ProductService_ListBanners_FullMethodName           = "/product.ProductService/ListBanners"
-	ProductService_CreateBanner_FullMethodName          = "/product.ProductService/CreateBanner"
-	ProductService_UpdateBanner_FullMethodName          = "/product.ProductService/UpdateBanner"
-	ProductService_DeleteBanner_FullMethodName          = "/product.ProductService/DeleteBanner"
-	ProductService_GetAttachmentConfig_FullMethodName   = "/product.ProductService/GetAttachmentConfig"
-	ProductService_SaveAttachmentConfig_FullMethodName  = "/product.ProductService/SaveAttachmentConfig"
-	ProductService_UploadImageLocal_FullMethodName      = "/product.ProductService/UploadImageLocal"
-	ProductService_AttachmentPresign_FullMethodName     = "/product.ProductService/AttachmentPresign"
-	ProductService_AttachmentConfirm_FullMethodName     = "/product.ProductService/AttachmentConfirm"
+	ProductService_ListCategories_FullMethodName                = "/product.ProductService/ListCategories"
+	ProductService_GetCategory_FullMethodName                   = "/product.ProductService/GetCategory"
+	ProductService_CreateCategory_FullMethodName                = "/product.ProductService/CreateCategory"
+	ProductService_UpdateCategory_FullMethodName                = "/product.ProductService/UpdateCategory"
+	ProductService_DeleteCategory_FullMethodName                = "/product.ProductService/DeleteCategory"
+	ProductService_ListProducts_FullMethodName                  = "/product.ProductService/ListProducts"
+	ProductService_GetProduct_FullMethodName                    = "/product.ProductService/GetProduct"
+	ProductService_SearchProducts_FullMethodName                = "/product.ProductService/SearchProducts"
+	ProductService_CreateProduct_FullMethodName                 = "/product.ProductService/CreateProduct"
+	ProductService_UpdateProduct_FullMethodName                 = "/product.ProductService/UpdateProduct"
+	ProductService_DeleteProduct_FullMethodName                 = "/product.ProductService/DeleteProduct"
+	ProductService_UpdateProductStatus_FullMethodName           = "/product.ProductService/UpdateProductStatus"
+	ProductService_ListSkus_FullMethodName                      = "/product.ProductService/ListSkus"
+	ProductService_CreateSku_FullMethodName                     = "/product.ProductService/CreateSku"
+	ProductService_UpdateSku_FullMethodName                     = "/product.ProductService/UpdateSku"
+	ProductService_GetSkuById_FullMethodName                    = "/product.ProductService/GetSkuById"
+	ProductService_DeductStock_FullMethodName                   = "/product.ProductService/DeductStock"
+	ProductService_ReleaseStock_FullMethodName                  = "/product.ProductService/ReleaseStock"
+	ProductService_StockEntry_FullMethodName                    = "/product.ProductService/StockEntry"
+	ProductService_StockOut_FullMethodName                      = "/product.ProductService/StockOut"
+	ProductService_ListStockRecords_FullMethodName              = "/product.ProductService/ListStockRecords"
+	ProductService_GetStockWarnings_FullMethodName              = "/product.ProductService/GetStockWarnings"
+	ProductService_GeneratePurchaseOrder_FullMethodName         = "/product.ProductService/GeneratePurchaseOrder"
+	ProductService_CreateStockCheck_FullMethodName              = "/product.ProductService/CreateStockCheck"
+	ProductService_SubmitStockCheck_FullMethodName              = "/product.ProductService/SubmitStockCheck"
+	ProductService_ListStockChecks_FullMethodName               = "/product.ProductService/ListStockChecks"
+	ProductService_GetStockCheck_FullMethodName                 = "/product.ProductService/GetStockCheck"
+	ProductService_SetCommunityPricing_FullMethodName           = "/product.ProductService/SetCommunityPricing"
+	ProductService_ListCommunityPricing_FullMethodName          = "/product.ProductService/ListCommunityPricing"
+	ProductService_GetReferencePricing_FullMethodName           = "/product.ProductService/GetReferencePricing"
+	ProductService_ListCoupons_FullMethodName                   = "/product.ProductService/ListCoupons"
+	ProductService_GetCoupon_FullMethodName                     = "/product.ProductService/GetCoupon"
+	ProductService_CreateCoupon_FullMethodName                  = "/product.ProductService/CreateCoupon"
+	ProductService_UpdateCoupon_FullMethodName                  = "/product.ProductService/UpdateCoupon"
+	ProductService_DeleteCoupon_FullMethodName                  = "/product.ProductService/DeleteCoupon"
+	ProductService_ReceiveCoupon_FullMethodName                 = "/product.ProductService/ReceiveCoupon"
+	ProductService_ListUserCoupons_FullMethodName               = "/product.ProductService/ListUserCoupons"
+	ProductService_UseCoupon_FullMethodName                     = "/product.ProductService/UseCoupon"
+	ProductService_ListFlashSales_FullMethodName                = "/product.ProductService/ListFlashSales"
+	ProductService_GetFlashSale_FullMethodName                  = "/product.ProductService/GetFlashSale"
+	ProductService_CreateFlashSale_FullMethodName               = "/product.ProductService/CreateFlashSale"
+	ProductService_UpdateFlashSale_FullMethodName               = "/product.ProductService/UpdateFlashSale"
+	ProductService_ListFullReductions_FullMethodName            = "/product.ProductService/ListFullReductions"
+	ProductService_CreateFullReduction_FullMethodName           = "/product.ProductService/CreateFullReduction"
+	ProductService_UpdateFullReduction_FullMethodName           = "/product.ProductService/UpdateFullReduction"
+	ProductService_ListBanners_FullMethodName                   = "/product.ProductService/ListBanners"
+	ProductService_CreateBanner_FullMethodName                  = "/product.ProductService/CreateBanner"
+	ProductService_UpdateBanner_FullMethodName                  = "/product.ProductService/UpdateBanner"
+	ProductService_DeleteBanner_FullMethodName                  = "/product.ProductService/DeleteBanner"
+	ProductService_GetAttachmentConfig_FullMethodName           = "/product.ProductService/GetAttachmentConfig"
+	ProductService_SaveAttachmentConfig_FullMethodName          = "/product.ProductService/SaveAttachmentConfig"
+	ProductService_UploadImageLocal_FullMethodName              = "/product.ProductService/UploadImageLocal"
+	ProductService_AttachmentPresign_FullMethodName             = "/product.ProductService/AttachmentPresign"
+	ProductService_AttachmentConfirm_FullMethodName             = "/product.ProductService/AttachmentConfirm"
+	ProductService_ScanAttachmentMigrate_FullMethodName         = "/product.ProductService/ScanAttachmentMigrate"
+	ProductService_ListAttachmentMigrate_FullMethodName         = "/product.ProductService/ListAttachmentMigrate"
+	ProductService_MigrateAttachmentItem_FullMethodName         = "/product.ProductService/MigrateAttachmentItem"
+	ProductService_VerifyAttachmentItem_FullMethodName          = "/product.ProductService/VerifyAttachmentItem"
+	ProductService_DeleteAttachmentLocal_FullMethodName         = "/product.ProductService/DeleteAttachmentLocal"
+	ProductService_DeleteAttachmentLocalVerified_FullMethodName = "/product.ProductService/DeleteAttachmentLocalVerified"
 )
 
 // ProductServiceClient is the client API for ProductService service.
@@ -143,6 +149,13 @@ type ProductServiceClient interface {
 	UploadImageLocal(ctx context.Context, in *UploadImageLocalReq, opts ...grpc.CallOption) (*AttachmentInfo, error)
 	AttachmentPresign(ctx context.Context, in *AttachmentPresignReq, opts ...grpc.CallOption) (*AttachmentPresignResp, error)
 	AttachmentConfirm(ctx context.Context, in *AttachmentConfirmReq, opts ...grpc.CallOption) (*AttachmentInfo, error)
+	// 附件迁移（本地 → OSS）
+	ScanAttachmentMigrate(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentMigrateOverview, error)
+	ListAttachmentMigrate(ctx context.Context, in *AttachmentMigrateListReq, opts ...grpc.CallOption) (*AttachmentMigrateListResp, error)
+	MigrateAttachmentItem(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error)
+	VerifyAttachmentItem(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error)
+	DeleteAttachmentLocal(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error)
+	DeleteAttachmentLocalVerified(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentMigrateDeleteBatchResp, error)
 }
 
 type productServiceClient struct {
@@ -693,6 +706,66 @@ func (c *productServiceClient) AttachmentConfirm(ctx context.Context, in *Attach
 	return out, nil
 }
 
+func (c *productServiceClient) ScanAttachmentMigrate(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentMigrateOverview, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentMigrateOverview)
+	err := c.cc.Invoke(ctx, ProductService_ScanAttachmentMigrate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ListAttachmentMigrate(ctx context.Context, in *AttachmentMigrateListReq, opts ...grpc.CallOption) (*AttachmentMigrateListResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentMigrateListResp)
+	err := c.cc.Invoke(ctx, ProductService_ListAttachmentMigrate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) MigrateAttachmentItem(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentMigrateItemInfo)
+	err := c.cc.Invoke(ctx, ProductService_MigrateAttachmentItem_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) VerifyAttachmentItem(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentMigrateItemInfo)
+	err := c.cc.Invoke(ctx, ProductService_VerifyAttachmentItem_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) DeleteAttachmentLocal(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentMigrateItemInfo)
+	err := c.cc.Invoke(ctx, ProductService_DeleteAttachmentLocal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) DeleteAttachmentLocalVerified(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentMigrateDeleteBatchResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachmentMigrateDeleteBatchResp)
+	err := c.cc.Invoke(ctx, ProductService_DeleteAttachmentLocalVerified_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProductServiceServer is the server API for ProductService service.
 // All implementations must embed UnimplementedProductServiceServer
 // for forward compatibility.
@@ -760,6 +833,13 @@ type ProductServiceServer interface {
 	UploadImageLocal(context.Context, *UploadImageLocalReq) (*AttachmentInfo, error)
 	AttachmentPresign(context.Context, *AttachmentPresignReq) (*AttachmentPresignResp, error)
 	AttachmentConfirm(context.Context, *AttachmentConfirmReq) (*AttachmentInfo, error)
+	// 附件迁移（本地 → OSS）
+	ScanAttachmentMigrate(context.Context, *common.Empty) (*AttachmentMigrateOverview, error)
+	ListAttachmentMigrate(context.Context, *AttachmentMigrateListReq) (*AttachmentMigrateListResp, error)
+	MigrateAttachmentItem(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error)
+	VerifyAttachmentItem(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error)
+	DeleteAttachmentLocal(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error)
+	DeleteAttachmentLocalVerified(context.Context, *common.Empty) (*AttachmentMigrateDeleteBatchResp, error)
 	mustEmbedUnimplementedProductServiceServer()
 }
 
@@ -931,6 +1011,24 @@ func (UnimplementedProductServiceServer) AttachmentPresign(context.Context, *Att
 }
 func (UnimplementedProductServiceServer) AttachmentConfirm(context.Context, *AttachmentConfirmReq) (*AttachmentInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method AttachmentConfirm not implemented")
+}
+func (UnimplementedProductServiceServer) ScanAttachmentMigrate(context.Context, *common.Empty) (*AttachmentMigrateOverview, error) {
+	return nil, status.Error(codes.Unimplemented, "method ScanAttachmentMigrate not implemented")
+}
+func (UnimplementedProductServiceServer) ListAttachmentMigrate(context.Context, *AttachmentMigrateListReq) (*AttachmentMigrateListResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAttachmentMigrate not implemented")
+}
+func (UnimplementedProductServiceServer) MigrateAttachmentItem(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method MigrateAttachmentItem not implemented")
+}
+func (UnimplementedProductServiceServer) VerifyAttachmentItem(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyAttachmentItem not implemented")
+}
+func (UnimplementedProductServiceServer) DeleteAttachmentLocal(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteAttachmentLocal not implemented")
+}
+func (UnimplementedProductServiceServer) DeleteAttachmentLocalVerified(context.Context, *common.Empty) (*AttachmentMigrateDeleteBatchResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteAttachmentLocalVerified not implemented")
 }
 func (UnimplementedProductServiceServer) mustEmbedUnimplementedProductServiceServer() {}
 func (UnimplementedProductServiceServer) testEmbeddedByValue()                        {}
@@ -1925,6 +2023,114 @@ func _ProductService_AttachmentConfirm_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_ScanAttachmentMigrate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(common.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ScanAttachmentMigrate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ScanAttachmentMigrate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ScanAttachmentMigrate(ctx, req.(*common.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ListAttachmentMigrate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachmentMigrateListReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListAttachmentMigrate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListAttachmentMigrate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListAttachmentMigrate(ctx, req.(*AttachmentMigrateListReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_MigrateAttachmentItem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachmentMigrateItemReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).MigrateAttachmentItem(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_MigrateAttachmentItem_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).MigrateAttachmentItem(ctx, req.(*AttachmentMigrateItemReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_VerifyAttachmentItem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachmentMigrateItemReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).VerifyAttachmentItem(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_VerifyAttachmentItem_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).VerifyAttachmentItem(ctx, req.(*AttachmentMigrateItemReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_DeleteAttachmentLocal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachmentMigrateItemReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).DeleteAttachmentLocal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_DeleteAttachmentLocal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).DeleteAttachmentLocal(ctx, req.(*AttachmentMigrateItemReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_DeleteAttachmentLocalVerified_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(common.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).DeleteAttachmentLocalVerified(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_DeleteAttachmentLocalVerified_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).DeleteAttachmentLocalVerified(ctx, req.(*common.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ProductService_ServiceDesc is the grpc.ServiceDesc for ProductService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2147,6 +2353,30 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AttachmentConfirm",
 			Handler:    _ProductService_AttachmentConfirm_Handler,
+		},
+		{
+			MethodName: "ScanAttachmentMigrate",
+			Handler:    _ProductService_ScanAttachmentMigrate_Handler,
+		},
+		{
+			MethodName: "ListAttachmentMigrate",
+			Handler:    _ProductService_ListAttachmentMigrate_Handler,
+		},
+		{
+			MethodName: "MigrateAttachmentItem",
+			Handler:    _ProductService_MigrateAttachmentItem_Handler,
+		},
+		{
+			MethodName: "VerifyAttachmentItem",
+			Handler:    _ProductService_VerifyAttachmentItem_Handler,
+		},
+		{
+			MethodName: "DeleteAttachmentLocal",
+			Handler:    _ProductService_DeleteAttachmentLocal_Handler,
+		},
+		{
+			MethodName: "DeleteAttachmentLocalVerified",
+			Handler:    _ProductService_DeleteAttachmentLocalVerified_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

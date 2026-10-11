@@ -696,3 +696,57 @@ func (s *server) AttachmentConfirm(ctx stdctx.Context, req *product.AttachmentCo
 	}
 	return info, nil
 }
+
+// ScanAttachmentMigrate 扫描本地附件目录与附件表匹配，生成/刷新迁移任务清单
+func (s *server) ScanAttachmentMigrate(ctx stdctx.Context, _ *common.Empty) (*product.AttachmentMigrateOverview, error) {
+	overview, err := s.attachmentService.ScanAttachmentMigrate(ctx)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return overview, nil
+}
+
+// ListAttachmentMigrate 迁移条目分页列表（含概览统计）
+func (s *server) ListAttachmentMigrate(ctx stdctx.Context, req *product.AttachmentMigrateListReq) (*product.AttachmentMigrateListResp, error) {
+	resp, err := s.attachmentService.ListAttachmentMigrateItems(ctx, req)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return resp, nil
+}
+
+// MigrateAttachmentItem 迁移单个条目（上传 OSS 后自动验证）
+func (s *server) MigrateAttachmentItem(ctx stdctx.Context, req *product.AttachmentMigrateItemReq) (*product.AttachmentMigrateItemInfo, error) {
+	info, err := s.attachmentService.MigrateAttachmentItem(ctx, req.Id)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return info, nil
+}
+
+// VerifyAttachmentItem 验证单个条目（OSS 对象存在 + 大小一致）
+func (s *server) VerifyAttachmentItem(ctx stdctx.Context, req *product.AttachmentMigrateItemReq) (*product.AttachmentMigrateItemInfo, error) {
+	info, err := s.attachmentService.VerifyAttachmentItem(ctx, req.Id)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return info, nil
+}
+
+// DeleteAttachmentLocal 删除单个条目的本地文件（仅验证成功条目）
+func (s *server) DeleteAttachmentLocal(ctx stdctx.Context, req *product.AttachmentMigrateItemReq) (*product.AttachmentMigrateItemInfo, error) {
+	info, err := s.attachmentService.DeleteAttachmentLocal(ctx, req.Id)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return info, nil
+}
+
+// DeleteAttachmentLocalVerified 一键删除全部已验证条目的本地文件
+func (s *server) DeleteAttachmentLocalVerified(ctx stdctx.Context, _ *common.Empty) (*product.AttachmentMigrateDeleteBatchResp, error) {
+	deleted, err := s.attachmentService.DeleteAttachmentLocalVerified(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &product.AttachmentMigrateDeleteBatchResp{Deleted: deleted}, nil
+}

@@ -200,3 +200,117 @@ export async function uploadImage(file: File, width = 0, height = 0): Promise<st
   const res = await uploadImageLocal(file)
   return res.data.data.url
 }
+
+/** 附件迁移条目状态 */
+export type AttachmentMigrateStatus =
+  | 'pending' | 'migrating' | 'migrated' | 'verified'
+  | 'failed' | 'verify_failed' | 'local_deleted' | 'orphan'
+
+/** 附件迁移任务概览统计（missing 仅扫描响应填充） */
+export interface AttachmentMigrateOverview {
+  total: number
+  pending: number
+  migrating: number
+  migrated: number
+  verified: number
+  failed: number
+  verify_failed: number
+  local_deleted: number
+  orphan: number
+  missing: number
+}
+
+/** 附件迁移条目 */
+export interface AttachmentMigrateItem {
+  id: number
+  path: string
+  name: string
+  type: string
+  size: number
+  width: number
+  height: number
+  status: AttachmentMigrateStatus
+  error_msg: string
+  migrated_at: string
+  verified_at: string
+  local_deleted_at: string
+  created_at: string
+}
+
+/** 附件迁移条目列表响应 */
+export interface AttachmentMigrateListResult {
+  list: AttachmentMigrateItem[]
+  pagination: { total: number; page: number; page_size: number }
+  overview: AttachmentMigrateOverview
+}
+
+/**
+ * 扫描本地附件目录与附件表匹配，生成/刷新迁移任务清单
+ * @returns 任务概览统计（含孤儿文件与缺失文件数）
+ */
+export function scanAttachmentMigrate() {
+  return request<ApiResult<AttachmentMigrateOverview>>({
+    url: '/api/v1/admin/attachment/migrate/scan',
+    method: 'POST',
+  })
+}
+
+/**
+ * 分页查询迁移条目列表
+ * @param params 状态过滤与分页参数
+ * @returns 条目列表、分页与概览统计
+ */
+export function listAttachmentMigrate(params: { status?: string; page?: number; page_size?: number }) {
+  return request<ApiResult<AttachmentMigrateListResult>>({
+    url: '/api/v1/admin/attachment/migrate/items',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 迁移单个条目（上传 OSS 后自动验证）
+ * @param id 条目 ID
+ * @returns 操作后的最新条目
+ */
+export function migrateAttachmentItem(id: number) {
+  return request<ApiResult<AttachmentMigrateItem>>({
+    url: `/api/v1/admin/attachment/migrate/${id}/migrate`,
+    method: 'POST',
+  })
+}
+
+/**
+ * 验证单个条目（OSS 对象存在且大小一致）
+ * @param id 条目 ID
+ * @returns 操作后的最新条目
+ */
+export function verifyAttachmentItem(id: number) {
+  return request<ApiResult<AttachmentMigrateItem>>({
+    url: `/api/v1/admin/attachment/migrate/${id}/verify`,
+    method: 'POST',
+  })
+}
+
+/**
+ * 删除单个条目的本地文件（仅验证成功条目可删）
+ * @param id 条目 ID
+ * @returns 操作后的最新条目
+ */
+export function deleteAttachmentLocal(id: number) {
+  return request<ApiResult<AttachmentMigrateItem>>({
+    url: `/api/v1/admin/attachment/migrate/${id}/delete-local`,
+    method: 'POST',
+  })
+}
+
+/**
+ * 一键删除全部已验证条目的本地文件
+ * @returns 实际删除的文件数
+ */
+export function deleteAttachmentLocalVerified() {
+  return request<ApiResult<{ deleted: number }>>({
+    url: '/api/v1/admin/attachment/migrate/delete-verified',
+    method: 'POST',
+  })
+}

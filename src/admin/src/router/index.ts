@@ -212,6 +212,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/settings/attachment.vue'),
         meta: { title: '附件配置', permission: 'settings:view', group: '系统管理' },
       },
+      // 本地附件迁移工具：入口在附件配置页，不在左侧菜单展示
+      {
+        path: 'system/attachment-migrate',
+        name: 'AttachmentMigrate',
+        component: () => import('@/views/settings/attachment-migrate.vue'),
+        meta: { title: '附件迁移', permission: 'settings:view', group: '系统管理', hidden: true },
+      },
       // 个人设置：入口在右上角头像下拉，不在左侧菜单展示
       {
         path: 'settings/profile',

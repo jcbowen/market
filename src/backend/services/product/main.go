@@ -67,6 +67,7 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.Banner{},
 		&model.AttachmentConfig{},
 		&model.Attachment{},
+		&model.AttachmentMigrateItem{},
 	)
 }
 

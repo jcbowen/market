@@ -3,6 +3,7 @@ package handler
 import (
 	"io"
 	"log"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -198,4 +199,120 @@ func baseURLOf(c *gin.Context) string {
 		scheme = proto
 	}
 	return scheme + "://" + c.Request.Host
+}
+
+// --- 附件迁移（本地 → OSS） ---
+
+// ScanAttachmentMigrate 扫描本地附件目录与附件表匹配，生成/刷新迁移任务清单
+//
+// 接口: POST /api/v1/admin/attachment/migrate/scan
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AttachmentHandler) ScanAttachmentMigrate(c *gin.Context) {
+	resp, err := h.productClient.ScanAttachmentMigrate(c.Request.Context(), &common.Empty{})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// ListAttachmentMigrate 迁移条目分页列表（含概览统计）
+//
+// 接口: GET /api/v1/admin/attachment/migrate/items?status=&page=&page_size=
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AttachmentHandler) ListAttachmentMigrate(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+
+	resp, err := h.productClient.ListAttachmentMigrate(c.Request.Context(), &product.AttachmentMigrateListReq{
+		Status:     c.Query("status"),
+		Pagination: &common.Pagination{Page: int32(page), PageSize: int32(pageSize)},
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// MigrateAttachmentItem 迁移单个条目（上传 OSS 后自动验证）
+//
+// 接口: POST /api/v1/admin/attachment/migrate/:id/migrate
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AttachmentHandler) MigrateAttachmentItem(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError, "条目 ID 不合法")
+		return
+	}
+
+	resp, err := h.productClient.MigrateAttachmentItem(c.Request.Context(), &product.AttachmentMigrateItemReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// VerifyAttachmentItem 验证单个条目（OSS 对象存在 + 大小一致）
+//
+// 接口: POST /api/v1/admin/attachment/migrate/:id/verify
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AttachmentHandler) VerifyAttachmentItem(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError, "条目 ID 不合法")
+		return
+	}
+
+	resp, err := h.productClient.VerifyAttachmentItem(c.Request.Context(), &product.AttachmentMigrateItemReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// DeleteAttachmentLocal 删除单个条目的本地文件（仅验证成功条目）
+//
+// 接口: POST /api/v1/admin/attachment/migrate/:id/delete-local
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AttachmentHandler) DeleteAttachmentLocal(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError, "条目 ID 不合法")
+		return
+	}
+
+	resp, err := h.productClient.DeleteAttachmentLocal(c.Request.Context(), &product.AttachmentMigrateItemReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// DeleteAttachmentLocalVerified 一键删除全部已验证条目的本地文件
+//
+// 接口: POST /api/v1/admin/attachment/migrate/delete-verified
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AttachmentHandler) DeleteAttachmentLocalVerified(c *gin.Context) {
+	resp, err := h.productClient.DeleteAttachmentLocalVerified(c.Request.Context(), &common.Empty{})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
 }

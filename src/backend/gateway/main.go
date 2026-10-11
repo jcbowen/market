@@ -272,6 +272,14 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/attachment/presign", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.AttachmentPresign)
 			authAdmin.POST("/attachment/confirm", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.AttachmentConfirm)
 
+			// 附件迁移（本地 → OSS）：清单扫描、条目迁移/验证/删除本地文件
+			authAdmin.POST("/attachment/migrate/scan", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.ScanAttachmentMigrate)
+			authAdmin.GET("/attachment/migrate/items", gwMiddleware.RequirePermission("settings:view"), attachmentHandler.ListAttachmentMigrate)
+			authAdmin.POST("/attachment/migrate/delete-verified", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.DeleteAttachmentLocalVerified)
+			authAdmin.POST("/attachment/migrate/:id/migrate", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.MigrateAttachmentItem)
+			authAdmin.POST("/attachment/migrate/:id/verify", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.VerifyAttachmentItem)
+			authAdmin.POST("/attachment/migrate/:id/delete-local", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.DeleteAttachmentLocal)
+
 			authAdmin.GET("/users", gwMiddleware.RequirePermission("user:view"), adminHandler.ListUsers)
 
 			authAdmin.GET("/communities", gwMiddleware.RequirePermission("community:view"), adminHandler.ListAdminCommunities)

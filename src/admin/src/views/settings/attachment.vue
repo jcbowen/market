@@ -17,7 +17,7 @@
         </n-form-item>
 
         <n-alert v-if="form.storage_type === 'local'" type="info" class="tip">
-          本地模式文件保存在服务部署目录的 attachment/ 下，通过 /uploads/ 路径对外访问；商品、Banner 等图片地址在返回给页面时按上方「自定义访问域名」拼接为完整 URL（数据库仅存相对路径），请务必配置；切换为 OSS 后新上传的图片将直传 OSS，历史本地图片不受影响。
+          本地模式文件保存在服务部署目录的 attachment/ 下，通过 /uploads/ 路径对外访问；商品、Banner 等图片地址在返回给页面时按上方「自定义访问域名」拼接为完整 URL（数据库仅存相对路径）。切换为 OSS 后，新上传的图片将直传 OSS；历史本地图片的访问地址会随存储模式变化，请先通过下方「本地附件迁移」将历史文件同步到 OSS，再切换存储模式，避免图片无法访问。
         </n-alert>
 
         <template v-if="form.storage_type === 'oss'">
@@ -73,6 +73,9 @@
             <n-button type="primary" :loading="saving" :disabled="!authStore.isSuperAdmin && !authStore.hasPermission('settings:update')" @click="save">
               保存配置
             </n-button>
+            <n-button :disabled="!authStore.isSuperAdmin && !authStore.hasPermission('settings:update')" @click="goMigrate">
+              本地附件迁移
+            </n-button>
           </n-space>
         </n-form-item>
       </n-form>
@@ -82,6 +85,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { getAttachmentSetting, updateAttachmentSetting } from '@/api/attachment'
 import type { AttachmentSetting } from '@/api/attachment'
@@ -94,6 +98,7 @@ import { useAuthStore } from '@/stores/auth'
  */
 const message = useMessage()
 const authStore = useAuthStore()
+const router = useRouter()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -153,6 +158,13 @@ async function save() {
 }
 
 onMounted(load)
+
+/**
+ * 跳转本地附件迁移面板（携带 scan=1 自动扫描）
+ */
+function goMigrate() {
+  router.push({ name: 'AttachmentMigrate', query: { scan: '1' } })
+}
 </script>
 
 <style lang="scss" scoped>

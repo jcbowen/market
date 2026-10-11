@@ -678,4 +678,88 @@ message AttachmentInfo {
   int32 width = 5;
   int32 height = 6;
 }
+
+// --- 附件迁移 ---
+// 本地附件一键迁移 OSS（扫描生成任务清单 → 迁移（成功自动验证）→ 手动删除本地文件）
+// 批量由前端循环调用单条接口驱动，状态落库 attachment_migrate_item，无后端常驻任务
+service 追加：
+  rpc ScanAttachmentMigrate(common.Empty) returns (AttachmentMigrateOverview);
+  rpc ListAttachmentMigrate(AttachmentMigrateListReq) returns (AttachmentMigrateListResp);
+  rpc MigrateAttachmentItem(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
+  rpc VerifyAttachmentItem(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
+  rpc DeleteAttachmentLocal(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
+  rpc DeleteAttachmentLocalVerified(common.Empty) returns (AttachmentMigrateDeleteBatchResp);
+
+// AttachmentMigrateItemInfo 迁移条目
+message AttachmentMigrateItemInfo {
+  int64 id = 1;                // 条目 ID
+  string path = 2;             // 对象相对路径（与 attachment.path 同口径）
+  string name = 3;             // 原始文件名
+  string type = 4;             // 文件 MIME 类型
+  int64 size = 5;              // 文件大小（字节）
+  int32 width = 6;             // 图片宽度（像素）
+  int32 height = 7;            // 图片高度（像素）
+  string status = 8;           // 条目状态：pending/migrating/migrated/verified/failed/verify_failed/local_deleted/orphan
+  string error_msg = 9;        // 最近一次失败原因
+  string migrated_at = 10;     // 迁移完成时间
+  string verified_at = 11;     // 验证通过时间
+  string local_deleted_at = 12; // 本地文件删除时间
+  string created_at = 13;      // 入库时间
+}
+
+// AttachmentMigrateOverview 迁移任务概览统计
+// orphan 为孤儿文件数（本地有、附件表无记录）；missing 仅为扫描响应填充（附件表有记录、本地文件缺失）
+message AttachmentMigrateOverview {
+  int32 total = 1;
+  int32 pending = 2;
+  int32 migrating = 3;
+  int32 migrated = 4;
+  int32 verified = 5;
+  int32 failed = 6;
+  int32 verify_failed = 7;
+  int32 local_deleted = 8;
+  int32 orphan = 9;
+  int32 missing = 10;
+}
+
+// AttachmentMigrateListReq 迁移条目列表请求
+message AttachmentMigrateListReq {
+  string status = 1;               // 状态过滤，空为全部
+  common.Pagination pagination = 2;
+}
+
+// AttachmentMigrateListResp 迁移条目列表响应
+message AttachmentMigrateListResp {
+  repeated AttachmentMigrateItemInfo list = 1;
+  common.PaginationResponse pagination = 2;
+  AttachmentMigrateOverview overview = 3;
+}
+
+// AttachmentMigrateItemReq 单条目操作请求（迁移/验证/删除本地文件）
+message AttachmentMigrateItemReq {
+  int64 id = 1;
+}
+
+// AttachmentMigrateDeleteBatchResp 批量删除本地文件响应
+message AttachmentMigrateDeleteBatchResp {
+  int32 deleted = 1; // 实际删除的文件数
+}
 ```
+
+接口语义说明：
+- `ScanAttachmentMigrate`：前置校验 OSS 配置完整性（未配置时返回业务错误）；遍历本地附件目录与 `attachment` 表全量匹配生成/刷新任务清单，返回概览统计。
+- `MigrateAttachmentItem`：仅 pending/failed/verify_failed 状态可迁移（orphan 拒绝）；读本地文件经 jcbaseGo OSS 客户端上传至相同 path，成功后自动验证（对象存在且大小一致 → verified，否则 verify_failed）。
+- `VerifyAttachmentItem`：对 migrated/verify_failed 条目重新验证。
+- `DeleteAttachmentLocal`：仅 verified 条目可删本地文件（OSS 保留副本），删除后置 local_deleted。
+- `DeleteAttachmentLocalVerified`：批量删除所有 verified 条目的本地文件，单个失败跳过不中断，返回实际删除数。
+
+对应网关路由（admin，需 JWT）：
+
+| 方法 | 路径 | 权限 |
+|------|------|------|
+| POST | /api/v1/admin/attachment/migrate/scan | settings:update |
+| GET | /api/v1/admin/attachment/migrate/items | settings:view |
+| POST | /api/v1/admin/attachment/migrate/delete-verified | settings:update |
+| POST | /api/v1/admin/attachment/migrate/:id/migrate | settings:update |
+| POST | /api/v1/admin/attachment/migrate/:id/verify | settings:update |
+| POST | /api/v1/admin/attachment/migrate/:id/delete-local | settings:update |
