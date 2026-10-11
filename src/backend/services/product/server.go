@@ -697,6 +697,15 @@ func (s *server) AttachmentConfirm(ctx stdctx.Context, req *product.AttachmentCo
 	return info, nil
 }
 
+// ListAttachments 附件选择器分页列表（本人上传且 is_display=1 的图片附件）
+func (s *server) ListAttachments(ctx stdctx.Context, req *product.ListAttachmentsReq) (*product.ListAttachmentsResp, error) {
+	resp, err := s.attachmentService.ListAttachments(ctx, req)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return resp, nil
+}
+
 // ScanAttachmentMigrate 扫描本地附件目录与附件表匹配，生成/刷新迁移任务清单
 func (s *server) ScanAttachmentMigrate(ctx stdctx.Context, _ *common.Empty) (*product.AttachmentMigrateOverview, error) {
 	overview, err := s.attachmentService.ScanAttachmentMigrate(ctx)

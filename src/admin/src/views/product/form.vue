@@ -11,7 +11,10 @@
         <n-input v-model:value="form.unit" placeholder="如：件 / 斤 / 箱" />
       </n-form-item>
       <n-form-item label="封面图">
-        <ImageUploadInput v-model:value="form.cover_image" placeholder="图片 URL 或点击上传" />
+        <ImageUploadInput v-model:value="form.cover_image" placeholder="图片 URL 或点击上传" hint="建议尺寸 750×600（5:4）" />
+      </n-form-item>
+      <n-form-item label="商品相册">
+        <ImageListInput v-model:list="form.images" hint="建议尺寸 750×600（5:4）" />
       </n-form-item>
       <n-form-item label="是否多规格">
         <n-switch v-model:value="form.is_multi_spec" />
@@ -136,6 +139,7 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
+import ImageListInput from '@/components/ImageListInput.vue'
 import { useTabsStore } from '@/stores/tabs'
 import { getProductDetail, createProduct, updateProduct, getCategoryList } from '@/api/product'
 import type {
@@ -186,6 +190,7 @@ const form = reactive({
   category_id: null as number | null,
   unit: '',
   cover_image: '',
+  images: [] as string[],
   is_multi_spec: false,
   min_buy: 1,
   sort: 0,
@@ -330,6 +335,7 @@ async function loadDetail(): Promise<void> {
     category_id: p.category_id,
     unit: p.unit ?? '',
     cover_image: p.cover_image ?? '',
+    images: [...(p.images ?? [])],
     is_multi_spec: !!p.is_multi_spec,
     min_buy: p.min_buy ?? 1,
     sort: p.sort ?? 0,
@@ -409,7 +415,7 @@ function buildPayload(): ProductSavePayload | null {
     category_id: form.category_id,
     description: '',
     cover_image: form.cover_image,
-    images: [],
+    images: form.images,
     unit: form.unit,
     is_multi_spec: form.is_multi_spec,
     min_buy: form.min_buy,

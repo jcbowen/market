@@ -15,7 +15,7 @@
           <n-input v-model:value="form.title" placeholder="请输入 Banner 标题" />
         </n-form-item>
         <n-form-item label="图片地址">
-          <ImageUploadInput v-model:value="form.image_url" placeholder="图片 URL 或点击上传" />
+          <ImageUploadInput v-model:value="form.image_url" placeholder="图片 URL 或点击上传" hint="建议尺寸 750×320（21:9）" />
         </n-form-item>
         <n-form-item label="链接地址">
           <n-input v-model:value="form.link_url" placeholder="请输入跳转链接" />

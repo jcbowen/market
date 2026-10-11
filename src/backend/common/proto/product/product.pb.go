@@ -6838,6 +6838,9 @@ type AttachmentInfo struct {
 	Size          int64                  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`                              // 文件大小（字节）
 	Width         int32                  `protobuf:"varint,5,opt,name=width,proto3" json:"width,omitempty"`                            // 图片宽度（像素）
 	Height        int32                  `protobuf:"varint,6,opt,name=height,proto3" json:"height,omitempty"`                          // 图片高度（像素）
+	Name          string                 `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`                               // 原始文件名（附件选择器展示用）
+	Type          string                 `protobuf:"bytes,8,opt,name=type,proto3" json:"type,omitempty"`                               // 文件 MIME 类型
+	CreatedAt     string                 `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`    // 上传时间（YYYY-MM-DD HH:mm:ss）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6914,6 +6917,182 @@ func (x *AttachmentInfo) GetHeight() int32 {
 	return 0
 }
 
+func (x *AttachmentInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *AttachmentInfo) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *AttachmentInfo) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+// ListAttachmentsReq 附件选择器分页查询请求
+// 可见性按上传管理员隔离：gateway 注入 admin_id，服务端仅返回本人上传且 is_display=1 的图片附件
+type ListAttachmentsReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AdminId       int64                  `protobuf:"varint,1,opt,name=admin_id,json=adminId,proto3" json:"admin_id,omitempty"`      // 上传管理员 ID（gateway 从登录态注入）
+	Keyword       string                 `protobuf:"bytes,2,opt,name=keyword,proto3" json:"keyword,omitempty"`                      // 关键字，模糊匹配原始文件名 name 或路径 path
+	StartTime     string                 `protobuf:"bytes,3,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"` // 上传时间范围起（YYYY-MM-DD HH:mm:ss，含）
+	EndTime       string                 `protobuf:"bytes,4,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`       // 上传时间范围止（YYYY-MM-DD HH:mm:ss，含）
+	Page          int32                  `protobuf:"varint,5,opt,name=page,proto3" json:"page,omitempty"`                           // 页码，从 1 开始
+	PageSize      int32                  `protobuf:"varint,6,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`   // 每页条数，默认 12
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAttachmentsReq) Reset() {
+	*x = ListAttachmentsReq{}
+	mi := &file_product_product_proto_msgTypes[96]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAttachmentsReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAttachmentsReq) ProtoMessage() {}
+
+func (x *ListAttachmentsReq) ProtoReflect() protoreflect.Message {
+	mi := &file_product_product_proto_msgTypes[96]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAttachmentsReq.ProtoReflect.Descriptor instead.
+func (*ListAttachmentsReq) Descriptor() ([]byte, []int) {
+	return file_product_product_proto_rawDescGZIP(), []int{96}
+}
+
+func (x *ListAttachmentsReq) GetAdminId() int64 {
+	if x != nil {
+		return x.AdminId
+	}
+	return 0
+}
+
+func (x *ListAttachmentsReq) GetKeyword() string {
+	if x != nil {
+		return x.Keyword
+	}
+	return ""
+}
+
+func (x *ListAttachmentsReq) GetStartTime() string {
+	if x != nil {
+		return x.StartTime
+	}
+	return ""
+}
+
+func (x *ListAttachmentsReq) GetEndTime() string {
+	if x != nil {
+		return x.EndTime
+	}
+	return ""
+}
+
+func (x *ListAttachmentsReq) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListAttachmentsReq) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+// ListAttachmentsResp 附件选择器分页响应
+type ListAttachmentsResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	List          []*AttachmentInfo      `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
+	Total         int64                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Page          int32                  `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListAttachmentsResp) Reset() {
+	*x = ListAttachmentsResp{}
+	mi := &file_product_product_proto_msgTypes[97]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListAttachmentsResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListAttachmentsResp) ProtoMessage() {}
+
+func (x *ListAttachmentsResp) ProtoReflect() protoreflect.Message {
+	mi := &file_product_product_proto_msgTypes[97]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListAttachmentsResp.ProtoReflect.Descriptor instead.
+func (*ListAttachmentsResp) Descriptor() ([]byte, []int) {
+	return file_product_product_proto_rawDescGZIP(), []int{97}
+}
+
+func (x *ListAttachmentsResp) GetList() []*AttachmentInfo {
+	if x != nil {
+		return x.List
+	}
+	return nil
+}
+
+func (x *ListAttachmentsResp) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListAttachmentsResp) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListAttachmentsResp) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
 // AttachmentMigrateItemInfo 迁移条目信息
 type AttachmentMigrateItemInfo struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -6936,7 +7115,7 @@ type AttachmentMigrateItemInfo struct {
 
 func (x *AttachmentMigrateItemInfo) Reset() {
 	*x = AttachmentMigrateItemInfo{}
-	mi := &file_product_product_proto_msgTypes[96]
+	mi := &file_product_product_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6948,7 +7127,7 @@ func (x *AttachmentMigrateItemInfo) String() string {
 func (*AttachmentMigrateItemInfo) ProtoMessage() {}
 
 func (x *AttachmentMigrateItemInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_product_product_proto_msgTypes[96]
+	mi := &file_product_product_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6961,7 +7140,7 @@ func (x *AttachmentMigrateItemInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachmentMigrateItemInfo.ProtoReflect.Descriptor instead.
 func (*AttachmentMigrateItemInfo) Descriptor() ([]byte, []int) {
-	return file_product_product_proto_rawDescGZIP(), []int{96}
+	return file_product_product_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *AttachmentMigrateItemInfo) GetId() int64 {
@@ -7075,7 +7254,7 @@ type AttachmentMigrateOverview struct {
 
 func (x *AttachmentMigrateOverview) Reset() {
 	*x = AttachmentMigrateOverview{}
-	mi := &file_product_product_proto_msgTypes[97]
+	mi := &file_product_product_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7087,7 +7266,7 @@ func (x *AttachmentMigrateOverview) String() string {
 func (*AttachmentMigrateOverview) ProtoMessage() {}
 
 func (x *AttachmentMigrateOverview) ProtoReflect() protoreflect.Message {
-	mi := &file_product_product_proto_msgTypes[97]
+	mi := &file_product_product_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7100,7 +7279,7 @@ func (x *AttachmentMigrateOverview) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachmentMigrateOverview.ProtoReflect.Descriptor instead.
 func (*AttachmentMigrateOverview) Descriptor() ([]byte, []int) {
-	return file_product_product_proto_rawDescGZIP(), []int{97}
+	return file_product_product_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *AttachmentMigrateOverview) GetTotal() int32 {
@@ -7184,7 +7363,7 @@ type AttachmentMigrateListReq struct {
 
 func (x *AttachmentMigrateListReq) Reset() {
 	*x = AttachmentMigrateListReq{}
-	mi := &file_product_product_proto_msgTypes[98]
+	mi := &file_product_product_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7196,7 +7375,7 @@ func (x *AttachmentMigrateListReq) String() string {
 func (*AttachmentMigrateListReq) ProtoMessage() {}
 
 func (x *AttachmentMigrateListReq) ProtoReflect() protoreflect.Message {
-	mi := &file_product_product_proto_msgTypes[98]
+	mi := &file_product_product_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7209,7 +7388,7 @@ func (x *AttachmentMigrateListReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachmentMigrateListReq.ProtoReflect.Descriptor instead.
 func (*AttachmentMigrateListReq) Descriptor() ([]byte, []int) {
-	return file_product_product_proto_rawDescGZIP(), []int{98}
+	return file_product_product_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *AttachmentMigrateListReq) GetStatus() string {
@@ -7238,7 +7417,7 @@ type AttachmentMigrateListResp struct {
 
 func (x *AttachmentMigrateListResp) Reset() {
 	*x = AttachmentMigrateListResp{}
-	mi := &file_product_product_proto_msgTypes[99]
+	mi := &file_product_product_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7250,7 +7429,7 @@ func (x *AttachmentMigrateListResp) String() string {
 func (*AttachmentMigrateListResp) ProtoMessage() {}
 
 func (x *AttachmentMigrateListResp) ProtoReflect() protoreflect.Message {
-	mi := &file_product_product_proto_msgTypes[99]
+	mi := &file_product_product_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7263,7 +7442,7 @@ func (x *AttachmentMigrateListResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachmentMigrateListResp.ProtoReflect.Descriptor instead.
 func (*AttachmentMigrateListResp) Descriptor() ([]byte, []int) {
-	return file_product_product_proto_rawDescGZIP(), []int{99}
+	return file_product_product_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *AttachmentMigrateListResp) GetList() []*AttachmentMigrateItemInfo {
@@ -7297,7 +7476,7 @@ type AttachmentMigrateItemReq struct {
 
 func (x *AttachmentMigrateItemReq) Reset() {
 	*x = AttachmentMigrateItemReq{}
-	mi := &file_product_product_proto_msgTypes[100]
+	mi := &file_product_product_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7309,7 +7488,7 @@ func (x *AttachmentMigrateItemReq) String() string {
 func (*AttachmentMigrateItemReq) ProtoMessage() {}
 
 func (x *AttachmentMigrateItemReq) ProtoReflect() protoreflect.Message {
-	mi := &file_product_product_proto_msgTypes[100]
+	mi := &file_product_product_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7322,7 +7501,7 @@ func (x *AttachmentMigrateItemReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachmentMigrateItemReq.ProtoReflect.Descriptor instead.
 func (*AttachmentMigrateItemReq) Descriptor() ([]byte, []int) {
-	return file_product_product_proto_rawDescGZIP(), []int{100}
+	return file_product_product_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *AttachmentMigrateItemReq) GetId() int64 {
@@ -7342,7 +7521,7 @@ type AttachmentMigrateDeleteBatchResp struct {
 
 func (x *AttachmentMigrateDeleteBatchResp) Reset() {
 	*x = AttachmentMigrateDeleteBatchResp{}
-	mi := &file_product_product_proto_msgTypes[101]
+	mi := &file_product_product_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7354,7 +7533,7 @@ func (x *AttachmentMigrateDeleteBatchResp) String() string {
 func (*AttachmentMigrateDeleteBatchResp) ProtoMessage() {}
 
 func (x *AttachmentMigrateDeleteBatchResp) ProtoReflect() protoreflect.Message {
-	mi := &file_product_product_proto_msgTypes[101]
+	mi := &file_product_product_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7367,7 +7546,7 @@ func (x *AttachmentMigrateDeleteBatchResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttachmentMigrateDeleteBatchResp.ProtoReflect.Descriptor instead.
 func (*AttachmentMigrateDeleteBatchResp) Descriptor() ([]byte, []int) {
-	return file_product_product_proto_rawDescGZIP(), []int{101}
+	return file_product_product_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *AttachmentMigrateDeleteBatchResp) GetDeleted() int32 {
@@ -7974,7 +8153,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\x03md5\x18\x03 \x01(\tR\x03md5\x12\x12\n" +
 	"\x04size\x18\x04 \x01(\x03R\x04size\x12\x14\n" +
 	"\x05width\x18\x05 \x01(\x05R\x05width\x12\x16\n" +
-	"\x06height\x18\x06 \x01(\x05R\x06height\"\xa2\x01\n" +
+	"\x06height\x18\x06 \x01(\x05R\x06height\"\xe9\x01\n" +
 	"\x0eAttachmentInfo\x12\x1b\n" +
 	"\tattach_id\x18\x01 \x01(\tR\battachId\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12\x1f\n" +
@@ -7982,7 +8161,24 @@ const file_product_product_proto_rawDesc = "" +
 	"remotePath\x12\x12\n" +
 	"\x04size\x18\x04 \x01(\x03R\x04size\x12\x14\n" +
 	"\x05width\x18\x05 \x01(\x05R\x05width\x12\x16\n" +
-	"\x06height\x18\x06 \x01(\x05R\x06height\"\xe9\x02\n" +
+	"\x06height\x18\x06 \x01(\x05R\x06height\x12\x12\n" +
+	"\x04name\x18\a \x01(\tR\x04name\x12\x12\n" +
+	"\x04type\x18\b \x01(\tR\x04type\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\t \x01(\tR\tcreatedAt\"\xb4\x01\n" +
+	"\x12ListAttachmentsReq\x12\x19\n" +
+	"\badmin_id\x18\x01 \x01(\x03R\aadminId\x12\x18\n" +
+	"\akeyword\x18\x02 \x01(\tR\akeyword\x12\x1d\n" +
+	"\n" +
+	"start_time\x18\x03 \x01(\tR\tstartTime\x12\x19\n" +
+	"\bend_time\x18\x04 \x01(\tR\aendTime\x12\x12\n" +
+	"\x04page\x18\x05 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x06 \x01(\x05R\bpageSize\"\x89\x01\n" +
+	"\x13ListAttachmentsResp\x12+\n" +
+	"\x04list\x18\x01 \x03(\v2\x17.product.AttachmentInfoR\x04list\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\x12\x12\n" +
+	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\"\xe9\x02\n" +
 	"\x19AttachmentMigrateItemInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
@@ -8027,7 +8223,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\x18AttachmentMigrateItemReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"<\n" +
 	" AttachmentMigrateDeleteBatchResp\x12\x18\n" +
-	"\adeleted\x18\x01 \x01(\x05R\adeleted2\x83\"\n" +
+	"\adeleted\x18\x01 \x01(\x05R\adeleted2\xd1\"\n" +
 	"\x0eProductService\x12I\n" +
 	"\x0eListCategories\x12\x1a.product.ListCategoriesReq\x1a\x1b.product.ListCategoriesResp\x12=\n" +
 	"\vGetCategory\x12\x17.product.GetCategoryReq\x1a\x15.product.CategoryInfo\x12C\n" +
@@ -8085,7 +8281,8 @@ const file_product_product_proto_rawDesc = "" +
 	"\x14SaveAttachmentConfig\x12\x19.product.AttachmentConfig\x1a\x16.common.CommonResponse\x12I\n" +
 	"\x10UploadImageLocal\x12\x1c.product.UploadImageLocalReq\x1a\x17.product.AttachmentInfo\x12R\n" +
 	"\x11AttachmentPresign\x12\x1d.product.AttachmentPresignReq\x1a\x1e.product.AttachmentPresignResp\x12K\n" +
-	"\x11AttachmentConfirm\x12\x1d.product.AttachmentConfirmReq\x1a\x17.product.AttachmentInfo\x12J\n" +
+	"\x11AttachmentConfirm\x12\x1d.product.AttachmentConfirmReq\x1a\x17.product.AttachmentInfo\x12L\n" +
+	"\x0fListAttachments\x12\x1b.product.ListAttachmentsReq\x1a\x1c.product.ListAttachmentsResp\x12J\n" +
 	"\x15ScanAttachmentMigrate\x12\r.common.Empty\x1a\".product.AttachmentMigrateOverview\x12^\n" +
 	"\x15ListAttachmentMigrate\x12!.product.AttachmentMigrateListReq\x1a\".product.AttachmentMigrateListResp\x12^\n" +
 	"\x15MigrateAttachmentItem\x12!.product.AttachmentMigrateItemReq\x1a\".product.AttachmentMigrateItemInfo\x12]\n" +
@@ -8105,7 +8302,7 @@ func file_product_product_proto_rawDescGZIP() []byte {
 	return file_product_product_proto_rawDescData
 }
 
-var file_product_product_proto_msgTypes = make([]protoimpl.MessageInfo, 103)
+var file_product_product_proto_msgTypes = make([]protoimpl.MessageInfo, 105)
 var file_product_product_proto_goTypes = []any{
 	(*ListCategoriesReq)(nil),                // 0: product.ListCategoriesReq
 	(*GetCategoryReq)(nil),                   // 1: product.GetCategoryReq
@@ -8203,23 +8400,25 @@ var file_product_product_proto_goTypes = []any{
 	(*AttachmentPresignResp)(nil),            // 93: product.AttachmentPresignResp
 	(*AttachmentConfirmReq)(nil),             // 94: product.AttachmentConfirmReq
 	(*AttachmentInfo)(nil),                   // 95: product.AttachmentInfo
-	(*AttachmentMigrateItemInfo)(nil),        // 96: product.AttachmentMigrateItemInfo
-	(*AttachmentMigrateOverview)(nil),        // 97: product.AttachmentMigrateOverview
-	(*AttachmentMigrateListReq)(nil),         // 98: product.AttachmentMigrateListReq
-	(*AttachmentMigrateListResp)(nil),        // 99: product.AttachmentMigrateListResp
-	(*AttachmentMigrateItemReq)(nil),         // 100: product.AttachmentMigrateItemReq
-	(*AttachmentMigrateDeleteBatchResp)(nil), // 101: product.AttachmentMigrateDeleteBatchResp
-	nil,                                      // 102: product.AttachmentPresignResp.HeadersEntry
-	(*common.Pagination)(nil),                // 103: common.Pagination
-	(*common.PaginationResponse)(nil),        // 104: common.PaginationResponse
-	(*common.Empty)(nil),                     // 105: common.Empty
-	(*common.CommonResponse)(nil),            // 106: common.CommonResponse
+	(*ListAttachmentsReq)(nil),               // 96: product.ListAttachmentsReq
+	(*ListAttachmentsResp)(nil),              // 97: product.ListAttachmentsResp
+	(*AttachmentMigrateItemInfo)(nil),        // 98: product.AttachmentMigrateItemInfo
+	(*AttachmentMigrateOverview)(nil),        // 99: product.AttachmentMigrateOverview
+	(*AttachmentMigrateListReq)(nil),         // 100: product.AttachmentMigrateListReq
+	(*AttachmentMigrateListResp)(nil),        // 101: product.AttachmentMigrateListResp
+	(*AttachmentMigrateItemReq)(nil),         // 102: product.AttachmentMigrateItemReq
+	(*AttachmentMigrateDeleteBatchResp)(nil), // 103: product.AttachmentMigrateDeleteBatchResp
+	nil,                                      // 104: product.AttachmentPresignResp.HeadersEntry
+	(*common.Pagination)(nil),                // 105: common.Pagination
+	(*common.PaginationResponse)(nil),        // 106: common.PaginationResponse
+	(*common.Empty)(nil),                     // 107: common.Empty
+	(*common.CommonResponse)(nil),            // 108: common.CommonResponse
 }
 var file_product_product_proto_depIdxs = []int32{
 	5,   // 0: product.CategoryInfo.children:type_name -> product.CategoryInfo
 	5,   // 1: product.ListCategoriesResp.list:type_name -> product.CategoryInfo
-	103, // 2: product.ListProductsReq.pagination:type_name -> common.Pagination
-	103, // 3: product.SearchProductsReq.pagination:type_name -> common.Pagination
+	105, // 2: product.ListProductsReq.pagination:type_name -> common.Pagination
+	105, // 3: product.SearchProductsReq.pagination:type_name -> common.Pagination
 	18,  // 4: product.CreateProductReq.specs:type_name -> product.SpecReq
 	19,  // 5: product.CreateProductReq.sku_items:type_name -> product.SkuItemReq
 	18,  // 6: product.UpdateProductReq.specs:type_name -> product.SpecReq
@@ -8228,21 +8427,21 @@ var file_product_product_proto_depIdxs = []int32{
 	26,  // 9: product.ProductDetail.skus:type_name -> product.SkuInfo
 	21,  // 10: product.ProductDetail.specs:type_name -> product.SpecInfo
 	14,  // 11: product.ListProductsResp.list:type_name -> product.ProductInfo
-	104, // 12: product.ListProductsResp.pagination:type_name -> common.PaginationResponse
+	106, // 12: product.ListProductsResp.pagination:type_name -> common.PaginationResponse
 	17,  // 13: product.SpecReq.values:type_name -> product.SpecValueReq
 	20,  // 14: product.SpecInfo.values:type_name -> product.SpecValueInfo
 	26,  // 15: product.ListSkusResp.list:type_name -> product.SkuInfo
 	31,  // 16: product.StockEntryReq.items:type_name -> product.StockEntryItem
 	33,  // 17: product.StockOutReq.items:type_name -> product.StockOutItem
-	103, // 18: product.ListStockRecordsReq.pagination:type_name -> common.Pagination
+	105, // 18: product.ListStockRecordsReq.pagination:type_name -> common.Pagination
 	36,  // 19: product.ListStockRecordsResp.list:type_name -> product.StockRecordInfo
-	104, // 20: product.ListStockRecordsResp.pagination:type_name -> common.PaginationResponse
+	106, // 20: product.ListStockRecordsResp.pagination:type_name -> common.PaginationResponse
 	39,  // 21: product.ListStockWarningsResp.list:type_name -> product.StockWarningInfo
 	41,  // 22: product.GeneratePurchaseOrderResp.items:type_name -> product.PurchaseOrderItem
 	45,  // 23: product.SubmitStockCheckReq.items:type_name -> product.StockCheckItem
-	103, // 24: product.ListStockChecksReq.pagination:type_name -> common.Pagination
+	105, // 24: product.ListStockChecksReq.pagination:type_name -> common.Pagination
 	47,  // 25: product.ListStockChecksResp.list:type_name -> product.StockCheckInfo
-	104, // 26: product.ListStockChecksResp.pagination:type_name -> common.PaginationResponse
+	106, // 26: product.ListStockChecksResp.pagination:type_name -> common.PaginationResponse
 	47,  // 27: product.StockCheckDetail.info:type_name -> product.StockCheckInfo
 	51,  // 28: product.StockCheckDetail.items:type_name -> product.StockCheckDetailItem
 	54,  // 29: product.ListPricingResp.list:type_name -> product.PricingInfo
@@ -8254,136 +8453,139 @@ var file_product_product_proto_depIdxs = []int32{
 	75,  // 35: product.ListFlashSalesResp.list:type_name -> product.FlashSaleInfo
 	82,  // 36: product.ListFullReductionsResp.list:type_name -> product.FullReductionInfo
 	85,  // 37: product.ListBannersResp.list:type_name -> product.BannerInfo
-	102, // 38: product.AttachmentPresignResp.headers:type_name -> product.AttachmentPresignResp.HeadersEntry
-	103, // 39: product.AttachmentMigrateListReq.pagination:type_name -> common.Pagination
-	96,  // 40: product.AttachmentMigrateListResp.list:type_name -> product.AttachmentMigrateItemInfo
-	104, // 41: product.AttachmentMigrateListResp.pagination:type_name -> common.PaginationResponse
-	97,  // 42: product.AttachmentMigrateListResp.overview:type_name -> product.AttachmentMigrateOverview
-	0,   // 43: product.ProductService.ListCategories:input_type -> product.ListCategoriesReq
-	1,   // 44: product.ProductService.GetCategory:input_type -> product.GetCategoryReq
-	2,   // 45: product.ProductService.CreateCategory:input_type -> product.CreateCategoryReq
-	3,   // 46: product.ProductService.UpdateCategory:input_type -> product.UpdateCategoryReq
-	4,   // 47: product.ProductService.DeleteCategory:input_type -> product.DeleteCategoryReq
-	7,   // 48: product.ProductService.ListProducts:input_type -> product.ListProductsReq
-	8,   // 49: product.ProductService.GetProduct:input_type -> product.GetProductReq
-	9,   // 50: product.ProductService.SearchProducts:input_type -> product.SearchProductsReq
-	10,  // 51: product.ProductService.CreateProduct:input_type -> product.CreateProductReq
-	11,  // 52: product.ProductService.UpdateProduct:input_type -> product.UpdateProductReq
-	12,  // 53: product.ProductService.DeleteProduct:input_type -> product.DeleteProductReq
-	13,  // 54: product.ProductService.UpdateProductStatus:input_type -> product.UpdateProductStatusReq
-	22,  // 55: product.ProductService.ListSkus:input_type -> product.ListSkusReq
-	24,  // 56: product.ProductService.CreateSku:input_type -> product.CreateSkuReq
-	25,  // 57: product.ProductService.UpdateSku:input_type -> product.UpdateSkuReq
-	23,  // 58: product.ProductService.GetSkuById:input_type -> product.GetSkuByIdReq
-	28,  // 59: product.ProductService.DeductStock:input_type -> product.DeductStockReq
-	30,  // 60: product.ProductService.ReleaseStock:input_type -> product.ReleaseStockReq
-	32,  // 61: product.ProductService.StockEntry:input_type -> product.StockEntryReq
-	34,  // 62: product.ProductService.StockOut:input_type -> product.StockOutReq
-	35,  // 63: product.ProductService.ListStockRecords:input_type -> product.ListStockRecordsReq
-	38,  // 64: product.ProductService.GetStockWarnings:input_type -> product.GetStockWarningsReq
-	42,  // 65: product.ProductService.GeneratePurchaseOrder:input_type -> product.GeneratePurchaseOrderReq
-	44,  // 66: product.ProductService.CreateStockCheck:input_type -> product.CreateStockCheckReq
-	46,  // 67: product.ProductService.SubmitStockCheck:input_type -> product.SubmitStockCheckReq
-	48,  // 68: product.ProductService.ListStockChecks:input_type -> product.ListStockChecksReq
-	50,  // 69: product.ProductService.GetStockCheck:input_type -> product.GetStockCheckReq
-	53,  // 70: product.ProductService.SetCommunityPricing:input_type -> product.SetPricingReq
-	55,  // 71: product.ProductService.ListCommunityPricing:input_type -> product.ListPricingReq
-	57,  // 72: product.ProductService.GetReferencePricing:input_type -> product.GetReferencePricingReq
-	58,  // 73: product.ProductService.ListCoupons:input_type -> product.ListCouponsReq
-	59,  // 74: product.ProductService.GetCoupon:input_type -> product.GetCouponReq
-	60,  // 75: product.ProductService.CreateCoupon:input_type -> product.CreateCouponReq
-	61,  // 76: product.ProductService.UpdateCoupon:input_type -> product.UpdateCouponReq
-	62,  // 77: product.ProductService.DeleteCoupon:input_type -> product.DeleteCouponReq
-	65,  // 78: product.ProductService.ReceiveCoupon:input_type -> product.ReceiveCouponReq
-	66,  // 79: product.ProductService.ListUserCoupons:input_type -> product.ListUserCouponsReq
-	69,  // 80: product.ProductService.UseCoupon:input_type -> product.UseCouponReq
-	70,  // 81: product.ProductService.ListFlashSales:input_type -> product.ListFlashSalesReq
-	71,  // 82: product.ProductService.GetFlashSale:input_type -> product.GetFlashSaleReq
-	72,  // 83: product.ProductService.CreateFlashSale:input_type -> product.CreateFlashSaleReq
-	73,  // 84: product.ProductService.UpdateFlashSale:input_type -> product.UpdateFlashSaleReq
-	79,  // 85: product.ProductService.ListFullReductions:input_type -> product.ListFullReductionsReq
-	80,  // 86: product.ProductService.CreateFullReduction:input_type -> product.CreateFullReductionReq
-	81,  // 87: product.ProductService.UpdateFullReduction:input_type -> product.UpdateFullReductionReq
-	84,  // 88: product.ProductService.ListBanners:input_type -> product.ListBannersReq
-	87,  // 89: product.ProductService.CreateBanner:input_type -> product.CreateBannerReq
-	88,  // 90: product.ProductService.UpdateBanner:input_type -> product.UpdateBannerReq
-	89,  // 91: product.ProductService.DeleteBanner:input_type -> product.DeleteBannerReq
-	105, // 92: product.ProductService.GetAttachmentConfig:input_type -> common.Empty
-	90,  // 93: product.ProductService.SaveAttachmentConfig:input_type -> product.AttachmentConfig
-	91,  // 94: product.ProductService.UploadImageLocal:input_type -> product.UploadImageLocalReq
-	92,  // 95: product.ProductService.AttachmentPresign:input_type -> product.AttachmentPresignReq
-	94,  // 96: product.ProductService.AttachmentConfirm:input_type -> product.AttachmentConfirmReq
-	105, // 97: product.ProductService.ScanAttachmentMigrate:input_type -> common.Empty
-	98,  // 98: product.ProductService.ListAttachmentMigrate:input_type -> product.AttachmentMigrateListReq
-	100, // 99: product.ProductService.MigrateAttachmentItem:input_type -> product.AttachmentMigrateItemReq
-	100, // 100: product.ProductService.VerifyAttachmentItem:input_type -> product.AttachmentMigrateItemReq
-	100, // 101: product.ProductService.DeleteAttachmentLocal:input_type -> product.AttachmentMigrateItemReq
-	105, // 102: product.ProductService.DeleteAttachmentLocalVerified:input_type -> common.Empty
-	6,   // 103: product.ProductService.ListCategories:output_type -> product.ListCategoriesResp
-	5,   // 104: product.ProductService.GetCategory:output_type -> product.CategoryInfo
-	5,   // 105: product.ProductService.CreateCategory:output_type -> product.CategoryInfo
-	5,   // 106: product.ProductService.UpdateCategory:output_type -> product.CategoryInfo
-	106, // 107: product.ProductService.DeleteCategory:output_type -> common.CommonResponse
-	16,  // 108: product.ProductService.ListProducts:output_type -> product.ListProductsResp
-	15,  // 109: product.ProductService.GetProduct:output_type -> product.ProductDetail
-	16,  // 110: product.ProductService.SearchProducts:output_type -> product.ListProductsResp
-	15,  // 111: product.ProductService.CreateProduct:output_type -> product.ProductDetail
-	15,  // 112: product.ProductService.UpdateProduct:output_type -> product.ProductDetail
-	106, // 113: product.ProductService.DeleteProduct:output_type -> common.CommonResponse
-	106, // 114: product.ProductService.UpdateProductStatus:output_type -> common.CommonResponse
-	27,  // 115: product.ProductService.ListSkus:output_type -> product.ListSkusResp
-	26,  // 116: product.ProductService.CreateSku:output_type -> product.SkuInfo
-	26,  // 117: product.ProductService.UpdateSku:output_type -> product.SkuInfo
-	26,  // 118: product.ProductService.GetSkuById:output_type -> product.SkuInfo
-	29,  // 119: product.ProductService.DeductStock:output_type -> product.DeductStockResp
-	106, // 120: product.ProductService.ReleaseStock:output_type -> common.CommonResponse
-	106, // 121: product.ProductService.StockEntry:output_type -> common.CommonResponse
-	106, // 122: product.ProductService.StockOut:output_type -> common.CommonResponse
-	37,  // 123: product.ProductService.ListStockRecords:output_type -> product.ListStockRecordsResp
-	40,  // 124: product.ProductService.GetStockWarnings:output_type -> product.ListStockWarningsResp
-	43,  // 125: product.ProductService.GeneratePurchaseOrder:output_type -> product.GeneratePurchaseOrderResp
-	47,  // 126: product.ProductService.CreateStockCheck:output_type -> product.StockCheckInfo
-	106, // 127: product.ProductService.SubmitStockCheck:output_type -> common.CommonResponse
-	49,  // 128: product.ProductService.ListStockChecks:output_type -> product.ListStockChecksResp
-	52,  // 129: product.ProductService.GetStockCheck:output_type -> product.StockCheckDetail
-	106, // 130: product.ProductService.SetCommunityPricing:output_type -> common.CommonResponse
-	56,  // 131: product.ProductService.ListCommunityPricing:output_type -> product.ListPricingResp
-	56,  // 132: product.ProductService.GetReferencePricing:output_type -> product.ListPricingResp
-	64,  // 133: product.ProductService.ListCoupons:output_type -> product.ListCouponsResp
-	63,  // 134: product.ProductService.GetCoupon:output_type -> product.CouponInfo
-	63,  // 135: product.ProductService.CreateCoupon:output_type -> product.CouponInfo
-	63,  // 136: product.ProductService.UpdateCoupon:output_type -> product.CouponInfo
-	106, // 137: product.ProductService.DeleteCoupon:output_type -> common.CommonResponse
-	106, // 138: product.ProductService.ReceiveCoupon:output_type -> common.CommonResponse
-	68,  // 139: product.ProductService.ListUserCoupons:output_type -> product.ListUserCouponsResp
-	106, // 140: product.ProductService.UseCoupon:output_type -> common.CommonResponse
-	78,  // 141: product.ProductService.ListFlashSales:output_type -> product.ListFlashSalesResp
-	76,  // 142: product.ProductService.GetFlashSale:output_type -> product.FlashSaleDetail
-	75,  // 143: product.ProductService.CreateFlashSale:output_type -> product.FlashSaleInfo
-	75,  // 144: product.ProductService.UpdateFlashSale:output_type -> product.FlashSaleInfo
-	83,  // 145: product.ProductService.ListFullReductions:output_type -> product.ListFullReductionsResp
-	82,  // 146: product.ProductService.CreateFullReduction:output_type -> product.FullReductionInfo
-	82,  // 147: product.ProductService.UpdateFullReduction:output_type -> product.FullReductionInfo
-	86,  // 148: product.ProductService.ListBanners:output_type -> product.ListBannersResp
-	85,  // 149: product.ProductService.CreateBanner:output_type -> product.BannerInfo
-	85,  // 150: product.ProductService.UpdateBanner:output_type -> product.BannerInfo
-	106, // 151: product.ProductService.DeleteBanner:output_type -> common.CommonResponse
-	90,  // 152: product.ProductService.GetAttachmentConfig:output_type -> product.AttachmentConfig
-	106, // 153: product.ProductService.SaveAttachmentConfig:output_type -> common.CommonResponse
-	95,  // 154: product.ProductService.UploadImageLocal:output_type -> product.AttachmentInfo
-	93,  // 155: product.ProductService.AttachmentPresign:output_type -> product.AttachmentPresignResp
-	95,  // 156: product.ProductService.AttachmentConfirm:output_type -> product.AttachmentInfo
-	97,  // 157: product.ProductService.ScanAttachmentMigrate:output_type -> product.AttachmentMigrateOverview
-	99,  // 158: product.ProductService.ListAttachmentMigrate:output_type -> product.AttachmentMigrateListResp
-	96,  // 159: product.ProductService.MigrateAttachmentItem:output_type -> product.AttachmentMigrateItemInfo
-	96,  // 160: product.ProductService.VerifyAttachmentItem:output_type -> product.AttachmentMigrateItemInfo
-	96,  // 161: product.ProductService.DeleteAttachmentLocal:output_type -> product.AttachmentMigrateItemInfo
-	101, // 162: product.ProductService.DeleteAttachmentLocalVerified:output_type -> product.AttachmentMigrateDeleteBatchResp
-	103, // [103:163] is the sub-list for method output_type
-	43,  // [43:103] is the sub-list for method input_type
-	43,  // [43:43] is the sub-list for extension type_name
-	43,  // [43:43] is the sub-list for extension extendee
-	0,   // [0:43] is the sub-list for field type_name
+	104, // 38: product.AttachmentPresignResp.headers:type_name -> product.AttachmentPresignResp.HeadersEntry
+	95,  // 39: product.ListAttachmentsResp.list:type_name -> product.AttachmentInfo
+	105, // 40: product.AttachmentMigrateListReq.pagination:type_name -> common.Pagination
+	98,  // 41: product.AttachmentMigrateListResp.list:type_name -> product.AttachmentMigrateItemInfo
+	106, // 42: product.AttachmentMigrateListResp.pagination:type_name -> common.PaginationResponse
+	99,  // 43: product.AttachmentMigrateListResp.overview:type_name -> product.AttachmentMigrateOverview
+	0,   // 44: product.ProductService.ListCategories:input_type -> product.ListCategoriesReq
+	1,   // 45: product.ProductService.GetCategory:input_type -> product.GetCategoryReq
+	2,   // 46: product.ProductService.CreateCategory:input_type -> product.CreateCategoryReq
+	3,   // 47: product.ProductService.UpdateCategory:input_type -> product.UpdateCategoryReq
+	4,   // 48: product.ProductService.DeleteCategory:input_type -> product.DeleteCategoryReq
+	7,   // 49: product.ProductService.ListProducts:input_type -> product.ListProductsReq
+	8,   // 50: product.ProductService.GetProduct:input_type -> product.GetProductReq
+	9,   // 51: product.ProductService.SearchProducts:input_type -> product.SearchProductsReq
+	10,  // 52: product.ProductService.CreateProduct:input_type -> product.CreateProductReq
+	11,  // 53: product.ProductService.UpdateProduct:input_type -> product.UpdateProductReq
+	12,  // 54: product.ProductService.DeleteProduct:input_type -> product.DeleteProductReq
+	13,  // 55: product.ProductService.UpdateProductStatus:input_type -> product.UpdateProductStatusReq
+	22,  // 56: product.ProductService.ListSkus:input_type -> product.ListSkusReq
+	24,  // 57: product.ProductService.CreateSku:input_type -> product.CreateSkuReq
+	25,  // 58: product.ProductService.UpdateSku:input_type -> product.UpdateSkuReq
+	23,  // 59: product.ProductService.GetSkuById:input_type -> product.GetSkuByIdReq
+	28,  // 60: product.ProductService.DeductStock:input_type -> product.DeductStockReq
+	30,  // 61: product.ProductService.ReleaseStock:input_type -> product.ReleaseStockReq
+	32,  // 62: product.ProductService.StockEntry:input_type -> product.StockEntryReq
+	34,  // 63: product.ProductService.StockOut:input_type -> product.StockOutReq
+	35,  // 64: product.ProductService.ListStockRecords:input_type -> product.ListStockRecordsReq
+	38,  // 65: product.ProductService.GetStockWarnings:input_type -> product.GetStockWarningsReq
+	42,  // 66: product.ProductService.GeneratePurchaseOrder:input_type -> product.GeneratePurchaseOrderReq
+	44,  // 67: product.ProductService.CreateStockCheck:input_type -> product.CreateStockCheckReq
+	46,  // 68: product.ProductService.SubmitStockCheck:input_type -> product.SubmitStockCheckReq
+	48,  // 69: product.ProductService.ListStockChecks:input_type -> product.ListStockChecksReq
+	50,  // 70: product.ProductService.GetStockCheck:input_type -> product.GetStockCheckReq
+	53,  // 71: product.ProductService.SetCommunityPricing:input_type -> product.SetPricingReq
+	55,  // 72: product.ProductService.ListCommunityPricing:input_type -> product.ListPricingReq
+	57,  // 73: product.ProductService.GetReferencePricing:input_type -> product.GetReferencePricingReq
+	58,  // 74: product.ProductService.ListCoupons:input_type -> product.ListCouponsReq
+	59,  // 75: product.ProductService.GetCoupon:input_type -> product.GetCouponReq
+	60,  // 76: product.ProductService.CreateCoupon:input_type -> product.CreateCouponReq
+	61,  // 77: product.ProductService.UpdateCoupon:input_type -> product.UpdateCouponReq
+	62,  // 78: product.ProductService.DeleteCoupon:input_type -> product.DeleteCouponReq
+	65,  // 79: product.ProductService.ReceiveCoupon:input_type -> product.ReceiveCouponReq
+	66,  // 80: product.ProductService.ListUserCoupons:input_type -> product.ListUserCouponsReq
+	69,  // 81: product.ProductService.UseCoupon:input_type -> product.UseCouponReq
+	70,  // 82: product.ProductService.ListFlashSales:input_type -> product.ListFlashSalesReq
+	71,  // 83: product.ProductService.GetFlashSale:input_type -> product.GetFlashSaleReq
+	72,  // 84: product.ProductService.CreateFlashSale:input_type -> product.CreateFlashSaleReq
+	73,  // 85: product.ProductService.UpdateFlashSale:input_type -> product.UpdateFlashSaleReq
+	79,  // 86: product.ProductService.ListFullReductions:input_type -> product.ListFullReductionsReq
+	80,  // 87: product.ProductService.CreateFullReduction:input_type -> product.CreateFullReductionReq
+	81,  // 88: product.ProductService.UpdateFullReduction:input_type -> product.UpdateFullReductionReq
+	84,  // 89: product.ProductService.ListBanners:input_type -> product.ListBannersReq
+	87,  // 90: product.ProductService.CreateBanner:input_type -> product.CreateBannerReq
+	88,  // 91: product.ProductService.UpdateBanner:input_type -> product.UpdateBannerReq
+	89,  // 92: product.ProductService.DeleteBanner:input_type -> product.DeleteBannerReq
+	107, // 93: product.ProductService.GetAttachmentConfig:input_type -> common.Empty
+	90,  // 94: product.ProductService.SaveAttachmentConfig:input_type -> product.AttachmentConfig
+	91,  // 95: product.ProductService.UploadImageLocal:input_type -> product.UploadImageLocalReq
+	92,  // 96: product.ProductService.AttachmentPresign:input_type -> product.AttachmentPresignReq
+	94,  // 97: product.ProductService.AttachmentConfirm:input_type -> product.AttachmentConfirmReq
+	96,  // 98: product.ProductService.ListAttachments:input_type -> product.ListAttachmentsReq
+	107, // 99: product.ProductService.ScanAttachmentMigrate:input_type -> common.Empty
+	100, // 100: product.ProductService.ListAttachmentMigrate:input_type -> product.AttachmentMigrateListReq
+	102, // 101: product.ProductService.MigrateAttachmentItem:input_type -> product.AttachmentMigrateItemReq
+	102, // 102: product.ProductService.VerifyAttachmentItem:input_type -> product.AttachmentMigrateItemReq
+	102, // 103: product.ProductService.DeleteAttachmentLocal:input_type -> product.AttachmentMigrateItemReq
+	107, // 104: product.ProductService.DeleteAttachmentLocalVerified:input_type -> common.Empty
+	6,   // 105: product.ProductService.ListCategories:output_type -> product.ListCategoriesResp
+	5,   // 106: product.ProductService.GetCategory:output_type -> product.CategoryInfo
+	5,   // 107: product.ProductService.CreateCategory:output_type -> product.CategoryInfo
+	5,   // 108: product.ProductService.UpdateCategory:output_type -> product.CategoryInfo
+	108, // 109: product.ProductService.DeleteCategory:output_type -> common.CommonResponse
+	16,  // 110: product.ProductService.ListProducts:output_type -> product.ListProductsResp
+	15,  // 111: product.ProductService.GetProduct:output_type -> product.ProductDetail
+	16,  // 112: product.ProductService.SearchProducts:output_type -> product.ListProductsResp
+	15,  // 113: product.ProductService.CreateProduct:output_type -> product.ProductDetail
+	15,  // 114: product.ProductService.UpdateProduct:output_type -> product.ProductDetail
+	108, // 115: product.ProductService.DeleteProduct:output_type -> common.CommonResponse
+	108, // 116: product.ProductService.UpdateProductStatus:output_type -> common.CommonResponse
+	27,  // 117: product.ProductService.ListSkus:output_type -> product.ListSkusResp
+	26,  // 118: product.ProductService.CreateSku:output_type -> product.SkuInfo
+	26,  // 119: product.ProductService.UpdateSku:output_type -> product.SkuInfo
+	26,  // 120: product.ProductService.GetSkuById:output_type -> product.SkuInfo
+	29,  // 121: product.ProductService.DeductStock:output_type -> product.DeductStockResp
+	108, // 122: product.ProductService.ReleaseStock:output_type -> common.CommonResponse
+	108, // 123: product.ProductService.StockEntry:output_type -> common.CommonResponse
+	108, // 124: product.ProductService.StockOut:output_type -> common.CommonResponse
+	37,  // 125: product.ProductService.ListStockRecords:output_type -> product.ListStockRecordsResp
+	40,  // 126: product.ProductService.GetStockWarnings:output_type -> product.ListStockWarningsResp
+	43,  // 127: product.ProductService.GeneratePurchaseOrder:output_type -> product.GeneratePurchaseOrderResp
+	47,  // 128: product.ProductService.CreateStockCheck:output_type -> product.StockCheckInfo
+	108, // 129: product.ProductService.SubmitStockCheck:output_type -> common.CommonResponse
+	49,  // 130: product.ProductService.ListStockChecks:output_type -> product.ListStockChecksResp
+	52,  // 131: product.ProductService.GetStockCheck:output_type -> product.StockCheckDetail
+	108, // 132: product.ProductService.SetCommunityPricing:output_type -> common.CommonResponse
+	56,  // 133: product.ProductService.ListCommunityPricing:output_type -> product.ListPricingResp
+	56,  // 134: product.ProductService.GetReferencePricing:output_type -> product.ListPricingResp
+	64,  // 135: product.ProductService.ListCoupons:output_type -> product.ListCouponsResp
+	63,  // 136: product.ProductService.GetCoupon:output_type -> product.CouponInfo
+	63,  // 137: product.ProductService.CreateCoupon:output_type -> product.CouponInfo
+	63,  // 138: product.ProductService.UpdateCoupon:output_type -> product.CouponInfo
+	108, // 139: product.ProductService.DeleteCoupon:output_type -> common.CommonResponse
+	108, // 140: product.ProductService.ReceiveCoupon:output_type -> common.CommonResponse
+	68,  // 141: product.ProductService.ListUserCoupons:output_type -> product.ListUserCouponsResp
+	108, // 142: product.ProductService.UseCoupon:output_type -> common.CommonResponse
+	78,  // 143: product.ProductService.ListFlashSales:output_type -> product.ListFlashSalesResp
+	76,  // 144: product.ProductService.GetFlashSale:output_type -> product.FlashSaleDetail
+	75,  // 145: product.ProductService.CreateFlashSale:output_type -> product.FlashSaleInfo
+	75,  // 146: product.ProductService.UpdateFlashSale:output_type -> product.FlashSaleInfo
+	83,  // 147: product.ProductService.ListFullReductions:output_type -> product.ListFullReductionsResp
+	82,  // 148: product.ProductService.CreateFullReduction:output_type -> product.FullReductionInfo
+	82,  // 149: product.ProductService.UpdateFullReduction:output_type -> product.FullReductionInfo
+	86,  // 150: product.ProductService.ListBanners:output_type -> product.ListBannersResp
+	85,  // 151: product.ProductService.CreateBanner:output_type -> product.BannerInfo
+	85,  // 152: product.ProductService.UpdateBanner:output_type -> product.BannerInfo
+	108, // 153: product.ProductService.DeleteBanner:output_type -> common.CommonResponse
+	90,  // 154: product.ProductService.GetAttachmentConfig:output_type -> product.AttachmentConfig
+	108, // 155: product.ProductService.SaveAttachmentConfig:output_type -> common.CommonResponse
+	95,  // 156: product.ProductService.UploadImageLocal:output_type -> product.AttachmentInfo
+	93,  // 157: product.ProductService.AttachmentPresign:output_type -> product.AttachmentPresignResp
+	95,  // 158: product.ProductService.AttachmentConfirm:output_type -> product.AttachmentInfo
+	97,  // 159: product.ProductService.ListAttachments:output_type -> product.ListAttachmentsResp
+	99,  // 160: product.ProductService.ScanAttachmentMigrate:output_type -> product.AttachmentMigrateOverview
+	101, // 161: product.ProductService.ListAttachmentMigrate:output_type -> product.AttachmentMigrateListResp
+	98,  // 162: product.ProductService.MigrateAttachmentItem:output_type -> product.AttachmentMigrateItemInfo
+	98,  // 163: product.ProductService.VerifyAttachmentItem:output_type -> product.AttachmentMigrateItemInfo
+	98,  // 164: product.ProductService.DeleteAttachmentLocal:output_type -> product.AttachmentMigrateItemInfo
+	103, // 165: product.ProductService.DeleteAttachmentLocalVerified:output_type -> product.AttachmentMigrateDeleteBatchResp
+	105, // [105:166] is the sub-list for method output_type
+	44,  // [44:105] is the sub-list for method input_type
+	44,  // [44:44] is the sub-list for extension type_name
+	44,  // [44:44] is the sub-list for extension extendee
+	0,   // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_product_product_proto_init() }
@@ -8397,7 +8599,7 @@ func file_product_product_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_product_product_proto_rawDesc), len(file_product_product_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   103,
+			NumMessages:   105,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

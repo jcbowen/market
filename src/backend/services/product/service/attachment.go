@@ -42,6 +42,9 @@ const (
 	// defaultImageMaxSize 图片默认大小上限（5MB，与 jcbaseGo attachment image 类型一致）
 	defaultImageMaxSize = 5 * 1024 * 1024
 
+	// attachmentSelectorPageSize 附件选择器默认每页条数
+	attachmentSelectorPageSize = 12
+
 	// presignExpires 预签名 URL 有效期
 	presignExpires = 10 * time.Minute
 
@@ -298,6 +301,7 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 		MD5:       contentMD5,
 		Width:     width,
 		Height:    height,
+		IsDisplay: 1, // 上传即进入附件选择器（按上传人隔离展示）
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -465,6 +469,7 @@ func (s *AttachmentService) createPresign(ctx context.Context, ossCfg *remote.OS
 		MD5:       "", // 延迟写入：confirm 成功后补写
 		Width:     int(req.Width),
 		Height:    int(req.Height),
+		IsDisplay: 1, // 上传即进入附件选择器（按上传人隔离展示）
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -561,6 +566,80 @@ func (s *AttachmentService) AttachmentConfirm(ctx context.Context, req *product.
 		Size:       size,
 		Width:      int32(width),
 		Height:     int32(height),
+	}, nil
+}
+
+// ListAttachments 附件选择器分页列表
+// 可见性规则：仅返回当前管理员上传（admin_id）且 is_display=1 的图片附件，
+// 软删除记录由 gorm.DeletedAt 天然排除；keyword 模糊匹配原始文件名或路径，
+// 时间范围对 created_at（datetime 字符串）比较；按上传时间倒序，url 经 ToMediaURL 统一拼接
+//
+// 参数:
+//   - ctx: 上下文
+//   - req: 查询请求（admin_id/keyword/时间范围/分页）
+//
+// 返回值:
+//   - *product.ListAttachmentsResp: 附件列表与分页信息
+//   - error: 查询失败时返回错误
+func (s *AttachmentService) ListAttachments(ctx context.Context, req *product.ListAttachmentsReq) (*product.ListAttachmentsResp, error) {
+	page := int(req.Page)
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := int(req.PageSize)
+	if pageSize <= 0 {
+		pageSize = attachmentSelectorPageSize
+	}
+	keyword := escapeLike(strings.TrimSpace(req.Keyword))
+
+	buildQuery := func() *gorm.DB {
+		q := s.db.GetDb().WithContext(ctx).Model(&model.Attachment{}).
+			Where("admin_id = ? AND is_display = 1 AND type LIKE 'image/%'", req.AdminId)
+		if keyword != "" {
+			like := "%" + keyword + "%"
+			q = q.Where("name LIKE ? OR path LIKE ?", like, like)
+		}
+		if req.StartTime != "" {
+			q = q.Where("created_at >= ?", req.StartTime)
+		}
+		if req.EndTime != "" {
+			q = q.Where("created_at <= ?", req.EndTime)
+		}
+		return q
+	}
+
+	var total int64
+	if err := buildQuery().Count(&total).Error; err != nil {
+		return nil, fmt.Errorf("统计附件数量失败: %w", err)
+	}
+
+	var rows []*model.Attachment
+	if err := buildQuery().
+		Order("created_at DESC, id DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("查询附件列表失败: %w", err)
+	}
+
+	list := make([]*product.AttachmentInfo, 0, len(rows))
+	for _, row := range rows {
+		list = append(list, &product.AttachmentInfo{
+			AttachId:   fmt.Sprintf("%d", row.ID),
+			Url:        s.ToMediaURL(ctx, row.Path),
+			RemotePath: row.Path,
+			Size:       row.Size,
+			Width:      int32(row.Width),
+			Height:     int32(row.Height),
+			Name:       row.Name,
+			Type:       row.Type,
+			CreatedAt:  row.CreatedAt,
+		})
+	}
+	return &product.ListAttachmentsResp{
+		List:     list,
+		Total:    total,
+		Page:     int32(page),
+		PageSize: int32(pageSize),
 	}, nil
 }
 
@@ -852,6 +931,18 @@ func randomNumeric(length int) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%0*d", length, n), nil
+}
+
+// escapeLike 转义 LIKE 查询中的通配符，避免用户输入的 % 与 _ 扰动匹配范围
+//
+// 参数:
+//   - value: 原始字符串
+//
+// 返回值:
+//   - string: 转义后的字符串（\%、\_、\\）
+func escapeLike(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 // ensureTrailingSlash 确保域名以 / 结尾

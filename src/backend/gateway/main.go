@@ -271,6 +271,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/upload/image", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.UploadImage)
 			authAdmin.POST("/attachment/presign", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.AttachmentPresign)
 			authAdmin.POST("/attachment/confirm", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.AttachmentConfirm)
+			// 附件选择器：数据按上传管理员隔离，登录即可访问（不要求 settings 权限）
+			authAdmin.GET("/attachment/list", attachmentHandler.ListAttachments)
 
 			// 附件迁移（本地 → OSS）：清单扫描、条目迁移/验证/删除本地文件
 			authAdmin.POST("/attachment/migrate/scan", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.ScanAttachmentMigrate)

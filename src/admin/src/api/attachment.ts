@@ -41,6 +41,50 @@ export interface AttachmentUploadResult {
   height: number
 }
 
+/** 附件选择器条目（附件记录 + 访问 URL） */
+export interface AttachmentItem {
+  attach_id: string
+  url: string
+  remote_path: string
+  size: number
+  width: number
+  height: number
+  /** 原始文件名 */
+  name: string
+  /** 文件 MIME 类型 */
+  type: string
+  /** 上传时间（YYYY-MM-DD HH:mm:ss） */
+  created_at: string
+}
+
+/** 附件选择器分页响应 */
+export interface AttachmentListResult {
+  list: AttachmentItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/**
+ * 附件选择器分页列表
+ * 服务端仅返回当前登录管理员上传且 is_display=1 的图片附件
+ * @param params 查询参数：关键字（匹配文件名/路径）、时间范围与分页
+ * @returns 附件列表与分页信息
+ */
+export function listAttachments(params: {
+  keyword?: string
+  start_time?: string
+  end_time?: string
+  page?: number
+  page_size?: number
+}) {
+  return request<ApiResult<AttachmentListResult>>({
+    url: '/api/v1/admin/attachment/list',
+    method: 'GET',
+    params,
+  })
+}
+
 /**
  * 获取附件存储配置（AccessKeySecret 已脱敏）
  * @returns 脱敏后的附件配置

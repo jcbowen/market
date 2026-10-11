@@ -53,7 +53,7 @@
           <n-select v-model:value="productForm.category_id" :options="categoryOptions" placeholder="请选择分类" />
         </n-form-item>
         <n-form-item label="封面图">
-          <ImageUploadInput v-model:value="productForm.cover_image" placeholder="图片 URL 或点击上传" />
+          <ImageUploadInput v-model:value="productForm.cover_image" placeholder="图片 URL 或点击上传" hint="建议尺寸 750×600（5:4）" />
         </n-form-item>
         <n-space>
           <n-form-item label="售价" style="width: 240px;">

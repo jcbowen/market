@@ -619,6 +619,7 @@ service 追加：
   rpc UploadImageLocal(UploadImageLocalReq) returns (AttachmentInfo);
   rpc AttachmentPresign(AttachmentPresignReq) returns (AttachmentPresignResp);
   rpc AttachmentConfirm(AttachmentConfirmReq) returns (AttachmentInfo);
+  rpc ListAttachments(ListAttachmentsReq) returns (ListAttachmentsResp);
 
 // AttachmentConfig 附件存储配置（数据库单行存储，id 固定为 1）
 // oss_access_key_secret 写入时空或掩码值表示保留原值，读取时服务端脱敏
@@ -677,6 +678,28 @@ message AttachmentInfo {
   int64 size = 4;
   int32 width = 5;
   int32 height = 6;
+  string name = 7;                 // 原始文件名（附件选择器展示用）
+  string type = 8;                 // 文件 MIME 类型
+  string created_at = 9;           // 上传时间（YYYY-MM-DD HH:mm:ss）
+}
+
+// ListAttachmentsReq 附件选择器分页查询请求
+// 可见性按上传管理员隔离：仅返回 admin_id 匹配且 is_display=1 的图片附件
+message ListAttachmentsReq {
+  int64 admin_id = 1;     // 上传管理员 ID（gateway 从登录态注入）
+  string keyword = 2;     // 关键字，模糊匹配原始文件名 name 或路径 path
+  string start_time = 3;  // 上传时间范围起（YYYY-MM-DD HH:mm:ss，含）
+  string end_time = 4;    // 上传时间范围止（YYYY-MM-DD HH:mm:ss，含）
+  int32 page = 5;         // 页码，从 1 开始
+  int32 page_size = 6;    // 每页条数，默认 12
+}
+
+// ListAttachmentsResp 附件选择器分页响应
+message ListAttachmentsResp {
+  repeated AttachmentInfo list = 1;
+  int64 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
 }
 
 // --- 附件迁移 ---

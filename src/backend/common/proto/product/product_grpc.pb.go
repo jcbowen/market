@@ -74,6 +74,7 @@ const (
 	ProductService_UploadImageLocal_FullMethodName              = "/product.ProductService/UploadImageLocal"
 	ProductService_AttachmentPresign_FullMethodName             = "/product.ProductService/AttachmentPresign"
 	ProductService_AttachmentConfirm_FullMethodName             = "/product.ProductService/AttachmentConfirm"
+	ProductService_ListAttachments_FullMethodName               = "/product.ProductService/ListAttachments"
 	ProductService_ScanAttachmentMigrate_FullMethodName         = "/product.ProductService/ScanAttachmentMigrate"
 	ProductService_ListAttachmentMigrate_FullMethodName         = "/product.ProductService/ListAttachmentMigrate"
 	ProductService_MigrateAttachmentItem_FullMethodName         = "/product.ProductService/MigrateAttachmentItem"
@@ -149,6 +150,7 @@ type ProductServiceClient interface {
 	UploadImageLocal(ctx context.Context, in *UploadImageLocalReq, opts ...grpc.CallOption) (*AttachmentInfo, error)
 	AttachmentPresign(ctx context.Context, in *AttachmentPresignReq, opts ...grpc.CallOption) (*AttachmentPresignResp, error)
 	AttachmentConfirm(ctx context.Context, in *AttachmentConfirmReq, opts ...grpc.CallOption) (*AttachmentInfo, error)
+	ListAttachments(ctx context.Context, in *ListAttachmentsReq, opts ...grpc.CallOption) (*ListAttachmentsResp, error)
 	// 附件迁移（本地 → OSS）
 	ScanAttachmentMigrate(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentMigrateOverview, error)
 	ListAttachmentMigrate(ctx context.Context, in *AttachmentMigrateListReq, opts ...grpc.CallOption) (*AttachmentMigrateListResp, error)
@@ -706,6 +708,16 @@ func (c *productServiceClient) AttachmentConfirm(ctx context.Context, in *Attach
 	return out, nil
 }
 
+func (c *productServiceClient) ListAttachments(ctx context.Context, in *ListAttachmentsReq, opts ...grpc.CallOption) (*ListAttachmentsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAttachmentsResp)
+	err := c.cc.Invoke(ctx, ProductService_ListAttachments_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *productServiceClient) ScanAttachmentMigrate(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentMigrateOverview, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AttachmentMigrateOverview)
@@ -833,6 +845,7 @@ type ProductServiceServer interface {
 	UploadImageLocal(context.Context, *UploadImageLocalReq) (*AttachmentInfo, error)
 	AttachmentPresign(context.Context, *AttachmentPresignReq) (*AttachmentPresignResp, error)
 	AttachmentConfirm(context.Context, *AttachmentConfirmReq) (*AttachmentInfo, error)
+	ListAttachments(context.Context, *ListAttachmentsReq) (*ListAttachmentsResp, error)
 	// 附件迁移（本地 → OSS）
 	ScanAttachmentMigrate(context.Context, *common.Empty) (*AttachmentMigrateOverview, error)
 	ListAttachmentMigrate(context.Context, *AttachmentMigrateListReq) (*AttachmentMigrateListResp, error)
@@ -1011,6 +1024,9 @@ func (UnimplementedProductServiceServer) AttachmentPresign(context.Context, *Att
 }
 func (UnimplementedProductServiceServer) AttachmentConfirm(context.Context, *AttachmentConfirmReq) (*AttachmentInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method AttachmentConfirm not implemented")
+}
+func (UnimplementedProductServiceServer) ListAttachments(context.Context, *ListAttachmentsReq) (*ListAttachmentsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAttachments not implemented")
 }
 func (UnimplementedProductServiceServer) ScanAttachmentMigrate(context.Context, *common.Empty) (*AttachmentMigrateOverview, error) {
 	return nil, status.Error(codes.Unimplemented, "method ScanAttachmentMigrate not implemented")
@@ -2023,6 +2039,24 @@ func _ProductService_AttachmentConfirm_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_ListAttachments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAttachmentsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListAttachments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListAttachments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListAttachments(ctx, req.(*ListAttachmentsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProductService_ScanAttachmentMigrate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(common.Empty)
 	if err := dec(in); err != nil {
@@ -2353,6 +2387,10 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AttachmentConfirm",
 			Handler:    _ProductService_AttachmentConfirm_Handler,
+		},
+		{
+			MethodName: "ListAttachments",
+			Handler:    _ProductService_ListAttachments_Handler,
 		},
 		{
 			MethodName: "ScanAttachmentMigrate",

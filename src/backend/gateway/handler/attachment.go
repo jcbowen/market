@@ -182,6 +182,32 @@ func (h *AttachmentHandler) AttachmentConfirm(c *gin.Context) {
 	})
 }
 
+// ListAttachments 附件选择器分页列表
+// 数据按上传管理员隔离：admin_id 取登录态注入，服务端仅返回本人上传且 is_display=1 的图片附件
+//
+// 接口: GET /api/v1/admin/attachment/list?keyword=&start_time=&end_time=&page=&page_size=
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AttachmentHandler) ListAttachments(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "12"))
+
+	resp, err := h.productClient.ListAttachments(c.Request.Context(), &product.ListAttachmentsReq{
+		AdminId:   appcontext.GetUserContext(c).UserID,
+		Keyword:   c.Query("keyword"),
+		StartTime: c.Query("start_time"),
+		EndTime:   c.Query("end_time"),
+		Page:      int32(page),
+		PageSize:  int32(pageSize),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
 // baseURLOf 根据当前请求拼接基础地址
 // 优先取反向代理透传的 X-Forwarded-Proto，兼容 HTTPS 部署场景
 //
