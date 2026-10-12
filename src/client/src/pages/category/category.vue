@@ -1,22 +1,29 @@
 <template>
   <view class="category-page">
-    <!-- 顶部搜索栏 -->
-    <view class="search-bar">
-      <u-icon name="search" size="16" color="#999999" />
-      <input
-        v-show="isSearching"
-        ref="searchInputRef"
-        v-model="keyword"
-        class="search-input native-input"
-        placeholder="请输入商品名称"
-        type="search"
-        focus
-        confirm-type="search"
-        @confirm="onSearchConfirm"
-        @blur="onSearchBlur"
-      />
-      <text v-show="isSearching" class="search-cancel" @click="cancelSearch">取消</text>
-      <view v-show="!isSearching" class="search-text" @click="startSearch">搜索商品</view>
+    <!-- 顶部社区与搜索栏 -->
+    <view class="top-bar">
+      <view v-show="!isSearching" class="community-bar" @click="goCommunitySelect">
+        <u-icon name="map-fill" size="18" color="#07c160" />
+        <text class="community-name">{{ communityName }}</text>
+        <u-icon name="arrow-down" size="12" color="#999999" />
+      </view>
+      <view class="search-bar">
+        <u-icon name="search" size="16" color="#999999" />
+        <input
+          v-show="isSearching"
+          ref="searchInputRef"
+          v-model="keyword"
+          class="search-input native-input"
+          placeholder="请输入商品名称"
+          type="search"
+          focus
+          confirm-type="search"
+          @confirm="onSearchConfirm"
+          @blur="onSearchBlur"
+        />
+        <text v-show="isSearching" class="search-cancel" @click="cancelSearch">取消</text>
+        <view v-show="!isSearching" class="search-text" @click="startSearch">搜索商品</view>
+      </view>
     </view>
 
     <!-- 分类内容 -->
@@ -209,7 +216,7 @@ import { getBanners, getCategories, getProducts, getProductDetail, searchProduct
 import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart'
 import { getCommunityList } from '@/api/user'
 import { formatPrice } from '@/utils/format'
-import { goOrderConfirm, goLogin } from '@/utils/navigate'
+import { goOrderConfirm, goLogin, goCommunitySelect } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
 import {
   addLocalCartItem,
@@ -240,6 +247,9 @@ const bannerImages = computed(() =>
     link: item.link_url,
   })),
 )
+
+/** 顶部社区入口展示名，未选社区时引导选择 */
+const communityName = computed(() => userStore.communityInfo?.name || '选择社区')
 
 const isSearching = ref(false)
 const keyword = ref('')
@@ -894,11 +904,37 @@ function onSettlement() {
   overflow: hidden;
 }
 
-.search-bar {
+.top-bar {
   position: absolute;
   top: 16rpx;
   left: 30rpx;
   right: 30rpx;
+  display: flex;
+  align-items: center;
+  z-index: 10;
+}
+
+/* 与首页 community-bar 样式一致 */
+.community-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-right: 20rpx;
+}
+
+.community-name {
+  max-width: 260rpx;
+  margin: 0 8rpx;
+  font-size: 28rpx;
+  color: #333333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-bar {
+  flex: 1;
+  min-width: 0;
   height: 80rpx;
   display: flex;
   align-items: center;
@@ -906,7 +942,6 @@ function onSettlement() {
   box-sizing: border-box;
   border-radius: 32rpx;
   background-color: #ffffff;
-  z-index: 10;
 }
 
 .search-text {
