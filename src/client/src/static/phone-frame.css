@@ -18,8 +18,11 @@ body {
 }
 
 /* 装饰元素默认隐藏 */
-.device-notch,
+.device-earpiece,
+.device-camera,
 .device-home-indicator,
+.device-volume-switch,
+.device-volume-key,
 .device-button {
   display: none;
 }
@@ -68,7 +71,11 @@ body.app-mode #app-root {
     padding: 0;
     border-radius: 44px;
     background: #000000;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 2px #333333;
+    /* 外圈 1px 亮边模拟金属中框倒角，内圈 2px 深灰描边 + 投影 */
+    box-shadow:
+      0 20px 60px rgba(0, 0, 0, 0.5),
+      0 0 0 1px #454545,
+      inset 0 0 0 2px #333333;
     transform: scale(var(--device-scale, 1));
     transform-origin: center center;
     /* 通过负边距抵消 transform scale 减少的布局空间，保持居中 */
@@ -78,11 +85,22 @@ body.app-mode #app-root {
     margin-right: calc((var(--device-scale, 1) - 1) * 375px / 2);
   }
 
-  /* iframe 作为屏幕显示区域，占满手机边框内部 */
+  /**
+   * iframe 作为屏幕显示区域。
+   * 通过绝对定位让出全部悬浮装饰区，保证嵌套页面零遮挡、按自身视口完整渲染：
+   * - 顶部让出刘海区（top 8px + 高 24px = 32px），刘海完全落在边框（bezel）内；
+   * - 底部让出 Home 指示条区（bottom 8px + 高 4px = 12px）。
+   * 注意：iframe 是替换元素，绝对定位下 width/height:auto 会按固有尺寸（300×150）
+   * 解析而非拉伸填满，因此必须显式计算宽高（顶部 32px + 底部 12px = 共让出 44px）。
+   * 嵌套页面不感知边框壳，无需任何安全区避让逻辑。
+   */
   body.frame-mode .device-screen {
-    display: block;
+    position: absolute;
+    top: 32px;
+    left: 0;
     width: 100%;
-    height: 100%;
+    height: calc(100% - 44px);
+    display: block;
     min-height: auto;
     box-sizing: border-box;
     border: none;
@@ -92,26 +110,99 @@ body.app-mode #app-root {
   }
 
   /**
-   * 顶部刘海装饰
-   * 覆盖在屏幕顶部安全区域，不响应鼠标事件
+   * 顶部额区装饰：听筒格栅
+   * 位于边框（bezel）内的屏幕顶部区域（0 ~ 32px），iframe 已让出该区域；
+   * 用细密竖条纹模拟听筒网孔
    */
-  body.frame-mode .device-notch {
+  body.frame-mode .device-earpiece {
     display: block;
     position: absolute;
-    top: 8px;
+    top: 13px;
     left: 50%;
     transform: translateX(-50%);
-    width: 120px;
-    height: 24px;
-    background: #000000;
-    border-radius: 0 0 16px 16px;
-    z-index: 100;
+    width: 64px;
+    height: 5px;
+    border-radius: 3px;
+    background: repeating-linear-gradient(90deg, #1f1f1f 0 2px, #303030 2px 4px);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.08);
     pointer-events: none;
   }
 
   /**
+   * 顶部额区装饰：前置摄像头
+   * 位于听筒右侧，径向渐变模拟镜头镜片质感
+   */
+  body.frame-mode .device-camera {
+    display: block;
+    position: absolute;
+    top: 11px;
+    left: calc(50% + 40px);
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #3a5a7c 0%, #0d1b2a 50%, #000000 100%);
+    box-shadow: 0 0 0 1px #111111;
+    pointer-events: none;
+  }
+
+  /**
+   * 侧边实体键：静音拨键（左侧短键）
+   * 伸出边框左缘 3px，模拟金属按键
+   */
+  body.frame-mode .device-volume-switch {
+    display: block;
+    position: absolute;
+    left: -3px;
+    top: 96px;
+    width: 3px;
+    height: 24px;
+    background: #333333;
+    border-radius: 2px 0 0 2px;
+  }
+
+  /**
+   * 侧边实体键：音量键（左侧长键，::after 生成第二颗）
+   */
+  body.frame-mode .device-volume-key {
+    display: block;
+    position: absolute;
+    left: -3px;
+    top: 136px;
+    width: 3px;
+    height: 40px;
+    background: #333333;
+    border-radius: 2px 0 0 2px;
+  }
+
+  body.frame-mode .device-volume-key::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 48px;
+    width: 3px;
+    height: 40px;
+    background: #333333;
+    border-radius: 2px 0 0 2px;
+  }
+
+  /**
+   * 侧边实体键：电源键（右侧长键）
+   */
+  body.frame-mode .device-button {
+    display: block;
+    position: absolute;
+    right: -3px;
+    top: 130px;
+    width: 3px;
+    height: 70px;
+    background: #333333;
+    border-radius: 0 2px 2px 0;
+  }
+
+  /**
    * 底部 Home 指示条装饰
-   * 覆盖在屏幕底部安全区域，不响应鼠标事件
+   * 位于边框（bezel）内的屏幕底部区域，iframe 已让出该区域，不遮挡页面内容；
+   * 不响应鼠标事件
    */
   body.frame-mode .device-home-indicator {
     display: block;

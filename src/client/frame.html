@@ -8,14 +8,20 @@
 	</head>
 	<body class="frame-mode">
 		<div id="frame-shell" class="device-frame">
-			<div class="device-notch"></div>
+			<!-- 顶部额区装饰：听筒格栅 + 前置摄像头（位于让出的边框区内，不遮挡嵌套页面） -->
+			<div class="device-earpiece"></div>
+			<div class="device-camera"></div>
 			<iframe
 				id="app-frame"
 				class="device-screen"
 				frameborder="0"
 				title="社区商超"
 			></iframe>
+			<!-- 底部颏区装饰：Home 指示条 -->
 			<div class="device-home-indicator"></div>
+			<!-- 侧边实体键：静音拨键 + 音量键（左）、电源键（右） -->
+			<div class="device-volume-switch"></div>
+			<div class="device-volume-key"></div>
 			<div class="device-button"></div>
 		</div>
 
