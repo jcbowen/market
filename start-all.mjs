@@ -8,7 +8,7 @@
 //   node start-all.mjs --skip-build # 跳过构建，直接使用已有镜像/二进制
 //   node start-all.mjs --no-cache   # 构建镜像时不使用 Docker 缓存
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -62,7 +62,62 @@ function checkDockerCompose() {
   }
 }
 
+// Docker 守护进程检测与自动启动
+function dockerDaemonRunning() {
+  const r = spawnSync('docker', ['info'], {
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  });
+  return r.status === 0;
+}
+
+async function ensureDockerRunning() {
+  if (dockerDaemonRunning()) return;
+
+  console.log('==> Docker 未运行，正在启动 Docker Desktop...');
+  if (process.platform === 'darwin') {
+    // macOS：依次尝试常见的应用名
+    let opened = false;
+    for (const app of ['Docker', 'Docker Desktop']) {
+      const r = spawnSync('open', ['-a', app]);
+      if (r.status === 0) { opened = true; break; }
+    }
+    if (!opened) {
+      console.error('错误: 无法启动 Docker Desktop，请手动启动后重试');
+      process.exit(1);
+    }
+  } else if (process.platform === 'win32') {
+    const exe = 'C:/Program Files/Docker/Docker/Docker Desktop.exe';
+    if (!fs.existsSync(exe)) {
+      console.error(`错误: 未找到 Docker Desktop（${exe}），请手动启动后重试`);
+      process.exit(1);
+    }
+    spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    // Linux：尝试 systemd 启动 docker 服务
+    const r = spawnSync('sudo', ['systemctl', 'start', 'docker'], { stdio: 'inherit' });
+    if (r.status !== 0) {
+      console.error('错误: 无法启动 docker 服务，请手动启动后重试');
+      process.exit(1);
+    }
+  }
+
+  // 等待守护进程就绪（Docker Desktop 冷启动可能需要较长时间）
+  console.log('==> 等待 Docker 就绪...');
+  for (let i = 1; i <= 120; i++) {
+    if (dockerDaemonRunning()) {
+      console.log('    Docker 已就绪');
+      return;
+    }
+    await sleep(1000);
+    if (i % 15 === 0) console.log(`    仍在等待 Docker 启动... (${i}s)`);
+  }
+  console.error('错误: Docker 启动超时（120 秒），请手动启动 Docker Desktop 后重试');
+  process.exit(1);
+}
+
 checkCommand('docker', 'Docker');
+await ensureDockerRunning();
 checkDockerCompose();
 checkCommand('go', 'Go');
 checkCommand('node', 'Node.js');

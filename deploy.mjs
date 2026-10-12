@@ -10,7 +10,7 @@
 //   node deploy.mjs --up         # 构建完成后启动服务
 //   node deploy.mjs --no-cache   # 构建镜像时不使用缓存
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +45,68 @@ function installDepsIfNeeded(dir) {
     run('npm', ['install'], { cwd: dir });
   }
 }
+
+// 同步等待 1 秒（deploy 流程为纯同步脚本）
+function sleepSync() {
+  if (process.platform === 'win32') {
+    spawnSync('timeout', ['/t', '1', '/nobreak'], { shell: true, stdio: 'ignore' });
+  } else {
+    spawnSync('sleep', ['1']);
+  }
+}
+
+// Docker 守护进程检测与自动启动（同步版）
+function dockerDaemonRunning() {
+  const r = spawnSync('docker', ['info'], {
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  });
+  return r.status === 0;
+}
+
+function ensureDockerRunning() {
+  if (dockerDaemonRunning()) return;
+
+  console.log('==> Docker 未运行，正在启动 Docker Desktop...');
+  if (process.platform === 'darwin') {
+    let opened = false;
+    for (const app of ['Docker', 'Docker Desktop']) {
+      const r = spawnSync('open', ['-a', app]);
+      if (r.status === 0) { opened = true; break; }
+    }
+    if (!opened) {
+      console.error('错误: 无法启动 Docker Desktop，请手动启动后重试');
+      process.exit(1);
+    }
+  } else if (process.platform === 'win32') {
+    const exe = 'C:/Program Files/Docker/Docker/Docker Desktop.exe';
+    if (!fs.existsSync(exe)) {
+      console.error(`错误: 未找到 Docker Desktop（${exe}），请手动启动后重试`);
+      process.exit(1);
+    }
+    spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    const r = spawnSync('sudo', ['systemctl', 'start', 'docker'], { stdio: 'inherit' });
+    if (r.status !== 0) {
+      console.error('错误: 无法启动 docker 服务，请手动启动后重试');
+      process.exit(1);
+    }
+  }
+
+  console.log('==> 等待 Docker 就绪...');
+  for (let i = 1; i <= 120; i++) {
+    if (dockerDaemonRunning()) {
+      console.log('    Docker 已就绪');
+      return;
+    }
+    sleepSync();
+    if (i % 15 === 0) console.log(`    仍在等待 Docker 启动... (${i}s)`);
+  }
+  console.error('错误: Docker 启动超时（120 秒），请手动启动 Docker Desktop 后重试');
+  process.exit(1);
+}
+
+ensureDockerRunning();
 
 console.log('==> 构建管理端...');
 installDepsIfNeeded(path.join(ROOT_DIR, 'src', 'admin'));
