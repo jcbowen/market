@@ -113,33 +113,42 @@ body.app-mode #app-root {
 
   /**
    * 顶部额区状态栏：真实时间 + 信号/WiFi/电池
-   * 位于边框（bezel）内的屏幕顶部区域（0 ~ 32px），iframe 已让出该区域；
-   * 布局与真机一致（左时间、右图标），中间让位听筒与摄像头
+   * 位于边框（bezel）内的屏幕顶部区域（0 ~ 32px），iframe 已让出该区域。
+   * 布局对齐真机 iPhone（全面屏）：时间在听筒左半区居中（不贴左边缘），
+   * 图标组靠右缘约 14px，中间让位听筒与摄像头
    */
   body.frame-mode .device-status-bar {
-    display: flex;
+    display: block;
     position: absolute;
     top: 0;
-    left: 16px;
-    right: 16px;
+    left: 0;
+    right: 0;
     height: 32px;
-    align-items: center;
-    justify-content: space-between;
     z-index: 100;
     pointer-events: none;
   }
 
   body.frame-mode .status-time {
+    /* 时间区域占左侧 32% 并居中：中心落在 x≈60px，稍偏左于真机比例、视觉更均衡 */
+    position: absolute;
+    left: 0;
+    width: 24%;
+    text-align: center;
     /* 等宽数字避免时间刷新时宽度跳动 */
     font-variant-numeric: tabular-nums;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.3px;
+    line-height: 32px;
     color: #ffffff;
     font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   }
 
   body.frame-mode .status-icons {
+    position: absolute;
+    right: 26px;
+    top: 50%;
+    transform: translateY(-50%);
     display: flex;
     align-items: center;
     gap: 5px;
@@ -148,14 +157,14 @@ body.app-mode #app-root {
   /* 统一三个图标的视觉高度，避免基线参差 */
   body.frame-mode .status-signal {
     display: block;
-    width: 16px;
-    height: 10.5px;
+    width: 17px;
+    height: 11px;
   }
 
   body.frame-mode .status-wifi {
     display: block;
-    width: 14px;
-    height: 10.5px;
+    width: 15px;
+    height: 11px;
   }
 
   /**
@@ -164,10 +173,10 @@ body.app-mode #app-root {
   body.frame-mode .status-battery {
     position: relative;
     display: block;
-    width: 22px;
-    height: 10.5px;
+    width: 23px;
+    height: 11px;
     border: 1px solid rgba(255, 255, 255, 0.9);
-    border-radius: 3px;
+    border-radius: 3.5px;
   }
 
   body.frame-mode .status-battery::before {
@@ -176,7 +185,7 @@ body.app-mode #app-root {
     top: 1.5px;
     bottom: 1.5px;
     left: 1.5px;
-    width: 12px;
+    width: 13px;
     background: #ffffff;
     border-radius: 1px;
   }
@@ -188,7 +197,7 @@ body.app-mode #app-root {
     top: 50%;
     transform: translateY(-50%);
     width: 2px;
-    height: 4.5px;
+    height: 5px;
     background: rgba(255, 255, 255, 0.9);
     border-radius: 0 1px 1px 0;
   }
