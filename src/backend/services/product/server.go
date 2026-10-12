@@ -178,7 +178,10 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 		Specs:   specs,
 	}
 	for _, sku := range skus {
-		detail.Skus = append(detail.Skus, service.ToSkuInfo(sku))
+		skuInfo := service.ToSkuInfo(sku)
+		// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
+		skuInfo.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+		detail.Skus = append(detail.Skus, skuInfo)
 	}
 	return detail, nil
 }
@@ -199,6 +202,9 @@ func (s *server) CreateProduct(ctx stdctx.Context, req *product.CreateProductReq
 	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
 	req.CoverImage = s.attachmentService.ToSourcePath(ctx, req.CoverImage)
 	req.Images = s.attachmentService.ToSourcePaths(ctx, req.Images)
+	for _, item := range req.SkuItems {
+		item.Image = s.attachmentService.ToSourcePath(ctx, item.Image)
+	}
 	p, err := s.productService.CreateProduct(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -212,6 +218,9 @@ func (s *server) UpdateProduct(ctx stdctx.Context, req *product.UpdateProductReq
 	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
 	req.CoverImage = s.attachmentService.ToSourcePath(ctx, req.CoverImage)
 	req.Images = s.attachmentService.ToSourcePaths(ctx, req.Images)
+	for _, item := range req.SkuItems {
+		item.Image = s.attachmentService.ToSourcePath(ctx, item.Image)
+	}
 	if _, err := s.productService.UpdateProduct(ctx, req); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -242,7 +251,10 @@ func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*produc
 	}
 	resp := &product.ListSkusResp{List: make([]*product.SkuInfo, 0, len(list))}
 	for _, sku := range list {
-		resp.List = append(resp.List, service.ToSkuInfo(sku))
+		info := service.ToSkuInfo(sku)
+		// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
+		info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+		resp.List = append(resp.List, info)
 	}
 	return resp, nil
 }
@@ -271,7 +283,10 @@ func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*pr
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	return service.ToSkuInfo(sku), nil
+	info := service.ToSkuInfo(sku)
+	// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
+	info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+	return info, nil
 }
 
 // SetCommunityPricing 设置社区定价

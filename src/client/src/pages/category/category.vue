@@ -135,28 +135,47 @@
     <u-popup :show="showSkuPopup" mode="bottom" @close="closeSkuPopup">
       <view class="sku-popup">
         <view class="sku-header">
-          <image class="sku-image" :src="currentProduct.main_image || '/static/logo.png'" mode="aspectFill" />
+          <image class="sku-image" :src="activeSkuImage" mode="aspectFill" />
           <view class="sku-info">
             <text class="sku-name">{{ currentProduct.name }}</text>
-            <text class="sku-price">{{ formatPrice(selectedSku.price || currentProduct.price) }}</text>
-            <text class="sku-stock">库存 {{ selectedSku.stock || currentProduct.stock }}</text>
+            <text class="sku-price">{{ formatPrice(activeSkuPrice) }}</text>
+            <text class="sku-stock">库存 {{ activeSkuStock }}</text>
           </view>
           <u-icon name="close" size="20" color="#999999" @click="closeSkuPopup" />
         </view>
 
         <view class="sku-section">
           <text class="section-title">规格</text>
-          <view class="sku-options">
-            <text
-              v-for="sku in currentProduct.skus"
-              :key="sku.id"
-              class="sku-option"
-              :class="{ active: selectedSku.id === sku.id, disabled: sku.stock <= 0 }"
-              @click="selectSku(sku)"
-            >
-              {{ sku.name }}
-            </text>
-          </view>
+          <view v-if="skuLoading" class="sku-loading">规格加载中...</view>
+          <template v-else>
+            <!-- 多规格：按规格树渲染选择器（与商品详情页一致） -->
+            <view v-for="spec in currentProduct.specs" :key="spec.id" class="spec-group">
+              <text class="spec-group-name">{{ spec.name }}</text>
+              <view class="sku-options">
+                <text
+                  v-for="value in spec.values"
+                  :key="value.id"
+                  class="sku-option"
+                  :class="{ active: selectedValueIds[spec.id] === value.id }"
+                  @click="selectSpecValue(spec.id, value.id)"
+                >
+                  {{ value.name }}
+                </text>
+              </view>
+            </view>
+            <!-- 无规格树数据时回退为 SKU 平铺选择 -->
+            <view v-if="!currentProduct.specs.length" class="sku-options">
+              <text
+                v-for="sku in currentProduct.skus"
+                :key="sku.id"
+                class="sku-option"
+                :class="{ active: selectedSku.id === sku.id, disabled: sku.stock <= 0 }"
+                @click="selectSku(sku)"
+              >
+                {{ sku.name }}
+              </text>
+            </view>
+          </template>
         </view>
 
         <view class="sku-section quantity-section">
@@ -311,7 +330,50 @@ const selectedSku = ref<Sku>({
   spec_json: '{}',
   spec_value_ids: '',
 })
+/** 多规格已选值：规格 ID -> 规格值 ID */
+const selectedValueIds = ref<Record<number, number>>({})
+/** 规格数据兜底加载中 */
+const skuLoading = ref(false)
 const popupQuantity = ref(1)
+
+/** 已选规格组合键（规格值 ID 升序逗号串，与后端 spec_value_ids 一致） */
+const selectedKey = computed(() =>
+  Object.values(selectedValueIds.value)
+    .sort((a, b) => a - b)
+    .join(',')
+)
+
+/** 规格是否已全部选完 */
+const allSelected = computed(() =>
+  currentProduct.value.specs.length > 0 &&
+  currentProduct.value.specs.every((s) => selectedValueIds.value[s.id])
+)
+
+/**
+ * 当前匹配的 SKU
+ * 规格树模式下需全部选完才能按组合键匹配；平铺回退模式使用手动选择的 selectedSku
+ */
+const matchedSku = computed<Sku | null>(() => {
+  const skus = currentProduct.value.skus
+  if (!skus.length) return null
+  if (!currentProduct.value.specs.length) return null
+  if (!allSelected.value) return null
+  return skus.find((s) => s.spec_value_ids === selectedKey.value) || null
+})
+
+/** 弹窗当前生效 SKU：规格树匹配结果优先，其次平铺模式手动选中项 */
+const activeSku = computed<Sku | null>(() => matchedSku.value || (selectedSku.value.id ? selectedSku.value : null))
+
+// 注意用三目而非 ||：SKU 价格/库存为 0 时是有效值，不应回退到商品汇总字段
+const activeSkuPrice = computed(() =>
+  activeSku.value ? activeSku.value.price : currentProduct.value.price
+)
+const activeSkuStock = computed(() =>
+  activeSku.value ? activeSku.value.stock : currentProduct.value.stock
+)
+const activeSkuImage = computed(
+  () => activeSku.value?.image || currentProduct.value.main_image || '/static/logo.png'
+)
 
 onLoad((query) => {
   const id = Number(query?.categoryId) || 0
@@ -742,17 +804,70 @@ async function getDefaultSku(product: Product): Promise<Sku | null> {
 
 /**
  * 打开多规格商品弹窗
+ * 分类列表接口不返回 SKU/规格数据，缺失时调详情接口兜底加载并回填列表项，
+ * 下次打开同一商品不再重复请求
  * @param product 商品对象
  */
-function openSkuPopup(product: Product) {
+async function openSkuPopup(product: Product) {
   currentProduct.value = product
-  if (product.skus.length) {
-    selectedSku.value = product.skus.find((s) => s.stock > 0) || product.skus[0]
-  } else {
-    selectedSku.value = { id: 0, product_id: 0, name: '', price: 0, original_price: 0, stock: 0, image: '', spec_name: '', spec_json: '{}', spec_value_ids: '' }
-  }
+  selectedValueIds.value = {}
+  selectedSku.value = { id: 0, product_id: 0, name: '', price: 0, original_price: 0, stock: 0, image: '', spec_name: '', spec_json: '{}', spec_value_ids: '' }
   popupQuantity.value = product.min_buy || 1
   showSkuPopup.value = true
+
+  if (!product.skus.length) {
+    skuLoading.value = true
+    try {
+      const res = await getProductDetail(product.id, userStore.communityInfo?.id)
+      if (res.data) {
+        // 直接回填列表项对象（与 currentProduct 同引用），刷新列表数据并命中缓存
+        product.skus = res.data.skus
+        product.specs = res.data.specs
+        currentProduct.value = product
+      }
+    } catch {
+      uni.showToast({ title: '规格加载失败', icon: 'none' })
+    } finally {
+      skuLoading.value = false
+    }
+  }
+  initSpecSelection()
+}
+
+/**
+ * 初始化弹窗规格选中态
+ * 有规格树时默认选中每个规格的第一个规格值；无规格树时默认选中第一个有库存的 SKU
+ */
+function initSpecSelection() {
+  const product = currentProduct.value
+  if (product.specs.length) {
+    const init: Record<number, number> = {}
+    for (const spec of product.specs) {
+      if (spec.values.length) {
+        init[spec.id] = spec.values[0].id
+      }
+    }
+    selectedValueIds.value = init
+    if (matchedSku.value) {
+      selectedSku.value = matchedSku.value
+    }
+    return
+  }
+  if (product.skus.length) {
+    selectedSku.value = product.skus.find((s) => s.stock > 0) || product.skus[0]
+  }
+}
+
+/**
+ * 选择规格值，组合完整时同步定位 SKU
+ * @param specId 规格 ID
+ * @param valueId 规格值 ID
+ */
+function selectSpecValue(specId: number, valueId: number) {
+  selectedValueIds.value = { ...selectedValueIds.value, [specId]: valueId }
+  if (matchedSku.value) {
+    selectedSku.value = matchedSku.value
+  }
 }
 
 /**
@@ -775,6 +890,10 @@ function selectSku(sku: Sku) {
  * 确认将多规格商品加入购物车
  */
 async function confirmAddToCart() {
+  if (currentProduct.value.specs.length && !matchedSku.value) {
+    uni.showToast({ title: allSelected.value ? '该规格组合不存在' : '请选择完整规格', icon: 'none' })
+    return
+  }
   if (!selectedSku.value.id) {
     uni.showToast({ title: '请选择规格', icon: 'none' })
     return
@@ -1206,6 +1325,23 @@ function onSettlement() {
 
 .sku-section {
   margin-bottom: 30rpx;
+}
+
+.sku-loading {
+  padding: 20rpx 0;
+  font-size: 26rpx;
+  color: #999999;
+}
+
+.spec-group {
+  margin-bottom: 20rpx;
+}
+
+.spec-group-name {
+  display: block;
+  margin-bottom: 12rpx;
+  font-size: 24rpx;
+  color: #999999;
 }
 
 .section-title {

@@ -73,6 +73,7 @@
             <thead>
               <tr>
                 <th v-for="spec in specs" :key="spec.tempId">{{ spec.name || '规格' }}</th>
+                <th>规格图片</th>
                 <th>售价（元）</th>
                 <th>成本价（元）</th>
                 <th>库存</th>
@@ -83,6 +84,23 @@
               <tr v-for="row in skuRows" :key="row.key">
                 <td v-for="v in row.values" :key="v.tempId" class="spec-value-cell">
                   {{ v.name }}
+                </td>
+                <td>
+                  <div class="sku-image-cell">
+                    <img
+                      v-if="row.image"
+                      :src="row.image"
+                      alt="规格图片"
+                      class="sku-image-thumb"
+                      @click="previewSkuImage(row)"
+                    />
+                    <n-button size="tiny" secondary @click="openSkuImagePicker(row)">
+                      {{ row.image ? '更换' : '上传' }}
+                    </n-button>
+                    <n-button v-if="row.image" size="tiny" quaternary type="error" @click="row.image = ''">
+                      移除
+                    </n-button>
+                  </div>
                 </td>
                 <td>
                   <n-input-number
@@ -131,6 +149,22 @@
         </n-space>
       </n-form-item>
     </n-form>
+
+    <!-- SKU 规格图片：附件库选择与预览 -->
+    <AttachmentPicker v-model:show="showSkuImagePicker" @select="onSkuImageSelect" />
+    <n-modal
+      v-model:show="showSkuImagePreview"
+      preset="card"
+      title="规格图片预览"
+      style="width: auto; max-width: 90vw"
+    >
+      <img
+        v-if="skuImagePreviewUrl"
+        :src="skuImagePreviewUrl"
+        alt="规格图片"
+        class="sku-image-preview-large"
+      />
+    </n-modal>
   </n-card>
 </template>
 
@@ -140,6 +174,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import ImageListInput from '@/components/ImageListInput.vue'
+import AttachmentPicker from '@/components/AttachmentPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
 import { getProductDetail, createProduct, updateProduct, getCategoryList } from '@/api/product'
 import type {
@@ -174,6 +209,7 @@ interface SkuRow {
   cost_price: number | null
   stock: number | null
   safety_stock: number | null
+  image: string
 }
 
 const route = useRoute()
@@ -207,6 +243,12 @@ const singleSku = reactive({
 
 const specs = ref<SpecEditor[]>([])
 const skuRows = ref<SkuRow[]>([])
+
+/** SKU 规格图片：附件库选择与预览状态 */
+const showSkuImagePicker = ref(false)
+const showSkuImagePreview = ref(false)
+const skuImagePreviewUrl = ref('')
+let skuImageTarget: SkuRow | null = null
 
 /** 临时 ID 自增序号（页面内唯一即可） */
 let tempSeq = 0
@@ -288,6 +330,7 @@ function rebuildSkuRows(): void {
       cost_price: old?.cost_price ?? null,
       stock: old?.stock ?? null,
       safety_stock: old?.safety_stock ?? null,
+      image: old?.image ?? '',
     }
   })
 }
@@ -381,6 +424,7 @@ async function loadDetail(): Promise<void> {
         cost_price: sku.cost_price,
         stock: sku.stock,
         safety_stock: sku.safety_stock,
+        image: sku.image ?? '',
       }
     })
   } else {
@@ -499,9 +543,38 @@ function buildPayload(): ProductSavePayload | null {
     cost_price: row.cost_price ?? 0,
     stock: row.stock ?? 0,
     safety_stock: row.safety_stock ?? 0,
-    image: '',
+    image: row.image ?? '',
   }))
   return payload
+}
+
+/**
+ * 打开附件库为指定 SKU 行选择规格图片
+ * @param row SKU 表格行
+ */
+function openSkuImagePicker(row: SkuRow): void {
+  skuImageTarget = row
+  showSkuImagePicker.value = true
+}
+
+/**
+ * 附件库选中回填到目标 SKU 行
+ * @param url 选中的图片 URL
+ */
+function onSkuImageSelect(url: string): void {
+  if (skuImageTarget) {
+    skuImageTarget.image = url
+  }
+}
+
+/**
+ * 预览指定 SKU 行的规格图片
+ * @param row SKU 表格行
+ */
+function previewSkuImage(row: SkuRow): void {
+  if (!row.image) return
+  skuImagePreviewUrl.value = row.image
+  showSkuImagePreview.value = true
 }
 
 /**
@@ -537,5 +610,24 @@ onMounted(() => {
 }
 .spec-value-cell {
   color: var(--n-text-color);
+}
+.sku-image-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sku-image-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+  cursor: zoom-in;
+}
+.sku-image-preview-large {
+  display: block;
+  max-width: 80vw;
+  max-height: 68vh;
+  object-fit: contain;
 }
 </style>
