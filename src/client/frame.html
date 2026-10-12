@@ -8,7 +8,24 @@
 	</head>
 	<body class="frame-mode">
 		<div id="frame-shell" class="device-frame">
-			<!-- 顶部额区装饰：听筒格栅 + 前置摄像头（位于让出的边框区内，不遮挡嵌套页面） -->
+			<!-- 顶部额区装饰：状态栏（时间 + 信号/WiFi/电池）、听筒格栅、前置摄像头（均位于让出的边框区内，不遮挡嵌套页面） -->
+			<div class="device-status-bar">
+				<span class="status-time"></span>
+				<span class="status-icons">
+					<svg class="status-signal" width="15" height="10" viewBox="0 0 15 10">
+						<rect x="0" y="6.5" width="2.6" height="3.5" rx="0.8" fill="#fff" />
+						<rect x="4" y="4.5" width="2.6" height="5.5" rx="0.8" fill="#fff" />
+						<rect x="8" y="2.2" width="2.6" height="7.8" rx="0.8" fill="#fff" />
+						<rect x="12" y="0" width="2.6" height="10" rx="0.8" fill="#fff" opacity=".4" />
+					</svg>
+					<svg class="status-wifi" width="14" height="11" viewBox="0 0 14 11" fill="none">
+						<path d="M1 4a8.5 8.5 0 0 1 12 0" stroke="#fff" stroke-width="1.6" stroke-linecap="round" />
+						<path d="M3.2 6.5a5.4 5.4 0 0 1 7.6 0" stroke="#fff" stroke-width="1.6" stroke-linecap="round" />
+						<circle cx="7" cy="9.3" r="1.4" fill="#fff" />
+					</svg>
+					<i class="status-battery"></i>
+				</span>
+			</div>
 			<div class="device-earpiece"></div>
 			<div class="device-camera"></div>
 			<iframe
@@ -23,6 +40,12 @@
 			<div class="device-volume-switch"></div>
 			<div class="device-volume-key"></div>
 			<div class="device-button"></div>
+			<!-- 机身右侧二维码：引导手机扫码访问 H5（内容随当前访问地址自动正确） -->
+			<div class="device-qr">
+				<div class="qr-code" id="qr-code"></div>
+				<div class="qr-tip">手机扫码访问</div>
+				<div class="qr-url" id="qr-url"></div>
+			</div>
 		</div>
 
 		<script>
@@ -103,6 +126,47 @@
 				}
 			})
 		})()
+		</script>
+
+		<script src="static/qrcode.min.js"></script>
+		<script>
+			/**
+			 * 额区状态栏真实时间：每 15 秒刷新，与真机状态栏一致。
+			 */
+			;(function () {
+				var pad = function (n) {
+					return String(n).padStart(2, '0')
+				}
+				var update = function () {
+					var d = new Date()
+					var el = document.querySelector('.status-time')
+					if (el) {
+						el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes())
+					}
+				}
+				update()
+				setInterval(update, 15000)
+			})()
+
+			/**
+			 * 机身右侧二维码：指向当前 origin 的 /s/ 入口。
+			 * 手机扫码后由入口页宽窄屏检测自动进入全屏 App 模式；
+			 * 注意二维码内容取自地址栏 origin，需以局域网 IP 访问本页，手机方可打开。
+			 */
+			;(function () {
+				var url = window.location.origin + '/s/'
+				var box = document.getElementById('qr-code')
+				if (box && typeof qrcode === 'function') {
+					var qr = qrcode(0, 'M')
+					qr.addData(url)
+					qr.make()
+					box.innerHTML = qr.createSvgTag({ cellSize: 3, margin: 0 })
+				}
+				var urlEl = document.getElementById('qr-url')
+				if (urlEl) {
+					urlEl.textContent = url
+				}
+			})()
 		</script>
 	</body>
 </html>

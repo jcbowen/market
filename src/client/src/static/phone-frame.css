@@ -18,12 +18,14 @@ body {
 }
 
 /* 装饰元素默认隐藏 */
+.device-status-bar,
 .device-earpiece,
 .device-camera,
 .device-home-indicator,
 .device-volume-switch,
 .device-volume-key,
-.device-button {
+.device-button,
+.device-qr {
   display: none;
 }
 
@@ -107,6 +109,88 @@ body.app-mode #app-root {
     border-radius: 34px;
     background: #ffffff;
     overflow: hidden;
+  }
+
+  /**
+   * 顶部额区状态栏：真实时间 + 信号/WiFi/电池
+   * 位于边框（bezel）内的屏幕顶部区域（0 ~ 32px），iframe 已让出该区域；
+   * 布局与真机一致（左时间、右图标），中间让位听筒与摄像头
+   */
+  body.frame-mode .device-status-bar {
+    display: flex;
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 16px;
+    height: 32px;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 100;
+    pointer-events: none;
+  }
+
+  body.frame-mode .status-time {
+    /* 等宽数字避免时间刷新时宽度跳动 */
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  body.frame-mode .status-icons {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  /* 统一三个图标的视觉高度，避免基线参差 */
+  body.frame-mode .status-signal {
+    display: block;
+    width: 16px;
+    height: 10.5px;
+  }
+
+  body.frame-mode .status-wifi {
+    display: block;
+    width: 14px;
+    height: 10.5px;
+  }
+
+  /**
+   * 电池图标：边框 + 内部电量填充（::before）+ 正极凸点（::after）
+   */
+  body.frame-mode .status-battery {
+    position: relative;
+    display: block;
+    width: 22px;
+    height: 10.5px;
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 3px;
+  }
+
+  body.frame-mode .status-battery::before {
+    content: '';
+    position: absolute;
+    top: 1.5px;
+    bottom: 1.5px;
+    left: 1.5px;
+    width: 12px;
+    background: #ffffff;
+    border-radius: 1px;
+  }
+
+  body.frame-mode .status-battery::after {
+    content: '';
+    position: absolute;
+    right: -3.5px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2px;
+    height: 4.5px;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 0 1px 1px 0;
   }
 
   /**
@@ -197,6 +281,52 @@ body.app-mode #app-root {
     height: 70px;
     background: #333333;
     border-radius: 0 2px 2px 0;
+  }
+
+  /**
+   * 机身右侧二维码卡片：引导手机扫码访问 H5
+   * 伸出机身右侧 28px，垂直居中；二维码内容由 frame.html 脚本
+   * 按当前访问地址生成（局域网 IP 访问时手机扫码可直接打开）
+   */
+  body.frame-mode .device-qr {
+    display: block;
+    position: absolute;
+    left: calc(100% + 28px);
+    top: 50%;
+    transform: translateY(-50%);
+    width: 128px;
+    padding: 10px 10px 8px;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    text-align: center;
+  }
+
+  body.frame-mode .qr-code {
+    width: 108px;
+    margin: 0 auto;
+  }
+
+  body.frame-mode .qr-code svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  body.frame-mode .qr-tip {
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #333333;
+  }
+
+  body.frame-mode .qr-url {
+    margin-top: 2px;
+    font-size: 9px;
+    color: #999999;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /**
