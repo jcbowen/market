@@ -73,10 +73,13 @@ func (h *CartHandler) GetCart(c *gin.Context) {
 }
 
 // AddItemReq 添加购物车商品请求
+// CommunityID 从 body 读取：前端统一以 JSON body 传社区 ID，
+// 未传时降级 query，再降级 JWT 上下文（登录后切换社区时 JWT 中社区 ID 会过期，不能作为首选）
 type AddItemReq struct {
-	ProductID int64 `json:"product_id" binding:"required"`
-	SkuID     int64 `json:"sku_id" binding:"required"`
-	Quantity  int32 `json:"quantity" binding:"required,min=1"`
+	ProductID   int64 `json:"product_id" binding:"required"`
+	SkuID       int64 `json:"sku_id" binding:"required"`
+	Quantity    int32 `json:"quantity" binding:"required,min=1"`
+	CommunityID int64 `json:"community_id"`
 }
 
 // AddItem 添加商品到购物车
@@ -89,10 +92,16 @@ func (h *CartHandler) AddItem(c *gin.Context) {
 		return
 	}
 
+	// 社区 ID 优先级：body > query > JWT 上下文
+	communityID := req.CommunityID
+	if communityID <= 0 {
+		communityID = getCartCommunityID(c)
+	}
+
 	uc := appcontext.GetUserContext(c)
 	resp, err := h.cartClient.AddItem(c.Request.Context(), &cart.AddItemReq{
 		UserId:      uc.UserID,
-		CommunityId: getCartCommunityID(c),
+		CommunityId: communityID,
 		ProductId:   req.ProductID,
 		SkuId:       req.SkuID,
 		Quantity:    req.Quantity,

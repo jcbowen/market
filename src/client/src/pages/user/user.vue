@@ -54,8 +54,9 @@
       </u-cell-group>
     </view>
 
-    <view v-if="userStore.isLogin" class="logout-btn" @click="onLogout">
-      <u-button text="退出登录" />
+    <view v-if="userStore.isLogin" class="logout-btn">
+      <!-- u-button 默认阻止事件冒泡（stop: true），click 必须绑在组件上而非外层 view -->
+      <u-button text="退出登录" @click="onLogout" />
     </view>
   </view>
 </template>
