@@ -111,21 +111,32 @@ onShow(() => {
     goLogin()
     return
   }
-  page.value = 1
-  orders.value = []
-  loadOrders()
+  resetAndReload()
 })
 
 /**
- * 切换订单状态 tab
- * @param index tab 索引
+ * 重置分页状态并回到第 1 页刷新（切 tab / onShow 共用）
  */
-function onTabChange(index: number) {
-  currentTab.value = index
+function resetAndReload() {
   page.value = 1
   orders.value = []
+  loadStatus.value = 'loadmore'
   loadOrders()
 }
+
+/**
+ * 切换订单状态 tab
+ * uview-plus u-tabs 的 change 参数为 { ...点击项, index }
+ * @param item change 事件参数（含点击索引）
+ */
+function onTabChange(item: { index: number }) {
+  if (item.index === currentTab.value) return
+  currentTab.value = item.index
+  resetAndReload()
+}
+
+/** 请求序号：防止快速切换 tab 时旧响应覆盖新数据 */
+let requestSeq = 0
 
 /**
  * 加载订单列表
@@ -133,6 +144,7 @@ function onTabChange(index: number) {
 async function loadOrders() {
   if (loadStatus.value === 'loading' || loadStatus.value === 'nomore') return
   loadStatus.value = 'loading'
+  const seq = ++requestSeq
   try {
     const status = tabs.value[currentTab.value].value
     const res = await getOrders({
@@ -141,6 +153,7 @@ async function loadOrders() {
       page_size: pageSize,
       community_id: userStore.communityInfo?.id,
     })
+    if (seq !== requestSeq) return
     const list = res.data?.list || []
     if (page.value === 1) {
       orders.value = list
@@ -154,6 +167,7 @@ async function loadOrders() {
       page.value += 1
     }
   } catch {
+    if (seq !== requestSeq) return
     loadStatus.value = 'loadmore'
   }
 }
@@ -191,9 +205,7 @@ async function onPay(order: Order) {
     if (!channel) return
     const outcome = await payOrder(order.id, channel.channel)
     notifyPayOutcome(outcome)
-    page.value = 1
-    orders.value = []
-    loadOrders()
+    resetAndReload()
   } catch {
     // request 已统一提示错误
   }
@@ -207,9 +219,7 @@ async function onCancel(id: number) {
   try {
     await cancelOrder(id)
     uni.showToast({ title: '已取消', icon: 'success' })
-    page.value = 1
-    orders.value = []
-    loadOrders()
+    resetAndReload()
   } catch {
     // ignore
   }
@@ -223,9 +233,7 @@ async function onReceive(id: number) {
   try {
     await confirmReceive(id)
     uni.showToast({ title: '已确认收货', icon: 'success' })
-    page.value = 1
-    orders.value = []
-    loadOrders()
+    resetAndReload()
   } catch {
     // ignore
   }
@@ -244,9 +252,7 @@ function onRefund(id: number) {
  * 退款申请提交成功后回到第 1 页刷新列表
  */
 function refreshList() {
-  page.value = 1
-  orders.value = []
-  loadOrders()
+  resetAndReload()
 }
 </script>
 
@@ -261,6 +267,8 @@ function refreshList() {
 .order-list {
   flex: 1;
   overflow: hidden;
+  /* scroll-view 默认 content-box，width:100% + padding 会横向溢出导致页面超宽 */
+  box-sizing: border-box;
   padding: 20rpx;
 }
 
@@ -348,5 +356,12 @@ function refreshList() {
   display: flex;
   justify-content: flex-end;
   gap: 16rpx;
+}
+
+/* uniapp H5 的 button 默认块级撑满整行，操作按钮需收缩为小按钮横排 */
+.order-actions :deep(.u-button) {
+  width: auto;
+  min-width: 120rpx;
+  padding: 0 28rpx;
 }
 </style>

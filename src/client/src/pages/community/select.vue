@@ -199,6 +199,8 @@ async function onSelect(community: Community) {
 .community-list {
   flex: 1;
   overflow: hidden;
+  /* scroll-view 默认 content-box，width:100% + padding 会横向溢出导致页面超宽 */
+  box-sizing: border-box;
   padding: 20rpx;
 }
 

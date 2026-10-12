@@ -117,6 +117,8 @@ onShow(() => {
   loadBanners()
   page.value = 1
   products.value = []
+  // 重置加载状态，避免上次 nomore/loading 门禁导致 onShow 重新加载时直接 return
+  loadStatus.value = 'loadmore'
   loadProducts()
 })
 
@@ -166,18 +168,23 @@ function onBannerClick(index: number) {
   }
 }
 
+/** 请求序号：防止快速切换页面时旧响应覆盖新数据 */
+let productReqSeq = 0
+
 /**
  * 加载商品列表
  */
 async function loadProducts() {
   if (loadStatus.value === 'loading' || loadStatus.value === 'nomore') return
   loadStatus.value = 'loading'
+  const seq = ++productReqSeq
   try {
     const res = await getProducts({
       page: page.value,
       page_size: pageSize,
       community_id: userStore.communityInfo?.id,
     })
+    if (seq !== productReqSeq) return
     const list = res.data?.list || []
     if (page.value === 1) {
       products.value = list
@@ -191,6 +198,7 @@ async function loadProducts() {
       page.value += 1
     }
   } catch {
+    if (seq !== productReqSeq) return
     loadStatus.value = 'loadmore'
   }
 }

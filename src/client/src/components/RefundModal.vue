@@ -66,12 +66,14 @@
           </view>
           <view class="amount-edit">
             <text class="amount-label">退款金额（可调低）</text>
+            <!-- uview-plus u-input 值变化 emit change（仅用户输入触发，外部赋值不触发），用 change 标记手动修改 -->
             <u-input
               v-model="amountInput"
               type="digit"
               border="surround"
               :placeholder="`不超过 ${formatAmount(refundable)}`"
               style="flex: 1"
+              @change="onAmountInput"
             />
           </view>
           <text class="amount-tip">金额以商家审核确认为准，仅支持调低退款金额</text>
@@ -128,6 +130,8 @@ const wantFreight = ref(false)
 const reason = ref('')
 const amountInput = ref('')
 const submitting = ref(false)
+/** 用户是否手动修改过退款金额；为 true 后不再自动联动覆盖 */
+const amountTouched = ref(false)
 
 /** 运费金额（订单实收运费） */
 const freight = computed(() => order.value?.delivery_fee ?? 0)
@@ -229,12 +233,28 @@ function calcLineFullRefund(item: OrderItem, o: Order): number {
 }
 
 /**
+ * 用户手动输入退款金额，标记不再自动联动覆盖
+ */
+function onAmountInput() {
+  amountTouched.value = true
+}
+
+/**
+ * 默认填入汇算金额，并重置为未手动修改状态
+ */
+function fillDefaultAmount() {
+  amountTouched.value = false
+  amountInput.value = formatAmount(refundable.value)
+}
+
+/**
  * 加载订单详情与退款配置，初始化退款行
  */
 async function load() {
   submitting.value = false
   reason.value = ''
   amountInput.value = ''
+  amountTouched.value = false
   wantFreight.value = false
   try {
     const [orderRes, configRes] = await Promise.all([
@@ -256,6 +276,7 @@ async function load() {
     if (configRes?.data?.refund_freight_policy) {
       policy.value = configRes.data.refund_freight_policy
     }
+    fillDefaultAmount()
   } catch {
     // request 已统一提示错误
   }
@@ -324,6 +345,13 @@ watch(
     }
   },
 )
+
+// 勾选行/数量变化导致汇算金额变化时，用户未手动修改过则跟随更新
+watch(refundable, (value) => {
+  if (!amountTouched.value) {
+    amountInput.value = formatAmount(value)
+  }
+})
 </script>
 
 <style scoped>

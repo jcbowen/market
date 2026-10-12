@@ -73,23 +73,33 @@ const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 
 onShow(() => {
-  page.value = 1
-  coupons.value = []
-  userCoupons.value = []
-  loadData()
+  resetAndReload()
 })
 
 /**
- * 切换 tab
- * @param index tab 索引
+ * 重置分页状态并重新加载（切 tab / onShow 共用）
  */
-function onTabChange(index: number) {
-  currentTab.value = index
+function resetAndReload() {
   page.value = 1
   coupons.value = []
   userCoupons.value = []
+  loadStatus.value = 'loadmore'
   loadData()
 }
+
+/**
+ * 切换 tab
+ * uview-plus u-tabs 的 change 参数为 { ...点击项, index }
+ * @param item change 事件参数（含点击索引）
+ */
+function onTabChange(item: { index: number }) {
+  if (item.index === currentTab.value) return
+  currentTab.value = item.index
+  resetAndReload()
+}
+
+/** 请求序号：防止快速切换 tab 时旧响应覆盖新数据 */
+let requestSeq = 0
 
 /**
  * 加载优惠券数据
@@ -97,17 +107,19 @@ function onTabChange(index: number) {
 async function loadData() {
   if (loadStatus.value === 'loading' || loadStatus.value === 'nomore') return
   loadStatus.value = 'loading'
+  const seq = ++requestSeq
   try {
     if (currentTab.value === 0) {
       const res = await getCoupons({ page: page.value, page_size: pageSize, community_id: userStore.communityInfo?.id })
       const list = res.data?.list || []
-      appendList(coupons, list)
+      if (seq === requestSeq) appendList(coupons, list)
     } else {
       const res = await getUserCoupons({ page: page.value, page_size: pageSize })
       const list = res.data?.list || []
-      appendList(userCoupons, list)
+      if (seq === requestSeq) appendList(userCoupons, list)
     }
   } catch {
+    if (seq !== requestSeq) return
     loadStatus.value = 'loadmore'
   }
 }
@@ -146,9 +158,7 @@ async function onReceive(id: number) {
   try {
     await receiveCoupon(id)
     uni.showToast({ title: '领取成功', icon: 'success' })
-    page.value = 1
-    coupons.value = []
-    loadData()
+    resetAndReload()
   } catch {
     // ignore
   }
@@ -166,6 +176,8 @@ async function onReceive(id: number) {
 .coupon-list {
   flex: 1;
   overflow: hidden;
+  /* scroll-view 默认 content-box，width:100% + padding 会横向溢出导致页面超宽 */
+  box-sizing: border-box;
   padding: 20rpx;
 }
 
@@ -231,5 +243,13 @@ async function onReceive(id: number) {
 .coupon-status {
   font-size: 24rpx;
   color: #07c160;
+}
+
+/* uniapp H5 的 button 默认块级撑满整行，领取按钮收缩为小按钮 */
+.coupon-right :deep(.u-button) {
+  width: auto;
+  align-self: flex-start;
+  min-width: 120rpx;
+  padding: 0 28rpx;
 }
 </style>

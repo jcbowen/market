@@ -109,6 +109,8 @@ function onBuy(item: FlashSale) {
 }
 
 .flash-list {
+  /* scroll-view 默认 width:100%（content-box），padding 会横向溢出导致页面超宽 */
+  box-sizing: border-box;
   padding: 20rpx;
 }
 
