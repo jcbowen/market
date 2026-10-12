@@ -38,9 +38,9 @@ function run(cmd, args, opts = {}) {
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
-// 依赖检查
-function checkCommand(cmd, name) {
-  const r = spawnSync(cmd, ['--version'], {
+// 依赖检查（versionArgs 用于兼容不同 CLI 的版本命令，如 go 只支持 `go version`）
+function checkCommand(cmd, name, versionArgs = ['--version']) {
+  const r = spawnSync(cmd, versionArgs, {
     encoding: 'utf8',
     shell: process.platform === 'win32',
   });
@@ -119,7 +119,7 @@ async function ensureDockerRunning() {
 checkCommand('docker', 'Docker');
 await ensureDockerRunning();
 checkDockerCompose();
-checkCommand('go', 'Go');
+checkCommand('go', 'Go', ['version']);
 checkCommand('node', 'Node.js');
 checkCommand('npm', 'npm');
 
