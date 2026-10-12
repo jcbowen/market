@@ -50,8 +50,20 @@ function checkCommand(cmd, name) {
   }
 }
 
+// 检查 Docker Compose 子命令是否可用（docker 已存在时调用，用于区分「docker 缺失」与「compose 插件缺失」两种情况）
+function checkDockerCompose() {
+  const r = spawnSync('docker', ['compose', 'version'], {
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  });
+  if (r.status !== 0) {
+    console.error('错误: Docker Compose 子命令不可用，请安装/启用 Docker Compose 插件（docker compose）');
+    process.exit(1);
+  }
+}
+
 checkCommand('docker', 'Docker');
-checkCommand('docker', 'Docker Compose');
+checkDockerCompose();
 checkCommand('go', 'Go');
 checkCommand('node', 'Node.js');
 checkCommand('npm', 'npm');
