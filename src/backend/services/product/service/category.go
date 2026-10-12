@@ -40,7 +40,7 @@ func (s *CategoryService) ListCategories(ctx context.Context, communityID int64)
 	if communityID > 0 {
 		db = db.Where("community_id = ?", communityID)
 	}
-	err := db.Order("sort desc, id asc").Find(&list).Error
+	err := db.Order("sort asc, id asc").Find(&list).Error
 	return list, err
 }
 

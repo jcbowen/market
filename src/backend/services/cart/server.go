@@ -3,6 +3,7 @@ package main
 import (
 	stdctx "context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -84,7 +85,11 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 		return nil, status.Errorf(codes.NotFound, "商品不存在")
 	}
 
-	if err := s.upsertCartItem(ctx, req.UserId, req.CommunityId, skuInfo.ProductId, req.SkuId, req.Quantity); err != nil {
+	if err := s.upsertCartItem(ctx, req.UserId, req.CommunityId, skuInfo.ProductId, req.SkuId, req.Quantity, &cartSnapshot{
+		ProductName:  productInfo.Product.Name,
+		SpecName:     skuInfo.SpecName,
+		ProductImage: productImageOf(skuInfo, productInfo),
+	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 
@@ -259,55 +264,115 @@ func (s *server) buildCartItems(ctx stdctx.Context, list []*model.Cart) ([]*cart
 }
 
 // buildCartItem 将单个购物车模型转换为响应项
-// 若关联 SKU 或商品已不存在，则返回 nil 并跳过该项。
+// 失效判定：SKU 不存在/商品不存在 →"商品已失效"；商品下架 →"商品已下架"；库存为 0 →"商品已售罄"。
+// 失效项不再跳过而是返回并携带失效原因，展示信息优先使用实时数据，SKU/商品已删除时回退快照；
+// 失效项 selected 强制置为 false，结算（GetSelectedItems）与合计自动排除。
 //
 // 参数：
 //   - ctx: 上下文
 //   - m: 购物车模型
 //
 // 返回值：
-//   - *cart.CartItem: 购物车响应项，SKU/商品不存在时返回 nil
+//   - *cart.CartItem: 购物车响应项
 //   - error: 错误信息
 func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartItem, error) {
-	skuInfo, err := s.productClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: m.SkuID})
+	skuInfo, productInfo, invalidReason, err := s.invalidReasonOf(ctx, m.SkuID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "查询 SKU 失败: %v", err)
+		return nil, err
 	}
-	if skuInfo.Id == 0 {
-		return nil, nil
+
+	// 展示字段：实时数据优先，快照兜底（SKU/商品已删除时实时数据不可得）
+	productName := m.ProductName
+	specName := m.SpecName
+	productImage := m.ProductImage
+	price := 0.0
+	minBuy := int32(0)
+	var skuTotal int32
+	if skuInfo.Id != 0 {
+		price = skuInfo.Price
+		specName = skuInfo.SpecName
+		productImage = skuInfo.Image
+	}
+	if productInfo != nil && productInfo.Product != nil && productInfo.Product.Id != 0 {
+		productName = productInfo.Product.Name
+		if productImage == "" {
+			productImage = productInfo.Product.CoverImage
+		}
+		minBuy = productInfo.Product.MinBuy
+		skuTotal = int32(len(productInfo.Skus))
+	}
+
+	// 库存紧张提示：低于安全库存或低于购物车数量时展示"仅剩 X 件"（失效项不提示）
+	stockHint := ""
+	if invalidReason == "" && (skuInfo.Stock < skuInfo.SafetyStock || skuInfo.Stock < m.Quantity) {
+		stockHint = fmt.Sprintf("仅剩 %d 件", skuInfo.Stock)
+	}
+
+	return &cart.CartItem{
+		Id:            m.SkuID,
+		ProductId:     m.ProductID,
+		SkuId:         m.SkuID,
+		ProductName:   productName,
+		SpecName:      specName,
+		ProductImage:  productImage,
+		Price:         price,
+		Stock:         skuInfo.Stock,
+		Quantity:      m.Quantity,
+		Selected:      m.Selected && invalidReason == "",
+		CommunityId:   m.CommunityID,
+		MinBuy:        minBuy,
+		SkuTotal:      skuTotal,
+		Invalid:       invalidReason != "",
+		InvalidReason: invalidReason,
+		StockHint:     stockHint,
+	}, nil
+}
+
+// invalidReasonOf 判定购物车项的失效原因
+// 判定顺序：SKU 不存在 →"商品已失效"；商品不存在 →"商品已失效"；商品下架 →"商品已下架"；库存为 0 →"商品已售罄"。
+// SKU/商品的"不存在"类错误（NotFound）同样归入失效而非系统错误；其他查询错误按系统错误返回。
+//
+// 参数：
+//   - ctx: 上下文
+//   - skuID: SKU ID
+//
+// 返回值：
+//   - *product.SkuInfo: SKU 信息（SKU 已删除时为空对象）
+//   - *product.ProductDetail: 商品详情（商品已删除时为 nil）
+//   - string: 失效原因，空字符串表示未失效
+//   - error: 系统错误信息
+func (s *server) invalidReasonOf(ctx stdctx.Context, skuID int64) (*product.SkuInfo, *product.ProductDetail, string, error) {
+	skuInfo, err := s.productClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: skuID})
+	if err != nil {
+		if status.Code(err) != codes.NotFound {
+			return nil, nil, "", status.Errorf(codes.Internal, "查询 SKU 失败: %v", err)
+		}
+		// SKU 已删除：按失效处理，展示信息回退快照
+		return &product.SkuInfo{}, nil, "商品已失效", nil
 	}
 
 	productInfo, err := s.productClient.GetProduct(ctx, &product.GetProductReq{Id: skuInfo.ProductId, CommunityId: skuInfo.CommunityId})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "查询商品失败: %v", err)
-	}
-	if productInfo.Product == nil || productInfo.Product.Id == 0 {
-		return nil, nil
-	}
-
-	productImage := skuInfo.Image
-	if productImage == "" {
-		productImage = productInfo.Product.CoverImage
+		if status.Code(err) != codes.NotFound {
+			return nil, nil, "", status.Errorf(codes.Internal, "查询商品失败: %v", err)
+		}
+		return skuInfo, nil, "商品已失效", nil
 	}
 
-	return &cart.CartItem{
-		Id:           m.SkuID,
-		ProductId:    m.ProductID,
-		SkuId:        m.SkuID,
-		ProductName:  productInfo.Product.Name,
-		SpecName:     skuInfo.SpecName,
-		ProductImage: productImage,
-		Price:        skuInfo.Price,
-		Stock:        skuInfo.Stock,
-		Quantity:     m.Quantity,
-		Selected:     m.Selected,
-		CommunityId:  m.CommunityID,
-		MinBuy:       productInfo.Product.MinBuy,
-	}, nil
+	switch {
+	case productInfo.Product == nil || productInfo.Product.Id == 0:
+		return skuInfo, productInfo, "商品已失效", nil
+	case productInfo.Product.Status != 1:
+		return skuInfo, productInfo, "商品已下架", nil
+	case skuInfo.Stock <= 0:
+		return skuInfo, productInfo, "商品已售罄", nil
+	}
+	return skuInfo, productInfo, "", nil
 }
 
 // upsertCartItem 新增或更新购物车记录
-// 同一用户同一 SKU 已存在时累加数量并置为选中，否则新建记录。
+// 同一用户同一 SKU 已存在时累加数量并置为选中，否则新建记录；
+// 无论新建还是更新均刷新商品快照，保证快照与最新商品信息一致。
 //
 // 参数：
 //   - ctx: 上下文
@@ -316,10 +381,11 @@ func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartIte
 //   - productID: 商品 ID
 //   - skuID: SKU ID
 //   - quantity: 新增数量
+//   - snap: 商品快照（名称/规格/图片）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *server) upsertCartItem(ctx stdctx.Context, userID, communityID, productID, skuID int64, quantity int32) error {
+func (s *server) upsertCartItem(ctx stdctx.Context, userID, communityID, productID, skuID int64, quantity int32, snap *cartSnapshot) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
 	var cart model.Cart
@@ -329,14 +395,17 @@ func (s *server) upsertCartItem(ctx stdctx.Context, userID, communityID, product
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			cart = model.Cart{
-				UserID:      userID,
-				CommunityID: communityID,
-				ProductID:   productID,
-				SkuID:       skuID,
-				Quantity:    quantity,
-				Selected:    true,
-				CreatedAt:   now,
-				UpdatedAt:   now,
+				UserID:       userID,
+				CommunityID:  communityID,
+				ProductID:    productID,
+				SkuID:        skuID,
+				Quantity:     quantity,
+				Selected:     true,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+				ProductName:  snap.ProductName,
+				SpecName:     snap.SpecName,
+				ProductImage: snap.ProductImage,
 			}
 			return s.db.GetDb().WithContext(ctx).Create(&cart).Error
 		}
@@ -349,9 +418,12 @@ func (s *server) upsertCartItem(ctx stdctx.Context, userID, communityID, product
 	return s.db.GetDb().WithContext(ctx).Model(&model.Cart{}).
 		Where("id = ?", cart.ID).
 		Updates(map[string]interface{}{
-			"quantity":   cart.Quantity,
-			"selected":   true,
-			"updated_at": now,
+			"quantity":      cart.Quantity,
+			"selected":      true,
+			"updated_at":    now,
+			"product_name":  snap.ProductName,
+			"spec_name":     snap.SpecName,
+			"product_image": snap.ProductImage,
 		}).Error
 }
 
@@ -393,4 +465,67 @@ func (s *server) updateCartItem(ctx stdctx.Context, userID, skuID int64, quantit
 		return status.Errorf(codes.Internal, "%v", err)
 	}
 	return nil
+}
+
+// ClearInvalidItems 清空当前用户全部失效购物车项
+// 失效判定与 GetCart 一致（复用 buildCartItem），删除后返回剩余购物车项
+//
+// 参数：
+//   - ctx: 上下文
+//   - req: 清空请求
+//
+// 返回值：
+//   - *cart.CartResp: 剩余购物车响应
+//   - error: 错误信息
+func (s *server) ClearInvalidItems(ctx stdctx.Context, req *cart.ClearInvalidItemsReq) (*cart.CartResp, error) {
+	items, err := s.getCartItems(ctx, req.UserId, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	invalidSkuIds := make([]int64, 0, len(items))
+	for _, it := range items {
+		if it.Invalid {
+			invalidSkuIds = append(invalidSkuIds, it.SkuId)
+		}
+	}
+
+	if len(invalidSkuIds) > 0 {
+		if err := s.db.GetDb().WithContext(ctx).
+			Where("user_id = ? AND sku_id IN ?", req.UserId, invalidSkuIds).
+			Delete(&model.Cart{}).Error; err != nil {
+			return nil, status.Errorf(codes.Internal, "%v", err)
+		}
+	}
+
+	remaining, err := s.getCartItems(ctx, req.UserId, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &cart.CartResp{Items: remaining}, nil
+}
+
+// cartSnapshot 购物车商品快照（加购/更新时写入 carts 表）
+type cartSnapshot struct {
+	ProductName  string
+	SpecName     string
+	ProductImage string
+}
+
+// productImageOf 计算商品图片：优先 SKU 规格图，其次商品封面
+//
+// 参数：
+//   - skuInfo: SKU 信息
+//   - productInfo: 商品详情
+//
+// 返回值：
+//   - string: 图片地址
+func productImageOf(skuInfo *product.SkuInfo, productInfo *product.ProductDetail) string {
+	if skuInfo.Image != "" {
+		return skuInfo.Image
+	}
+	if productInfo.Product != nil {
+		return productInfo.Product.CoverImage
+	}
+	return ""
 }

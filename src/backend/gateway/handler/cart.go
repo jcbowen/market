@@ -197,3 +197,18 @@ func (h *CartHandler) SelectAll(c *gin.Context) {
 	}
 	response.Success(c, resp)
 }
+
+// ClearInvalidItems 清空当前用户购物车中的失效商品
+// 参数：
+//   - c: gin 上下文
+func (h *CartHandler) ClearInvalidItems(c *gin.Context) {
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.cartClient.ClearInvalidItems(c.Request.Context(), &cart.ClearInvalidItemsReq{
+		UserId: uc.UserID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}

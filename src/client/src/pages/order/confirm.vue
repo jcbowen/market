@@ -24,10 +24,10 @@
         :key="`${item.product_id}-${item.sku_id}`"
         class="goods-item"
       >
-        <image class="goods-image" :src="item.image || '/static/logo.png'" mode="aspectFill" />
+        <image class="goods-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" />
         <view class="goods-info">
           <text class="goods-name">{{ item.product_name }}</text>
-          <text class="goods-sku">{{ item.sku_name }}</text>
+          <text class="goods-sku">{{ item.spec_name }}</text>
           <view class="goods-bottom">
             <text class="goods-price">{{ formatPrice(item.price) }}</text>
             <text class="goods-quantity">x{{ item.quantity }}</text>
@@ -90,11 +90,22 @@ import { getUserCoupons } from '@/api/marketing'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goAddressList, goOrderDetail, goLogin } from '@/utils/navigate'
-import type { Address, FullReduction, OrderItem, PaymentChannel, UserCoupon } from '@/api/types'
+import type { Address, FullReduction, PaymentChannel, UserCoupon } from '@/api/types'
+
+/** 结算页商品展示结构（购物车/直购中间态，无订单侧 id/total_price 字段） */
+interface SettleItem {
+  product_id: number
+  product_name: string
+  sku_id: number
+  spec_name: string
+  price: number
+  quantity: number
+  product_image: string
+}
 
 const userStore = useUserStore()
 const addresses = ref<Address[]>([])
-const orderItems = ref<OrderItem[]>([])
+const orderItems = ref<SettleItem[]>([])
 const remark = ref('')
 const submitting = ref(false)
 const cartItemIds = ref<number[]>([])
@@ -221,10 +232,10 @@ async function loadSelectedCartItems() {
       product_id: item.product_id,
       product_name: item.product_name,
       sku_id: item.sku_id,
-      sku_name: item.sku_name,
+      spec_name: item.spec_name,
       price: item.price,
       quantity: item.quantity,
-      image: item.image,
+      product_image: item.product_image,
     }))
   } catch {
     orderItems.value = []
@@ -243,10 +254,10 @@ async function loadCartItems() {
       product_id: item.product_id,
       product_name: item.product_name,
       sku_id: item.sku_id,
-      sku_name: item.sku_name,
+      spec_name: item.spec_name,
       price: item.price,
       quantity: item.quantity,
-      image: item.image,
+      product_image: item.product_image,
     }))
   } catch {
     orderItems.value = []
@@ -278,10 +289,10 @@ async function loadDirectItems() {
           product_id: res.data.id,
           product_name: res.data.name,
           sku_id: sku.id,
-          sku_name: sku.name,
+          spec_name: sku.name,
           price: sku.price,
           quantity: quantity.value,
-          image: sku.image || res.data.main_image,
+          product_image: sku.image || res.data.main_image,
         }]
       }
     }

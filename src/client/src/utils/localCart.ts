@@ -20,6 +20,8 @@ export interface LocalCartItem {
   selected: boolean
   stock: number
   min_buy: number
+  /** 商品 SKU 总数，>1 表示多规格（可切换规格） */
+  sku_total: number
 }
 
 /** 本地购物车结构：按社区 ID 分组 */
@@ -106,7 +108,8 @@ export function addLocalCartItem(
     list.push({
       product_id: product.id,
       product_name: product.name,
-      product_image: product.main_image || '/static/logo.png',
+      // 图片优先使用 SKU 规格图，与登录后服务端购物车展示口径一致
+      product_image: sku.image || product.main_image || '/static/logo.png',
       sku_id: sku.id,
       sku_name: sku.name,
       price: sku.price || product.price,
@@ -114,6 +117,8 @@ export function addLocalCartItem(
       selected: true,
       stock: sku.stock,
       min_buy: product.min_buy || 1,
+      // 多规格商品（走 SKU 弹窗）携带完整 skus；列表直加商品无 skus 数据按单规格处理
+      sku_total: product.skus?.length || 1,
     })
   }
   cart[communityId] = list
@@ -192,14 +197,19 @@ export function localCartToCartItems(communityId?: number): CartItem[] {
     product_id: item.product_id,
     product_name: item.product_name,
     sku_id: item.sku_id,
-    sku_name: item.sku_name,
+    spec_name: item.sku_name,
     price: item.price,
     quantity: item.quantity,
     selected: item.selected,
-    image: item.product_image,
+    product_image: item.product_image,
     stock: item.stock,
     community_id: communityId || 0,
     min_buy: item.min_buy,
+    sku_total: item.sku_total || 1,
+    // 本地购物车数据实时，不做失效判定（登录后以服务端为准）
+    invalid: false,
+    invalid_reason: '',
+    stock_hint: '',
   }))
 }
 

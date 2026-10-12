@@ -266,7 +266,7 @@ async function load() {
       lines.value = (orderRes.data.items || []).map((item) => ({
         order_item_id: item.id,
         product_name: item.product_name,
-        spec_name: item.sku_name,
+        spec_name: item.spec_name,
         max_qty: item.quantity,
         qty: item.quantity,
         checked: true,

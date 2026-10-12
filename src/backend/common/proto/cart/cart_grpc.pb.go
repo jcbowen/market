@@ -20,13 +20,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CartService_GetCart_FullMethodName          = "/cart.CartService/GetCart"
-	CartService_AddItem_FullMethodName          = "/cart.CartService/AddItem"
-	CartService_UpdateItem_FullMethodName       = "/cart.CartService/UpdateItem"
-	CartService_RemoveItem_FullMethodName       = "/cart.CartService/RemoveItem"
-	CartService_SelectAll_FullMethodName        = "/cart.CartService/SelectAll"
-	CartService_ClearCart_FullMethodName        = "/cart.CartService/ClearCart"
-	CartService_GetSelectedItems_FullMethodName = "/cart.CartService/GetSelectedItems"
+	CartService_GetCart_FullMethodName           = "/cart.CartService/GetCart"
+	CartService_AddItem_FullMethodName           = "/cart.CartService/AddItem"
+	CartService_UpdateItem_FullMethodName        = "/cart.CartService/UpdateItem"
+	CartService_RemoveItem_FullMethodName        = "/cart.CartService/RemoveItem"
+	CartService_SelectAll_FullMethodName         = "/cart.CartService/SelectAll"
+	CartService_ClearCart_FullMethodName         = "/cart.CartService/ClearCart"
+	CartService_GetSelectedItems_FullMethodName  = "/cart.CartService/GetSelectedItems"
+	CartService_ClearInvalidItems_FullMethodName = "/cart.CartService/ClearInvalidItems"
 )
 
 // CartServiceClient is the client API for CartService service.
@@ -40,6 +41,7 @@ type CartServiceClient interface {
 	SelectAll(ctx context.Context, in *SelectAllReq, opts ...grpc.CallOption) (*CartResp, error)
 	ClearCart(ctx context.Context, in *ClearCartReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	GetSelectedItems(ctx context.Context, in *GetSelectedItemsReq, opts ...grpc.CallOption) (*CartResp, error)
+	ClearInvalidItems(ctx context.Context, in *ClearInvalidItemsReq, opts ...grpc.CallOption) (*CartResp, error)
 }
 
 type cartServiceClient struct {
@@ -120,6 +122,16 @@ func (c *cartServiceClient) GetSelectedItems(ctx context.Context, in *GetSelecte
 	return out, nil
 }
 
+func (c *cartServiceClient) ClearInvalidItems(ctx context.Context, in *ClearInvalidItemsReq, opts ...grpc.CallOption) (*CartResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CartResp)
+	err := c.cc.Invoke(ctx, CartService_ClearInvalidItems_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CartServiceServer is the server API for CartService service.
 // All implementations must embed UnimplementedCartServiceServer
 // for forward compatibility.
@@ -131,6 +143,7 @@ type CartServiceServer interface {
 	SelectAll(context.Context, *SelectAllReq) (*CartResp, error)
 	ClearCart(context.Context, *ClearCartReq) (*common.CommonResponse, error)
 	GetSelectedItems(context.Context, *GetSelectedItemsReq) (*CartResp, error)
+	ClearInvalidItems(context.Context, *ClearInvalidItemsReq) (*CartResp, error)
 	mustEmbedUnimplementedCartServiceServer()
 }
 
@@ -161,6 +174,9 @@ func (UnimplementedCartServiceServer) ClearCart(context.Context, *ClearCartReq) 
 }
 func (UnimplementedCartServiceServer) GetSelectedItems(context.Context, *GetSelectedItemsReq) (*CartResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSelectedItems not implemented")
+}
+func (UnimplementedCartServiceServer) ClearInvalidItems(context.Context, *ClearInvalidItemsReq) (*CartResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClearInvalidItems not implemented")
 }
 func (UnimplementedCartServiceServer) mustEmbedUnimplementedCartServiceServer() {}
 func (UnimplementedCartServiceServer) testEmbeddedByValue()                     {}
@@ -309,6 +325,24 @@ func _CartService_GetSelectedItems_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CartService_ClearInvalidItems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClearInvalidItemsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CartServiceServer).ClearInvalidItems(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CartService_ClearInvalidItems_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CartServiceServer).ClearInvalidItems(ctx, req.(*ClearInvalidItemsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CartService_ServiceDesc is the grpc.ServiceDesc for CartService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -343,6 +377,10 @@ var CartService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSelectedItems",
 			Handler:    _CartService_GetSelectedItems_Handler,
+		},
+		{
+			MethodName: "ClearInvalidItems",
+			Handler:    _CartService_ClearInvalidItems_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

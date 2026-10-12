@@ -21,10 +21,10 @@
         :key="`${item.product_id}-${item.sku_id}`"
         class="goods-item"
       >
-        <image class="goods-image" :src="item.image || '/static/logo.png'" mode="aspectFill" />
+        <image class="goods-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" />
         <view class="goods-info">
           <text class="goods-name">{{ item.product_name }}</text>
-          <text class="goods-sku">{{ item.sku_name }}</text>
+          <text class="goods-sku">{{ item.spec_name }}</text>
           <view class="goods-bottom">
             <text class="goods-price">{{ formatPrice(item.price) }}</text>
             <text class="goods-quantity">x{{ item.quantity }}</text>

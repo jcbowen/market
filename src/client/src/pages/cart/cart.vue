@@ -17,6 +17,12 @@
     </view>
 
     <view v-else class="cart-content">
+      <!-- 失效商品汇总条 -->
+      <view v-if="invalidItems.length" class="invalid-bar">
+        <text class="invalid-bar-text">失效商品 {{ invalidItems.length }} 件</text>
+        <text class="invalid-bar-clear" @click="onClearInvalid">清空失效商品</text>
+      </view>
+
       <!-- 按社区分组展示 -->
       <view v-for="group in groupedItems" :key="group.community_id" class="community-group">
         <view class="community-header">
@@ -32,19 +38,26 @@
             :options="swipeOptions"
             @click="onSwipeClick(item.id)"
           >
-            <view class="cart-item">
+            <view class="cart-item" :class="{ 'cart-item-invalid': item.invalid }">
               <u-checkbox
                 v-model="item.selected"
                 shape="circle"
+                :disabled="item.invalid"
                 @change="onSelect(item)"
               />
-              <image class="item-image" :src="item.image || '/static/logo.png'" mode="aspectFill" />
+              <image class="item-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" />
               <view class="item-info">
                 <text class="item-name">{{ item.product_name }}</text>
-                <text class="item-sku">{{ item.sku_name }}</text>
+                <text v-if="item.invalid" class="item-invalid-tag">{{ item.invalid_reason }}</text>
+                <view v-else-if="item.sku_total > 1" class="item-sku-wrap" @click.stop="onSwitchSku(item)">
+                  <text class="item-sku">{{ item.spec_name }}</text>
+                  <u-icon name="arrow-down-fill" size="10" color="#999999" />
+                </view>
+                <view v-if="item.stock_hint" class="item-stock-hint">{{ item.stock_hint }}</view>
                 <view class="item-bottom">
                   <text class="item-price">{{ formatPrice(item.price) }}</text>
                   <u-number-box
+                    v-if="!item.invalid"
                     v-model="item.quantity"
                     :min="item.min_buy || 1"
                     :max="item.stock"
@@ -81,6 +94,15 @@
         </view>
       </view>
     </view>
+
+    <!-- 切换规格弹窗（预选当前规格，确认后替换购物车项） -->
+    <sku-selector
+      v-model:show="showSkuSelector"
+      :product="skuSelectorProduct"
+      :initial-sku-id="switchItem?.sku_id || 0"
+      :initial-quantity="switchItem?.quantity || 0"
+      @confirm="onSkuConfirm"
+    />
   </view>
 </template>
 
@@ -90,10 +112,11 @@ import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
 import { getCommunityList } from '@/api/user'
-import { getCart, updateCartItem, removeCartItem, selectAllCartItems } from '@/api/cart'
+import { getCart, updateCartItem, removeCartItem, selectAllCartItems, addCartItem, clearInvalidItems } from '@/api/cart'
 import { formatPrice } from '@/utils/format'
 import { goHome, goOrderConfirm, goLogin } from '@/utils/navigate'
-import type { CartItem, Community } from '@/api/types'
+import SkuSelector from '@/components/sku-selector.vue'
+import type { CartItem, Community, Product, Sku } from '@/api/types'
 
 const userStore = useUserStore()
 const cartStore = useCartStore()
@@ -102,12 +125,28 @@ const items = ref<CartItem[]>([])
 const communities = ref<Community[]>([])
 const totalAmount = ref(0)
 
+/** 切换规格：待替换的购物车项与弹窗状态 */
+const switchItem = ref<CartItem | null>(null)
+const showSkuSelector = ref(false)
+/** 切换规格弹窗商品（仅传 ID/名称，详情由组件内兜底加载） */
+const skuSelectorProduct = computed(() =>
+  switchItem.value
+    ? { id: switchItem.value.product_id, name: switchItem.value.product_name }
+    : null,
+)
+
 const swipeOptions = ref([
   {
     text: '删除',
     style: { backgroundColor: '#ff4d4f' },
   },
 ])
+
+/** 失效商品列表（商品下架/删除、SKU 删除、库存为 0） */
+const invalidItems = computed(() => items.value.filter((item) => item.invalid))
+
+/** 有效商品列表（全选与合计口径） */
+const validItems = computed(() => items.value.filter((item) => !item.invalid))
 
 /** 社区 ID -> 社区名称映射 */
 const communityMap = computed(() => {
@@ -130,7 +169,8 @@ const groupedItems = computed(() => {
   })
   return Object.keys(groups).map((cid) => {
     const list = groups[Number(cid)]
-    const allSelected = list.length > 0 && list.every((item) => item.selected)
+    const validList = list.filter((item) => !item.invalid)
+    const allSelected = validList.length > 0 && validList.every((item) => item.selected)
     return {
       community_id: Number(cid),
       community_name: communityMap.value[Number(cid)] || `社区 ${cid}`,
@@ -141,11 +181,11 @@ const groupedItems = computed(() => {
 })
 
 const selectedIds = computed(() =>
-  items.value.filter((item) => item.selected).map((item) => item.id),
+  validItems.value.filter((item) => item.selected).map((item) => item.id),
 )
 
 const isAllSelected = computed({
-  get: () => items.value.length > 0 && items.value.every((item) => item.selected),
+  get: () => validItems.value.length > 0 && validItems.value.every((item) => item.selected),
   set: (val: boolean) => toggleSelectAll(val),
 })
 
@@ -251,6 +291,51 @@ async function onSwipeClick(id: number) {
 }
 
 /**
+ * 点击规格名，打开切换规格弹窗
+ * 预选当前 SKU、数量保持购物车现值（同 SKU 确认等价于数量不变）
+ * @param item 购物车项
+ */
+function onSwitchSku(item: CartItem) {
+  switchItem.value = item
+  showSkuSelector.value = true
+}
+
+/**
+ * 切换规格确认回调：删旧购物车项 + 按新 SKU 重新加购
+ * 服务端同 SKU 已存在时自动累加合并；
+ * 无论成功与否最后都刷新购物车列表，保证与服务端状态一致
+ * @param product 组件内兜底加载后的完整商品对象
+ * @param sku 切换后的 SKU
+ * @param quantity 数量
+ */
+async function onSkuConfirm({ product, sku, quantity }: { product: Product; sku: Sku; quantity: number }) {
+  const item = switchItem.value
+  if (!item) return
+  try {
+    await removeCartItem(item.id)
+    await addCartItem(product.id, sku.id, quantity, userStore.communityInfo?.id)
+    showSkuSelector.value = false
+  } catch {
+    // 请求拦截器已统一提示
+  } finally {
+    loadCart()
+  }
+}
+
+/**
+ * 清空失效商品
+ * 成功后刷新购物车列表，失败由请求拦截器统一提示
+ */
+async function onClearInvalid() {
+  try {
+    await clearInvalidItems()
+    uni.showToast({ title: '已清空失效商品', icon: 'success' })
+  } finally {
+    loadCart()
+  }
+}
+
+/**
  * 全选/取消全选
  * @param selected 是否选中
  */
@@ -276,7 +361,7 @@ function onSettlement() {
   }
 
   const currentCommunityId = userStore.communityInfo?.id || 0
-  const selectedItems = items.value.filter((item) => item.selected)
+  const selectedItems = validItems.value.filter((item) => item.selected)
   const currentCommunityItems = selectedItems.filter(
     (item) => item.community_id === currentCommunityId,
   )
@@ -381,6 +466,14 @@ function onSettlement() {
   white-space: nowrap;
 }
 
+.item-sku-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  align-self: flex-start;
+  margin-top: 6rpx;
+}
+
 .item-sku {
   font-size: 24rpx;
   color: #999999;
@@ -448,5 +541,55 @@ function onSettlement() {
 
 .settlement-btn .u-button {
   width: 100%;
+}
+
+/* 失效商品汇总条 */
+.invalid-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 20rpx 20rpx 0;
+  padding: 16rpx 24rpx;
+  border-radius: 12rpx;
+  background-color: #fff7e6;
+}
+
+.invalid-bar-text {
+  font-size: 24rpx;
+  color: #999999;
+}
+
+.invalid-bar-clear {
+  font-size: 24rpx;
+  color: #07c160;
+}
+
+/* 失效商品置灰展示 */
+.cart-item-invalid .item-image,
+.cart-item-invalid .item-name,
+.cart-item-invalid .item-price {
+  opacity: 0.4;
+}
+
+.cart-item-invalid .item-info {
+  height: auto;
+  min-height: 160rpx;
+}
+
+.item-invalid-tag {
+  align-self: flex-start;
+  margin-top: 6rpx;
+  padding: 2rpx 12rpx;
+  border: 1rpx solid #dddddd;
+  border-radius: 6rpx;
+  font-size: 20rpx;
+  color: #999999;
+  background-color: #f7f7f7;
+}
+
+.item-stock-hint {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: #ff9800;
 }
 </style>

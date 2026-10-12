@@ -101,15 +101,23 @@ export interface CartItem {
   product_id: number
   product_name: string
   sku_id: number
-  sku_name: string
+  spec_name: string
   price: number
   quantity: number
   selected: boolean
-  image: string
+  product_image: string
   stock: number
   community_id: number
   community_name?: string
   min_buy: number
+  /** 商品 SKU 总数，>1 表示多规格（可切换规格） */
+  sku_total: number
+  /** 是否失效（商品下架/删除、SKU 删除、库存为 0） */
+  invalid: boolean
+  /** 失效原因文案，未失效为空 */
+  invalid_reason: string
+  /** 库存紧张提示文案（如"仅剩 5 件"），库存充足为空 */
+  stock_hint: string
 }
 
 /** 订单商品 */
@@ -118,11 +126,11 @@ export interface OrderItem {
   product_id: number
   product_name: string
   sku_id: number
-  sku_name: string
+  spec_name: string
   price: number
   quantity: number
   total_price: number
-  image: string
+  product_image: string
 }
 
 /** 订单 */

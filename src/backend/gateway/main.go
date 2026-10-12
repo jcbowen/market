@@ -169,6 +169,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.PUT("/cart/items/:id", cartHandler.UpdateItem)
 			authUser.DELETE("/cart/items/:id", cartHandler.RemoveItem)
 			authUser.POST("/cart/select", cartHandler.SelectAll)
+			authUser.DELETE("/cart/invalid", cartHandler.ClearInvalidItems)
 
 			authUser.POST("/orders", orderHandler.CreateOrder)
 			authUser.GET("/orders", orderHandler.ListOrders)

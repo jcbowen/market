@@ -17,6 +17,11 @@ type Cart struct {
 	Selected    bool   `gorm:"column:selected;type:tinyint(1);default:1" json:"selected"`
 	CreatedAt   string `gorm:"column:created_at;type:datetime" json:"created_at"`
 	UpdatedAt   string `gorm:"column:updated_at;type:datetime" json:"updated_at"`
+
+	// 商品快照（加购时写入）：SKU/商品被删除后仍可展示失效商品信息
+	ProductName  string `gorm:"column:product_name;type:varchar(255);default:''" json:"product_name"`
+	SpecName     string `gorm:"column:spec_name;type:varchar(255);default:''" json:"spec_name"`
+	ProductImage string `gorm:"column:product_image;type:varchar(500);default:''" json:"product_image"`
 }
 
 // TableName 返回购物车表名

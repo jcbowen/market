@@ -410,6 +410,50 @@ func (x *GetSelectedItemsReq) GetUserId() int64 {
 	return 0
 }
 
+type ClearInvalidItemsReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClearInvalidItemsReq) Reset() {
+	*x = ClearInvalidItemsReq{}
+	mi := &file_cart_cart_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClearInvalidItemsReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClearInvalidItemsReq) ProtoMessage() {}
+
+func (x *ClearInvalidItemsReq) ProtoReflect() protoreflect.Message {
+	mi := &file_cart_cart_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClearInvalidItemsReq.ProtoReflect.Descriptor instead.
+func (*ClearInvalidItemsReq) Descriptor() ([]byte, []int) {
+	return file_cart_cart_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ClearInvalidItemsReq) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
 type CartItem struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -424,13 +468,17 @@ type CartItem struct {
 	Selected      bool                   `protobuf:"varint,10,opt,name=selected,proto3" json:"selected,omitempty"`
 	CommunityId   int64                  `protobuf:"varint,11,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	MinBuy        int32                  `protobuf:"varint,12,opt,name=min_buy,json=minBuy,proto3" json:"min_buy,omitempty"`
+	SkuTotal      int32                  `protobuf:"varint,13,opt,name=sku_total,json=skuTotal,proto3" json:"sku_total,omitempty"`               // 商品 SKU 总数（前端据此区分单/多规格，仅多规格展示切换入口）
+	Invalid       bool                   `protobuf:"varint,14,opt,name=invalid,proto3" json:"invalid,omitempty"`                                 // 是否失效（商品下架/删除、SKU 删除、库存为 0）
+	InvalidReason string                 `protobuf:"bytes,15,opt,name=invalid_reason,json=invalidReason,proto3" json:"invalid_reason,omitempty"` // 失效原因文案（如"商品已下架"），未失效为空
+	StockHint     string                 `protobuf:"bytes,16,opt,name=stock_hint,json=stockHint,proto3" json:"stock_hint,omitempty"`             // 库存紧张提示文案（如"仅剩 5 件"），库存充足为空
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CartItem) Reset() {
 	*x = CartItem{}
-	mi := &file_cart_cart_proto_msgTypes[7]
+	mi := &file_cart_cart_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -442,7 +490,7 @@ func (x *CartItem) String() string {
 func (*CartItem) ProtoMessage() {}
 
 func (x *CartItem) ProtoReflect() protoreflect.Message {
-	mi := &file_cart_cart_proto_msgTypes[7]
+	mi := &file_cart_cart_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -455,7 +503,7 @@ func (x *CartItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CartItem.ProtoReflect.Descriptor instead.
 func (*CartItem) Descriptor() ([]byte, []int) {
-	return file_cart_cart_proto_rawDescGZIP(), []int{7}
+	return file_cart_cart_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CartItem) GetId() int64 {
@@ -542,6 +590,34 @@ func (x *CartItem) GetMinBuy() int32 {
 	return 0
 }
 
+func (x *CartItem) GetSkuTotal() int32 {
+	if x != nil {
+		return x.SkuTotal
+	}
+	return 0
+}
+
+func (x *CartItem) GetInvalid() bool {
+	if x != nil {
+		return x.Invalid
+	}
+	return false
+}
+
+func (x *CartItem) GetInvalidReason() string {
+	if x != nil {
+		return x.InvalidReason
+	}
+	return ""
+}
+
+func (x *CartItem) GetStockHint() string {
+	if x != nil {
+		return x.StockHint
+	}
+	return ""
+}
+
 type CartResp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Items         []*CartItem            `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
@@ -551,7 +627,7 @@ type CartResp struct {
 
 func (x *CartResp) Reset() {
 	*x = CartResp{}
-	mi := &file_cart_cart_proto_msgTypes[8]
+	mi := &file_cart_cart_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -563,7 +639,7 @@ func (x *CartResp) String() string {
 func (*CartResp) ProtoMessage() {}
 
 func (x *CartResp) ProtoReflect() protoreflect.Message {
-	mi := &file_cart_cart_proto_msgTypes[8]
+	mi := &file_cart_cart_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -576,7 +652,7 @@ func (x *CartResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CartResp.ProtoReflect.Descriptor instead.
 func (*CartResp) Descriptor() ([]byte, []int) {
-	return file_cart_cart_proto_rawDescGZIP(), []int{8}
+	return file_cart_cart_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CartResp) GetItems() []*CartItem {
@@ -617,7 +693,9 @@ const file_cart_cart_proto_rawDesc = "" +
 	"\fClearCartReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\".\n" +
 	"\x13GetSelectedItemsReq\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\"\xd5\x02\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\"/\n" +
+	"\x14ClearInvalidItemsReq\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\"\xd2\x03\n" +
 	"\bCartItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +
@@ -632,9 +710,14 @@ const file_cart_cart_proto_rawDesc = "" +
 	"\bselected\x18\n" +
 	" \x01(\bR\bselected\x12!\n" +
 	"\fcommunity_id\x18\v \x01(\x03R\vcommunityId\x12\x17\n" +
-	"\amin_buy\x18\f \x01(\x05R\x06minBuy\"0\n" +
+	"\amin_buy\x18\f \x01(\x05R\x06minBuy\x12\x1b\n" +
+	"\tsku_total\x18\r \x01(\x05R\bskuTotal\x12\x18\n" +
+	"\ainvalid\x18\x0e \x01(\bR\ainvalid\x12%\n" +
+	"\x0einvalid_reason\x18\x0f \x01(\tR\rinvalidReason\x12\x1d\n" +
+	"\n" +
+	"stock_hint\x18\x10 \x01(\tR\tstockHint\"0\n" +
 	"\bCartResp\x12$\n" +
-	"\x05items\x18\x01 \x03(\v2\x0e.cart.CartItemR\x05items2\xf6\x02\n" +
+	"\x05items\x18\x01 \x03(\v2\x0e.cart.CartItemR\x05items2\xb7\x03\n" +
 	"\vCartService\x12+\n" +
 	"\aGetCart\x12\x10.cart.GetCartReq\x1a\x0e.cart.CartResp\x12+\n" +
 	"\aAddItem\x12\x10.cart.AddItemReq\x1a\x0e.cart.CartResp\x121\n" +
@@ -644,7 +727,8 @@ const file_cart_cart_proto_rawDesc = "" +
 	"RemoveItem\x12\x13.cart.RemoveItemReq\x1a\x0e.cart.CartResp\x12/\n" +
 	"\tSelectAll\x12\x12.cart.SelectAllReq\x1a\x0e.cart.CartResp\x127\n" +
 	"\tClearCart\x12\x12.cart.ClearCartReq\x1a\x16.common.CommonResponse\x12=\n" +
-	"\x10GetSelectedItems\x12\x19.cart.GetSelectedItemsReq\x1a\x0e.cart.CartRespB9Z7github.com/jcbowen/market/src/backend/common/proto/cartb\x06proto3"
+	"\x10GetSelectedItems\x12\x19.cart.GetSelectedItemsReq\x1a\x0e.cart.CartResp\x12?\n" +
+	"\x11ClearInvalidItems\x12\x1a.cart.ClearInvalidItemsReq\x1a\x0e.cart.CartRespB9Z7github.com/jcbowen/market/src/backend/common/proto/cartb\x06proto3"
 
 var (
 	file_cart_cart_proto_rawDescOnce sync.Once
@@ -658,7 +742,7 @@ func file_cart_cart_proto_rawDescGZIP() []byte {
 	return file_cart_cart_proto_rawDescData
 }
 
-var file_cart_cart_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_cart_cart_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_cart_cart_proto_goTypes = []any{
 	(*GetCartReq)(nil),            // 0: cart.GetCartReq
 	(*AddItemReq)(nil),            // 1: cart.AddItemReq
@@ -667,31 +751,34 @@ var file_cart_cart_proto_goTypes = []any{
 	(*SelectAllReq)(nil),          // 4: cart.SelectAllReq
 	(*ClearCartReq)(nil),          // 5: cart.ClearCartReq
 	(*GetSelectedItemsReq)(nil),   // 6: cart.GetSelectedItemsReq
-	(*CartItem)(nil),              // 7: cart.CartItem
-	(*CartResp)(nil),              // 8: cart.CartResp
-	(*common.CommonResponse)(nil), // 9: common.CommonResponse
+	(*ClearInvalidItemsReq)(nil),  // 7: cart.ClearInvalidItemsReq
+	(*CartItem)(nil),              // 8: cart.CartItem
+	(*CartResp)(nil),              // 9: cart.CartResp
+	(*common.CommonResponse)(nil), // 10: common.CommonResponse
 }
 var file_cart_cart_proto_depIdxs = []int32{
-	7, // 0: cart.CartResp.items:type_name -> cart.CartItem
-	0, // 1: cart.CartService.GetCart:input_type -> cart.GetCartReq
-	1, // 2: cart.CartService.AddItem:input_type -> cart.AddItemReq
-	2, // 3: cart.CartService.UpdateItem:input_type -> cart.UpdateItemReq
-	3, // 4: cart.CartService.RemoveItem:input_type -> cart.RemoveItemReq
-	4, // 5: cart.CartService.SelectAll:input_type -> cart.SelectAllReq
-	5, // 6: cart.CartService.ClearCart:input_type -> cart.ClearCartReq
-	6, // 7: cart.CartService.GetSelectedItems:input_type -> cart.GetSelectedItemsReq
-	8, // 8: cart.CartService.GetCart:output_type -> cart.CartResp
-	8, // 9: cart.CartService.AddItem:output_type -> cart.CartResp
-	8, // 10: cart.CartService.UpdateItem:output_type -> cart.CartResp
-	8, // 11: cart.CartService.RemoveItem:output_type -> cart.CartResp
-	8, // 12: cart.CartService.SelectAll:output_type -> cart.CartResp
-	9, // 13: cart.CartService.ClearCart:output_type -> common.CommonResponse
-	8, // 14: cart.CartService.GetSelectedItems:output_type -> cart.CartResp
-	8, // [8:15] is the sub-list for method output_type
-	1, // [1:8] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	8,  // 0: cart.CartResp.items:type_name -> cart.CartItem
+	0,  // 1: cart.CartService.GetCart:input_type -> cart.GetCartReq
+	1,  // 2: cart.CartService.AddItem:input_type -> cart.AddItemReq
+	2,  // 3: cart.CartService.UpdateItem:input_type -> cart.UpdateItemReq
+	3,  // 4: cart.CartService.RemoveItem:input_type -> cart.RemoveItemReq
+	4,  // 5: cart.CartService.SelectAll:input_type -> cart.SelectAllReq
+	5,  // 6: cart.CartService.ClearCart:input_type -> cart.ClearCartReq
+	6,  // 7: cart.CartService.GetSelectedItems:input_type -> cart.GetSelectedItemsReq
+	7,  // 8: cart.CartService.ClearInvalidItems:input_type -> cart.ClearInvalidItemsReq
+	9,  // 9: cart.CartService.GetCart:output_type -> cart.CartResp
+	9,  // 10: cart.CartService.AddItem:output_type -> cart.CartResp
+	9,  // 11: cart.CartService.UpdateItem:output_type -> cart.CartResp
+	9,  // 12: cart.CartService.RemoveItem:output_type -> cart.CartResp
+	9,  // 13: cart.CartService.SelectAll:output_type -> cart.CartResp
+	10, // 14: cart.CartService.ClearCart:output_type -> common.CommonResponse
+	9,  // 15: cart.CartService.GetSelectedItems:output_type -> cart.CartResp
+	9,  // 16: cart.CartService.ClearInvalidItems:output_type -> cart.CartResp
+	9,  // [9:17] is the sub-list for method output_type
+	1,  // [1:9] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_cart_cart_proto_init() }
@@ -705,7 +792,7 @@ func file_cart_cart_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cart_cart_proto_rawDesc), len(file_cart_cart_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

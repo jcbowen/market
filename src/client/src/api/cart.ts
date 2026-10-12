@@ -66,3 +66,11 @@ export function removeCartItem(id: number) {
 export function selectAllCartItems(selected: boolean) {
   return post('/cart/select', { selected })
 }
+
+/**
+ * 清空当前用户购物车中的失效商品
+ * @returns 清空后的剩余购物车项列表
+ */
+export function clearInvalidItems() {
+  return del<CartItem[]>('/cart/invalid')
+}

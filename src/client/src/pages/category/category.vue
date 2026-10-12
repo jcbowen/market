@@ -131,68 +131,12 @@
       </view>
     </view>
 
-    <!-- 多规格商品弹窗 -->
-    <u-popup :show="showSkuPopup" mode="bottom" @close="closeSkuPopup">
-      <view class="sku-popup">
-        <view class="sku-header">
-          <image class="sku-image" :src="activeSkuImage" mode="aspectFill" />
-          <view class="sku-info">
-            <text class="sku-name">{{ currentProduct.name }}</text>
-            <text class="sku-price">{{ formatPrice(activeSkuPrice) }}</text>
-            <text class="sku-stock">库存 {{ activeSkuStock }}</text>
-          </view>
-          <u-icon name="close" size="20" color="#999999" @click="closeSkuPopup" />
-        </view>
-
-        <view class="sku-section">
-          <text class="section-title">规格</text>
-          <view v-if="skuLoading" class="sku-loading">规格加载中...</view>
-          <template v-else>
-            <!-- 多规格：按规格树渲染选择器（与商品详情页一致） -->
-            <view v-for="spec in currentProduct.specs" :key="spec.id" class="spec-group">
-              <text class="spec-group-name">{{ spec.name }}</text>
-              <view class="sku-options">
-                <text
-                  v-for="value in spec.values"
-                  :key="value.id"
-                  class="sku-option"
-                  :class="{ active: selectedValueIds[spec.id] === value.id }"
-                  @click="selectSpecValue(spec.id, value.id)"
-                >
-                  {{ value.name }}
-                </text>
-              </view>
-            </view>
-            <!-- 无规格树数据时回退为 SKU 平铺选择 -->
-            <view v-if="!currentProduct.specs.length" class="sku-options">
-              <text
-                v-for="sku in currentProduct.skus"
-                :key="sku.id"
-                class="sku-option"
-                :class="{ active: selectedSku.id === sku.id, disabled: sku.stock <= 0 }"
-                @click="selectSku(sku)"
-              >
-                {{ sku.name }}
-              </text>
-            </view>
-          </template>
-        </view>
-
-        <view class="sku-section quantity-section">
-          <text class="section-title">数量</text>
-          <u-number-box
-            v-model="popupQuantity"
-            :min="currentProduct.min_buy || 1"
-            :max="selectedSku.stock || currentProduct.stock"
-            integer
-          />
-        </view>
-
-        <view class="sku-confirm">
-          <u-button type="success" text="加入购物车" @click="confirmAddToCart" />
-        </view>
-      </view>
-    </u-popup>
+    <!-- 多规格商品弹窗（公共规格选择组件） -->
+    <sku-selector
+      v-model:show="showSkuPopup"
+      :product="currentProduct"
+      @confirm="onSkuConfirm"
+    />
 
     <!-- 当前社区购物车弹窗 -->
     <u-popup :show="showCartPopup" mode="bottom" @close="closeCartPopup">
@@ -208,15 +152,19 @@
             v-for="item in cartItems"
             :key="item.sku_id"
             class="cart-popup-item"
+            :class="{ 'cart-popup-item-invalid': item.invalid }"
           >
-            <image class="cart-popup-image" :src="item.image || '/static/logo.png'" mode="aspectFill" />
+            <image class="cart-popup-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" />
             <view class="cart-popup-info">
               <text class="cart-popup-name">{{ item.product_name }}</text>
-              <text class="cart-popup-sku">{{ item.sku_name }}</text>
+              <text v-if="item.invalid" class="cart-popup-invalid-tag">{{ item.invalid_reason }}</text>
+              <text v-else-if="item.sku_total > 1" class="cart-popup-sku" @click="onCartSkuClick(item)">{{ item.spec_name }}</text>
+              <text v-if="item.stock_hint" class="cart-popup-stock-hint">{{ item.stock_hint }}</text>
               <text class="cart-popup-price">{{ formatPrice(item.price) }}</text>
             </view>
             <view class="cart-popup-action">
               <u-number-box
+                v-if="!item.invalid"
                 :modelValue="item.quantity"
                 :min="item.min_buy || 1"
                 :max="item.stock"
@@ -239,6 +187,15 @@
         </view>
       </view>
     </u-popup>
+
+    <!-- 购物车切换规格弹窗（预选当前规格，确认后替换购物车项） -->
+    <sku-selector
+      v-model:show="showCartSkuPopup"
+      :product="cartSkuProduct"
+      :initial-sku-id="cartSwitchItem?.sku_id || 0"
+      :initial-quantity="cartSwitchItem?.quantity || 0"
+      @confirm="onCartSkuConfirm"
+    />
   </view>
 </template>
 
@@ -253,6 +210,7 @@ import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart
 import { getCommunityList } from '@/api/user'
 import { formatPrice } from '@/utils/format'
 import { goOrderConfirm, goLogin } from '@/utils/navigate'
+import SkuSelector from '@/components/sku-selector.vue'
 import {
   addLocalCartItem,
   updateLocalCartItem,
@@ -301,78 +259,17 @@ const cartSelectedCount = ref(0)
 
 const showSkuPopup = ref(false)
 const showCartPopup = ref(false)
-const currentProduct = ref<Product>({
-  id: 0,
-  name: '',
-  main_image: '',
-  images: [],
-  price: 0,
-  original_price: 0,
-  stock: 0,
-  category_id: 0,
-  category_name: '',
-  description: '',
-  skus: [],
-  specs: [],
-  sales: 0,
-  is_multi_spec: false,
-  min_buy: 1,
-})
-const selectedSku = ref<Sku>({
-  id: 0,
-  product_id: 0,
-  name: '',
-  price: 0,
-  original_price: 0,
-  stock: 0,
-  image: '',
-  spec_name: '',
-  spec_json: '{}',
-  spec_value_ids: '',
-})
-/** 多规格已选值：规格 ID -> 规格值 ID */
-const selectedValueIds = ref<Record<number, number>>({})
-/** 规格数据兜底加载中 */
-const skuLoading = ref(false)
-const popupQuantity = ref(1)
+/** 当前加购弹窗商品（分类列表项，SKU/规格数据由组件内兜底加载） */
+const currentProduct = ref<Partial<Product> & { id: number } | null>(null)
 
-/** 已选规格组合键（规格值 ID 升序逗号串，与后端 spec_value_ids 一致） */
-const selectedKey = computed(() =>
-  Object.values(selectedValueIds.value)
-    .sort((a, b) => a - b)
-    .join(',')
-)
-
-/** 规格是否已全部选完 */
-const allSelected = computed(() =>
-  currentProduct.value.specs.length > 0 &&
-  currentProduct.value.specs.every((s) => selectedValueIds.value[s.id])
-)
-
-/**
- * 当前匹配的 SKU
- * 规格树模式下需全部选完才能按组合键匹配；平铺回退模式使用手动选择的 selectedSku
- */
-const matchedSku = computed<Sku | null>(() => {
-  const skus = currentProduct.value.skus
-  if (!skus.length) return null
-  if (!currentProduct.value.specs.length) return null
-  if (!allSelected.value) return null
-  return skus.find((s) => s.spec_value_ids === selectedKey.value) || null
-})
-
-/** 弹窗当前生效 SKU：规格树匹配结果优先，其次平铺模式手动选中项 */
-const activeSku = computed<Sku | null>(() => matchedSku.value || (selectedSku.value.id ? selectedSku.value : null))
-
-// 注意用三目而非 ||：SKU 价格/库存为 0 时是有效值，不应回退到商品汇总字段
-const activeSkuPrice = computed(() =>
-  activeSku.value ? activeSku.value.price : currentProduct.value.price
-)
-const activeSkuStock = computed(() =>
-  activeSku.value ? activeSku.value.stock : currentProduct.value.stock
-)
-const activeSkuImage = computed(
-  () => activeSku.value?.image || currentProduct.value.main_image || '/static/logo.png'
+/** 购物车切换规格：待替换的购物车项与弹窗状态 */
+const cartSwitchItem = ref<CartItem | null>(null)
+const showCartSkuPopup = ref(false)
+/** 切换规格弹窗商品（仅传 ID/名称，详情由组件内兜底加载） */
+const cartSkuProduct = computed(() =>
+  cartSwitchItem.value
+    ? { id: cartSwitchItem.value.product_id, name: cartSwitchItem.value.product_name }
+    : null,
 )
 
 onLoad((query) => {
@@ -516,10 +413,11 @@ async function loadAllCategoryProducts() {
 /**
  * 选中左侧分类
  * 右侧列表平滑滚动到对应分类分区，并高亮左侧菜单
+ * 点击当前已高亮分类同样触发滚动（用于滚回该分区顶部）
  * @param id 分类 ID
  */
 function selectCategory(id: number) {
-  if (!id || activeCategoryId.value === id) return
+  if (!id) return
   activeCategoryId.value = id
   leftScrollIntoView.value = `menu-${id}`
   scrollRightToCategory(id)
@@ -527,12 +425,16 @@ function selectCategory(id: number) {
 
 /**
  * 将右侧列表滚动到指定分类分区
- * 优先使用 scroll-into-view，同时计算 scrollTop 作为 H5 兜底
+ * 非 H5 平台使用 scroll-into-view；H5 平台仅用 scrollTop 驱动：
+ * scroll-into-view 与 scroll-top 双机制同时生效会在滚动动画期间互相覆盖，
+ * 导致滚动停在途中（实测点击分类后 scrollTop 停在 112/536）
  * @param id 分类 ID
  */
 function scrollRightToCategory(id: number) {
   isClickScrolling = true
+  // #ifndef H5
   rightScrollIntoView.value = `category-${id}`
+  // #endif
   if (clickScrollTimer) {
     clearTimeout(clickScrollTimer)
   }
@@ -587,6 +489,12 @@ function observeSections() {
     if (isClickScrolling) return
     const id = Number(res?.id?.replace('category-', ''))
     if (!id || !res?.intersectionRatio) return
+    // 收紧联动条件：分区顶部到达列表顶部附近（<=20px）才视为当前分区，
+    // 避免分区刚露出一点就过早高亮（阈值与 updateActiveCategoryByScroll 保持一致）
+    const sectionTop = res?.boundingClientRect?.top
+    const listTop = res?.relativeRect?.top
+    if (typeof sectionTop !== 'number' || typeof listTop !== 'number') return
+    if (sectionTop - listTop > 20) return
     if (id !== activeCategoryId.value) {
       activeCategoryId.value = id
       leftScrollIntoView.value = `menu-${id}`
@@ -804,102 +712,23 @@ async function getDefaultSku(product: Product): Promise<Sku | null> {
 
 /**
  * 打开多规格商品弹窗
- * 分类列表接口不返回 SKU/规格数据，缺失时调详情接口兜底加载并回填列表项，
- * 下次打开同一商品不再重复请求
- * @param product 商品对象
+ * SKU/规格数据与预选逻辑均由公共 sku-selector 组件内部处理
+ * @param product 商品对象（分类列表项）
  */
-async function openSkuPopup(product: Product) {
+function openSkuPopup(product: Product) {
   currentProduct.value = product
-  selectedValueIds.value = {}
-  selectedSku.value = { id: 0, product_id: 0, name: '', price: 0, original_price: 0, stock: 0, image: '', spec_name: '', spec_json: '{}', spec_value_ids: '' }
-  popupQuantity.value = product.min_buy || 1
   showSkuPopup.value = true
-
-  if (!product.skus.length) {
-    skuLoading.value = true
-    try {
-      const res = await getProductDetail(product.id, userStore.communityInfo?.id)
-      if (res.data) {
-        // 直接回填列表项对象（与 currentProduct 同引用），刷新列表数据并命中缓存
-        product.skus = res.data.skus
-        product.specs = res.data.specs
-        currentProduct.value = product
-      }
-    } catch {
-      uni.showToast({ title: '规格加载失败', icon: 'none' })
-    } finally {
-      skuLoading.value = false
-    }
-  }
-  initSpecSelection()
 }
 
 /**
- * 初始化弹窗规格选中态
- * 有规格树时默认选中每个规格的第一个规格值；无规格树时默认选中第一个有库存的 SKU
+ * 规格选择弹窗确认回调：将选中 SKU 加入购物车
+ * @param product 组件内兜底加载后的完整商品对象
+ * @param sku 选中的 SKU
+ * @param quantity 数量
  */
-function initSpecSelection() {
-  const product = currentProduct.value
-  if (product.specs.length) {
-    const init: Record<number, number> = {}
-    for (const spec of product.specs) {
-      if (spec.values.length) {
-        init[spec.id] = spec.values[0].id
-      }
-    }
-    selectedValueIds.value = init
-    if (matchedSku.value) {
-      selectedSku.value = matchedSku.value
-    }
-    return
-  }
-  if (product.skus.length) {
-    selectedSku.value = product.skus.find((s) => s.stock > 0) || product.skus[0]
-  }
-}
-
-/**
- * 选择规格值，组合完整时同步定位 SKU
- * @param specId 规格 ID
- * @param valueId 规格值 ID
- */
-function selectSpecValue(specId: number, valueId: number) {
-  selectedValueIds.value = { ...selectedValueIds.value, [specId]: valueId }
-  if (matchedSku.value) {
-    selectedSku.value = matchedSku.value
-  }
-}
-
-/**
- * 关闭规格弹窗
- */
-function closeSkuPopup() {
+function onSkuConfirm({ product, sku, quantity }: { product: Product; sku: Sku; quantity: number }) {
   showSkuPopup.value = false
-}
-
-/**
- * 选择 SKU
- * @param sku SKU 对象
- */
-function selectSku(sku: Sku) {
-  if (sku.stock <= 0) return
-  selectedSku.value = sku
-}
-
-/**
- * 确认将多规格商品加入购物车
- */
-async function confirmAddToCart() {
-  if (currentProduct.value.specs.length && !matchedSku.value) {
-    uni.showToast({ title: allSelected.value ? '该规格组合不存在' : '请选择完整规格', icon: 'none' })
-    return
-  }
-  if (!selectedSku.value.id) {
-    uni.showToast({ title: '请选择规格', icon: 'none' })
-    return
-  }
-  await doAddCart(currentProduct.value, selectedSku.value, popupQuantity.value)
-  closeSkuPopup()
+  doAddCart(product, sku, quantity)
 }
 
 /**
@@ -990,6 +819,44 @@ function onPopupRemove(item: CartItem) {
 }
 
 /**
+ * 点击购物车项规格名，打开切换规格弹窗
+ * 预选当前 SKU、数量保持购物车现值（同 SKU 确认等价于数量不变）
+ * @param item 购物车项
+ */
+function onCartSkuClick(item: CartItem) {
+  cartSwitchItem.value = item
+  showCartSkuPopup.value = true
+}
+
+/**
+ * 切换规格确认回调：删旧购物车项 + 按新 SKU 重新加购
+ * 服务端同 SKU 已存在时自动累加合并；未登录时操作本地购物车。
+ * 无论成功与否最后都刷新购物车摘要，保证与服务端状态一致
+ * @param product 组件内兜底加载后的完整商品对象
+ * @param sku 切换后的 SKU
+ * @param quantity 数量
+ */
+async function onCartSkuConfirm({ product, sku, quantity }: { product: Product; sku: Sku; quantity: number }) {
+  const item = cartSwitchItem.value
+  if (!item) return
+  const communityId = userStore.communityInfo?.id
+  try {
+    if (userStore.isLogin) {
+      await removeCartItem(item.id)
+      await addCartItem(product.id, sku.id, quantity, communityId)
+    } else {
+      removeLocalCartItem(item.sku_id, communityId)
+      addLocalCartItem(product, sku, quantity, communityId)
+    }
+    showCartSkuPopup.value = false
+  } catch {
+    // 请求拦截器已统一提示
+  } finally {
+    loadCartSummary()
+  }
+}
+
+/**
  * 去结算
  * 未登录时先跳转登录页并携带订单确认页回跳地址，登录后由订单确认页加载已同步的购物车选中项；
  * 已登录时直接携带当前选中的购物车项 ID 跳转订单确认页。
@@ -1021,6 +888,8 @@ function onSettlement() {
   left: 0;
   right: 0;
   bottom: 100rpx;
+  /* 高于根层级 uni-tabbar（z-index 998），避免 SKU 弹窗被困在本层叠上下文内被 tabBar 遮挡 */
+  z-index: 999;
   background-color: #f5f5f5;
   overflow: hidden;
 }
@@ -1276,119 +1145,6 @@ function onSettlement() {
   width: 100%;
 }
 
-.sku-popup {
-  padding: 30rpx;
-  padding-bottom: 50rpx;
-}
-
-.sku-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 30rpx;
-}
-
-.sku-image {
-  width: 160rpx;
-  height: 160rpx;
-  border-radius: 12rpx;
-}
-
-.sku-info {
-  flex: 1;
-  margin: 0 20rpx;
-  overflow: hidden;
-}
-
-.sku-name {
-  display: block;
-  font-size: 28rpx;
-  color: #333333;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sku-price {
-  display: block;
-  margin-top: 10rpx;
-  font-size: 34rpx;
-  font-weight: bold;
-  color: #ff4d4f;
-}
-
-.sku-stock {
-  display: block;
-  margin-top: 6rpx;
-  font-size: 24rpx;
-  color: #999999;
-}
-
-.sku-section {
-  margin-bottom: 30rpx;
-}
-
-.sku-loading {
-  padding: 20rpx 0;
-  font-size: 26rpx;
-  color: #999999;
-}
-
-.spec-group {
-  margin-bottom: 20rpx;
-}
-
-.spec-group-name {
-  display: block;
-  margin-bottom: 12rpx;
-  font-size: 24rpx;
-  color: #999999;
-}
-
-.section-title {
-  display: block;
-  margin-bottom: 16rpx;
-  font-size: 28rpx;
-  color: #333333;
-}
-
-.sku-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16rpx;
-}
-
-.sku-option {
-  padding: 12rpx 24rpx;
-  border-radius: 8rpx;
-  font-size: 26rpx;
-  color: #666666;
-  background-color: #f5f5f5;
-}
-
-.sku-option.active {
-  color: #07c160;
-  background-color: rgba(7, 193, 96, 0.1);
-}
-
-.sku-option.disabled {
-  color: #cccccc;
-  background-color: #f5f5f5;
-}
-
-.quantity-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.sku-confirm {
-  margin-top: 20rpx;
-}
-
-.sku-confirm .u-button {
-  width: 100%;
-}
-
 .cart-popup {
   display: flex;
   flex-direction: column;
@@ -1476,6 +1232,31 @@ function onSettlement() {
   flex-direction: column;
   align-items: flex-end;
   gap: 16rpx;
+}
+
+/* 失效商品置灰展示（不可改数量，仅保留删除） */
+.cart-popup-item-invalid .cart-popup-image,
+.cart-popup-item-invalid .cart-popup-name,
+.cart-popup-item-invalid .cart-popup-price {
+  opacity: 0.4;
+}
+
+.cart-popup-invalid-tag {
+  align-self: flex-start;
+  margin-top: 6rpx;
+  padding: 2rpx 12rpx;
+  border: 1rpx solid #dddddd;
+  border-radius: 6rpx;
+  font-size: 20rpx;
+  color: #999999;
+  background-color: #f7f7f7;
+}
+
+.cart-popup-stock-hint {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  color: #ff9800;
 }
 
 .cart-popup-footer {
