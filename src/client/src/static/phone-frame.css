@@ -330,6 +330,7 @@ body.app-mode #app-root {
   }
 
   body.frame-mode .qr-url {
+    display: none;
     margin-top: 2px;
     font-size: 9px;
     color: #999999;
