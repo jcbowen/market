@@ -11,6 +11,24 @@
 			)
 		</script>
 		<title>社区商超</title>
+		<script>
+			/**
+			 * 宽屏自动跳转 Frame 模式：
+			 * - 顶层窗口（非 iframe 嵌套）且视口宽度 >= 768px（PC/平板横屏）时，
+			 *   跳转到同目录下的 Frame 模式入口（/s/index.html），保持手机边框显示效果；
+			 * - iframe 内加载（Frame 模式，top !== window）或窄屏（真手机/模拟手机）时不跳转。
+			 * - dev 环境（vite dev server，端口 5173）为单入口模式，不跳转。
+			 * 使用 location.replace 避免污染浏览历史，hash 一并携带保持当前页面。
+			 */
+			(function () {
+				if (location.port === '5173') return
+				var isTop = window.top === window
+				var isWide = window.matchMedia('(min-width: 768px)').matches
+				if (isTop && isWide) {
+					location.replace('./' + window.location.hash)
+				}
+			})()
+		</script>
 		<link rel="stylesheet" href="static/phone-frame.css" />
 		<!--preload-links-->
 		<!--app-context-->

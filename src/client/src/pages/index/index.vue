@@ -13,8 +13,8 @@
       </view>
     </view>
 
-    <!-- 首页 Banner -->
-    <view class="banner-section">
+    <!-- 首页 Banner（空列表不渲染，避免 u-swiper 空态灰块） -->
+    <view class="banner-section" v-if="bannerImages.length > 0">
       <u-swiper
         :list="bannerImages"
         showTitle

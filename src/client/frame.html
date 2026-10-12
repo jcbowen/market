@@ -21,6 +21,17 @@
 
 		<script>
 			/**
+			 * 窄屏自动切换 App 模式：
+			 * 真手机/模拟手机（视口宽度 < 768px）不需要手机边框壳，
+			 * 直接跳转到同目录下的 app.html 全屏直出应用，避免小屏下
+			 * Frame 模式容器样式（@media min-width:768px）不生效导致布局塌陷。
+			 * 使用 location.replace 避免污染浏览历史，hash 一并携带保持当前页面。
+			 */
+			if (window.matchMedia('(max-width: 767.98px)').matches) {
+				location.replace('./app.html' + window.location.hash)
+			}
+
+			/**
 			 * PC 端模拟手机边框入口
 			 * 通过 iframe 加载真实 H5 应用，使内部 fixed 定位元素（顶部导航栏、底部 tabBar）
 			 * 相对于 iframe 自身视口固定，避免外层 transform 缩放导致滚动时一起移动。
