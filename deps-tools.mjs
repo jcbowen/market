@@ -141,19 +141,35 @@ export function createContext({ rootDir, autoFix = true }) {
 }
 
 /**
- * 执行命令，边输出边收集，供调用方在失败时取原始文本做诊断。
+ * 执行命令，支持三种输出模式。
  *
- * 不用 spawnSync + pipe：那样长耗时构建（uni build、docker build）会等结束才一次性打印，
- * 过程中看不到进度。这里实时回显的同时把输出累积下来。
+ * 默认用 tty（stdio: 'inherit'）：Docker Compose / vite / uni 都按 stdout 是否为 TTY
+ * 决定输出形态，一旦接 pipe 就退化成逐行打印容器事件与进度，终端里全是重复行。
+ * tty 模式拿不到输出文本，所以只在需要判定失败原因时才用 capture 模式跑。
  *
  * @param {string} cmd 可执行文件名
  * @param {string[]} args 参数列表
- * @param {{cwd?: string, env?: Record<string,string>, quiet?: boolean}} [opts]
- *        quiet=true 时不回显输出（用于预检类命令），仅收集文本供诊断
- * @returns {Promise<{ok: boolean, status: number|null, output: string}>} 命令执行结果
- * @example const r = await runChecked('go', ['list', '-m', 'all'], { quiet: true });
+ * @param {{cwd?: string, env?: Record<string,string>, mode?: 'tty'|'capture'|'quiet'}} [opts]
+ *        tty=直通终端（默认，保留原生进度渲染）；capture=实时回显并收集文本；quiet=只收集不回显
+ * @returns {Promise<{ok: boolean, status: number|null, output: string}>} output 仅 capture/quiet 模式有内容
+ * @example await runChecked('go', ['list', '-m', 'all'], { mode: 'quiet' });
  */
 export function runChecked(cmd, args, opts = {}) {
+  const mode = opts.mode || 'tty';
+  if (mode === 'tty') {
+    return new Promise((resolve) => {
+      const child = spawn(cmd, args, {
+        cwd: opts.cwd || process.cwd(),
+        env: opts.env ? { ...process.env, ...opts.env } : process.env,
+        stdio: 'inherit',
+        shell: process.platform === 'win32',
+      });
+      child.on('error', (err) => resolve({ ok: false, status: 127, output: String(err.message) }));
+      child.on('close', (code) => resolve({ ok: code === 0, status: code, output: '' }));
+    });
+  }
+
+  const echo = mode === 'capture';
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd: opts.cwd || process.cwd(),
@@ -164,7 +180,7 @@ export function runChecked(cmd, args, opts = {}) {
     let output = '';
     const collect = (chunk) => {
       output += chunk;
-      if (!opts.quiet) process.stdout.write(chunk);
+      if (echo) process.stdout.write(chunk);
     };
     child.stdout.on('data', collect);
     child.stderr.on('data', collect);
@@ -208,6 +224,10 @@ function failWith(step, output) {
 /**
  * 执行命令，失败时按诊断结果自动修复并重试一次。
  *
+ * 输出策略：正常路径一律 tty 直通，保住 compose / vite / uni 的原生进度渲染；
+ * 只有 tty 失败后才用 capture 重跑一次取错误文本做归类（compose 与构建命令都幂等，
+ * 重跑无副作用；若重跑反而成功，说明是瞬时故障，直接按成功处理）。
+ *
  * @param {ReturnType<createContext>} ctx 工具上下文
  * @param {string} cmd 可执行文件名
  * @param {string[]} args 参数列表
@@ -224,8 +244,15 @@ export async function runWithRepair(ctx, cmd, args, opts = {}) {
   const first = await runChecked(cmd, args, runOpts);
   if (first.ok) return;
 
-  const rule = diagnose(first.output);
-  if (!rule.repair || opts.allowRepair === false) failWith(step, first.output);
+  // tty 模式拿不到文本，重跑一次只为取错误输出做原因归类
+  const detail = await runChecked(cmd, args, { ...runOpts, mode: 'capture' });
+  if (detail.ok) {
+    console.log(`    ${step} 重试后成功（首次为瞬时故障），继续后续步骤`);
+    return;
+  }
+
+  const rule = diagnose(detail.output);
+  if (!rule.repair || opts.allowRepair === false) failWith(step, detail.output);
   if (!ctx.autoFix) {
     console.error('');
     console.error(`错误: ${step} 失败 —— ${rule.title}`);
@@ -238,7 +265,7 @@ export async function runWithRepair(ctx, cmd, args, opts = {}) {
   const repaired = await applyRepair(ctx, rule.repair, opts.cwd);
   if (!repaired.ok) failWith(`${rule.repair}（自动修复）`, repaired.output);
 
-  const second = await runChecked(cmd, args, runOpts);
+  const second = await runChecked(cmd, args, { ...runOpts, mode: 'capture' });
   if (second.ok) return;
   failWith(`${step}（${rule.repair} 重试后）`, second.output);
 }
@@ -315,7 +342,7 @@ export async function preflightGoModules(ctx) {
 
   // `go list -m all` 只做模块解析，不编译，能提前暴露 go.sum 缺行与 replace 路径问题
   const check = await runChecked('go', ['list', '-m', 'all'], {
-    cwd: ctx.backendDir, env: ctx.goEnv, quiet: true,
+    cwd: ctx.backendDir, env: ctx.goEnv, mode: 'quiet',
   });
   if (check.ok) return;
 
@@ -335,7 +362,7 @@ export async function preflightGoModules(ctx) {
   if (!download.ok) failWith('go mod download', download.output);
 
   const recheck = await runChecked('go', ['list', '-m', 'all'], {
-    cwd: ctx.backendDir, env: ctx.goEnv, quiet: true,
+    cwd: ctx.backendDir, env: ctx.goEnv, mode: 'quiet',
   });
   if (!recheck.ok) failWith('Go 模块预检（go mod tidy 后）', recheck.output);
   console.log('    Go 模块依赖已就绪');
@@ -400,7 +427,7 @@ async function missingNpmReason(dir) {
   if (!fs.existsSync(modulesDir)) return '缺少 node_modules';
 
   // 只认明确的缺失/损坏标记，peer 依赖之类的警告不应触发重装
-  const ls = await runChecked('npm', ['ls', '--depth=0'], { cwd: dir, quiet: true });
+  const ls = await runChecked('npm', ['ls', '--depth=0'], { cwd: dir, mode: 'quiet' });
   if (/(^|\s)missing: |UNMET DEPENDENCY|ENOTEMPTY/.test(ls.output)) {
     return 'node_modules 与 package.json 不一致';
   }
