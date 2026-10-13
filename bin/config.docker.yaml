@@ -1,10 +1,13 @@
+# 注意：web_server/db/redis 由 jcbaseGo 结构体解析，其字段无 yaml tag，
+# yaml.v3 按“字段名全小写”匹配（如 enablessl、drivername），
+# camelCase 或下划线写法会被静默忽略并回落默认值，切勿改回 enable_ssl 等写法
 web_server:
     port: 18080
-    enable_ssl: false
-    cert_path: ""
-    key_path: ""
+    enablessl: false
+    certpath: ""
+    keypath: ""
 db:
-    driverName: mysql
+    drivername: mysql
     protocol: tcp
     host: mysql
     port: "3306"
@@ -12,10 +15,10 @@ db:
     username: root
     password: "market123"
     charset: utf8mb4
-    tablePrefix: ""
-    parseTime: "True"
-    singularTable: true
-    disableForeignKeyConstraintWhenMigrating: true
+    tableprefix: ""
+    parsetime: "True"
+    singulartable: true
+    disableforeignkeyconstraintwhenmigrating: true
 redis:
     host: redis
     port: "6379"
