@@ -88,6 +88,25 @@ import type { Region, RegionDiffItem, RegionUpdateTask } from '@/api/region'
  */
 const dialog = useDialog()
 const message = useMessage()
+
+/**
+ * 规范化任务详情：proto3 的 json tag 带 omitempty，
+ * 0 值数字（如无差异时的 updated_count/removed_count）与 null 数组
+ * 不会出现在响应 JSON 中，直接渲染会显示 undefined，统一兜底
+ */
+function normalizeTask(t: RegionUpdateTask): RegionUpdateTask {
+  return {
+    ...t,
+    total_remote: t.total_remote ?? 0,
+    total_local: t.total_local ?? 0,
+    added_count: t.added_count ?? 0,
+    updated_count: t.updated_count ?? 0,
+    removed_count: t.removed_count ?? 0,
+    added: t.added ?? [],
+    updated: t.updated ?? [],
+    removed: t.removed ?? [],
+  }
+}
 const list = ref<Region[]>([])
 const loading = ref(false)
 const pagination = ref({
@@ -219,7 +238,7 @@ function pollTask() {
     try {
       const res = await getRegionUpdateTask(id)
       if (res.data.code !== 0) return
-      task.value = res.data.data
+      task.value = normalizeTask(res.data.data)
       if (task.value.status >= 4) {
         stopPolling()
         if (
@@ -260,7 +279,7 @@ function applyTask() {
         if (res.data.code === 0) {
           message.success('差异已覆盖入库')
           const detail = await getRegionUpdateTask(id)
-          if (detail.data.code === 0) task.value = detail.data.data
+          if (detail.data.code === 0) task.value = normalizeTask(detail.data.data)
           loadData()
         }
       } finally {

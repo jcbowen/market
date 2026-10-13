@@ -23,13 +23,23 @@ import (
 // 数据来自民政部国家地名信息库，每年 1 月更新至上一年度末，省/市/区县三级
 // 注意：该源直辖市下直接挂区县（如 11 → 110101），无「市辖区」中间层，
 // 且不含港澳台（其区划代码尚未公布）
-const regionDataSource = "https://cdn.jsdelivr.net/gh/FHZDCJ/administrative-division-code-of-China@main/Dist/pca-code.json"
+//
+// 主源用 Gitee raw（无 CDN 缓存层，实时性最好）；
+// jsDelivr 对 @main 分支 URL 的缓存各节点版本可能滞后，仅作兜底，
+// 拉取时优先按最新 commit 锁定版本（见 fetchRemoteRegions）
+const regionDataSource = "https://gitee.com/FHZDCJ/administrative-division-code-of-china/raw/main/Dist/pca-code.json"
 
 var regionDataSourceFallbacks = []string{
+	"https://cdn.jsdelivr.net/gh/FHZDCJ/administrative-division-code-of-China@main/Dist/pca-code.json",
 	"https://fastly.jsdelivr.net/gh/FHZDCJ/administrative-division-code-of-China@main/Dist/pca-code.json",
-	"https://gitee.com/FHZDCJ/administrative-division-code-of-china/raw/main/Dist/pca-code.json",
 	"https://raw.githubusercontent.com/FHZDCJ/administrative-division-code-of-China/main/Dist/pca-code.json",
 }
+
+// 上游仓库标识（GitHub / jsDelivr / raw.githubusercontent 构造 URL 共用）
+const (
+	regionRepoSlug = "FHZDCJ/administrative-division-code-of-China"
+	regionRepoFile = "Dist/pca-code.json"
+)
 
 // regionHTTPTimeout 拉取上游数据的超时时间
 const regionHTTPTimeout = 30 * time.Second
@@ -487,13 +497,19 @@ func (s *RegionService) diffAndStore(taskID int64, nodes []*remoteRegionNode) er
 }
 
 // fetchRemoteRegions 依次尝试多源拉取上游区划 JSON
+// 优先按仓库 main 分支最新 commit 锁定版本（jsDelivr 对分支 URL 的缓存
+// 各节点版本可能滞后，会导致不同环境拉到新旧口径不一致的数据）；
+// commit 解析失败或锁定 URL 全部失败时，回退到分支 URL 列表
 // 返回：
 //   - []*remoteRegionNode: 区划树
 //   - string: 实际命中的数据源 URL
 //   - error: 全部数据源失败时的错误信息
 func fetchRemoteRegions() ([]*remoteRegionNode, string, error) {
-	urls := append([]string{regionDataSource}, regionDataSourceFallbacks...)
 	client := &http.Client{Timeout: regionHTTPTimeout}
+	urls := regionCommitLockedURLs(client)
+	urls = append(urls, regionDataSource)
+	urls = append(urls, regionDataSourceFallbacks...)
+
 	var lastErr error
 	for _, u := range urls {
 		nodes, err := fetchRegionURL(client, u)
@@ -503,6 +519,41 @@ func fetchRemoteRegions() ([]*remoteRegionNode, string, error) {
 		lastErr = fmt.Errorf("%s: %w", u, err)
 	}
 	return nil, "", fmt.Errorf("全部数据源拉取失败: %w", lastErr)
+}
+
+// regionCommitLockedURLs 查询上游仓库 main 分支最新 commit，
+// 构造按 commit 锁定的数据源 URL 列表（jsDelivr 对 commit 版本不做缓存）
+// 失败时返回 nil（调用方回退分支 URL）
+func regionCommitLockedURLs(client *http.Client) []string {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/commits/main", regionRepoSlug)
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil
+	}
+	var info struct {
+		SHA string `json:"sha"`
+	}
+	if json.Unmarshal(body, &info) != nil || len(info.SHA) < 12 {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("https://cdn.jsdelivr.net/gh/%s@%s/%s", regionRepoSlug, info.SHA, regionRepoFile),
+		fmt.Sprintf("https://fastly.jsdelivr.net/gh/%s@%s/%s", regionRepoSlug, info.SHA, regionRepoFile),
+		fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s", regionRepoSlug, info.SHA, regionRepoFile),
+	}
 }
 
 // fetchRegionURL 拉取并解析单个数据源
