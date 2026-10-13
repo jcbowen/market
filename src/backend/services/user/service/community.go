@@ -33,8 +33,9 @@ func NewCommunityService(db *mysql.Instance) *CommunityService {
 //   - ctx: 上下文
 //   - req: 查询请求（含分页、是否包含停业社区、状态筛选）
 //
-// 语义：req 为 nil 或 IncludeDisabled=false 时仅返回营业中社区（客户端语义）；
-// IncludeDisabled=true 时（管理端语义）按 Status 筛选，-1 表示全部。
+// 语义：req 为 nil 或 IncludeDisabled=false 时仅返回营业中社区（客户端语义），
+// 按创建时间升序（id asc）排序兜底；
+// IncludeDisabled=true 时（管理端语义）按 Status 筛选，-1 表示全部，保持创建时间倒序。
 // 返回：
 //   - []*model.Community: 社区列表
 //   - int: 总条数
@@ -65,8 +66,13 @@ func (s *CommunityService) ListCommunities(ctx context.Context, req *user.ListCo
 		return nil, 0, err
 	}
 	offset := (page - 1) * pageSize
-	// 排序字段已废弃：C 端按定位距离排序，默认列表按创建时间倒序
-	err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error
+	// 排序字段已废弃：C 端有定位时按距离排序（见 ListNearbyCommunities），
+	// 默认列表按创建时间升序（id asc）兜底；管理端保持创建时间倒序
+	order := "id asc"
+	if req != nil && req.IncludeDisabled {
+		order = "id desc"
+	}
+	err := db.Order(order).Offset(offset).Limit(pageSize).Find(&list).Error
 	return list, int(total), err
 }
 
@@ -110,9 +116,9 @@ func (s *CommunityService) ListNearbyCommunities(ctx context.Context, longitude,
 
 	var list []*model.Community
 	// 按经纬度平面距离近似排序，固定返回最近的 10 个社区；
-	// 排序字段已废弃，同距离时按 id 倒序兜底
+	// 排序字段已废弃，同距离时按创建时间升序（id asc）兜底
 	err := db.Order(fmt.Sprintf(
-		"POWER(longitude - %v, 2) + POWER(latitude - %v, 2) ASC, id desc",
+		"POWER(longitude - %v, 2) + POWER(latitude - %v, 2) ASC, id asc",
 		longitude, latitude,
 	)).Limit(limit).Find(&list).Error
 	return list, int(total), err
