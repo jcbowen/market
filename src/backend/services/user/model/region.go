@@ -23,15 +23,15 @@ const (
 type Region struct {
 	base.MysqlBaseModel
 	// 行政区划代码，省级 2 位、市级 4 位、区县级 6 位
-	Code string `gorm:"column:code;type:varchar(12);primaryKey" json:"code"`
-	Name string `gorm:"column:name;type:varchar(50);not null" json:"name"`
+	Code string `gorm:"column:code;type:varchar(12);primaryKey;comment:行政区划代码" json:"code"`
+	Name string `gorm:"column:name;type:varchar(50);not null;comment:行政区划名称" json:"name"`
 	// 父级区划代码，省级为 "0"
-	ParentCode string `gorm:"column:parent_code;type:varchar(12);not null;default:'0';index" json:"parent_code"`
+	ParentCode string `gorm:"column:parent_code;type:varchar(12);not null;default:'0';index;comment:上级行政区划代码" json:"parent_code"`
 	Level      int32  `gorm:"column:level;type:tinyint;not null;default:1;comment:层级 1省 2市 3区县" json:"level"`
 	// 状态：1 正常 2 停用（上游撤销后软标记，避免业务表已引用代码悬空）
 	Status    int32  `gorm:"column:status;type:tinyint;not null;default:1;comment:状态 1正常 2停用" json:"status"`
-	CreatedAt string `gorm:"column:created_at;type:datetime" json:"created_at"`
-	UpdatedAt string `gorm:"column:updated_at;type:datetime" json:"updated_at"`
+	CreatedAt string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回行政区划表名
@@ -56,27 +56,27 @@ const (
 // 差异详情（新增/更名/停用）以 JSON 存储，管理员确认后覆盖入库
 type RegionUpdateTask struct {
 	base.MysqlBaseModel
-	ID     int64 `gorm:"column:id;type:bigint;primaryKey;autoIncrement" json:"id"`
+	ID     int64 `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	Status int32 `gorm:"column:status;type:tinyint;not null;default:1;comment:1待执行 2拉取中 3比对中 4完成 5失败" json:"status"`
 	// 数据源 URL
-	Source       string `gorm:"column:source;type:varchar(255)" json:"source"`
-	TotalRemote  int32  `gorm:"column:total_remote;type:int;default:0" json:"total_remote"`
-	TotalLocal   int32  `gorm:"column:total_local;type:int;default:0" json:"total_local"`
-	AddedCount   int32  `gorm:"column:added_count;type:int;default:0" json:"added_count"`
-	UpdatedCount int32  `gorm:"column:updated_count;type:int;default:0" json:"updated_count"`
-	RemovedCount int32  `gorm:"column:removed_count;type:int;default:0" json:"removed_count"`
+	Source       string `gorm:"column:source;type:varchar(255);comment:数据源：default 镜像多源 / official 官方源" json:"source"`
+	TotalRemote  int32  `gorm:"column:total_remote;type:int;default:0;comment:远端拉取总数" json:"total_remote"`
+	TotalLocal   int32  `gorm:"column:total_local;type:int;default:0;comment:本地记录总数" json:"total_local"`
+	AddedCount   int32  `gorm:"column:added_count;type:int;default:0;comment:新增数量" json:"added_count"`
+	UpdatedCount int32  `gorm:"column:updated_count;type:int;default:0;comment:更新数量" json:"updated_count"`
+	RemovedCount int32  `gorm:"column:removed_count;type:int;default:0;comment:删除数量" json:"removed_count"`
 	// 差异明细 JSON（[]RegionDiffItem），确认覆盖前供前端展示
 	// 全量初始化时新增明细可达数百 KB，text（64KB）不够，用 mediumtext
-	AddedJSON   string `gorm:"column:added_json;type:mediumtext" json:"-"`
-	UpdatedJSON string `gorm:"column:updated_json;type:mediumtext" json:"-"`
-	RemovedJSON string `gorm:"column:removed_json;type:mediumtext" json:"-"`
+	AddedJSON   string `gorm:"column:added_json;type:mediumtext;comment:新增明细 JSON" json:"-"`
+	UpdatedJSON string `gorm:"column:updated_json;type:mediumtext;comment:更新明细 JSON" json:"-"`
+	RemovedJSON string `gorm:"column:removed_json;type:mediumtext;comment:删除明细 JSON" json:"-"`
 	// 失败原因
-	Error   string  `gorm:"column:error;type:varchar(500)" json:"error"`
+	Error   string  `gorm:"column:error;type:varchar(500);comment:失败原因" json:"error"`
 	Applied bool    `gorm:"column:applied;type:tinyint(1);default:0;comment:差异是否已覆盖入库" json:"applied"`
 	// 任务结束时间（未结束时为 NULL；指针类型避免零值空串写入 datetime 报 1292）
-	CreatedAt  string  `gorm:"column:created_at;type:datetime" json:"created_at"`
-	FinishedAt *string `gorm:"column:finished_at;type:datetime" json:"finished_at"`
-	UpdatedAt  string  `gorm:"column:updated_at;type:datetime" json:"updated_at"`
+	CreatedAt  string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	FinishedAt *string `gorm:"column:finished_at;type:datetime;comment:完成时间" json:"finished_at"`
+	UpdatedAt  string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回区划更新任务表名

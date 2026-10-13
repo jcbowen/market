@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"google.golang.org/grpc"
@@ -50,59 +49,13 @@ func main() {
 }
 
 // autoMigrate 迁移购物车数据表
-// carts 为已有表且带 uniqueIndex，禁用 AutoMigrate（gorm 驱动对含唯一索引的已有表
-// 执行列变更时会误发 DROP FOREIGN KEY / DROP INDEX），统一走幂等 SQL 建表/补列
+// carts 的 uk_user_sku 为复合唯一索引（MySQL 报 MUL），可安全走 AutoMigrate；
+// 模型 tag 已与 DB 列定义对齐，详细规范见 需求-统一GORM自动迁移.md
 // 参数：
 //   - db: MySQL 实例
 //
 // 返回值：
 //   - error: 迁移错误信息
 func autoMigrate(db *mysql.Instance) error {
-	return ensureCartTable(db)
-}
-
-// ensureCartTable 幂等创建购物车表并补充缺失列
-// 参数：
-//   - db: MySQL 实例
-//
-// 返回值：
-//   - error: 迁移错误信息
-func ensureCartTable(db *mysql.Instance) error {
-	if err := db.GetDb().Exec(`CREATE TABLE IF NOT EXISTS ` + "`carts`" + ` (
-		` + "`id`" + ` bigint NOT NULL AUTO_INCREMENT,
-		` + "`user_id`" + ` bigint NOT NULL,
-		` + "`community_id`" + ` bigint NOT NULL,
-		` + "`product_id`" + ` bigint NOT NULL,
-		` + "`sku_id`" + ` bigint NOT NULL,
-		` + "`quantity`" + ` int DEFAULT 1,
-		` + "`selected`" + ` tinyint(1) DEFAULT 1,
-		` + "`product_name`" + ` varchar(255) DEFAULT '',
-		` + "`spec_name`" + ` varchar(255) DEFAULT '',
-		` + "`product_image`" + ` varchar(500) DEFAULT '',
-		` + "`created_at`" + ` datetime DEFAULT NULL,
-		` + "`updated_at`" + ` datetime DEFAULT NULL,
-		PRIMARY KEY (` + "`id`" + `),
-		UNIQUE KEY ` + "`uk_user_sku`" + ` (` + "`user_id`" + `,` + "`sku_id`" + `),
-		KEY ` + "`idx_user_community`" + ` (` + "`user_id`" + `,` + "`community_id`" + `)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`).Error; err != nil {
-		return err
-	}
-
-	updates := []struct {
-		column string
-		ddl    string
-	}{
-		{"product_name", "ALTER TABLE `carts` ADD COLUMN `product_name` varchar(255) DEFAULT '' COMMENT '商品名称快照'"},
-		{"spec_name", "ALTER TABLE `carts` ADD COLUMN `spec_name` varchar(255) DEFAULT '' COMMENT '规格名快照'"},
-		{"product_image", "ALTER TABLE `carts` ADD COLUMN `product_image` varchar(500) DEFAULT '' COMMENT '商品图片快照'"},
-	}
-	for _, u := range updates {
-		if db.GetDb().Migrator().HasColumn(&model.Cart{}, u.column) {
-			continue
-		}
-		if err := db.GetDb().Exec(u.ddl).Error; err != nil {
-			return fmt.Errorf("补充 carts.%s 列失败: %w", u.column, err)
-		}
-	}
-	return nil
+	return db.GetDb().AutoMigrate(&model.Cart{})
 }

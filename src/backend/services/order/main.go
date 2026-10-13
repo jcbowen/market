@@ -101,51 +101,22 @@ func runGRPCServer(server *grpc.Server, port int) error {
 	return nil
 }
 
-// autoMigrate 自动迁移订单服务相关数据表
-// 仅迁移新增表，已有表（orders/refunds 等）的加列由各 ensureXxxColumns 函数显式处理，
-// 避免 GORM AutoMigrate 对已有表的索引/外键变更产生误判（如对 refunds 的 uniqueIndex
-// 误发 DROP FOREIGN KEY 导致启动失败）
+// autoMigrate 自动迁移订单服务全部数据表
+// tag 需与 DB 列定义严格对齐：单列唯一用 unique（uniqueIndex 会触发 gorm
+// MigrateColumnUnique 误发 DROP FOREIGN KEY 导致 1091 启动失败，见需求文档）
 // 参数：
 //   - db: MySQL 实例
 //
 // 返回值：
 //   - error: 迁移错误信息
 func autoMigrate(db *mysql.Instance) error {
-	if err := db.GetDb().AutoMigrate(
-		&model.SchedulerFailure{},
+	return db.GetDb().AutoMigrate(
+		&model.Order{},
+		&model.OrderItem{},
+		&model.OrderStatusLog{},
+		&model.Refund{},
 		&model.RefundItem{},
 		&model.RefundConfig{},
-	); err != nil {
-		return err
-	}
-	return ensureRefundColumns(db)
-}
-
-// ensureRefundColumns 幂等补充 refunds 表新增列（freight_amount/type）
-// 不走 AutoMigrate 的原因见 autoMigrate 注释
-// 参数：
-//   - db: MySQL 实例
-//
-// 返回值：
-//   - error: 执行错误信息
-//
-// 使用示例：
-//   err := ensureRefundColumns(db)
-func ensureRefundColumns(db *mysql.Instance) error {
-	updates := []struct {
-		column string
-		ddl    string
-	}{
-		{"freight_amount", "ALTER TABLE `refunds` ADD COLUMN `freight_amount` decimal(10,2) DEFAULT 0 NOT NULL COMMENT '本单退还的运费金额'"},
-		{"type", "ALTER TABLE `refunds` ADD COLUMN `type` tinyint DEFAULT 1 NOT NULL COMMENT '1整单退 2部分退'"},
-	}
-	for _, u := range updates {
-		if db.GetDb().Migrator().HasColumn(&model.Refund{}, u.column) {
-			continue
-		}
-		if err := db.GetDb().Exec(u.ddl).Error; err != nil {
-			return fmt.Errorf("补充 refunds.%s 列失败: %w", u.column, err)
-		}
-	}
-	return nil
+		&model.SchedulerFailure{},
+	)
 }
