@@ -2130,10 +2130,17 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 func (h *AdminHandler) ListAdminCommunities(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	// 状态筛选：-1 全部（默认），0 停业，1 营业
+	status, _ := strconv.Atoi(c.DefaultQuery("status", "-1"))
 
-	resp, err := h.userClient.ListCommunities(c.Request.Context(), &common.Pagination{
-		Page:     int32(page),
-		PageSize: int32(pageSize),
+	resp, err := h.userClient.ListCommunities(c.Request.Context(), &user.ListCommunitiesReq{
+		Pagination: &common.Pagination{
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+		// 管理端需要看到停业社区，否则停业后将无法再编辑
+		IncludeDisabled: true,
+		Status:          int32(status),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2149,6 +2156,8 @@ type CreateCommunityReq struct {
 	Longitude       float64 `json:"longitude"`
 	Latitude        float64 `json:"latitude"`
 	ContactPhone    string  `json:"contact_phone"`
+	ManagerName     string  `json:"manager_name"`
+	ManagerPhone    string  `json:"manager_phone"`
 	PickupAddress   string  `json:"pickup_address"`
 	DeliveryFee     float64 `json:"delivery_fee"`
 	MinOrderAmount  float64 `json:"min_order_amount"`
@@ -2174,6 +2183,8 @@ func (h *AdminHandler) CreateCommunity(c *gin.Context) {
 		Longitude:       req.Longitude,
 		Latitude:        req.Latitude,
 		ContactPhone:    req.ContactPhone,
+		ManagerName:     req.ManagerName,
+		ManagerPhone:    req.ManagerPhone,
 		PickupAddress:   req.PickupAddress,
 		DeliveryFee:     req.DeliveryFee,
 		MinOrderAmount:  req.MinOrderAmount,
@@ -2189,13 +2200,33 @@ func (h *AdminHandler) CreateCommunity(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// GetCommunity 获取社区详情
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GetCommunity(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	resp, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
 // UpdateAdminCommunityReq 更新社区请求
 type UpdateAdminCommunityReq struct {
-	Name            string  `json:"name"`
+	Name            string  `json:"name" binding:"required"`
 	Address         string  `json:"address"`
 	Longitude       float64 `json:"longitude"`
 	Latitude        float64 `json:"latitude"`
 	ContactPhone    string  `json:"contact_phone"`
+	ManagerName     string  `json:"manager_name"`
+	ManagerPhone    string  `json:"manager_phone"`
 	PickupAddress   string  `json:"pickup_address"`
 	DeliveryFee     float64 `json:"delivery_fee"`
 	MinOrderAmount  float64 `json:"min_order_amount"`
@@ -2228,6 +2259,8 @@ func (h *AdminHandler) UpdateCommunity(c *gin.Context) {
 		Longitude:       req.Longitude,
 		Latitude:        req.Latitude,
 		ContactPhone:    req.ContactPhone,
+		ManagerName:     req.ManagerName,
+		ManagerPhone:    req.ManagerPhone,
 		PickupAddress:   req.PickupAddress,
 		DeliveryFee:     req.DeliveryFee,
 		MinOrderAmount:  req.MinOrderAmount,

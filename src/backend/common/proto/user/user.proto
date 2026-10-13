@@ -22,7 +22,7 @@ service UserService {
   rpc SetDefaultAddress(SetDefaultAddressReq) returns (common.CommonResponse);
 
   // 社区
-  rpc ListCommunities(common.Pagination) returns (ListCommunitiesResp);
+  rpc ListCommunities(ListCommunitiesReq) returns (ListCommunitiesResp);
   rpc GetCommunity(GetCommunityReq) returns (CommunityInfo);
   rpc ListNearbyCommunities(ListNearbyCommunitiesReq) returns (ListCommunitiesResp);
   rpc CreateCommunity(CreateCommunityReq) returns (CommunityInfo);
@@ -185,6 +185,17 @@ message CommunityInfo {
   int32 status = 11;
   string business_hours = 12;
   int32 sort = 13;
+  string manager_name = 14;
+  string manager_phone = 15;
+}
+
+// ListCommunitiesReq 社区列表查询请求
+message ListCommunitiesReq {
+  common.Pagination pagination = 1;
+  // 管理端置 true 时查询包含停业社区；默认 false 仅返回营业中（客户端语义）
+  bool include_disabled = 2;
+  // 状态筛选（仅 include_disabled=true 时生效）：-1 全部，0 停业，1 营业
+  int32 status = 3;
 }
 
 message CreateCommunityReq {
@@ -200,6 +211,8 @@ message CreateCommunityReq {
   int32 status = 10;
   string business_hours = 11;
   int32 sort = 12;
+  string manager_name = 13;
+  string manager_phone = 14;
 }
 
 message UpdateCommunityInfoReq {
@@ -216,6 +229,8 @@ message UpdateCommunityInfoReq {
   int32 status = 11;
   string business_hours = 12;
   int32 sort = 13;
+  string manager_name = 14;
+  string manager_phone = 15;
 }
 
 message DeleteCommunityReq {

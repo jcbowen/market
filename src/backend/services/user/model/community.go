@@ -14,6 +14,8 @@ type Community struct {
 	Longitude         float64 `gorm:"column:longitude;type:decimal(10,7);default:0" json:"longitude"`
 	Latitude          float64 `gorm:"column:latitude;type:decimal(10,7);default:0" json:"latitude"`
 	ContactPhone      string  `gorm:"column:contact_phone;type:varchar(20)" json:"contact_phone"`
+	ManagerName       string  `gorm:"column:manager_name;type:varchar(50)" json:"manager_name"`
+	ManagerPhone      string  `gorm:"column:manager_phone;type:varchar(20)" json:"manager_phone"`
 	PickupAddress     string  `gorm:"column:pickup_address;type:varchar(255)" json:"pickup_address"`
 	DeliveryFee       float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0" json:"delivery_fee"`
 	MinOrderAmount    float64 `gorm:"column:min_order_amount;type:decimal(10,2);default:0" json:"min_order_amount"`

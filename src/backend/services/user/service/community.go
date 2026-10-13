@@ -30,13 +30,20 @@ func NewCommunityService(db *mysql.Instance) *CommunityService {
 // ListCommunities 分页查询社区列表
 // 参数：
 //   - ctx: 上下文
-//   - page: 页码
-//   - pageSize: 每页条数
+//   - req: 查询请求（含分页、是否包含停业社区、状态筛选）
+//
+// 语义：req 为 nil 或 IncludeDisabled=false 时仅返回营业中社区（客户端语义）；
+// IncludeDisabled=true 时（管理端语义）按 Status 筛选，-1 表示全部。
 // 返回：
 //   - []*model.Community: 社区列表
 //   - int: 总条数
 //   - error: 错误信息
-func (s *CommunityService) ListCommunities(ctx context.Context, page, pageSize int) ([]*model.Community, int, error) {
+func (s *CommunityService) ListCommunities(ctx context.Context, req *user.ListCommunitiesReq) ([]*model.Community, int, error) {
+	page, pageSize := 1, 10
+	if req != nil && req.Pagination != nil {
+		page = int(req.Pagination.Page)
+		pageSize = int(req.Pagination.PageSize)
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -46,7 +53,13 @@ func (s *CommunityService) ListCommunities(ctx context.Context, page, pageSize i
 
 	var total int64
 	var list []*model.Community
-	db := s.db.GetDb().WithContext(ctx).Where("status = ?", 1)
+	db := s.db.GetDb().WithContext(ctx)
+	switch {
+	case req == nil || !req.IncludeDisabled:
+		db = db.Where("status = ?", 1)
+	case req.Status >= 0:
+		db = db.Where("status = ?", req.Status)
+	}
 	if err := db.Model(&model.Community{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -116,6 +129,8 @@ func ToCommunityInfo(c *model.Community) *user.CommunityInfo {
 		Longitude:       c.Longitude,
 		Latitude:        c.Latitude,
 		ContactPhone:    c.ContactPhone,
+		ManagerName:     c.ManagerName,
+		ManagerPhone:    c.ManagerPhone,
 		PickupAddress:   c.PickupAddress,
 		DeliveryFee:     c.DeliveryFee,
 		MinOrderAmount:  c.MinOrderAmount,
@@ -140,6 +155,8 @@ func (s *CommunityService) CreateCommunity(ctx context.Context, req *user.Create
 		Longitude:       req.Longitude,
 		Latitude:        req.Latitude,
 		ContactPhone:    req.ContactPhone,
+		ManagerName:     req.ManagerName,
+		ManagerPhone:    req.ManagerPhone,
 		PickupAddress:   req.PickupAddress,
 		DeliveryFee:     req.DeliveryFee,
 		MinOrderAmount:  req.MinOrderAmount,
@@ -165,34 +182,29 @@ func (s *CommunityService) CreateCommunity(ctx context.Context, req *user.Create
 //   - *model.Community: 社区模型
 //   - error: 错误信息
 func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.UpdateCommunityInfoReq) (*model.Community, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("社区名称不能为空")
+	}
 	c, err := s.GetCommunity(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}
-	if req.Name != "" {
-		c.Name = req.Name
-	}
-	if req.Address != "" {
-		c.Address = req.Address
-	}
-	if req.ContactPhone != "" {
-		c.ContactPhone = req.ContactPhone
-	}
-	if req.PickupAddress != "" {
-		c.PickupAddress = req.PickupAddress
-	}
-	if req.BusinessHours != "" {
-		c.BusinessHours = req.BusinessHours
-	}
+	// 管理端编辑表单为整表提交，所有字段全量覆盖：
+	// 保证清空文本字段、状态改为停业（0）等场景可正常保存
+	c.Name = req.Name
+	c.Address = req.Address
+	c.ContactPhone = req.ContactPhone
+	c.ManagerName = req.ManagerName
+	c.ManagerPhone = req.ManagerPhone
+	c.PickupAddress = req.PickupAddress
+	c.BusinessHours = req.BusinessHours
 	c.Longitude = req.Longitude
 	c.Latitude = req.Latitude
 	c.DeliveryFee = req.DeliveryFee
 	c.MinOrderAmount = req.MinOrderAmount
 	c.DeliveryRangeKm = req.DeliveryRangeKm
 	c.Sort = req.Sort
-	if req.Status > 0 {
-		c.Status = req.Status
-	}
+	c.Status = req.Status
 	if err := s.db.GetDb().WithContext(ctx).Save(c).Error; err != nil {
 		return nil, err
 	}

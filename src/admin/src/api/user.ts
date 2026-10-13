@@ -19,6 +19,18 @@ export function getCommunityList(params: PageParams & { keyword?: string; status
 }
 
 /**
+ * 获取社区详情
+ * @param id 社区 ID
+ * @returns 社区详情
+ */
+export function getCommunity(id: number) {
+  return request<ApiResult<Community>>({
+    url: `/api/v1/admin/communities/${id}`,
+    method: 'GET',
+  })
+}
+
+/**
  * 创建社区
  * @param data 社区数据
  * @returns 创建结果

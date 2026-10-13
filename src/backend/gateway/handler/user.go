@@ -341,9 +341,13 @@ func (h *UserHandler) ListCommunities(c *gin.Context) {
 			},
 		})
 	} else {
-		resp, err = h.userClient.ListCommunities(c.Request.Context(), &common.Pagination{
-			Page:     int32(page),
-			PageSize: int32(pageSize),
+		resp, err = h.userClient.ListCommunities(c.Request.Context(), &user.ListCommunitiesReq{
+			// C 端仅展示营业中社区，显式声明语义，避免依赖 proto3 零值默认
+			IncludeDisabled: false,
+			Pagination: &common.Pagination{
+				Page:     int32(page),
+				PageSize: int32(pageSize),
+			},
 		})
 	}
 	if err != nil {

@@ -165,15 +165,18 @@ func (s *server) SetDefaultAddress(ctx stdctx.Context, req *user.SetDefaultAddre
 }
 
 // ListCommunities 获取社区列表
-func (s *server) ListCommunities(ctx stdctx.Context, req *common.Pagination) (*user.ListCommunitiesResp, error) {
-	page, pageSize := int(req.Page), int(req.PageSize)
+func (s *server) ListCommunities(ctx stdctx.Context, req *user.ListCommunitiesReq) (*user.ListCommunitiesResp, error) {
+	page, pageSize := 1, 10
+	if req != nil && req.Pagination != nil {
+		page, pageSize = int(req.Pagination.Page), int(req.Pagination.PageSize)
+	}
 	if page < 1 {
 		page = 1
 	}
 	if pageSize < 1 {
 		pageSize = 10
 	}
-	list, total, err := s.communityService.ListCommunities(ctx, page, pageSize)
+	list, total, err := s.communityService.ListCommunities(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}

@@ -1,6 +1,6 @@
 <template>
   <n-card :title="isEdit ? '编辑社区' : '新增社区'">
-    <n-form :model="form" label-placement="left" label-width="100px">
+    <n-form ref="formRef" :model="form" :rules="rules" label-placement="left" label-width="100px">
       <n-form-item label="社区名称">
         <n-input v-model:value="form.name" />
       </n-form-item>
@@ -58,8 +58,8 @@
       </n-form-item>
       <n-form-item>
         <n-space>
-          <n-button type="primary" @click="submit">保存</n-button>
-          <n-button @click="router.back()">返回</n-button>
+          <n-button type="primary" :loading="saving" @click="submit">保存</n-button>
+          <n-button :disabled="saving" @click="router.back()">返回</n-button>
         </n-space>
       </n-form-item>
     </n-form>
@@ -71,7 +71,8 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { createCommunity, updateCommunity, getCommunityList } from '@/api/user'
+import type { FormInst, FormRules } from 'naive-ui'
+import { createCommunity, updateCommunity, getCommunity } from '@/api/user'
 import { useTabsStore } from '@/stores/tabs'
 import type { Community } from '@/api/types'
 
@@ -83,6 +84,8 @@ const router = useRouter()
 const message = useMessage()
 const tabsStore = useTabsStore()
 const isEdit = ref(false)
+const formRef = ref<FormInst | null>(null)
+const saving = ref(false)
 const form = ref<Partial<Community>>({
   name: '',
   address: '',
@@ -99,6 +102,9 @@ const form = ref<Partial<Community>>({
   sort: 0,
   status: 1,
 })
+const rules: FormRules = {
+  name: { required: true, message: '请输入社区名称', trigger: 'blur' },
+}
 const statusOptions = [
   { label: '营业', value: 1 },
   { label: '停业', value: 0 },
@@ -161,22 +167,42 @@ async function loadDetail() {
   const id = Number(route.params.id)
   if (!id) return
   isEdit.value = true
-  const res = await getCommunityList({ page: 1, page_size: 100 })
-  if (res.data.code === 0) {
-    const item = res.data.data.list.find((c: Community) => c.id === id)
-    if (item) {
-      form.value = { ...item }
+  try {
+    const res = await getCommunity(id)
+    if (res.data.code === 0 && res.data.data) {
+      form.value = { ...form.value, ...res.data.data }
       // 加载完成后用社区名区分标签页
-      tabsStore.rename(route.fullPath, `编辑社区 · ${item.name}`)
+      tabsStore.rename(route.fullPath, `编辑社区 · ${res.data.data.name}`)
+    } else {
+      message.error('社区不存在或已被删除')
+      router.back()
     }
+  } catch {
+    // 错误提示由响应拦截器统一弹出
+    router.back()
   }
 }
 
 async function submit() {
-  const data = { ...form.value } as Community
-  const res = isEdit.value ? await updateCommunity(data.id, data) : await createCommunity(data)
-  if (res.data.code === 0) {
-    router.back()
+  try {
+    await formRef.value?.validate()
+  } catch {
+    // 校验失败，表单内已显示错误提示
+    return
+  }
+  saving.value = true
+  try {
+    // 管理端为整表提交，后端全量覆盖保存（含清空字段与停业状态）
+    const data = { ...form.value } as Community
+    const res = isEdit.value ? await updateCommunity(data.id, data) : await createCommunity(data)
+    if (res.data.code === 0) {
+      message.success(isEdit.value ? '保存成功' : '创建成功')
+      router.back()
+    }
+  } catch {
+    // 错误提示由响应拦截器统一弹出，此处仅阻断返回
+  } finally {
+    saving.value = false
   }
 }
 
