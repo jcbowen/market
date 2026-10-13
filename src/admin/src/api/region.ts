@@ -101,11 +101,10 @@ export function getRegionList(
 }
 
 /**
- * 拉取全量区划（管理端树形页用）
- * 省市区县三级约 3400 条，单页拉不满时分页补齐（status=0 不过滤状态，状态由前端本地筛）；
- * 拉全量后前端本地建树/搜索，避免筛选时反复请求
+ * 分页拉取全量区划（不带缓存，getAllRegions 的底层实现）
+ * 省市区县三级约 3400 条，单页拉不满时分页补齐（status=0 不过滤状态，状态由前端本地筛）
  */
-export async function getAllRegions(): Promise<Region[]> {
+async function fetchAllRegions(): Promise<Region[]> {
   const pageSize = 1000
   const first = await getRegionList({ page: 1, page_size: pageSize, status: 0 })
   const data = first.data.data
@@ -116,6 +115,76 @@ export async function getAllRegions(): Promise<Region[]> {
     all.push(...res.data.data.list)
   }
   return all
+}
+
+/** 全量区划 localStorage 缓存 key */
+const REGION_ALL_CACHE_KEY = 'admin_region_all_cache'
+/** 缓存有效期：7 天（区划数据低频变更，仅作兜底重刷） */
+const REGION_ALL_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
+
+/** 模块级内存缓存（同一会话内复用，避免重复读 localStorage 与 JSON 解析） */
+let regionAllCache: Region[] | null = null
+
+/**
+ * localStorage 是否可用
+ * 项目当前为纯客户端 SPA，浏览器环境必然存在；
+ * 此判断用于兼容未来可能的 SSR 迁移或 Node 环境单测，避免 ReferenceError
+ */
+function hasLocalStorage(): boolean {
+  return typeof localStorage !== 'undefined'
+}
+
+/** 读取 localStorage 中的持久化缓存，无缓存或解析失败返回 null */
+function readRegionAllPersisted(): { list: Region[]; time: number } | null {
+  if (!hasLocalStorage()) return null
+  try {
+    const raw = localStorage.getItem(REGION_ALL_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed?.list)) return null
+    return { list: parsed.list as Region[], time: Number(parsed.time) || 0 }
+  } catch {
+    return null
+  }
+}
+
+/** 将全量区划写入 localStorage（写入失败如隐私模式/容量不足时静默降级为无持久化） */
+function persistRegionAll(list: Region[]): void {
+  if (!hasLocalStorage()) return
+  try {
+    localStorage.setItem(REGION_ALL_CACHE_KEY, JSON.stringify({ time: Date.now(), list }))
+  } catch {
+    // 静默降级：仅本次会话内使用内存缓存
+  }
+}
+
+/**
+ * 清除全量区划缓存（内存 + localStorage）
+ * 区划更新任务覆盖入库后必须调用，否则选择器/管理页将展示旧数据
+ */
+export function clearAllRegionsCache(): void {
+  regionAllCache = null
+  if (hasLocalStorage()) localStorage.removeItem(REGION_ALL_CACHE_KEY)
+}
+
+/**
+ * 拉取全量区划（管理端树形页与 RegionPicker 用，带持久化缓存）
+ * 读取顺序：模块级内存缓存 → localStorage（7 天内有效）→ 接口分页拉全量并回写缓存；
+ * 缓存未过期时不再发请求，跨页面挂载复用
+ */
+export async function getAllRegions(): Promise<Region[]> {
+  if (regionAllCache) return regionAllCache
+
+  const persisted = readRegionAllPersisted()
+  if (persisted && Date.now() - persisted.time < REGION_ALL_CACHE_TTL) {
+    regionAllCache = persisted.list
+    return regionAllCache
+  }
+
+  const list = await fetchAllRegions()
+  regionAllCache = list
+  persistRegionAll(list)
+  return list
 }
 
 /**

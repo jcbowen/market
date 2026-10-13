@@ -11,6 +11,7 @@
         <n-select v-model:value="levelFilter" :options="levelFilterOptions" style="width: 140px" />
         <n-select v-model:value="statusFilter" :options="statusFilterOptions" style="width: 140px" />
         <n-button :disabled="shouldAutoExpand" @click="toggleExpandAll">{{ allExpanded ? '收起全部' : '展开全部' }}</n-button>
+        <n-button :loading="refreshing" @click="refreshData">刷新</n-button>
         <n-button type="primary" :loading="checking" @click="startCheck">检查更新</n-button>
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -94,7 +95,7 @@ defineOptions({ name: 'RegionList' })
 import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import { NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getAllRegions, createRegionUpdateTask, getRegionUpdateTask, applyRegionUpdateTask } from '@/api/region'
+import { getAllRegions, clearAllRegionsCache, createRegionUpdateTask, getRegionUpdateTask, applyRegionUpdateTask } from '@/api/region'
 import type { Region, RegionDiffItem, RegionUpdateTask } from '@/api/region'
 
 /**
@@ -105,6 +106,8 @@ import type { Region, RegionDiffItem, RegionUpdateTask } from '@/api/region'
  *
  * 性能要点：
  * - 全量约 3400 条（三级区划），单次请求 ~300KB（gzip 后几十 KB），建树/过滤均为 O(n) 毫秒级
+ * - getAllRegions 带内存 + localStorage 持久化缓存（7 天），跨页面挂载复用；
+ *   覆盖入库后自动清缓存，工具栏「刷新」可手动强制重拉
  * - 表格默认折叠，仅渲染可见行；n-data-table 树形模式只在展开时渲染子行
  * - 若未来区划扩到乡级（4 万+ 条），需改为后端建树 + 懒加载方案
  */
@@ -312,6 +315,22 @@ async function loadData() {
   }
 }
 
+const refreshing = ref(false)
+
+/**
+ * 手动刷新：清除全量区划缓存后重新加载并重建树
+ * 缓存清除后 loadData 内的 getAllRegions 会重新走接口拉取并回写缓存
+ */
+async function refreshData() {
+  refreshing.value = true
+  try {
+    clearAllRegionsCache()
+    await loadData()
+  } finally {
+    refreshing.value = false
+  }
+}
+
 // --- 更新任务 ---
 
 const checking = ref(false)
@@ -416,6 +435,8 @@ function applyTask() {
         const res = await applyRegionUpdateTask(id)
         if (res.data.code === 0) {
           message.success('差异已覆盖入库')
+          // 区划数据已变更，清除前端持久化缓存，避免选择器/管理页展示旧数据
+          clearAllRegionsCache()
           const detail = await getRegionUpdateTask(id)
           if (detail.data.code === 0) task.value = normalizeTask(detail.data.data)
           loadData()

@@ -75,10 +75,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { createAddress, updateAddress, getCommunity, listRegionChildren, locateRegion } from '@/api/user'
+import { createAddress, updateAddress, getCommunity, locateRegion } from '@/api/user'
 import { joinRegionAddress } from '@/utils/region'
+import { loadProvinces, loadCities, loadDistricts } from '@/utils/regionCache'
 import { useUserStore } from '@/stores/user'
-import type { Address, Community, Region } from '@/api/types'
+import type { Address, Community } from '@/api/types'
+import type { Region } from '@/api/user'
 
 const userStore = useUserStore()
 const addressId = ref(0)
@@ -142,10 +144,10 @@ const selectedRegion = ref<{ province: Region | null; city: Region | null; distr
   district: null,
 })
 
-/** 省列表缓存 */
-let provinces: Region[] | null = null
-const cityCache = new Map<string, Region[]>()
-const districtCache = new Map<string, Region[]>()
+/**
+ * 区划列表加载与缓存统一收敛到 utils/regionCache：
+ * 省级持久化缓存（7 天过期自动重拉），市/区县模块级内存缓存（跨页面实例复用）
+ */
 
 /** 已选地区展示文案（相邻重复层级去重，如直辖市市省同名） */
 const regionDisplayText = computed(() => {
@@ -154,30 +156,6 @@ const regionDisplayText = computed(() => {
     .filter(Boolean)
   return parts.filter((p, i) => i === 0 || p !== parts[i - 1]).join(' / ')
 })
-
-async function loadProvinces(): Promise<Region[]> {
-  if (!provinces) {
-    const res = await listRegionChildren('0')
-    provinces = res.data || []
-  }
-  return provinces
-}
-
-async function loadCities(code: string): Promise<Region[]> {
-  if (!cityCache.has(code)) {
-    const res = await listRegionChildren(code)
-    cityCache.set(code, res.data || [])
-  }
-  return cityCache.get(code)!
-}
-
-async function loadDistricts(code: string): Promise<Region[]> {
-  if (!districtCache.has(code)) {
-    const res = await listRegionChildren(code)
-    districtCache.set(code, res.data || [])
-  }
-  return districtCache.get(code)!
-}
 
 /**
  * 打开区划选择器
