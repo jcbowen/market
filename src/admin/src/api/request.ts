@@ -28,7 +28,7 @@ const CURRENT_COMMUNITY_KEY = 'current_community_id'
  * - 从 cookie 读取 access_token，加入 Authorization 请求头
  * - 从 localStorage 读取当前社区 ID，加入 X-Community-Id 请求头
  *   （后端数据域接口据此切换社区，与业务筛选参数 community_id 解耦；
- *   超管 0 表示全部社区；未登录时不携带）
+ *   仅注入有效社区 ID，未登录或尚未选定社区（0）时不携带，由后端回退默认社区）
  */
 service.interceptors.request.use(
   (config) => {
@@ -39,7 +39,7 @@ service.interceptors.request.use(
       }
       const raw = localStorage.getItem(CURRENT_COMMUNITY_KEY)
       const id = Number.parseInt(raw ?? '', 10)
-      if (Number.isFinite(id) && id >= 0) {
+      if (Number.isFinite(id) && id > 0) {
         config.headers['X-Community-Id'] = String(id)
       }
     }

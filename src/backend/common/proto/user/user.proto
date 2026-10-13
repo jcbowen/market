@@ -270,6 +270,8 @@ message CreateAdminReq {
   string phone = 4;
   int64 role_id = 5;
   int64 community_id = 6;
+  // 绑定的全部社区 ID 列表（写入 admin_communities 关联表）
+  repeated int64 community_ids = 7;
 }
 
 message UpdateAdminReq {
@@ -279,6 +281,8 @@ message UpdateAdminReq {
   int64 role_id = 4;
   int64 community_id = 5;
   int32 status = 6;
+  // 重新绑定的全部社区 ID 列表（全量覆盖 admin_communities 关联表）
+  repeated int64 community_ids = 7;
 }
 
 message DeleteAdminReq {

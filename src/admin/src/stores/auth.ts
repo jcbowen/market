@@ -32,8 +32,9 @@ export const useAuthStore = defineStore('auth', () => {
   const permissions = ref<string[]>([])
   /**
    * 当前社区 ID
-   * - 超管：默认 0 表示全部社区，可切换到任意社区
+   * 超管与普通管理员一致：必须选定一个具体社区，表示当前在操作哪个社区的商超。
    * - 普通管理员：只能切换到自己绑定的社区，默认取绑定列表第一个
+   * - 超管：可切换到任意社区；0 仅表示"尚未选定"的瞬态，由 Layout 加载社区列表后自动补选
    * 请求拦截器读取持久化值注入 X-Community-Id 请求头
    */
   const currentCommunityId = ref<number>(loadPersistedCommunityId())
@@ -71,12 +72,15 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 归一化当前社区 ID
-   * 校验已选社区是否仍对当前管理员合法（超管任意；普通管理员须在绑定列表内），
-   * 不合法时回退默认社区并同步持久化
+   * 校验已选社区是否仍对当前管理员合法：
+   * - 普通管理员：须在绑定列表内，不合法回退绑定列表第一个（无绑定时回退默认社区字段）
+   * - 超管：已选具体社区保持；0（未选定）保留，由 Layout 加载社区列表后补选
    */
   function normalizeCommunityId() {
     if (isSuperAdmin.value) {
-      // 超管：任意持久化值均合法（0 = 全部社区），无需调整
+      if (currentCommunityId.value < 0) {
+        currentCommunityId.value = 0
+      }
       persistCommunityId()
       return
     }
@@ -90,13 +94,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 切换当前社区
-   * @param id 目标社区 ID（超管可传 0 表示全部社区）
+   * 超管与普通管理员都必须选定具体社区（0 仅作为未选定瞬态，不接受切换）
+   * @param id 目标社区 ID
    * @returns 是否切换成功（目标社区不合法时失败）
    */
   function switchCommunity(id: number): boolean {
-    if (isSuperAdmin.value) {
-      if (id < 0) return false
-    } else if (id <= 0 || !communityIds.value.includes(id)) {
+    if (id <= 0) return false
+    if (!isSuperAdmin.value && !communityIds.value.includes(id)) {
       return false
     }
     currentCommunityId.value = id
@@ -148,7 +152,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 登出：清空 token 与管理员信息，状态机转移至 unauthenticated，并同步清空标签页
-   * 同时清除持久化的当前社区，避免换账号登录后残留上一账号的社区选择
+   * 保留持久化的当前社区（"上次选中的社区"），同浏览器下次登录优先沿用；
+   * 更换账号时由归一化逻辑校验：不合法则回退到新账号绑定列表的第一个社区
    */
   function logout() {
     Cookies.remove('access_token', { path: '/' })
@@ -158,8 +163,6 @@ export const useAuthStore = defineStore('auth', () => {
     admin.value = null
     permissions.value = []
     status.value = 'unauthenticated'
-    currentCommunityId.value = 0
-    localStorage.removeItem(CURRENT_COMMUNITY_KEY)
     // 清空标签页，避免残留上一个账号的标签与页面缓存
     useTabsStore().reset()
   }

@@ -78,6 +78,7 @@ func (s *AdminService) ListAdmins(ctx context.Context, communityID int64, page, 
 }
 
 // CreateAdmin 创建管理员
+// 社区绑定（req.CommunityIds）与管理员创建在同一事务内写入
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建请求
@@ -99,13 +100,21 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 		CommunityID: req.CommunityId,
 		Status:      1,
 	}
-	if err := s.db.GetDb().WithContext(ctx).Create(a).Error; err != nil {
+	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(a).Error; err != nil {
+			return err
+		}
+		return bindCommunitiesTx(tx, a.ID, req.CommunityIds)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
 // UpdateAdmin 更新管理员
+// req.CommunityIds 非空时全量覆盖社区绑定关系（约定：空表示不修改绑定，
+// 因为 proto3 无法区分"未传"与"空数组"，而误清绑定会导致管理员失去数据访问权）
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新请求
@@ -126,7 +135,16 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 		a.Status = req.Status
 	}
 
-	if err := s.db.GetDb().WithContext(ctx).Save(a).Error; err != nil {
+	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(a).Error; err != nil {
+			return err
+		}
+		if len(req.CommunityIds) > 0 {
+			return bindCommunitiesTx(tx, a.ID, req.CommunityIds)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -246,19 +264,62 @@ func (s *AdminService) ListAdminCommunityIDs(ctx context.Context, adminID int64,
 //   - error: 错误信息
 func (s *AdminService) BindAdminCommunities(ctx context.Context, adminID int64, communityIDs []int64) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("admin_id = ?", adminID).Delete(&model.AdminCommunity{}).Error; err != nil {
+		return bindCommunitiesTx(tx, adminID, communityIDs)
+	})
+}
+
+// bindCommunitiesTx 在给定事务内全量覆盖管理员的社区绑定关系
+// 先删除原有绑定，再写入新绑定（跳过非正值）
+//
+// 参数：
+//   - tx: gorm 事务
+//   - adminID: 管理员 ID
+//   - communityIDs: 社区 ID 列表
+//
+// 返回：
+//   - error: 错误信息
+func bindCommunitiesTx(tx *gorm.DB, adminID int64, communityIDs []int64) error {
+	if err := tx.Where("admin_id = ?", adminID).Delete(&model.AdminCommunity{}).Error; err != nil {
+		return err
+	}
+	for _, cid := range communityIDs {
+		if cid <= 0 {
+			continue
+		}
+		if err := tx.Create(&model.AdminCommunity{AdminID: adminID, CommunityID: cid}).Error; err != nil {
 			return err
 		}
-		for _, cid := range communityIDs {
-			if cid <= 0 {
-				continue
-			}
-			if err := tx.Create(&model.AdminCommunity{AdminID: adminID, CommunityID: cid}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
+}
+
+// ListCommunitiesForAdmins 批量查询多个管理员的社区绑定关系
+// 单次 IN 查询后按管理员 ID 分组，供列表接口组装，避免逐行查询
+//
+// 参数：
+//   - ctx: 上下文
+//   - adminIDs: 管理员 ID 列表
+//
+// 返回：
+//   - map[int64][]int64: 管理员 ID → 绑定社区 ID 列表
+//   - error: 错误信息
+func (s *AdminService) ListCommunitiesForAdmins(ctx context.Context, adminIDs []int64) (map[int64][]int64, error) {
+	result := make(map[int64][]int64, len(adminIDs))
+	if len(adminIDs) == 0 {
+		return result, nil
+	}
+	var list []*model.AdminCommunity
+	err := s.db.GetDb().WithContext(ctx).
+		Where("admin_id IN ?", adminIDs).
+		Order("id asc").
+		Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range list {
+		result[item.AdminID] = append(result[item.AdminID], item.CommunityID)
+	}
+	return result, nil
 }
 
 // hashPassword 对密码进行 bcrypt 哈希

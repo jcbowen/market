@@ -278,6 +278,16 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 		return nil, bizerr.ToStatus(err)
 	}
 
+	// 批量查询各管理员的社区绑定关系
+	adminIDs := make([]int64, 0, len(list))
+	for _, a := range list {
+		adminIDs = append(adminIDs, a.ID)
+	}
+	communityIDsByAdmin, err := s.adminService.ListCommunitiesForAdmins(ctx, adminIDs)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+
 	resp := &user.ListAdminsResp{
 		List: make([]*user.AdminInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -288,7 +298,7 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 	}
 	for _, a := range list {
 		role, _ := s.roleService.GetRoleByID(ctx, a.RoleID)
-		resp.List = append(resp.List, service.ToAdminInfo(a, role, nil))
+		resp.List = append(resp.List, service.ToAdminInfo(a, role, communityIDsByAdmin[a.ID]))
 	}
 	return resp, nil
 }
@@ -300,7 +310,8 @@ func (s *server) CreateAdmin(ctx stdctx.Context, req *user.CreateAdminReq) (*use
 		return nil, bizerr.ToStatus(err)
 	}
 	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
-	return service.ToAdminInfo(admin, role, nil), nil
+	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID, false)
+	return service.ToAdminInfo(admin, role, communityIDs), nil
 }
 
 // UpdateAdmin 更新管理员
@@ -310,7 +321,8 @@ func (s *server) UpdateAdmin(ctx stdctx.Context, req *user.UpdateAdminReq) (*use
 		return nil, bizerr.ToStatus(err)
 	}
 	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
-	return service.ToAdminInfo(admin, role, nil), nil
+	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID, false)
+	return service.ToAdminInfo(admin, role, communityIDs), nil
 }
 
 // DeleteAdmin 删除管理员

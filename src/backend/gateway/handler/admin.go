@@ -224,7 +224,7 @@ func (h *AdminHandler) getAdminPermissions(ctx context.Context, roleID int64) []
 
 // getAdminCommunityID 获取管理员当前社区 ID
 // 前端通过请求头 X-Community-Id 声明当前操作的社区（与业务筛选参数 community_id 解耦）：
-//   - 超管：任意社区 ID 均合法，0 表示全部社区
+//   - 超管：任意社区 ID 均合法（含未绑定社区）
 //   - 普通管理员：仅允许切换到自己绑定的社区，越权值静默回退默认社区
 //   - 未携带或值非法时回退 JWT 中的默认社区
 //
@@ -236,11 +236,8 @@ func (h *AdminHandler) getAdminPermissions(ctx context.Context, roleID int64) []
 func (h *AdminHandler) getAdminCommunityID(c *gin.Context) int64 {
 	uc := appcontext.GetUserContext(c)
 	if header := c.GetHeader("X-Community-Id"); header != "" {
-		if id, err := strconv.ParseInt(header, 10, 64); err == nil && id >= 0 {
-			if uc.Role == "super_admin" {
-				return id
-			}
-			if id > 0 && containsInt64(uc.CommunityIDs, id) {
+		if id, err := strconv.ParseInt(header, 10, 64); err == nil && id > 0 {
+			if uc.Role == "super_admin" || containsInt64(uc.CommunityIDs, id) {
 				return id
 			}
 		}
@@ -289,12 +286,14 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 // CreateAdminReq 创建管理员请求
 // 包含管理员基础信息字段
 type CreateAdminReq struct {
-	Username    string `json:"username" binding:"required"`
-	Password    string `json:"password" binding:"required,min=6"`
-	RealName    string `json:"real_name"`
-	Phone       string `json:"phone"`
-	RoleID      int64  `json:"role_id" binding:"required"`
-	CommunityID int64  `json:"community_id"`
+	Username    string  `json:"username" binding:"required"`
+	Password    string  `json:"password" binding:"required,min=6"`
+	RealName    string  `json:"real_name"`
+	Phone       string  `json:"phone"`
+	RoleID      int64   `json:"role_id" binding:"required"`
+	CommunityID int64   `json:"community_id"`
+	// 绑定的全部社区 ID 列表（写入 admin_communities 关联表）
+	CommunityIDs []int64 `json:"community_ids"`
 }
 
 // CreateAdmin 创建管理员
@@ -308,12 +307,13 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	}
 
 	admin, err := h.userClient.CreateAdmin(c.Request.Context(), &user.CreateAdminReq{
-		Username:    req.Username,
-		Password:    req.Password,
-		RealName:    req.RealName,
-		Phone:       req.Phone,
-		RoleId:      req.RoleID,
-		CommunityId: req.CommunityID,
+		Username:     req.Username,
+		Password:     req.Password,
+		RealName:     req.RealName,
+		Phone:        req.Phone,
+		RoleId:       req.RoleID,
+		CommunityId:  req.CommunityID,
+		CommunityIds: req.CommunityIDs,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -325,11 +325,13 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 // UpdateAdminReq 更新管理员请求
 // 包含管理员可更新字段
 type UpdateAdminReq struct {
-	RealName    string `json:"real_name"`
-	Phone       string `json:"phone"`
-	RoleID      int64  `json:"role_id"`
-	CommunityID int64  `json:"community_id"`
-	Status      int32  `json:"status"`
+	RealName    string  `json:"real_name"`
+	Phone       string  `json:"phone"`
+	RoleID      int64   `json:"role_id"`
+	CommunityID int64   `json:"community_id"`
+	Status      int32   `json:"status"`
+	// 重新绑定的全部社区 ID 列表；空表示不修改绑定关系
+	CommunityIDs []int64 `json:"community_ids"`
 }
 
 // UpdateAdmin 更新管理员
@@ -356,12 +358,13 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	}
 
 	admin, err := h.userClient.UpdateAdmin(c.Request.Context(), &user.UpdateAdminReq{
-		Id:          id,
-		RealName:    req.RealName,
-		Phone:       req.Phone,
-		RoleId:      req.RoleID,
-		CommunityId: req.CommunityID,
-		Status:      req.Status,
+		Id:           id,
+		RealName:     req.RealName,
+		Phone:        req.Phone,
+		RoleId:       req.RoleID,
+		CommunityId:  req.CommunityID,
+		Status:       req.Status,
+		CommunityIds: req.CommunityIDs,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2410,6 +2413,7 @@ func (h *AdminHandler) toAdminVO(admin *user.AdminInfo) gin.H {
 		"role_code":     admin.RoleCode,
 		"role_name":     admin.RoleName,
 		"community_id":  admin.CommunityId,
+		"community_ids": admin.CommunityIds,
 		"status":        admin.Status,
 		"last_login_at": admin.LastLoginAt,
 		"last_login_ip": admin.LastLoginIp,
