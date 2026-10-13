@@ -1,38 +1,63 @@
 <template>
   <view class="community-select-page">
+    <!-- 搜索栏：灰底胶囊 + 绿色搜索入口 -->
     <view class="search-bar">
-      <u-input
-        v-model="keyword"
-        placeholder="搜索社区"
-        prefix-icon="search"
-        border="surround"
-        clearable
-      />
-      <view class="search-btn" @click="onSearch">
-        <u-button size="small" text="搜索" />
+      <view class="search-field">
+        <u-icon name="search" size="16" color="#999999" />
+        <u-input
+          v-model="keyword"
+          class="search-input"
+          placeholder="搜索社区名称"
+          border="none"
+          clearable
+          confirm-type="search"
+          @confirm="onSearch"
+        />
       </view>
+      <text class="search-action" @click="onSearch">搜索</text>
     </view>
 
+    <!-- 附近社区入口：带定位状态反馈 -->
     <view class="location-bar" @click="getNearby">
-      <u-icon name="map-fill" size="18" color="#07c160" />
-      <text>附近社区</text>
+      <view class="location-icon">
+        <u-icon name="map-fill" size="16" color="#07c160" />
+      </view>
+      <view class="location-text">
+        <text class="location-title">附近社区</text>
+        <text class="location-sub">{{ locating ? '正在定位…' : '按距离由近到远排序' }}</text>
+      </view>
+      <u-loading-icon v-if="locating" mode="semicircle" size="20" color="#07c160" />
     </view>
 
+    <!-- 社区列表 -->
     <scroll-view class="community-list" scroll-y @scrolltolower="loadMore">
       <view
         v-for="item in communities"
         :key="item.id"
         class="community-card"
+        :class="{ 'community-card--active': isCurrent(item.id) }"
         @click="onSelect(item)"
       >
-        <view class="community-top">
-          <text class="community-name">{{ item.name }}</text>
-          <text v-if="distanceText(item)" class="community-distance">{{ distanceText(item) }}</text>
-          <text v-if="isCurrent(item.id)" class="current-tag">当前</text>
+        <view class="card-icon">
+          <u-icon name="home" size="20" :color="isCurrent(item.id) ? '#07c160' : '#999999'" />
         </view>
-        <text class="community-address">{{ item.address }}</text>
+        <view class="card-main">
+          <view class="community-top">
+            <text class="community-name">{{ item.name }}</text>
+            <text v-if="isCurrent(item.id)" class="current-tag">当前</text>
+          </view>
+          <text class="community-address">{{ item.address }}</text>
+        </view>
+        <text v-if="distanceText(item)" class="community-distance">{{ distanceText(item) }}</text>
+        <u-icon v-if="isCurrent(item.id)" name="checkmark-circle-fill" size="20" color="#07c160" />
       </view>
-      <u-loadmore :status="loadStatus" />
+      <u-loadmore v-if="communities.length" :status="loadStatus" />
+      <u-empty
+        v-if="!communities.length && loadStatus === 'nomore'"
+        mode="search"
+        text="没有找到相关社区"
+        margin-top="120"
+      />
     </scroll-view>
   </view>
 </template>
@@ -53,6 +78,8 @@ const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 /** 系统定位成功的定位原点，仅系统定位时用于距离展示（IP 定位不展示距离） */
 const origin = ref<{ longitude: number; latitude: number } | null>(null)
+/** 定位进行中，用于「附近社区」入口的状态反馈 */
+const locating = ref(false)
 
 onShow(() => {
   page.value = 1
@@ -139,9 +166,11 @@ function locateAndLoad(manual = false) {
   // #endif
   // TODO 调试日志：定位链路排查，问题定位后移除
   console.log('[社区定位] 开始系统定位, type:', locationType)
+  locating.value = true
   uni.getLocation({
     type: locationType,
     success: (res) => {
+      locating.value = false
       console.log('[社区定位] 系统定位成功:', res.longitude, res.latitude, res)
       page.value = 1
       communities.value = []
@@ -150,6 +179,7 @@ function locateAndLoad(manual = false) {
     fail: async (err) => {
       console.warn('[社区定位] 系统定位失败:', err)
       const ipLoc = await locateByIp()
+      locating.value = false
       console.log('[社区定位] IP 定位兜底结果:', ipLoc)
       if (ipLoc) {
         page.value = 1
@@ -242,33 +272,73 @@ async function onSelect(community: Community) {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background-color: #f5f5f5;
+  background-color: #f5f6f8;
 }
 
+/* 搜索栏：灰底胶囊，弱化边框感 */
 .search-bar {
   display: flex;
   align-items: center;
-  gap: 16rpx;
+  gap: 24rpx;
   padding: 20rpx 30rpx;
   background-color: #ffffff;
 }
 
-.search-bar .u-input {
+.search-field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  height: 64rpx;
+  padding: 0 24rpx;
+  border-radius: 999rpx;
+  background-color: #f5f6f8;
+}
+
+.search-input {
   flex: 1;
 }
 
+.search-action {
+  font-size: 28rpx;
+  color: #07c160;
+}
+
+/* 附近社区入口：图标底色块 + 双行文案 + 定位中反馈 */
 .location-bar {
   display: flex;
   align-items: center;
-  padding: 24rpx 30rpx;
+  padding: 20rpx 30rpx;
   background-color: #ffffff;
-  border-top: 1rpx solid #f5f5f5;
+  border-top: 1rpx solid #f0f0f0;
+}
+
+.location-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 16rpx;
+  background-color: rgba(7, 193, 96, 0.1);
+}
+
+.location-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-left: 16rpx;
+}
+
+.location-title {
   font-size: 28rpx;
   color: #333333;
 }
 
-.location-bar text {
-  margin-left: 12rpx;
+.location-sub {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #999999;
 }
 
 .community-list {
@@ -276,45 +346,78 @@ async function onSelect(community: Community) {
   overflow: hidden;
   /* scroll-view 默认 content-box，width:100% + padding 会横向溢出导致页面超宽 */
   box-sizing: border-box;
-  padding: 20rpx;
+  padding: 24rpx;
 }
 
+/* 卡片：图标 + 主信息 + 右侧距离/选中态，透明占位边框避免选中时跳动 */
 .community-card {
+  display: flex;
+  align-items: center;
   margin-bottom: 20rpx;
   padding: 24rpx;
+  border: 2rpx solid transparent;
   border-radius: 16rpx;
   background-color: #ffffff;
+}
+
+.community-card--active {
+  border-color: #07c160;
+  background-color: rgba(7, 193, 96, 0.04);
+}
+
+.card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 16rpx;
+  background-color: #f5f6f8;
+}
+
+.community-card--active .card-icon {
+  background-color: rgba(7, 193, 96, 0.1);
+}
+
+.card-main {
+  flex: 1;
+  margin: 0 20rpx;
+  overflow: hidden;
 }
 
 .community-top {
   display: flex;
   align-items: center;
-  margin-bottom: 12rpx;
+  margin-bottom: 8rpx;
 }
 
 .community-name {
   font-size: 30rpx;
-  font-weight: bold;
+  font-weight: 600;
   color: #333333;
 }
 
-.community-distance {
-  margin-left: 16rpx;
-  font-size: 24rpx;
-  color: #999999;
-}
-
 .current-tag {
-  margin-left: 16rpx;
-  padding: 2rpx 10rpx;
-  border-radius: 8rpx;
+  margin-left: 12rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
   font-size: 20rpx;
   color: #07c160;
   background-color: rgba(7, 193, 96, 0.1);
 }
 
 .community-address {
-  font-size: 26rpx;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 24rpx;
+  color: #999999;
+}
+
+.community-distance {
+  margin-right: 8rpx;
+  font-size: 24rpx;
   color: #999999;
 }
 </style>
