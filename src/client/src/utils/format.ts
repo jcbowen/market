@@ -50,3 +50,26 @@ export function maskPhone(phone: string): string {
   if (!phone || phone.length !== 11) return phone
   return `${phone.slice(0, 3)}****${phone.slice(7)}`
 }
+
+/**
+ * 格式化两点间距离（Haversine 球面距离）
+ * @param from 定位原点经纬度
+ * @param to 目标点经纬度
+ * @returns 如 "850m"/"1.2km"，任一坐标缺失时返回空串
+ */
+export function formatDistance(
+  from: { longitude: number; latitude: number } | null | undefined,
+  to: { longitude: number; latitude: number } | null | undefined,
+): string {
+  if (!from?.longitude || !from?.latitude || !to?.longitude || !to?.latitude) return ''
+
+  const rad = Math.PI / 180
+  const lat1 = from.latitude * rad
+  const lat2 = to.latitude * rad
+  const dLat = (to.latitude - from.latitude) * rad
+  const dLon = (to.longitude - from.longitude) * rad
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
+  const km = 2 * 6371 * Math.asin(Math.sqrt(h))
+  return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`
+}

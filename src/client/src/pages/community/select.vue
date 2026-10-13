@@ -27,6 +27,7 @@
       >
         <view class="community-top">
           <text class="community-name">{{ item.name }}</text>
+          <text v-if="distanceText(item)" class="community-distance">{{ distanceText(item) }}</text>
           <text v-if="isCurrent(item.id)" class="current-tag">当前</text>
         </view>
         <text class="community-address">{{ item.address }}</text>
@@ -41,6 +42,7 @@ import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getCommunityList, getIpLocation } from '@/api/user'
+import { formatDistance } from '@/utils/format'
 import type { Community } from '@/api/types'
 
 const userStore = useUserStore()
@@ -49,6 +51,8 @@ const communities = ref<Community[]>([])
 const page = ref(1)
 const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
+/** 系统定位成功的定位原点，仅系统定位时用于距离展示（IP 定位不展示距离） */
+const origin = ref<{ longitude: number; latitude: number } | null>(null)
 
 onShow(() => {
   page.value = 1
@@ -65,11 +69,21 @@ function isCurrent(id: number): boolean {
 }
 
 /**
- * 加载社区列表
+ * 计算社区与定位原点的距离文案
+ * @param community 社区对象
+ * @returns 如 "850m"/"1.2km"，无系统定位原点或社区坐标缺失时返回空串
+ */
+function distanceText(community: Community): string {
+  return formatDistance(origin.value, community)
+}
+
+/**
+ * 加载社区列表（默认/搜索模式，无定位原点不展示距离）
  */
 async function loadCommunities() {
   if (loadStatus.value === 'loading' || loadStatus.value === 'nomore') return
   loadStatus.value = 'loading'
+  origin.value = null
   try {
     const res = await getCommunityList({
       page: page.value,
@@ -115,15 +129,28 @@ function loadMore() {
  * @param manual 是否用户手动触发「附近社区」（全部失败时给出 toast 反馈）
  */
 function locateAndLoad(manual = false) {
+  // 坐标系：H5 端用浏览器原生 wgs84（gcj02 转换需在 manifest 配置地图厂商 key，
+  // H5 未配置），其他端用 gcj02；wgs84 偏差对距离展示与就近排序可接受
+  // #ifdef H5
+  const locationType: 'wgs84' | 'gcj02' = 'wgs84'
+  // #endif
+  // #ifndef H5
+  const locationType: 'wgs84' | 'gcj02' = 'gcj02'
+  // #endif
+  // TODO 调试日志：定位链路排查，问题定位后移除
+  console.log('[社区定位] 开始系统定位, type:', locationType)
   uni.getLocation({
-    type: 'gcj02',
+    type: locationType,
     success: (res) => {
+      console.log('[社区定位] 系统定位成功:', res.longitude, res.latitude, res)
       page.value = 1
       communities.value = []
-      loadCommunitiesWithLocation(res.longitude, res.latitude)
+      loadCommunitiesWithLocation(res.longitude, res.latitude, true)
     },
-    fail: async () => {
+    fail: async (err) => {
+      console.warn('[社区定位] 系统定位失败:', err)
       const ipLoc = await locateByIp()
+      console.log('[社区定位] IP 定位兜底结果:', ipLoc)
       if (ipLoc) {
         page.value = 1
         communities.value = []
@@ -135,6 +162,7 @@ function locateAndLoad(manual = false) {
         return
       }
       // 自动定位全失败：静默回退默认列表，不打断浏览
+      console.log('[社区定位] 全部定位失败，回退默认列表（不展示距离）')
       loadCommunities()
     },
   })
@@ -169,8 +197,10 @@ async function locateByIp(): Promise<{ longitude: number; latitude: number } | n
  * 根据坐标加载社区
  * @param longitude 经度
  * @param latitude 纬度
+ * @param withDistance 是否记录定位原点用于距离展示（仅系统定位传 true，IP 定位精度不足不展示）
  */
-async function loadCommunitiesWithLocation(longitude: number, latitude: number) {
+async function loadCommunitiesWithLocation(longitude: number, latitude: number, withDistance = false) {
+  origin.value = withDistance ? { longitude, latitude } : null
   loadStatus.value = 'loading'
   try {
     const res = await getCommunityList({
@@ -180,6 +210,12 @@ async function loadCommunitiesWithLocation(longitude: number, latitude: number) 
       latitude,
     })
     communities.value = res.data?.list || []
+    // TODO 调试日志：确认社区数据是否带经纬度，问题定位后移除
+    console.log(
+      '[社区定位] 展示距离:', withDistance,
+      '定位原点:', origin.value,
+      '社区坐标:', communities.value.map((c) => ({ id: c.id, name: c.name, longitude: c.longitude, latitude: c.latitude })),
+    )
     loadStatus.value = 'nomore'
   } catch {
     loadStatus.value = 'loadmore'
@@ -260,6 +296,12 @@ async function onSelect(community: Community) {
   font-size: 30rpx;
   font-weight: bold;
   color: #333333;
+}
+
+.community-distance {
+  margin-left: 16rpx;
+  font-size: 24rpx;
+  color: #999999;
 }
 
 .current-tag {
