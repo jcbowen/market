@@ -1,0 +1,50 @@
+{
+	"version": "2.0.0",
+	"inputs": [
+		{
+			"id": "startMode",
+			"type": "pickString",
+			"description": "start-all 启动模式",
+			"default": "",
+			"options": [
+				{
+					"label": "常规启动（保留 MySQL/Redis 数据）",
+					"value": ""
+				},
+				{
+					"label": "清理 MySQL/Redis 数据后重启（--clean）",
+					"value": "--clean"
+				},
+				{
+					"label": "跳过构建，直接使用已有镜像/二进制（--skip-build）",
+					"value": "--skip-build"
+				},
+				{
+					"label": "构建镜像不使用 Docker 缓存（--no-cache）",
+					"value": "--no-cache"
+				}
+			]
+		}
+	],
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "start-all（Docker 一键启动）",
+			"command": "node start-all.mjs ${input:startMode}",
+			"problemMatcher": [],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"detail": "依赖检查 → 前后端构建 → 镜像构建 → 启动服务 → 初始化数据（首次会弹出启动模式选择）"
+		}
+	]
+}
