@@ -24,13 +24,18 @@ import (
 const mtimeCheckInterval = time.Minute
 
 // Location IP 归属地定位结果
+// 各字段取决于数据库数据，缺失时为零值（空字符串/0），调用方自行判断
 type Location struct {
-	Latitude    float64 // 纬度
-	Longitude   float64 // 经度
-	Country     string  // ISO 3166-1 alpha-2 国家码，如 CN
-	CountryName string  // 国家名称（中文优先，英文兜底）
-	Province    string  // 一级行政区名称（中文优先，英文兜底；如 "广东"）
-	City        string  // 城市名称（中文优先，英文兜底）
+	Latitude       float64 // 纬度
+	Longitude      float64 // 经度
+	AccuracyRadius int     // 定位精度半径（公里），坐标 67% 置信落在该圆内；0 表示数据库未提供
+	Country        string  // ISO 3166-1 alpha-2 国家码，如 CN
+	CountryName    string  // 国家名称（中文优先，英文兜底）
+	Province       string  // 一级行政区名称（中文优先，英文兜底；如 "广东"）
+	District       string  // 二级行政区名称（中文优先，英文兜底；中国市辖区/国外州下级，多数记录为空）
+	City           string  // 城市名称（中文优先，英文兜底）
+	PostalCode     string  // 邮政编码（部分国家才有，中国城市多为空）
+	TimeZone       string  // IANA 时区，如 Asia/Shanghai
 }
 
 // manager 数据库读取器单例：reader 可并发使用，重载由互斥锁保护
@@ -69,15 +74,22 @@ func Lookup(dbPath string, ip netip.Addr) *Location {
 	}
 
 	loc := &Location{
-		Latitude:    derefFloat(record.Location.Latitude),
-		Longitude:   derefFloat(record.Location.Longitude),
-		Country:     record.Country.ISOCode,
-		CountryName: pickName(record.Country.Names),
-		City:        pickName(record.City.Names),
+		Latitude:       derefFloat(record.Location.Latitude),
+		Longitude:      derefFloat(record.Location.Longitude),
+		AccuracyRadius: int(record.Location.AccuracyRadius),
+		Country:        record.Country.ISOCode,
+		CountryName:    pickName(record.Country.Names),
+		City:           pickName(record.City.Names),
+		PostalCode:     record.Postal.Code,
+		TimeZone:       record.Location.TimeZone,
 	}
 	// 一级行政区（省/州）：取第一个 subdivision（中国为省/直辖市/自治区）
+	// 二级行政区：取第二个 subdivision（中国部分记录为市辖区，多数国家/记录无此层）
 	if len(record.Subdivisions) > 0 {
 		loc.Province = pickName(record.Subdivisions[0].Names)
+		if len(record.Subdivisions) > 1 {
+			loc.District = pickName(record.Subdivisions[1].Names)
+		}
 	}
 	return loc
 }
