@@ -679,16 +679,18 @@ func (x *GetAddressReq) GetUserId() int64 {
 }
 
 type CreateAddressReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	ContactName   string                 `protobuf:"bytes,2,opt,name=contact_name,json=contactName,proto3" json:"contact_name,omitempty"`
-	ContactPhone  string                 `protobuf:"bytes,3,opt,name=contact_phone,json=contactPhone,proto3" json:"contact_phone,omitempty"`
-	Province      string                 `protobuf:"bytes,4,opt,name=province,proto3" json:"province,omitempty"`
-	City          string                 `protobuf:"bytes,5,opt,name=city,proto3" json:"city,omitempty"`
-	District      string                 `protobuf:"bytes,6,opt,name=district,proto3" json:"district,omitempty"`
-	Detail        string                 `protobuf:"bytes,7,opt,name=detail,proto3" json:"detail,omitempty"`
-	Tag           string                 `protobuf:"bytes,8,opt,name=tag,proto3" json:"tag,omitempty"`
-	IsDefault     bool                   `protobuf:"varint,9,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	UserId       int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ContactName  string                 `protobuf:"bytes,2,opt,name=contact_name,json=contactName,proto3" json:"contact_name,omitempty"`
+	ContactPhone string                 `protobuf:"bytes,3,opt,name=contact_phone,json=contactPhone,proto3" json:"contact_phone,omitempty"`
+	Province     string                 `protobuf:"bytes,4,opt,name=province,proto3" json:"province,omitempty"`
+	City         string                 `protobuf:"bytes,5,opt,name=city,proto3" json:"city,omitempty"`
+	District     string                 `protobuf:"bytes,6,opt,name=district,proto3" json:"district,omitempty"`
+	Detail       string                 `protobuf:"bytes,7,opt,name=detail,proto3" json:"detail,omitempty"`
+	Tag          string                 `protobuf:"bytes,8,opt,name=tag,proto3" json:"tag,omitempty"`
+	IsDefault    bool                   `protobuf:"varint,9,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	// 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
+	CommunityId   int64 `protobuf:"varint,10,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -786,18 +788,27 @@ func (x *CreateAddressReq) GetIsDefault() bool {
 	return false
 }
 
+func (x *CreateAddressReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
 type UpdateAddressReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	UserId        int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	ContactName   string                 `protobuf:"bytes,3,opt,name=contact_name,json=contactName,proto3" json:"contact_name,omitempty"`
-	ContactPhone  string                 `protobuf:"bytes,4,opt,name=contact_phone,json=contactPhone,proto3" json:"contact_phone,omitempty"`
-	Province      string                 `protobuf:"bytes,5,opt,name=province,proto3" json:"province,omitempty"`
-	City          string                 `protobuf:"bytes,6,opt,name=city,proto3" json:"city,omitempty"`
-	District      string                 `protobuf:"bytes,7,opt,name=district,proto3" json:"district,omitempty"`
-	Detail        string                 `protobuf:"bytes,8,opt,name=detail,proto3" json:"detail,omitempty"`
-	Tag           string                 `protobuf:"bytes,9,opt,name=tag,proto3" json:"tag,omitempty"`
-	IsDefault     bool                   `protobuf:"varint,10,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Id           int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId       int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ContactName  string                 `protobuf:"bytes,3,opt,name=contact_name,json=contactName,proto3" json:"contact_name,omitempty"`
+	ContactPhone string                 `protobuf:"bytes,4,opt,name=contact_phone,json=contactPhone,proto3" json:"contact_phone,omitempty"`
+	Province     string                 `protobuf:"bytes,5,opt,name=province,proto3" json:"province,omitempty"`
+	City         string                 `protobuf:"bytes,6,opt,name=city,proto3" json:"city,omitempty"`
+	District     string                 `protobuf:"bytes,7,opt,name=district,proto3" json:"district,omitempty"`
+	Detail       string                 `protobuf:"bytes,8,opt,name=detail,proto3" json:"detail,omitempty"`
+	Tag          string                 `protobuf:"bytes,9,opt,name=tag,proto3" json:"tag,omitempty"`
+	IsDefault    bool                   `protobuf:"varint,10,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	// 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
+	CommunityId   int64 `protobuf:"varint,11,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -900,6 +911,13 @@ func (x *UpdateAddressReq) GetIsDefault() bool {
 		return x.IsDefault
 	}
 	return false
+}
+
+func (x *UpdateAddressReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
 }
 
 type DeleteAddressReq struct {
@@ -1007,18 +1025,21 @@ func (x *SetDefaultAddressReq) GetUserId() int64 {
 }
 
 type AddressInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	UserId        int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	ContactName   string                 `protobuf:"bytes,3,opt,name=contact_name,json=contactName,proto3" json:"contact_name,omitempty"`
-	ContactPhone  string                 `protobuf:"bytes,4,opt,name=contact_phone,json=contactPhone,proto3" json:"contact_phone,omitempty"`
-	Province      string                 `protobuf:"bytes,5,opt,name=province,proto3" json:"province,omitempty"`
-	City          string                 `protobuf:"bytes,6,opt,name=city,proto3" json:"city,omitempty"`
-	District      string                 `protobuf:"bytes,7,opt,name=district,proto3" json:"district,omitempty"`
-	Detail        string                 `protobuf:"bytes,8,opt,name=detail,proto3" json:"detail,omitempty"`
-	Tag           string                 `protobuf:"bytes,9,opt,name=tag,proto3" json:"tag,omitempty"`
-	IsDefault     bool                   `protobuf:"varint,10,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
-	CreatedAt     string                 `protobuf:"bytes,11,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Id           int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId       int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ContactName  string                 `protobuf:"bytes,3,opt,name=contact_name,json=contactName,proto3" json:"contact_name,omitempty"`
+	ContactPhone string                 `protobuf:"bytes,4,opt,name=contact_phone,json=contactPhone,proto3" json:"contact_phone,omitempty"`
+	Province     string                 `protobuf:"bytes,5,opt,name=province,proto3" json:"province,omitempty"`
+	City         string                 `protobuf:"bytes,6,opt,name=city,proto3" json:"city,omitempty"`
+	District     string                 `protobuf:"bytes,7,opt,name=district,proto3" json:"district,omitempty"`
+	Detail       string                 `protobuf:"bytes,8,opt,name=detail,proto3" json:"detail,omitempty"`
+	Tag          string                 `protobuf:"bytes,9,opt,name=tag,proto3" json:"tag,omitempty"`
+	IsDefault    bool                   `protobuf:"varint,10,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	CreatedAt    string                 `protobuf:"bytes,11,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// 地址所属社区 ID 与名称（按保存时用户当前社区回填，供 C 端按社区分组展示）
+	CommunityId   int64  `protobuf:"varint,12,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	CommunityName string `protobuf:"bytes,13,opt,name=community_name,json=communityName,proto3" json:"community_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1130,6 +1151,20 @@ func (x *AddressInfo) GetCreatedAt() string {
 	return ""
 }
 
+func (x *AddressInfo) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
+func (x *AddressInfo) GetCommunityName() string {
+	if x != nil {
+		return x.CommunityName
+	}
+	return ""
+}
+
 type ListAddressesResp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	List          []*AddressInfo         `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
@@ -1235,8 +1270,14 @@ type CommunityInfo struct {
 	Sort            int32                  `protobuf:"varint,13,opt,name=sort,proto3" json:"sort,omitempty"`
 	ManagerName     string                 `protobuf:"bytes,14,opt,name=manager_name,json=managerName,proto3" json:"manager_name,omitempty"`
 	ManagerPhone    string                 `protobuf:"bytes,15,opt,name=manager_phone,json=managerPhone,proto3" json:"manager_phone,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// 社区所在省/市/区（C 端锁定地址前缀用）
+	Province string `protobuf:"bytes,16,opt,name=province,proto3" json:"province,omitempty"`
+	City     string `protobuf:"bytes,17,opt,name=city,proto3" json:"city,omitempty"`
+	District string `protobuf:"bytes,18,opt,name=district,proto3" json:"district,omitempty"`
+	// 是否允许社区外配送（false 时 C 端地址前缀锁定为本社区）
+	AllowOutsideDelivery bool `protobuf:"varint,19,opt,name=allow_outside_delivery,json=allowOutsideDelivery,proto3" json:"allow_outside_delivery,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *CommunityInfo) Reset() {
@@ -1374,6 +1415,34 @@ func (x *CommunityInfo) GetManagerPhone() string {
 	return ""
 }
 
+func (x *CommunityInfo) GetProvince() string {
+	if x != nil {
+		return x.Province
+	}
+	return ""
+}
+
+func (x *CommunityInfo) GetCity() string {
+	if x != nil {
+		return x.City
+	}
+	return ""
+}
+
+func (x *CommunityInfo) GetDistrict() string {
+	if x != nil {
+		return x.District
+	}
+	return ""
+}
+
+func (x *CommunityInfo) GetAllowOutsideDelivery() bool {
+	if x != nil {
+		return x.AllowOutsideDelivery
+	}
+	return false
+}
+
 // ListCommunitiesReq 社区列表查询请求
 type ListCommunitiesReq struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
@@ -1453,8 +1522,13 @@ type CreateCommunityReq struct {
 	Sort            int32                  `protobuf:"varint,12,opt,name=sort,proto3" json:"sort,omitempty"`
 	ManagerName     string                 `protobuf:"bytes,13,opt,name=manager_name,json=managerName,proto3" json:"manager_name,omitempty"`
 	ManagerPhone    string                 `protobuf:"bytes,14,opt,name=manager_phone,json=managerPhone,proto3" json:"manager_phone,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	Province        string                 `protobuf:"bytes,15,opt,name=province,proto3" json:"province,omitempty"`
+	City            string                 `protobuf:"bytes,16,opt,name=city,proto3" json:"city,omitempty"`
+	District        string                 `protobuf:"bytes,17,opt,name=district,proto3" json:"district,omitempty"`
+	// 是否允许社区外配送，默认 false
+	AllowOutsideDelivery bool `protobuf:"varint,18,opt,name=allow_outside_delivery,json=allowOutsideDelivery,proto3" json:"allow_outside_delivery,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *CreateCommunityReq) Reset() {
@@ -1585,6 +1659,34 @@ func (x *CreateCommunityReq) GetManagerPhone() string {
 	return ""
 }
 
+func (x *CreateCommunityReq) GetProvince() string {
+	if x != nil {
+		return x.Province
+	}
+	return ""
+}
+
+func (x *CreateCommunityReq) GetCity() string {
+	if x != nil {
+		return x.City
+	}
+	return ""
+}
+
+func (x *CreateCommunityReq) GetDistrict() string {
+	if x != nil {
+		return x.District
+	}
+	return ""
+}
+
+func (x *CreateCommunityReq) GetAllowOutsideDelivery() bool {
+	if x != nil {
+		return x.AllowOutsideDelivery
+	}
+	return false
+}
+
 type UpdateCommunityInfoReq struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1602,8 +1704,13 @@ type UpdateCommunityInfoReq struct {
 	Sort            int32                  `protobuf:"varint,13,opt,name=sort,proto3" json:"sort,omitempty"`
 	ManagerName     string                 `protobuf:"bytes,14,opt,name=manager_name,json=managerName,proto3" json:"manager_name,omitempty"`
 	ManagerPhone    string                 `protobuf:"bytes,15,opt,name=manager_phone,json=managerPhone,proto3" json:"manager_phone,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	Province        string                 `protobuf:"bytes,16,opt,name=province,proto3" json:"province,omitempty"`
+	City            string                 `protobuf:"bytes,17,opt,name=city,proto3" json:"city,omitempty"`
+	District        string                 `protobuf:"bytes,18,opt,name=district,proto3" json:"district,omitempty"`
+	// 是否允许社区外配送（整表提交全量覆盖）
+	AllowOutsideDelivery bool `protobuf:"varint,19,opt,name=allow_outside_delivery,json=allowOutsideDelivery,proto3" json:"allow_outside_delivery,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *UpdateCommunityInfoReq) Reset() {
@@ -1739,6 +1846,34 @@ func (x *UpdateCommunityInfoReq) GetManagerPhone() string {
 		return x.ManagerPhone
 	}
 	return ""
+}
+
+func (x *UpdateCommunityInfoReq) GetProvince() string {
+	if x != nil {
+		return x.Province
+	}
+	return ""
+}
+
+func (x *UpdateCommunityInfoReq) GetCity() string {
+	if x != nil {
+		return x.City
+	}
+	return ""
+}
+
+func (x *UpdateCommunityInfoReq) GetDistrict() string {
+	if x != nil {
+		return x.District
+	}
+	return ""
+}
+
+func (x *UpdateCommunityInfoReq) GetAllowOutsideDelivery() bool {
+	if x != nil {
+		return x.AllowOutsideDelivery
+	}
+	return false
 }
 
 type DeleteCommunityReq struct {
@@ -2840,7 +2975,7 @@ const file_user_user_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\"8\n" +
 	"\rGetAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\x88\x02\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\xab\x02\n" +
 	"\x10CreateAddressReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
 	"\fcontact_name\x18\x02 \x01(\tR\vcontactName\x12#\n" +
@@ -2851,7 +2986,9 @@ const file_user_user_proto_rawDesc = "" +
 	"\x06detail\x18\a \x01(\tR\x06detail\x12\x10\n" +
 	"\x03tag\x18\b \x01(\tR\x03tag\x12\x1d\n" +
 	"\n" +
-	"is_default\x18\t \x01(\bR\tisDefault\"\x98\x02\n" +
+	"is_default\x18\t \x01(\bR\tisDefault\x12!\n" +
+	"\fcommunity_id\x18\n" +
+	" \x01(\x03R\vcommunityId\"\xbb\x02\n" +
 	"\x10UpdateAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12!\n" +
@@ -2864,13 +3001,14 @@ const file_user_user_proto_rawDesc = "" +
 	"\x03tag\x18\t \x01(\tR\x03tag\x12\x1d\n" +
 	"\n" +
 	"is_default\x18\n" +
-	" \x01(\bR\tisDefault\";\n" +
+	" \x01(\bR\tisDefault\x12!\n" +
+	"\fcommunity_id\x18\v \x01(\x03R\vcommunityId\";\n" +
 	"\x10DeleteAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\"?\n" +
 	"\x14SetDefaultAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\xb2\x02\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\xfc\x02\n" +
 	"\vAddressInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12!\n" +
@@ -2885,11 +3023,13 @@ const file_user_user_proto_rawDesc = "" +
 	"is_default\x18\n" +
 	" \x01(\bR\tisDefault\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\v \x01(\tR\tcreatedAt\":\n" +
+	"created_at\x18\v \x01(\tR\tcreatedAt\x12!\n" +
+	"\fcommunity_id\x18\f \x01(\x03R\vcommunityId\x12%\n" +
+	"\x0ecommunity_name\x18\r \x01(\tR\rcommunityName\":\n" +
 	"\x11ListAddressesResp\x12%\n" +
 	"\x04list\x18\x01 \x03(\v2\x11.user.AddressInfoR\x04list\"!\n" +
 	"\x0fGetCommunityReq\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\"\xe7\x03\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"\xe9\x04\n" +
 	"\rCommunityInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -2906,13 +3046,17 @@ const file_user_user_proto_rawDesc = "" +
 	"\x0ebusiness_hours\x18\f \x01(\tR\rbusinessHours\x12\x12\n" +
 	"\x04sort\x18\r \x01(\x05R\x04sort\x12!\n" +
 	"\fmanager_name\x18\x0e \x01(\tR\vmanagerName\x12#\n" +
-	"\rmanager_phone\x18\x0f \x01(\tR\fmanagerPhone\"\x8b\x01\n" +
+	"\rmanager_phone\x18\x0f \x01(\tR\fmanagerPhone\x12\x1a\n" +
+	"\bprovince\x18\x10 \x01(\tR\bprovince\x12\x12\n" +
+	"\x04city\x18\x11 \x01(\tR\x04city\x12\x1a\n" +
+	"\bdistrict\x18\x12 \x01(\tR\bdistrict\x124\n" +
+	"\x16allow_outside_delivery\x18\x13 \x01(\bR\x14allowOutsideDelivery\"\x8b\x01\n" +
 	"\x12ListCommunitiesReq\x122\n" +
 	"\n" +
 	"pagination\x18\x01 \x01(\v2\x12.common.PaginationR\n" +
 	"pagination\x12)\n" +
 	"\x10include_disabled\x18\x02 \x01(\bR\x0fincludeDisabled\x12\x16\n" +
-	"\x06status\x18\x03 \x01(\x05R\x06status\"\xdc\x03\n" +
+	"\x06status\x18\x03 \x01(\x05R\x06status\"\xde\x04\n" +
 	"\x12CreateCommunityReq\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1c\n" +
@@ -2928,7 +3072,11 @@ const file_user_user_proto_rawDesc = "" +
 	"\x0ebusiness_hours\x18\v \x01(\tR\rbusinessHours\x12\x12\n" +
 	"\x04sort\x18\f \x01(\x05R\x04sort\x12!\n" +
 	"\fmanager_name\x18\r \x01(\tR\vmanagerName\x12#\n" +
-	"\rmanager_phone\x18\x0e \x01(\tR\fmanagerPhone\"\xf0\x03\n" +
+	"\rmanager_phone\x18\x0e \x01(\tR\fmanagerPhone\x12\x1a\n" +
+	"\bprovince\x18\x0f \x01(\tR\bprovince\x12\x12\n" +
+	"\x04city\x18\x10 \x01(\tR\x04city\x12\x1a\n" +
+	"\bdistrict\x18\x11 \x01(\tR\bdistrict\x124\n" +
+	"\x16allow_outside_delivery\x18\x12 \x01(\bR\x14allowOutsideDelivery\"\xf2\x04\n" +
 	"\x16UpdateCommunityInfoReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -2945,7 +3093,11 @@ const file_user_user_proto_rawDesc = "" +
 	"\x0ebusiness_hours\x18\f \x01(\tR\rbusinessHours\x12\x12\n" +
 	"\x04sort\x18\r \x01(\x05R\x04sort\x12!\n" +
 	"\fmanager_name\x18\x0e \x01(\tR\vmanagerName\x12#\n" +
-	"\rmanager_phone\x18\x0f \x01(\tR\fmanagerPhone\"$\n" +
+	"\rmanager_phone\x18\x0f \x01(\tR\fmanagerPhone\x12\x1a\n" +
+	"\bprovince\x18\x10 \x01(\tR\bprovince\x12\x12\n" +
+	"\x04city\x18\x11 \x01(\tR\x04city\x12\x1a\n" +
+	"\bdistrict\x18\x12 \x01(\tR\bdistrict\x124\n" +
+	"\x16allow_outside_delivery\x18\x13 \x01(\bR\x14allowOutsideDelivery\"$\n" +
 	"\x12DeleteCommunityReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x88\x01\n" +
 	"\x18ListNearbyCommunitiesReq\x12\x1c\n" +

@@ -21,17 +21,19 @@ type UserHandler struct {
 // addressItem 地址视图对象
 // 用于向前端统一返回地址数据，避免 proto 的 omitempty 导致 bool 字段被省略
 type addressItem struct {
-	ID           int64  `json:"id"`
-	UserID       int64  `json:"user_id"`
-	ContactName  string `json:"contact_name"`
-	ContactPhone string `json:"contact_phone"`
-	Province     string `json:"province"`
-	City         string `json:"city"`
-	District     string `json:"district"`
-	Detail       string `json:"detail"`
-	Tag          string `json:"tag"`
-	IsDefault    bool   `json:"is_default"`
-	CreatedAt    string `json:"created_at"`
+	ID            int64  `json:"id"`
+	UserID        int64  `json:"user_id"`
+	ContactName   string `json:"contact_name"`
+	ContactPhone  string `json:"contact_phone"`
+	Province      string `json:"province"`
+	City          string `json:"city"`
+	District      string `json:"district"`
+	Detail        string `json:"detail"`
+	Tag           string `json:"tag"`
+	CommunityID   int64  `json:"community_id"`
+	CommunityName string `json:"community_name"`
+	IsDefault     bool   `json:"is_default"`
+	CreatedAt     string `json:"created_at"`
 }
 
 // toAddressItem 将 proto 地址信息转换为前端视图对象
@@ -45,17 +47,19 @@ func toAddressItem(addr *user.AddressInfo) addressItem {
 		return addressItem{}
 	}
 	return addressItem{
-		ID:           addr.Id,
-		UserID:       addr.UserId,
-		ContactName:  addr.ContactName,
-		ContactPhone: addr.ContactPhone,
-		Province:     addr.Province,
-		City:         addr.City,
-		District:     addr.District,
-		Detail:       addr.Detail,
-		Tag:          addr.Tag,
-		IsDefault:    addr.IsDefault,
-		CreatedAt:    addr.CreatedAt,
+		ID:            addr.Id,
+		UserID:        addr.UserId,
+		ContactName:   addr.ContactName,
+		ContactPhone:  addr.ContactPhone,
+		Province:      addr.Province,
+		City:          addr.City,
+		District:      addr.District,
+		Detail:        addr.Detail,
+		Tag:           addr.Tag,
+		CommunityID:   addr.CommunityId,
+		CommunityName: addr.CommunityName,
+		IsDefault:     addr.IsDefault,
+		CreatedAt:     addr.CreatedAt,
 	}
 }
 
@@ -368,4 +372,22 @@ func (h *UserHandler) ListCommunities(c *gin.Context) {
 	}
 
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
+}
+
+// GetCommunity 获取社区详情（公开接口）
+// C 端地址编辑页据此判断是否锁定地址前缀（allow_outside_delivery）并回填省市区
+// 参数：
+//   - c: gin 上下文
+func (h *UserHandler) GetCommunity(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	resp, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
 }

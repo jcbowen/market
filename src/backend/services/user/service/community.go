@@ -123,21 +123,25 @@ func ToCommunityInfo(c *model.Community) *user.CommunityInfo {
 		return nil
 	}
 	return &user.CommunityInfo{
-		Id:              c.ID,
-		Name:            c.Name,
-		Address:         c.Address,
-		Longitude:       c.Longitude,
-		Latitude:        c.Latitude,
-		ContactPhone:    c.ContactPhone,
-		ManagerName:     c.ManagerName,
-		ManagerPhone:    c.ManagerPhone,
-		PickupAddress:   c.PickupAddress,
-		DeliveryFee:     c.DeliveryFee,
-		MinOrderAmount:  c.MinOrderAmount,
-		DeliveryRangeKm: c.DeliveryRangeKm,
-		BusinessHours:   c.BusinessHours,
-		Sort:            c.Sort,
-		Status:          c.Status,
+		Id:                   c.ID,
+		Name:                 c.Name,
+		Address:              c.Address,
+		Longitude:            c.Longitude,
+		Latitude:             c.Latitude,
+		ContactPhone:         c.ContactPhone,
+		ManagerName:          c.ManagerName,
+		ManagerPhone:         c.ManagerPhone,
+		PickupAddress:        c.PickupAddress,
+		DeliveryFee:          c.DeliveryFee,
+		MinOrderAmount:       c.MinOrderAmount,
+		DeliveryRangeKm:      c.DeliveryRangeKm,
+		BusinessHours:        c.BusinessHours,
+		Sort:                 c.Sort,
+		Status:               c.Status,
+		Province:             c.Province,
+		City:                 c.City,
+		District:             c.District,
+		AllowOutsideDelivery: c.AllowOutsideDelivery,
 	}
 }
 
@@ -162,6 +166,10 @@ func (s *CommunityService) CreateCommunity(ctx context.Context, req *user.Create
 		MinOrderAmount:  req.MinOrderAmount,
 		DeliveryRangeKm: req.DeliveryRangeKm,
 		BusinessHours:   req.BusinessHours,
+		Province:              req.Province,
+		City:                  req.City,
+		District:              req.District,
+		AllowOutsideDelivery:  req.AllowOutsideDelivery,
 		Sort:            req.Sort,
 		Status:          req.Status,
 	}
@@ -203,6 +211,10 @@ func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.Update
 	c.DeliveryFee = req.DeliveryFee
 	c.MinOrderAmount = req.MinOrderAmount
 	c.DeliveryRangeKm = req.DeliveryRangeKm
+	c.Province = req.Province
+	c.City = req.City
+	c.District = req.District
+	c.AllowOutsideDelivery = req.AllowOutsideDelivery
 	c.Sort = req.Sort
 	c.Status = req.Status
 	if err := s.db.GetDb().WithContext(ctx).Save(c).Error; err != nil {

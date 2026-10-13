@@ -11,8 +11,9 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
-	github.com/jcbowen/jcbaseGo v0.15.5
+	github.com/jcbowen/jcbaseGo v0.15.6
 	github.com/jcbowen/wego v0.0.0
+	github.com/oschwald/geoip2-golang/v2 v2.5.0
 	golang.org/x/crypto v0.50.0
 	golang.org/x/image v0.47.0
 	google.golang.org/grpc v1.82.1
@@ -48,11 +49,11 @@ require (
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/mitchellh/mapstructure v1.4.3 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/mozillazg/go-httpheader v0.2.1 // indirect
+	github.com/oschwald/maxminddb-golang/v2 v2.8.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pkg/sftp v1.13.6 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
@@ -71,5 +72,4 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gorm.io/driver/mysql v1.5.1 // indirect
-	gorm.io/driver/sqlite v1.6.0 // indirect
 )

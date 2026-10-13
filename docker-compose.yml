@@ -158,6 +158,9 @@ services:
       # 本地附件共享目录：与 product-service 挂载同一宿主目录，
       # /uploads 静态路由（<exe 同级>/attachment）读取 product 落盘的附件
       - ./bin/attachment:/app/attachment
+      # IP 定位数据库（GeoLite2-City）：由 download-geoip.mjs 下载更新（不入 git），
+      # 目录未初始化时 IP 定位接口优雅降级，不影响其他功能
+      - ./bin/data/geoip:/app/data/geoip:ro
       # 开发阶段挂载宿主机前端编译产物，避免每次修改都重新构建 gateway 镜像
       - ./bin/static/admin:/app/static/admin:ro
       - ./bin/static/h5:/app/static/h5:ro

@@ -4,23 +4,28 @@
       <text class="empty-text">暂无收货地址</text>
     </view>
 
-    <view
-      v-for="item in addresses"
-      :key="item.id"
-      class="address-card"
-      @click="onSelect(item)"
-    >
-      <view class="address-top">
-        <text class="name">{{ item.contact_name }}</text>
-        <text class="phone">{{ item.contact_phone }}</text>
-        <text v-if="item.is_default" class="default-tag">默认</text>
+    <view v-for="group in addressGroups" :key="group.communityId" class="community-group">
+      <view class="group-header">
+        <text class="group-title">{{ group.communityName || '其他地址' }}</text>
       </view>
-      <text class="address-text">
-        {{ item.province }}{{ item.city }}{{ item.district }}{{ item.detail }}
-      </text>
-      <view class="address-actions">
-        <text class="action" @click.stop="onEdit(item.id)">编辑</text>
-        <text class="action delete" @click.stop="onDelete(item.id)">删除</text>
+      <view
+        v-for="item in group.items"
+        :key="item.id"
+        class="address-card"
+        @click="onSelect(item)"
+      >
+        <view class="address-top">
+          <text class="name">{{ item.contact_name }}</text>
+          <text class="phone">{{ item.contact_phone }}</text>
+          <text v-if="item.is_default" class="default-tag">默认</text>
+        </view>
+        <text class="address-text">
+          {{ item.province }}{{ item.city }}{{ item.district }}{{ item.detail }}
+        </text>
+        <view class="address-actions">
+          <text class="action" @click.stop="onEdit(item.id)">编辑</text>
+          <text class="action delete" @click.stop="onDelete(item.id)">删除</text>
+        </view>
       </view>
     </view>
 
@@ -31,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getAddressList, deleteAddress } from '@/api/user'
@@ -40,6 +45,23 @@ import type { Address } from '@/api/types'
 
 const userStore = useUserStore()
 const addresses = ref<Address[]>([])
+
+/** 按所属社区分组的地址列表（保持默认地址/最新地址优先的原始顺序） */
+const addressGroups = computed(() => {
+  const groups: { communityId: number; communityName: string; items: Address[] }[] = []
+  const indexBy = new Map<number, number>()
+  for (const item of addresses.value) {
+    const key = item.community_id || 0
+    let idx = indexBy.get(key)
+    if (idx === undefined) {
+      idx = groups.length
+      indexBy.set(key, idx)
+      groups.push({ communityId: key, communityName: item.community_name || '', items: [] })
+    }
+    groups[idx].items.push(item)
+  }
+  return groups
+})
 
 onShow(() => {
   if (!userStore.isLogin) {
@@ -134,8 +156,22 @@ function onDelete(id: number) {
   color: #999999;
 }
 
+.community-group {
+  margin-top: 20rpx;
+}
+
+.group-header {
+  padding: 12rpx 8rpx;
+}
+
+.group-title {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
 .address-card {
-  margin: 20rpx 0;
+  margin-bottom: 20rpx;
   padding: 24rpx;
   border-radius: 16rpx;
   background-color: #ffffff;

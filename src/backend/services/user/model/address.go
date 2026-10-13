@@ -17,7 +17,9 @@ type Address struct {
 	District     string `gorm:"column:district;type:varchar(50);not null" json:"district"`
 	Detail       string `gorm:"column:detail;type:varchar(255);not null" json:"detail"`
 	Tag          string `gorm:"column:tag;type:varchar(20)" json:"tag"`
-	IsDefault    bool   `gorm:"column:is_default;type:tinyint(1);default:0" json:"is_default"`
+	// 地址所属社区（保存时由服务端按用户当前社区回填，供按社区分组展示与配送校验）
+	CommunityID int64 `gorm:"column:community_id;type:bigint;default:0;index" json:"community_id"`
+	IsDefault   bool  `gorm:"column:is_default;type:tinyint(1);default:0" json:"is_default"`
 	CreatedAt    string `gorm:"column:created_at;type:datetime" json:"created_at"`
 	UpdatedAt    string `gorm:"column:updated_at;type:datetime" json:"updated_at"`
 }

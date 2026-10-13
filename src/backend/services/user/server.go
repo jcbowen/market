@@ -108,15 +108,15 @@ func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.Li
 	return resp, nil
 }
 
-// ListAddresses 获取地址列表
+// ListAddresses 获取地址列表（附带社区名称，供 C 端按社区分组）
 func (s *server) ListAddresses(ctx stdctx.Context, req *user.ListAddressesReq) (*user.ListAddressesResp, error) {
-	list, err := s.addressService.ListAddresses(ctx, req.UserId)
+	list, communityNames, err := s.addressService.ListAddresses(ctx, req.UserId)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	resp := &user.ListAddressesResp{List: make([]*user.AddressInfo, 0, len(list))}
 	for _, addr := range list {
-		resp.List = append(resp.List, service.ToAddressInfo(addr))
+		resp.List = append(resp.List, service.ToAddressInfo(addr, communityNames[addr.CommunityID]))
 	}
 	return resp, nil
 }
@@ -127,7 +127,7 @@ func (s *server) GetAddress(ctx stdctx.Context, req *user.GetAddressReq) (*user.
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	return service.ToAddressInfo(addr), nil
+	return service.ToAddressInfo(addr, s.addressService.GetCommunityName(ctx, addr.CommunityID)), nil
 }
 
 // CreateAddress 创建地址
@@ -136,7 +136,7 @@ func (s *server) CreateAddress(ctx stdctx.Context, req *user.CreateAddressReq) (
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToAddressInfo(addr), nil
+	return service.ToAddressInfo(addr, s.addressService.GetCommunityName(ctx, addr.CommunityID)), nil
 }
 
 // UpdateAddress 更新地址
@@ -145,7 +145,7 @@ func (s *server) UpdateAddress(ctx stdctx.Context, req *user.UpdateAddressReq) (
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToAddressInfo(addr), nil
+	return service.ToAddressInfo(addr, s.addressService.GetCommunityName(ctx, addr.CommunityID)), nil
 }
 
 // DeleteAddress 删除地址

@@ -1,62 +1,126 @@
 <template>
   <n-card :title="isEdit ? '编辑社区' : '新增社区'">
     <n-form ref="formRef" :model="form" :rules="rules" label-placement="left" label-width="100px">
-      <n-form-item label="社区名称">
-        <n-input v-model:value="form.name" />
-      </n-form-item>
-      <n-form-item label="地址">
-        <n-input v-model:value="form.address" />
-      </n-form-item>
-      <n-form-item label="联系电话">
-        <n-input v-model:value="form.contact_phone" />
-      </n-form-item>
-      <n-form-item label="负责人">
-        <n-input v-model:value="form.manager_name" />
-      </n-form-item>
-      <n-form-item label="负责人电话">
-        <n-input v-model:value="form.manager_phone" />
-      </n-form-item>
-      <n-form-item label="自提点地址">
-        <n-input v-model:value="form.pickup_address" />
-      </n-form-item>
-      <n-form-item label="经纬度">
-        <n-space vertical>
-          <n-space>
-            <n-input v-model:value="longitudeText" placeholder="经度" style="width: 140px" />
-            <n-input v-model:value="latitudeText" placeholder="纬度" style="width: 140px" />
-            <n-button @click="openMapPicker">在地图中选择</n-button>
-          </n-space>
-          <n-space>
-            <n-input
-              v-model:value="coordPasteText"
-              placeholder="粘贴坐标后回填，如 116.397428,39.90923"
-              style="width: 300px"
-              clearable
-              @keyup.enter="applyPastedCoords"
-            />
-            <n-button @click="applyPastedCoords">解析回填</n-button>
-          </n-space>
-        </n-space>
-      </n-form-item>
-      <n-form-item label="配送费">
-        <n-input-number v-model:value="form.delivery_fee" :min="0" />
-      </n-form-item>
-      <n-form-item label="起送金额">
-        <n-input-number v-model:value="form.min_order_amount" :min="0" />
-      </n-form-item>
-      <n-form-item label="配送范围(km)">
-        <n-input-number v-model:value="form.delivery_range_km" :min="0" />
-      </n-form-item>
-      <n-form-item label="营业时间">
-        <n-input v-model:value="form.business_hours" placeholder="如 08:00-22:00" />
-      </n-form-item>
-      <n-form-item label="排序">
-        <n-input-number v-model:value="form.sort" :min="0" />
-      </n-form-item>
-      <n-form-item label="状态">
-        <n-select v-model:value="form.status" :options="statusOptions" />
-      </n-form-item>
-      <n-form-item>
+      <n-tabs v-model:value="activeTab" type="line" display-directive="show">
+        <!-- 基本信息 -->
+        <n-tab-pane name="basic" tab="基本信息">
+          <n-grid :cols="2" :x-gap="24">
+            <n-gi>
+              <n-form-item label="社区名称" path="name">
+                <n-input v-model:value="form.name" placeholder="请输入社区名称" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="状态">
+                <n-select v-model:value="form.status" :options="statusOptions" />
+              </n-form-item>
+            </n-gi>
+          </n-grid>
+
+          <n-form-item label="地址">
+            <n-input v-model:value="form.address" placeholder="社区详细地址" />
+          </n-form-item>
+
+          <!-- 省/市/区紧随地址一行排布，作为 C 端锁定地址前缀的数据来源 -->
+          <n-form-item label="所在地区">
+            <n-grid :cols="3" :x-gap="12" style="flex: 1">
+              <n-gi>
+                <n-input v-model:value="form.province" placeholder="省，如 广东省" />
+              </n-gi>
+              <n-gi>
+                <n-input v-model:value="form.city" placeholder="市，如 广州市" />
+              </n-gi>
+              <n-gi>
+                <n-input v-model:value="form.district" placeholder="区，如 天河区" />
+              </n-gi>
+            </n-grid>
+          </n-form-item>
+
+          <n-grid :cols="2" :x-gap="24">
+            <n-gi>
+              <n-form-item label="联系电话">
+                <n-input v-model:value="form.contact_phone" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="负责人">
+                <n-input v-model:value="form.manager_name" />
+              </n-form-item>
+            </n-gi>
+          </n-grid>
+
+          <n-grid :cols="2" :x-gap="24">
+            <n-gi>
+              <n-form-item label="负责人电话">
+                <n-input v-model:value="form.manager_phone" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="排序">
+                <n-input-number v-model:value="form.sort" :min="0" style="width: 100%" />
+              </n-form-item>
+            </n-gi>
+          </n-grid>
+        </n-tab-pane>
+
+        <!-- 配送设置 -->
+        <n-tab-pane name="delivery" tab="配送设置">
+          <n-form-item label="自提点地址">
+            <n-input v-model:value="form.pickup_address" />
+          </n-form-item>
+
+          <n-form-item label="经纬度">
+            <n-space vertical>
+              <n-space>
+                <n-input v-model:value="longitudeText" placeholder="经度" style="width: 140px" />
+                <n-input v-model:value="latitudeText" placeholder="纬度" style="width: 140px" />
+                <n-button @click="openMapPicker">在地图中选择</n-button>
+              </n-space>
+              <n-space>
+                <n-input
+                  v-model:value="coordPasteText"
+                  placeholder="粘贴坐标后回填，如 116.397428,39.90923"
+                  style="width: 300px"
+                  clearable
+                  @keyup.enter="applyPastedCoords"
+                />
+                <n-button @click="applyPastedCoords">解析回填</n-button>
+              </n-space>
+            </n-space>
+          </n-form-item>
+
+          <n-grid :cols="3" :x-gap="24">
+            <n-gi>
+              <n-form-item label="配送费" :show-feedback="false">
+                <n-input-number v-model:value="form.delivery_fee" :min="0" style="width: 100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="起送金额" :show-feedback="false">
+                <n-input-number v-model:value="form.min_order_amount" :min="0" style="width: 100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="配送范围(km)" :show-feedback="false">
+                <n-input-number v-model:value="form.delivery_range_km" :min="0" style="width: 100%" />
+              </n-form-item>
+            </n-gi>
+          </n-grid>
+
+          <n-form-item label="营业时间">
+            <n-input v-model:value="form.business_hours" placeholder="如 08:00-22:00" />
+          </n-form-item>
+
+          <n-form-item label="社区外配送">
+            <n-space align="center">
+              <n-switch v-model:value="form.allow_outside_delivery" />
+              <span class="form-hint">关闭时，C 端收货地址前缀锁定为本社区省市区，用户仅可填写楼栋门牌等详细地址</span>
+            </n-space>
+          </n-form-item>
+        </n-tab-pane>
+      </n-tabs>
+
+      <n-form-item :show-label="false" style="margin-top: 8px">
         <n-space>
           <n-button type="primary" :loading="saving" @click="submit">保存</n-button>
           <n-button :disabled="saving" @click="router.back()">返回</n-button>
@@ -78,6 +142,7 @@ import type { Community } from '@/api/types'
 
 /**
  * 社区新增/编辑页面
+ * 表单按 Tab 分组：基本信息（名称/地址/省市区/联系人与排序状态）、配送设置（自提点/经纬度/费用/外配开关）
  */
 const route = useRoute()
 const router = useRouter()
@@ -86,6 +151,10 @@ const tabsStore = useTabsStore()
 const isEdit = ref(false)
 const formRef = ref<FormInst | null>(null)
 const saving = ref(false)
+
+/** 当前激活的表单分组 Tab */
+const activeTab = ref<'basic' | 'delivery'>('basic')
+
 const form = ref<Partial<Community>>({
   name: '',
   address: '',
@@ -99,6 +168,10 @@ const form = ref<Partial<Community>>({
   min_order_amount: 0,
   delivery_range_km: 0,
   business_hours: '',
+  province: '',
+  city: '',
+  district: '',
+  allow_outside_delivery: false,
   sort: 0,
   status: 1,
 })
@@ -109,6 +182,11 @@ const statusOptions = [
   { label: '营业', value: 1 },
   { label: '停业', value: 0 },
 ]
+
+/** 校验失败字段所在表单分组（用于自动切到出错 Tab） */
+const fieldTabMap: Record<string, 'basic' | 'delivery'> = {
+  name: 'basic',
+}
 
 const longitudeText = computed({
   get: () => (form.value.longitude ? String(form.value.longitude) : ''),
@@ -186,8 +264,16 @@ async function loadDetail() {
 async function submit() {
   try {
     await formRef.value?.validate()
-  } catch {
-    // 校验失败，表单内已显示错误提示
+  } catch (errors) {
+    // 校验失败：自动切到出错字段所在的 Tab，表单内已显示错误提示
+    const fields = Array.isArray(errors) ? errors.map((e) => (e as { field?: string }).field) : []
+    for (const field of fields) {
+      const tab = field ? fieldTabMap[field] : undefined
+      if (tab) {
+        activeTab.value = tab
+        break
+      }
+    }
     return
   }
   saving.value = true
@@ -208,3 +294,10 @@ async function submit() {
 
 onMounted(loadDetail)
 </script>
+
+<style scoped>
+.form-hint {
+  font-size: 12px;
+  color: #999;
+}
+</style>

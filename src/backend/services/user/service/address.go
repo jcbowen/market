@@ -31,14 +31,84 @@ func NewAddressService(db *mysql.Instance) *AddressService {
 //   - userID: 用户 ID
 // 返回：
 //   - []*model.Address: 地址列表
+//   - map[int64]string: 地址所属社区 ID -> 社区名称（供按社区分组展示）
 //   - error: 错误信息
-func (s *AddressService) ListAddresses(ctx context.Context, userID int64) ([]*model.Address, error) {
+func (s *AddressService) ListAddresses(ctx context.Context, userID int64) ([]*model.Address, map[int64]string, error) {
 	var list []*model.Address
 	err := s.db.GetDb().WithContext(ctx).
 		Where("user_id = ?", userID).
 		Order("is_default desc, id desc").
 		Find(&list).Error
-	return list, err
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ids := make([]int64, 0, len(list))
+	for _, addr := range list {
+		if addr.CommunityID > 0 {
+			ids = append(ids, addr.CommunityID)
+		}
+	}
+	return list, s.ListCommunityNames(ctx, ids), nil
+}
+
+// ListCommunityNames 批量查询社区名称
+// 参数：
+//   - ctx: 上下文
+//   - ids: 社区 ID 列表
+// 返回：
+//   - map[int64]string: 社区 ID -> 名称
+func (s *AddressService) ListCommunityNames(ctx context.Context, ids []int64) map[int64]string {
+	names := make(map[int64]string, len(ids))
+	if len(ids) == 0 {
+		return names
+	}
+	var communities []*model.Community
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("id IN ?", ids).
+		Select("id, name").
+		Find(&communities).Error; err != nil {
+		return names
+	}
+	for _, c := range communities {
+		names[c.ID] = c.Name
+	}
+	return names
+}
+
+// GetCommunityName 查询单个社区名称
+// 参数：
+//   - ctx: 上下文
+//   - id: 社区 ID
+// 返回：
+//   - string: 社区名称（不存在时为空串）
+func (s *AddressService) GetCommunityName(ctx context.Context, id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	return s.ListCommunityNames(ctx, []int64{id})[id]
+}
+
+// getUserCommunity 查询用户当前所属社区
+// 参数：
+//   - ctx: 上下文
+//   - userID: 用户 ID
+// 返回：
+//   - *model.Community: 用户所属社区（未选择社区或社区已删除时返回错误）
+//   - error: 错误信息
+func (s *AddressService) getUserCommunity(ctx context.Context, userID int64) (*model.Community, error) {
+	var u model.User
+	if err := s.db.GetDb().WithContext(ctx).Select("id, community_id").First(&u, userID).Error; err != nil {
+		return nil, fmt.Errorf("用户不存在")
+	}
+	if u.CommunityID <= 0 {
+		return nil, fmt.Errorf("请先选择社区")
+	}
+	var c model.Community
+	if err := s.db.GetDb().WithContext(ctx).First(&c, u.CommunityID).Error; err != nil {
+		return nil, fmt.Errorf("所属社区不存在，请重新选择社区")
+	}
+	return &c, nil
 }
 
 // GetAddress 查询地址详情
@@ -61,6 +131,8 @@ func (s *AddressService) GetAddress(ctx context.Context, id, userID int64) (*mod
 }
 
 // CreateAddress 创建地址
+// 语义：地址归属与省市区前缀由服务端按用户当前社区裁决——
+// 社区不允许外配（默认）时强制覆盖为本社区省市区，防止绕过前端约束。
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建地址请求
@@ -68,15 +140,20 @@ func (s *AddressService) GetAddress(ctx context.Context, id, userID int64) (*mod
 //   - *model.Address: 地址模型
 //   - error: 错误信息
 func (s *AddressService) CreateAddress(ctx context.Context, req *user.CreateAddressReq) (*model.Address, error) {
+	community, province, city, district, err := s.resolveAddressRegion(ctx, req.UserId, req.Province, req.City, req.District)
+	if err != nil {
+		return nil, err
+	}
 	addr := &model.Address{
 		UserID:       req.UserId,
 		ContactName:  req.ContactName,
 		ContactPhone: req.ContactPhone,
-		Province:     req.Province,
-		City:         req.City,
-		District:     req.District,
+		Province:     province,
+		City:         city,
+		District:     district,
 		Detail:       req.Detail,
 		Tag:          req.Tag,
+		CommunityID:  community.ID,
 		IsDefault:    req.IsDefault,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -95,6 +172,7 @@ func (s *AddressService) CreateAddress(ctx context.Context, req *user.CreateAddr
 }
 
 // UpdateAddress 更新地址
+// 语义同 CreateAddress：归属社区与省市区前缀由服务端按用户当前社区裁决。
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新地址请求
@@ -102,6 +180,10 @@ func (s *AddressService) CreateAddress(ctx context.Context, req *user.CreateAddr
 //   - *model.Address: 地址模型
 //   - error: 错误信息
 func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddressReq) (*model.Address, error) {
+	community, province, city, district, err := s.resolveAddressRegion(ctx, req.UserId, req.Province, req.City, req.District)
+	if err != nil {
+		return nil, err
+	}
 	addr, err := s.GetAddress(ctx, req.Id, req.UserId)
 	if err != nil {
 		return nil, err
@@ -109,11 +191,12 @@ func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddr
 
 	addr.ContactName = req.ContactName
 	addr.ContactPhone = req.ContactPhone
-	addr.Province = req.Province
-	addr.City = req.City
-	addr.District = req.District
+	addr.Province = province
+	addr.City = city
+	addr.District = district
 	addr.Detail = req.Detail
 	addr.Tag = req.Tag
+	addr.CommunityID = community.ID
 	addr.IsDefault = req.IsDefault
 
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -164,26 +247,53 @@ func (s *AddressService) SetDefaultAddress(ctx context.Context, id, userID int64
 	})
 }
 
+// resolveAddressRegion 按用户当前社区裁决地址省市区前缀与归属社区
+// 语义：用户必须已选择社区；社区不允许外配（默认）时，
+// 省/市/区强制取社区配置值，忽略请求中传入的前缀。
+// 参数：
+//   - ctx: 上下文
+//   - userID: 用户 ID
+//   - province, city, district: 请求中的省市区
+// 返回：
+//   - *model.Community: 用户所属社区
+//   - string, string, string: 裁决后的省、市、区
+//   - error: 错误信息
+func (s *AddressService) resolveAddressRegion(ctx context.Context, userID int64, province, city, district string) (*model.Community, string, string, string, error) {
+	community, err := s.getUserCommunity(ctx, userID)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	if !community.AllowOutsideDelivery {
+		province = community.Province
+		city = community.City
+		district = community.District
+	}
+	return community, province, city, district, nil
+}
+
 // ToAddressInfo 将地址模型转换为 proto 地址信息
 // 参数：
 //   - addr: 地址模型
+//   - communityName: 地址所属社区名称（用于按社区分组展示，可为空）
 // 返回：
 //   - *user.AddressInfo: proto 地址信息
-func ToAddressInfo(addr *model.Address) *user.AddressInfo {
+func ToAddressInfo(addr *model.Address, communityName string) *user.AddressInfo {
 	if addr == nil {
 		return nil
 	}
 	return &user.AddressInfo{
-		Id:           addr.ID,
-		UserId:       addr.UserID,
-		ContactName:  addr.ContactName,
-		ContactPhone: addr.ContactPhone,
-		Province:     addr.Province,
-		City:         addr.City,
-		District:     addr.District,
-		Detail:       addr.Detail,
-		Tag:          addr.Tag,
-		IsDefault:    addr.IsDefault,
-		CreatedAt:    addr.CreatedAt,
+		Id:            addr.ID,
+		UserId:        addr.UserID,
+		ContactName:   addr.ContactName,
+		ContactPhone:  addr.ContactPhone,
+		Province:      addr.Province,
+		City:          addr.City,
+		District:      addr.District,
+		Detail:        addr.Detail,
+		Tag:           addr.Tag,
+		CommunityId:   addr.CommunityID,
+		CommunityName: communityName,
+		IsDefault:     addr.IsDefault,
+		CreatedAt:     addr.CreatedAt,
 	}
 }

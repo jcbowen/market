@@ -21,10 +21,16 @@ type Community struct {
 	MinOrderAmount    float64 `gorm:"column:min_order_amount;type:decimal(10,2);default:0" json:"min_order_amount"`
 	DeliveryRangeKm   float64 `gorm:"column:delivery_range_km;type:decimal(6,2);default:0" json:"delivery_range_km"`
 	BusinessHours     string  `gorm:"column:business_hours;type:varchar(50)" json:"business_hours"`
-	Sort              int32   `gorm:"column:sort;type:int;default:0" json:"sort"`
-	Status            int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
-	CreatedAt         string  `gorm:"column:created_at;type:datetime" json:"created_at"`
-	UpdatedAt         string  `gorm:"column:updated_at;type:datetime" json:"updated_at"`
+	// 社区所在省/市/区（C 端锁定收货地址前缀用）
+	Province string `gorm:"column:province;type:varchar(50)" json:"province"`
+	City     string `gorm:"column:city;type:varchar(50)" json:"city"`
+	District string `gorm:"column:district;type:varchar(50)" json:"district"`
+	// 是否允许社区外配送（false 时 C 端收货地址前缀锁定为本社区省市区）
+	AllowOutsideDelivery bool    `gorm:"column:allow_outside_delivery;type:tinyint(1);default:0;comment:是否允许社区外配送 0否 1是" json:"allow_outside_delivery"`
+	Sort                 int32   `gorm:"column:sort;type:int;default:0" json:"sort"`
+	Status               int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
+	CreatedAt            string  `gorm:"column:created_at;type:datetime" json:"created_at"`
+	UpdatedAt            string  `gorm:"column:updated_at;type:datetime" json:"updated_at"`
 }
 
 // TableName 返回社区表名

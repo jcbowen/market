@@ -57,6 +57,33 @@ export function deleteAddress(id: number) {
 }
 
 /**
+ * 获取社区详情
+ * @param id 社区 ID
+ */
+export function getCommunity(id: number) {
+  return get<Community>(`/communities/${id}`)
+}
+
+/**
+ * IP 归属地定位结果（服务端按本地 GeoLite2-City 数据库解析出口 IP，城市级精度）
+ */
+export interface IpLocation {
+  longitude: number
+  latitude: number
+  country?: string
+  country_name?: string
+  city?: string
+}
+
+/**
+ * 按出口 IP 定位大致经纬度（best-effort 兜底）
+ * 服务端未就绪或未命中时 data 为 null
+ */
+export function getIpLocation() {
+  return get<IpLocation | null>('/geoip/locate')
+}
+
+/**
  * 获取社区列表（支持分页与坐标筛选）
  * @param params 分页与坐标参数
  */

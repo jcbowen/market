@@ -40,7 +40,7 @@
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getCommunityList } from '@/api/user'
+import { getCommunityList, getIpLocation } from '@/api/user'
 import type { Community } from '@/api/types'
 
 const userStore = useUserStore()
@@ -111,6 +111,7 @@ function loadMore() {
 
 /**
  * 获取附近社区
+ * 网页定位失败时按出口 IP 估算大致坐标兜底（best-effort），仍失败则提示手动搜索
  */
 function getNearby() {
   uni.getLocation({
@@ -120,10 +121,35 @@ function getNearby() {
       communities.value = []
       loadCommunitiesWithLocation(res.longitude, res.latitude)
     },
-    fail: () => {
-      uni.showToast({ title: '定位失败', icon: 'none' })
+    fail: async () => {
+      const ipLoc = await locateByIp()
+      if (ipLoc) {
+        page.value = 1
+        communities.value = []
+        loadCommunitiesWithLocation(ipLoc.longitude, ipLoc.latitude)
+      } else {
+        uni.showToast({ title: '定位失败，请手动搜索社区', icon: 'none' })
+      }
     },
   })
+}
+
+/**
+ * IP 定位兜底：服务端按本地 GeoLite2-City 数据库解析出口 IP，返回大致经纬度（城市级精度）
+ * 数据库未就绪、内网 IP 或未命中时 data 为 null
+ * @returns 经纬度，获取失败时返回 null
+ */
+async function locateByIp(): Promise<{ longitude: number; latitude: number } | null> {
+  try {
+    const res = await getIpLocation()
+    const data = res.data
+    if (data?.longitude && data?.latitude) {
+      return { longitude: data.longitude, latitude: data.latitude }
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 /**

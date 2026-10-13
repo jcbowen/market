@@ -19,6 +19,11 @@ export interface Community {
   address: string
   longitude: number
   latitude: number
+  province: string
+  city: string
+  district: string
+  /** 是否允许社区外配送（false 时地址前缀锁定为本社区） */
+  allow_outside_delivery: boolean
 }
 
 /** 收货地址 */
@@ -31,6 +36,9 @@ export interface Address {
   district: string
   detail: string
   tag: string
+  /** 地址所属社区（保存时由服务端按用户当前社区回填） */
+  community_id: number
+  community_name: string
   is_default: boolean
 }
 

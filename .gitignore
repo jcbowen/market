@@ -20,6 +20,9 @@ bin/gateway
 bin/*-service
 bin/logs/
 bin/release/
+# IP 定位数据库（GeoLite2-City 等 mmdb）：由 download-geoip.mjs 下载更新，不入仓库
+*.mmdb
+*.mmdb.gz
 /cart
 /order
 /payment

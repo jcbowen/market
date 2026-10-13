@@ -396,6 +396,10 @@ export interface Community {
   min_order_amount: number
   delivery_range_km: number
   business_hours: string
+  province: string
+  city: string
+  district: string
+  allow_outside_delivery: boolean
   sort: number
   status: number
 }

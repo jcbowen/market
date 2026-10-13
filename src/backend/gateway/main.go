@@ -124,6 +124,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
 	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat)
+	// IP 定位：本地 GeoLite2-City 数据库，相对路径以可执行文件所在目录为基准
+	geoipHandler := handler.NewGeoIPHandler(resolveBinPath(cfg.GeoIP.DBPath))
 
 	apiV1 := r.Group("/api/v1")
 	{
@@ -131,6 +133,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		public := apiV1.Group("")
 		{
 			public.GET("/communities", userHandler.ListCommunities)
+			public.GET("/communities/:id", userHandler.GetCommunity)
 			public.GET("/products", productHandler.ListProducts)
 			public.GET("/products/:id", productHandler.GetProduct)
 			public.GET("/skus", productHandler.ListSkus)
@@ -140,6 +143,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.GET("/flash-sales", productHandler.ListFlashSales)
 			public.GET("/full-reductions", productHandler.ListFullReductions)
 			public.GET("/banners", productHandler.ListBanners)
+
+			public.GET("/geoip/locate", geoipHandler.Locate)
 
 			public.POST("/auth/phone-code", authHandler.SendPhoneCode)
 			public.POST("/auth/login/phone", authHandler.PhoneLogin)
@@ -352,6 +357,19 @@ func getBinDir() string {
 		return "."
 	}
 	return filepath.Dir(exe)
+}
+
+// resolveBinPath 将相对路径解析为可执行文件所在目录下的绝对路径，绝对路径原样返回
+// 用于数据文件（如 GeoLite2-City 数据库）等运行时资源定位
+// 参数：
+//   - p: 配置中的路径
+// 返回：
+//   - string: 绝对路径
+func resolveBinPath(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(getBinDir(), p)
 }
 
 // staticCacheMiddleware 静态资源缓存策略中间件
