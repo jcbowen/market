@@ -101,6 +101,24 @@ export function getRegionList(
 }
 
 /**
+ * 拉取全量区划（管理端树形页用）
+ * 省市区县三级约 3400 条，单页拉不满时分页补齐（status=0 不过滤状态，状态由前端本地筛）；
+ * 拉全量后前端本地建树/搜索，避免筛选时反复请求
+ */
+export async function getAllRegions(): Promise<Region[]> {
+  const pageSize = 1000
+  const first = await getRegionList({ page: 1, page_size: pageSize, status: 0 })
+  const data = first.data.data
+  const all: Region[] = [...data.list]
+  const pages = Math.ceil(data.total / pageSize)
+  for (let p = 2; p <= pages; p++) {
+    const res = await getRegionList({ page: p, page_size: pageSize, status: 0 })
+    all.push(...res.data.data.list)
+  }
+  return all
+}
+
+/**
  * 创建区划更新检查任务（存在进行中任务时幂等返回该任务）
  */
 export function createRegionUpdateTask() {
