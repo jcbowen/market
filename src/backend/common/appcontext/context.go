@@ -20,6 +20,8 @@ const (
 	KeyRole Key = "role"
 	// KeyCommunityID 社区 ID
 	KeyCommunityID Key = "community_id"
+	// KeyCommunityIDs 管理员绑定的全部社区 ID 列表
+	KeyCommunityIDs Key = "community_ids"
 	// KeyPhone 手机号
 	KeyPhone Key = "phone"
 	// KeyRealIP 真实 IP
@@ -32,9 +34,11 @@ type UserContext struct {
 	TokenType   string
 	Role        string
 	CommunityID int64
-	Phone       string
-	TraceID     string
-	RealIP      string
+	// CommunityIDs 管理员绑定的全部社区 ID 列表（超管为空，表示不限制社区）
+	CommunityIDs []int64
+	Phone        string
+	TraceID      string
+	RealIP       string
 }
 
 // SetUserContext 将用户信息写入 gin 上下文
@@ -49,6 +53,7 @@ func SetUserContext(c *gin.Context, uc *UserContext) {
 	c.Set(string(KeyTokenType), uc.TokenType)
 	c.Set(string(KeyRole), uc.Role)
 	c.Set(string(KeyCommunityID), uc.CommunityID)
+	c.Set(string(KeyCommunityIDs), uc.CommunityIDs)
 	c.Set(string(KeyPhone), uc.Phone)
 	c.Set(string(KeyTraceID), uc.TraceID)
 	c.Set(string(KeyRealIP), uc.RealIP)
@@ -75,6 +80,9 @@ func GetUserContext(c *gin.Context) *UserContext {
 	}
 	if v, ok := c.Get(string(KeyCommunityID)); ok {
 		uc.CommunityID, _ = v.(int64)
+	}
+	if v, ok := c.Get(string(KeyCommunityIDs)); ok {
+		uc.CommunityIDs, _ = v.([]int64)
 	}
 	if v, ok := c.Get(string(KeyPhone)); ok {
 		uc.Phone, _ = v.(string)

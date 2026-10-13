@@ -104,7 +104,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	permissions := h.getAdminPermissions(c.Request.Context(), admin.RoleId)
 	communityID := h.getAdminDefaultCommunityID(admin)
 	accessToken, accessExpire, err := h.jwtManager.GenerateAdminAccessToken(
-		admin.Id, admin.Phone, admin.RoleCode, communityID, permissions, admin.Username, admin.RealName,
+		admin.Id, admin.Phone, admin.RoleCode, communityID, admin.CommunityIds, permissions, admin.Username, admin.RealName,
 	)
 	if err != nil {
 		response.GRPCError(c, err)
@@ -222,17 +222,46 @@ func (h *AdminHandler) getAdminPermissions(ctx context.Context, roleID int64) []
 	return nil
 }
 
-// getAdminCommunityID 获取管理员当前社区 ID，优先查询参数，其次 JWT 上下文
+// getAdminCommunityID 获取管理员当前社区 ID
+// 前端通过请求头 X-Community-Id 声明当前操作的社区（与业务筛选参数 community_id 解耦）：
+//   - 超管：任意社区 ID 均合法，0 表示全部社区
+//   - 普通管理员：仅允许切换到自己绑定的社区，越权值静默回退默认社区
+//   - 未携带或值非法时回退 JWT 中的默认社区
+//
 // 参数：
 //   - c: gin 上下文
 //
 // 返回值：
 //   - int64: 社区 ID
 func (h *AdminHandler) getAdminCommunityID(c *gin.Context) int64 {
-	if id, err := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64); err == nil && id > 0 {
-		return id
+	uc := appcontext.GetUserContext(c)
+	if header := c.GetHeader("X-Community-Id"); header != "" {
+		if id, err := strconv.ParseInt(header, 10, 64); err == nil && id >= 0 {
+			if uc.Role == "super_admin" {
+				return id
+			}
+			if id > 0 && containsInt64(uc.CommunityIDs, id) {
+				return id
+			}
+		}
 	}
-	return appcontext.GetUserContext(c).CommunityID
+	return uc.CommunityID
+}
+
+// containsInt64 判断 int64 切片是否包含指定元素
+// 参数：
+//   - list: int64 切片
+//   - item: 目标元素
+//
+// 返回值：
+//   - bool: 是否包含
+func containsInt64(list []int64, item int64) bool {
+	for _, v := range list {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }
 
 // ListAdmins 获取管理员列表
@@ -520,7 +549,7 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	}
 
 	accessToken, accessExpire, err := h.jwtManager.GenerateAdminAccessToken(
-		claims.UserID, claims.Phone, claims.Role, claims.CommunityID, claims.Permissions, claims.Username, claims.RealName,
+		claims.UserID, claims.Phone, claims.Role, claims.CommunityID, claims.CommunityIDs, claims.Permissions, claims.Username, claims.RealName,
 	)
 	if err != nil {
 		response.GRPCError(c, err)

@@ -40,6 +40,10 @@ export interface AdminInfo {
   role_code?: string
   permissions: string[]
   status: number
+  /** 默认社区 ID（登录时取绑定列表第一个） */
+  community_id?: number
+  /** 绑定的全部社区 ID 列表（超管为空数组，表示不限制社区） */
+  community_ids?: number[]
 }
 
 /**

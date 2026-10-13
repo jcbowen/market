@@ -18,14 +18,30 @@ const service: AxiosInstance = axios.create({
 })
 
 /**
+ * 当前社区 ID 的 localStorage 持久化键
+ * 与 auth store 保持同一约定：store 写入，此处只读（避免拦截器与 Pinia 初始化时序耦合）
+ */
+const CURRENT_COMMUNITY_KEY = 'current_community_id'
+
+/**
  * 请求拦截器
- * 从 cookie 读取 access_token，加入 Authorization 请求头
+ * - 从 cookie 读取 access_token，加入 Authorization 请求头
+ * - 从 localStorage 读取当前社区 ID，加入 X-Community-Id 请求头
+ *   （后端数据域接口据此切换社区，与业务筛选参数 community_id 解耦；
+ *   超管 0 表示全部社区；未登录时不携带）
  */
 service.interceptors.request.use(
   (config) => {
     const token = Cookies.get('access_token')
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`
+    if (token) {
+      if (config.headers) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+      const raw = localStorage.getItem(CURRENT_COMMUNITY_KEY)
+      const id = Number.parseInt(raw ?? '', 10)
+      if (Number.isFinite(id) && id >= 0) {
+        config.headers['X-Community-Id'] = String(id)
+      }
     }
     return config
   },

@@ -46,13 +46,14 @@ func AuthMiddleware(manager *jwt.Manager, allowedTypes ...string) gin.HandlerFun
 		}
 
 		appcontext.SetUserContext(c, &appcontext.UserContext{
-			UserID:      claims.UserID,
-			TokenType:   claims.Type,
-			Role:        claims.Role,
-			CommunityID: claims.CommunityID,
-			Phone:       claims.Phone,
-			TraceID:     c.GetString(string(appcontext.KeyTraceID)),
-			RealIP:      c.GetString(string(appcontext.KeyRealIP)),
+			UserID:       claims.UserID,
+			TokenType:    claims.Type,
+			Role:         claims.Role,
+			CommunityID:  claims.CommunityID,
+			CommunityIDs: claims.CommunityIDs,
+			Phone:        claims.Phone,
+			TraceID:      c.GetString(string(appcontext.KeyTraceID)),
+			RealIP:       c.GetString(string(appcontext.KeyRealIP)),
 		})
 		c.Set("admin_permissions", claims.Permissions)
 		c.Set("admin_username", claims.Username)

@@ -38,6 +38,20 @@
           </n-breadcrumb>
         </div>
         <div class="header-right">
+          <!-- 当前社区展示/切换：超管可选全部社区与任意社区；多社区管理员可切换绑定社区；单社区仅展示 -->
+          <div v-if="showCommunitySwitch" class="community-switch">
+            <template v-if="canSwitchCommunity">
+              <span class="community-label">社区</span>
+              <n-select
+                :value="authStore.currentCommunityId"
+                :options="communityOptions"
+                size="small"
+                class="community-select"
+                @update:value="onCommunityChange"
+              />
+            </template>
+            <span v-else class="community-name" :title="currentCommunityName">{{ currentCommunityName }}</span>
+          </div>
           <span class="admin-name">{{ authStore.admin?.nickname || authStore.admin?.username || '管理员' }}</span>
           <n-dropdown :options="userOptions" @select="onUserAction">
             <n-button text>
@@ -82,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, onUnmounted, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
@@ -91,6 +105,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
 import { resolveHomePath } from '@/router'
+import { getCommunityList } from '@/api/user'
 
 const router = useRouter()
 const route = useRoute()
@@ -101,6 +116,80 @@ const tabsStore = useTabsStore()
 
 const collapsed = computed(() => appStore.collapsed)
 const activeKey = computed(() => route.path)
+
+// --- 当前社区展示与切换 ---
+
+/** 社区 ID → 名称映射（无 community:view 权限时拉取失败，降级显示"社区 #id"） */
+const communityNameMap = ref<Map<number, string>>(new Map())
+/** 超管的全部社区 ID 列表（来自社区管理接口，仅超管使用） */
+const superCommunityIds = ref<number[]>([])
+
+/** 是否展示当前社区区域：超管或绑定了社区的管理员 */
+const showCommunitySwitch = computed(() => authStore.isSuperAdmin || authStore.communityIds.length > 0)
+/** 是否可切换：超管（全部+任意）或绑定多个社区 */
+const canSwitchCommunity = computed(() => authStore.isSuperAdmin || authStore.communityIds.length > 1)
+
+/** 当前社区显示名 */
+const currentCommunityName = computed(() => {
+  const id = authStore.currentCommunityId
+  if (authStore.isSuperAdmin && id === 0) return '全部社区'
+  return communityNameMap.value.get(id) ?? `社区 #${id}`
+})
+
+/** 切换器选项列表 */
+const communityOptions = computed(() => {
+  const options: { label: string; value: number }[] = []
+  if (authStore.isSuperAdmin) {
+    options.push({ label: '全部社区', value: 0 })
+    for (const id of superCommunityIds.value) {
+      options.push({ label: communityNameMap.value.get(id) ?? `社区 #${id}`, value: id })
+    }
+    return options
+  }
+  for (const id of authStore.communityIds) {
+    options.push({ label: communityNameMap.value.get(id) ?? `社区 #${id}`, value: id })
+  }
+  return options
+})
+
+/**
+ * 加载社区名称映射
+ * 仅在有 community:view 权限（或超管）时调用社区管理接口；
+ * 无权限的普通管理员静默降级为"社区 #id"文案，避免每次进入都弹权限错误提示
+ */
+async function loadCommunityNames() {
+  if (!authStore.hasPermission('community:view')) return
+  try {
+    const res = await getCommunityList({ page: 1, page_size: 200 })
+    const map = new Map<number, string>()
+    const ids: number[] = []
+    for (const item of res.data.data.list) {
+      map.set(item.id, item.name)
+      ids.push(item.id)
+    }
+    communityNameMap.value = map
+    if (authStore.isSuperAdmin) {
+      superCommunityIds.value = ids
+    }
+  } catch {
+    // 拉取失败（网络异常等）静默降级，不影响主流程
+  }
+}
+
+/**
+ * 切换当前社区
+ * 校验通过后持久化选择并整页刷新：
+ * keep-alive 缓存的标签页持有旧社区数据，reload 是最可靠的刷新方式
+ * @param value 目标社区 ID（超管 0 = 全部社区）
+ */
+function onCommunityChange(value: number) {
+  if (value === authStore.currentCommunityId) return
+  if (!authStore.switchCommunity(value)) {
+    message.error('无权切换到该社区')
+    return
+  }
+  window.location.reload()
+}
 
 // Layout 挂载即按账号兜底首页初始化固定标签（登录切换账号时随 Layout 重建天然重置）
 const homePath = resolveHomePath(authStore) ?? '/dashboard'
@@ -176,6 +265,7 @@ function updateSiderByWidth() {
 onMounted(() => {
   updateSiderByWidth()
   window.addEventListener('resize', updateSiderByWidth)
+  loadCommunityNames()
 })
 
 onUnmounted(() => {
@@ -380,6 +470,28 @@ function onUserAction(key: string) {
 .admin-name {
   font-size: 14px;
   color: #666;
+}
+.community-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.community-label {
+  font-size: 14px;
+  color: #666;
+  flex-shrink: 0;
+}
+.community-select {
+  width: 160px;
+}
+.community-name {
+  font-size: 14px;
+  color: #666;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tabs-bar {
   height: 40px;

@@ -16,8 +16,12 @@ export type AuthStatus = 'unauthenticated' | 'restoring' | 'ready'
 /**
  * 认证状态管理 Store
  * 存储 token、管理员信息、权限列表与认证状态，提供登录、登出、状态恢复等方法
+ * 同时维护"当前社区"（管理员多社区绑定时可切换的数据域），持久化到 localStorage
  */
 export const useAuthStore = defineStore('auth', () => {
+  /** 当前社区 ID 的 localStorage 持久化键 */
+  const CURRENT_COMMUNITY_KEY = 'current_community_id'
+
   /** 访问 token */
   const accessToken = ref(Cookies.get('access_token') || '')
   /** 刷新 token */
@@ -26,6 +30,13 @@ export const useAuthStore = defineStore('auth', () => {
   const admin = ref<AdminInfo | null>(null)
   /** 权限列表 */
   const permissions = ref<string[]>([])
+  /**
+   * 当前社区 ID
+   * - 超管：默认 0 表示全部社区，可切换到任意社区
+   * - 普通管理员：只能切换到自己绑定的社区，默认取绑定列表第一个
+   * 请求拦截器读取持久化值注入 X-Community-Id 请求头
+   */
+  const currentCommunityId = ref<number>(loadPersistedCommunityId())
   /** 认证状态机当前状态：有 token 说明是刷新页面进入，需要先恢复信息 */
   const status = ref<AuthStatus>(accessToken.value ? 'restoring' : 'unauthenticated')
 
@@ -35,9 +46,63 @@ export const useAuthStore = defineStore('auth', () => {
   const isReady = computed(() => status.value === 'ready')
   /** 是否为超管 */
   const isSuperAdmin = computed(() => admin.value?.role_code === 'super_admin' || admin.value?.role_name === '超级管理员')
+  /** 当前管理员绑定的社区 ID 列表 */
+  const communityIds = computed(() => admin.value?.community_ids ?? [])
 
   /** 进行中的恢复请求单例，保证并发调用幂等（只发一次请求） */
   let restorePromise: Promise<boolean> | null = null
+
+  /**
+   * 从 localStorage 读取持久化的当前社区 ID
+   * @returns 有效的社区 ID，无记录或值非法时返回 0
+   */
+  function loadPersistedCommunityId(): number {
+    const raw = localStorage.getItem(CURRENT_COMMUNITY_KEY)
+    const id = Number.parseInt(raw ?? '', 10)
+    return Number.isFinite(id) && id >= 0 ? id : 0
+  }
+
+  /**
+   * 持久化当前社区 ID 到 localStorage
+   */
+  function persistCommunityId() {
+    localStorage.setItem(CURRENT_COMMUNITY_KEY, String(currentCommunityId.value))
+  }
+
+  /**
+   * 归一化当前社区 ID
+   * 校验已选社区是否仍对当前管理员合法（超管任意；普通管理员须在绑定列表内），
+   * 不合法时回退默认社区并同步持久化
+   */
+  function normalizeCommunityId() {
+    if (isSuperAdmin.value) {
+      // 超管：任意持久化值均合法（0 = 全部社区），无需调整
+      persistCommunityId()
+      return
+    }
+    const ids = communityIds.value
+    const valid = currentCommunityId.value > 0 && ids.includes(currentCommunityId.value)
+    if (!valid) {
+      currentCommunityId.value = ids.length > 0 ? ids[0] : admin.value?.community_id ?? 0
+    }
+    persistCommunityId()
+  }
+
+  /**
+   * 切换当前社区
+   * @param id 目标社区 ID（超管可传 0 表示全部社区）
+   * @returns 是否切换成功（目标社区不合法时失败）
+   */
+  function switchCommunity(id: number): boolean {
+    if (isSuperAdmin.value) {
+      if (id < 0) return false
+    } else if (id <= 0 || !communityIds.value.includes(id)) {
+      return false
+    }
+    currentCommunityId.value = id
+    persistCommunityId()
+    return true
+  }
 
   /**
    * 设置 token 到 cookie 和响应式状态
@@ -56,6 +121,7 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 设置管理员信息和权限，状态机转移至 ready
    * 仅在仍持有 token 时转移，避免登出与恢复请求并发时状态回跳
+   * 同时归一化当前社区（管理员绑定关系可能较上次会话发生变化）
    * @param info 管理员信息
    */
   function setAdminInfo(info: AdminInfo) {
@@ -64,6 +130,7 @@ export const useAuthStore = defineStore('auth', () => {
     if (isAuthenticated.value) {
       status.value = 'ready'
     }
+    normalizeCommunityId()
   }
 
   /**
@@ -81,6 +148,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 登出：清空 token 与管理员信息，状态机转移至 unauthenticated，并同步清空标签页
+   * 同时清除持久化的当前社区，避免换账号登录后残留上一账号的社区选择
    */
   function logout() {
     Cookies.remove('access_token', { path: '/' })
@@ -90,6 +158,8 @@ export const useAuthStore = defineStore('auth', () => {
     admin.value = null
     permissions.value = []
     status.value = 'unauthenticated'
+    currentCommunityId.value = 0
+    localStorage.removeItem(CURRENT_COMMUNITY_KEY)
     // 清空标签页，避免残留上一个账号的标签与页面缓存
     useTabsStore().reset()
   }
@@ -156,6 +226,8 @@ export const useAuthStore = defineStore('auth', () => {
     admin,
     permissions,
     status,
+    currentCommunityId,
+    communityIds,
     isAuthenticated,
     isReady,
     isSuperAdmin,
@@ -165,5 +237,6 @@ export const useAuthStore = defineStore('auth', () => {
     fetchAdminInfo,
     ensureReady,
     hasPermission,
+    switchCommunity,
   }
 })
