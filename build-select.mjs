@@ -9,15 +9,27 @@
 //   4. docker 镜像
 //   5. 全部
 //   0. 退出
+//
+// 依赖不全时的检查与自愈同 start-all.mjs（见 deps-tools.mjs），
+// 传 --no-auto-fix 可关闭自动 npm install / go mod tidy。
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import {
+  buildComposeImages,
+  createContext,
+  ensureGeoipDatabase,
+  ensureNpmDependencies,
+  parseAutoFix,
+  runWithRepair,
+} from './deps-tools.mjs';
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(ROOT_DIR, 'bin', 'release');
+const ctx = createContext({ rootDir: ROOT_DIR, autoFix: parseAutoFix(process.argv.slice(2)) });
 
 // 菜单项
 let BUILD_ADMIN = false;
@@ -25,44 +37,34 @@ let BUILD_CLIENT = false;
 let BUILD_BACKEND = false;
 let BUILD_DOCKER = false;
 
-function run(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, {
-    stdio: 'inherit',
-    cwd: opts.cwd || ROOT_DIR,
-    shell: process.platform === 'win32',
-  });
-  if (r.status !== 0) process.exit(r.status ?? 1);
-}
-
-// 安装前端依赖（若缺失）
-function installDepsIfNeeded(dir) {
-  if (!fs.existsSync(path.join(dir, 'node_modules'))) {
-    console.log(`==> ${dir} 缺少 node_modules，正在安装依赖...`);
-    run('npm', ['install'], { cwd: dir });
-  }
-}
+// 前端子项目目录（依赖检查与构建共用）
+const ADMIN_DIR = path.join(ROOT_DIR, 'src', 'admin');
+const CLIENT_DIR = path.join(ROOT_DIR, 'src', 'client');
 
 // 构建各模块
 async function buildAdmin() {
   console.log('==> 构建 admin 管理端...');
-  installDepsIfNeeded(path.join(ROOT_DIR, 'src', 'admin'));
-  run('npm', ['run', 'build'], { cwd: path.join(ROOT_DIR, 'src', 'admin') });
+  await ensureNpmDependencies(ctx, ADMIN_DIR);
+  await runWithRepair(ctx, 'npm', ['run', 'build'], { cwd: ADMIN_DIR, step: '构建 admin 管理端' });
 }
 
 async function buildClient() {
   console.log('==> 构建 client C 端 H5...');
-  installDepsIfNeeded(path.join(ROOT_DIR, 'src', 'client'));
-  run('npm', ['run', 'build:h5'], { cwd: path.join(ROOT_DIR, 'src', 'client') });
+  await ensureNpmDependencies(ctx, CLIENT_DIR);
+  await runWithRepair(ctx, 'npm', ['run', 'build:h5'], { cwd: CLIENT_DIR, step: '构建 client C 端 H5' });
 }
 
-function buildBackend() {
+async function buildBackend() {
   console.log('==> 构建后端二进制（Linux arm64）...');
-  run(process.execPath, [path.join(ROOT_DIR, 'build.mjs')]);
+  // build.mjs 内部完成 Go 模块预检与自愈，这里透传开关
+  const args = [path.join(ROOT_DIR, 'build.mjs'), ...(ctx.autoFix ? [] : ['--no-auto-fix'])];
+  await runWithRepair(ctx, process.execPath, args, { step: '构建后端二进制', allowRepair: false });
 }
 
-function buildDocker() {
+async function buildDocker() {
   console.log('==> 构建 Docker 镜像...');
-  run('docker', ['compose', 'build']);
+  await ensureGeoipDatabase(ctx);
+  await buildComposeImages(ctx);
 }
 
 // 打包最终产物
@@ -84,6 +86,9 @@ function packageRelease() {
   copyIfExists('start-all.mjs');
   copyIfExists('deploy.mjs');
   copyIfExists('build.mjs');
+  // 依赖自愈工具与 GeoIP 下载脚本被上面三个入口依赖，必须一并入包
+  copyIfExists('deps-tools.mjs');
+  copyIfExists('download-geoip.mjs');
   if (fs.existsSync(path.join(ROOT_DIR, 'deploy'))) {
     fs.cpSync(path.join(ROOT_DIR, 'deploy'), path.join(DIST_DIR, 'deploy'), { recursive: true });
   }
@@ -113,6 +118,7 @@ console.log('   社区商超 - 交互式编译打包脚本');
 console.log('==============================================');
 console.log('');
 console.log('请选择要编译的模块（可多次选择，输入数字）：');
+console.log('  依赖缺失时会自动补齐（npm install / go mod tidy），如需关闭请加 --no-auto-fix');
 console.log('  1) admin 管理端');
 console.log('  2) client C 端 H5');
 console.log('  3) backend 后端服务');
@@ -152,8 +158,8 @@ rl.close();
 // 执行构建
 if (BUILD_ADMIN) await buildAdmin();
 if (BUILD_CLIENT) await buildClient();
-if (BUILD_BACKEND) buildBackend();
-if (BUILD_DOCKER) buildDocker();
+if (BUILD_BACKEND) await buildBackend();
+if (BUILD_DOCKER) await buildDocker();
 
 // 执行打包
 if (/^[Yy]$/.test(doPackage)) packageRelease();
