@@ -106,6 +106,7 @@ import { useRouter } from 'vue-router'
 import type { DataTableColumns } from 'naive-ui'
 import { stockIn, getInventoryLogList, getInventoryCheckList, createInventoryCheck, getStockWarnings, getSkuList } from '@/api/inventory'
 import type { InventoryLog, InventoryCheck, Sku } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 const message = useMessage()
 const router = useRouter()
@@ -123,7 +124,7 @@ const logColumns: DataTableColumns<InventoryLog> = [
   { title: '变动后库存', key: 'after_stock', width: 110 },
   { title: '批次号', key: 'batch_no', width: 120, ellipsis: { tooltip: true } },
   { title: '备注', key: 'remark', width: 140, ellipsis: { tooltip: true } },
-  { title: '时间', key: 'created_at', width: 160 },
+  { title: '时间', key: 'created_at', width: 160, render: (row) => formatDateTime(row.created_at) },
 ]
 
 /** 库存预警表格列 */
@@ -153,7 +154,7 @@ const checkColumns: DataTableColumns<InventoryCheck> = [
   { title: '差异数', key: 'diff_items', width: 90 },
   { title: '状态', key: 'status', width: 90 },
   { title: '备注', key: 'remark', ellipsis: { tooltip: true } },
-  { title: '时间', key: 'created_at', width: 160 },
+  { title: '时间', key: 'created_at', width: 160, render: (row) => formatDateTime(row.created_at) },
 ]
 
 const stockTypeOptions = [

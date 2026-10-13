@@ -18,6 +18,7 @@ import { NButton, NSpace, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getSeckillList, deleteSeckill } from '@/api/marketing'
 import type { Seckill } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 秒杀活动管理页面
@@ -32,8 +33,8 @@ const columns: DataTableColumns<Seckill> = [
   { title: '活动名称', key: 'product_name' },
   { title: '秒杀价', key: 'seckill_price' },
   { title: '库存', key: 'stock' },
-  { title: '开始时间', key: 'start_time' },
-  { title: '结束时间', key: 'end_time' },
+  { title: '开始时间', key: 'start_time', render: (row) => formatDateTime(row.start_time) },
+  { title: '结束时间', key: 'end_time', render: (row) => formatDateTime(row.end_time) },
   {
     title: '状态',
     key: 'status',

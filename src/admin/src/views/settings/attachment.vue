@@ -65,7 +65,7 @@
         </n-form-item>
 
         <n-form-item label="配置版本">
-          <n-text depth="3">{{ form.updated_at || '-' }}</n-text>
+          <n-text depth="3">{{ formatDateTime(form.updated_at) }}</n-text>
         </n-form-item>
 
         <n-form-item>
@@ -92,6 +92,7 @@ import { useMessage } from 'naive-ui'
 import { getAttachmentSetting, updateAttachmentSetting } from '@/api/attachment'
 import type { AttachmentSetting } from '@/api/attachment'
 import { useAuthStore } from '@/stores/auth'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 附件配置页面

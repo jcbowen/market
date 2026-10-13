@@ -47,7 +47,7 @@
             <img :src="item.url" :alt="item.name" loading="lazy" draggable="false" />
             <div class="meta">
               <span class="name" :title="item.name">{{ item.name }}</span>
-              <span class="time">{{ item.created_at }}</span>
+              <span class="time">{{ formatTimeText(item.created_at) }}</span>
             </div>
             <n-button class="eye" size="tiny" circle quaternary @click.stop="previewItem = item">
               <template #icon>
@@ -96,7 +96,7 @@
       />
       <p v-if="previewItem" class="preview-info">
         {{ previewItem.width }}×{{ previewItem.height }} · {{ formatSize(previewItem.size) }} ·
-        {{ previewItem.created_at }}
+        {{ formatTimeText(previewItem.created_at) }}
       </p>
     </n-modal>
   </n-modal>
@@ -113,6 +113,8 @@ import {
 } from '@vicons/ionicons5'
 import { listAttachments, type AttachmentItem } from '@/api/attachment'
 import { formatDateTime, isHandledRequestError, uploadImageFile } from '@/utils/image'
+// 后端 RFC3339 时间字符串展示用,与 image 版(Date 对象入参)区分
+import { formatDateTime as formatTimeText } from '@/utils/datetime'
 
 /**
  * 附件选择弹窗组件

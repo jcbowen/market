@@ -17,8 +17,8 @@
           <n-descriptions-item label="实付金额">
             <span class="amount-strong">￥{{ formatAmount(detail.pay_amount) }}</span>
           </n-descriptions-item>
-          <n-descriptions-item label="期望送达">{{ detail.delivery_time || '-' }}</n-descriptions-item>
-          <n-descriptions-item label="下单时间">{{ detail.created_at }}</n-descriptions-item>
+          <n-descriptions-item label="期望送达">{{ formatDateTime(detail.delivery_time) }}</n-descriptions-item>
+          <n-descriptions-item label="下单时间">{{ formatDateTime(detail.created_at) }}</n-descriptions-item>
           <n-descriptions-item label="收货信息" :span="2">
             <template v-if="detail.address && detail.address.name">
               {{ detail.address.name }} {{ detail.address.phone }} {{ detail.address.address }}
@@ -50,6 +50,7 @@ import { NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getOrderDetail } from '@/api/order'
 import type { OrderDetail, OrderItem, OrderStatusLog } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 订单详情弹窗组件
@@ -98,7 +99,7 @@ const logColumns: DataTableColumns<OrderStatusLog> = [
   },
   { title: '操作方', key: 'operator_type', width: 90 },
   { title: '备注', key: 'remark' },
-  { title: '时间', key: 'created_at', width: 180 },
+  { title: '时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
 ]
 
 /**

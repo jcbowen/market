@@ -41,6 +41,7 @@ import { useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getFullReductionList, createFullReduction, updateFullReduction } from '@/api/marketing'
 import type { FullReduction } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 const message = useMessage()
 const pageSize = 10
@@ -50,8 +51,8 @@ const columns: DataTableColumns<FullReduction> = [
   { title: '活动名称', key: 'name', width: 140, ellipsis: { tooltip: true } },
   { title: '满减门槛', key: 'threshold', width: 110, render(row) { return `¥${row.threshold.toFixed(2)}` } },
   { title: '减免金额', key: 'reduce_amount', width: 110, render(row) { return `¥${row.reduce_amount.toFixed(2)}` } },
-  { title: '开始时间', key: 'start_time', width: 160 },
-  { title: '结束时间', key: 'end_time', width: 160 },
+  { title: '开始时间', key: 'start_time', width: 160, render: (row) => formatDateTime(row.start_time) },
+  { title: '结束时间', key: 'end_time', width: 160, render: (row) => formatDateTime(row.end_time) },
   {
     title: '操作',
     key: 'actions',

@@ -52,6 +52,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { getRefundList, approveRefund, rejectRefund } from '@/api/order'
 import OrderDetailModal from './detail.vue'
 import type { Refund, RefundItem } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 售后管理页面（原退款管理）
@@ -160,7 +161,7 @@ const columns: DataTableColumns<Refund> = [
     ellipsis: { tooltip: true },
     render: (row) => (row.status === 3 ? row.reject_reason || '-' : '-'),
   },
-  { title: '申请时间', key: 'created_at', width: 180 },
+  { title: '申请时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
   {
     title: '操作',
     key: 'actions',

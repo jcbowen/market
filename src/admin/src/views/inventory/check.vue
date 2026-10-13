@@ -18,6 +18,7 @@ import { NButton } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getInventoryCheckList } from '@/api/inventory'
 import type { InventoryCheck } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 盘点管理页面
@@ -34,7 +35,7 @@ const columns: DataTableColumns<InventoryCheck> = [
   { title: '差异数', key: 'diff_items' },
   { title: '状态', key: 'status' },
   { title: '备注', key: 'remark' },
-  { title: '创建时间', key: 'created_at' },
+  { title: '创建时间', key: 'created_at', render: (row) => formatDateTime(row.created_at) },
   {
     title: '操作',
     key: 'actions',

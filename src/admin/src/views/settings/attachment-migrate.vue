@@ -81,6 +81,7 @@ import {
 } from '@/api/attachment'
 import type { AttachmentMigrateItem, AttachmentMigrateOverview, AttachmentMigrateStatus } from '@/api/attachment'
 import { useAuthStore } from '@/stores/auth'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 本地附件迁移任务面板
@@ -165,8 +166,8 @@ const columns: DataTableColumns<AttachmentMigrateItem> = [
     title: '失败原因', key: 'error_msg', width: 150, ellipsis: { tooltip: true },
     render: (row) => h('span', null, row.error_msg || '-'),
   },
-  { title: '迁移时间', key: 'migrated_at', width: 160, render: (row) => row.migrated_at || '-' },
-  { title: '验证时间', key: 'verified_at', width: 160, render: (row) => row.verified_at || '-' },
+  { title: '迁移时间', key: 'migrated_at', width: 160, render: (row) => formatDateTime(row.migrated_at) },
+  { title: '验证时间', key: 'verified_at', width: 160, render: (row) => formatDateTime(row.verified_at) },
   {
     title: '操作', key: 'actions', width: 200,
     render(row) {

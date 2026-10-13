@@ -42,6 +42,7 @@ import { ref, onMounted } from 'vue'
 import type { DataTableColumns } from 'naive-ui'
 import { getInventoryLogList, stockIn, stockOut } from '@/api/inventory'
 import type { InventoryLog } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 库存流水页面
@@ -77,7 +78,7 @@ const columns: DataTableColumns<InventoryLog> = [
   { title: '变动前', key: 'before_stock' },
   { title: '变动后', key: 'after_stock' },
   { title: '备注', key: 'remark' },
-  { title: '时间', key: 'created_at' },
+  { title: '时间', key: 'created_at', render: (row) => formatDateTime(row.created_at) },
 ]
 
 function formatDate(timestamp: number | null) {

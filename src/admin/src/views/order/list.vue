@@ -60,6 +60,7 @@ import type { DataTableColumns } from 'naive-ui'
 import { getOrderList, shipOrder, completeOrder, updateOrderStatus } from '@/api/order'
 import OrderDetailModal from './detail.vue'
 import type { Order } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 订单列表页面
@@ -109,7 +110,7 @@ const columns: DataTableColumns<Order> = [
     width: 100,
     render: (row) => h(NTag, { type: statusTagType(row.status), size: 'small', bordered: false }, { default: () => row.status_text }),
   },
-  { title: '创建时间', key: 'created_at', width: 180 },
+  { title: '创建时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
   {
     title: '操作',
     key: 'actions',

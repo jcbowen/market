@@ -57,6 +57,7 @@ import LinkSelector from '@/components/LinkSelector.vue'
 import type { DataTableColumns } from 'naive-ui'
 import { getBannerList, createBanner, updateBanner, deleteBanner } from '@/api/marketing'
 import type { Banner } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 const message = useMessage()
 
@@ -94,8 +95,8 @@ const columns: DataTableColumns<Banner> = [
       return h(NTag, { type: row.status === 1 ? 'success' : 'default' }, { default: () => (row.status === 1 ? '启用' : '禁用') })
     },
   },
-  { title: '开始时间', key: 'start_time', width: 150 },
-  { title: '结束时间', key: 'end_time', width: 150 },
+  { title: '开始时间', key: 'start_time', width: 150, render: (row) => formatDateTime(row.start_time) },
+  { title: '结束时间', key: 'end_time', width: 150, render: (row) => formatDateTime(row.end_time) },
   {
     title: '操作',
     key: 'actions',
