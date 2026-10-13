@@ -10,17 +10,22 @@
 //
 // 平台与架构在下方 PLATFORMS 列表中维护，无需在编译时传递环境参数。
 //
-// 使用方法：node build.mjs
+// 依赖不全（go.sum 缺行、模块未下载）会在编译前预检并自动 go mod tidy 修复，
+// 指定 --no-auto-fix 时只检查提示、不改动 go.mod / go.sum。
+//
+// 使用方法：node build.mjs [--no-auto-fix]
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { createContext, parseAutoFix, preflightGoModules, runWithRepair } from './deps-tools.mjs';
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUILD_DIR = path.join(ROOT_DIR, 'bin');
 const BACKEND_DIR = path.join(ROOT_DIR, 'src', 'backend');
+
+const ctx = createContext({ rootDir: ROOT_DIR, autoFix: parseAutoFix(process.argv.slice(2)) });
 
 // 目标平台列表（OS/ARCH），每个 OS 对应 bin/ 下一个二级目录
 const PLATFORMS = [
@@ -45,16 +50,6 @@ function srcDirOf(svc) {
   return `./services/${svc.replace(/-service$/, '')}/`;
 }
 
-function run(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, {
-    stdio: opts.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-    cwd: opts.cwd || ROOT_DIR,
-    env: opts.env ? { ...process.env, ...opts.env } : process.env,
-    shell: process.platform === 'win32',
-  });
-  return r;
-}
-
 // safeCleanDir 安全删除指定的平台构建目录。
 // 仅当目标路径严格位于 BUILD_DIR 内时才执行删除，
 // 避免构建目录变量异常（为空或被指向项目外）时误删系统文件。
@@ -68,19 +63,24 @@ function safeCleanDir(target) {
   }
 }
 
-function buildOne(goos, arch, svc) {
+/**
+ * 交叉编译单个服务，失败时按依赖诊断自动修复并重试。
+ *
+ * @param {string} goos 目标系统（darwin/linux/windows）
+ * @param {string} arch 目标架构（arm64/amd64）
+ * @param {string} svc  服务二进制名（gateway、user-service 等）
+ * @returns {void} 编译成功即返回
+ * @throws 依赖修复后仍失败时由 runWithRepair 结束进程
+ * @example buildOne('linux', 'arm64', 'gateway');
+ */
+async function buildOne(goos, arch, svc) {
   const ext = goos === 'windows' ? '.exe' : '';
   const out = path.join(BUILD_DIR, goos, svc + ext);
-  const r = run('go', ['build', '-o', out, srcDirOf(svc)], {
+  await runWithRepair(ctx, 'go', ['build', '-o', out, srcDirOf(svc)], {
     cwd: BACKEND_DIR,
-    env: {
-      GOPATH: ROOT_DIR,
-      CGO_ENABLED: '0',
-      GOOS: goos,
-      GOARCH: arch,
-    },
+    env: { ...ctx.goEnv, GOOS: goos, GOARCH: arch },
+    step: `构建 ${svc}（${goos}/${arch}）`,
   });
-  if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
 // 识别本机环境
@@ -94,6 +94,10 @@ function localPlatform() {
 
 fs.mkdirSync(path.join(BUILD_DIR, 'static'), { recursive: true });
 
+// 编译前预检 Go 模块依赖（本地 replace 路径、go.mod/go.sum 一致性）
+console.log('==> 预检 Go 模块依赖...');
+await preflightGoModules(ctx);
+
 // 逐平台编译
 for (const [goos, arch] of PLATFORMS) {
   console.log(`==> 构建 ${goos}/${arch} ...`);
@@ -101,7 +105,7 @@ for (const [goos, arch] of PLATFORMS) {
   fs.mkdirSync(path.join(BUILD_DIR, goos), { recursive: true });
   for (const svc of SERVICES) {
     console.log(`    构建 ${svc} ...`);
-    buildOne(goos, arch, svc);
+    await buildOne(goos, arch, svc);
   }
 }
 

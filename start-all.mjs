@@ -7,27 +7,44 @@
 //   node start-all.mjs --clean      # 清理 MySQL/Redis 数据后重新启动
 //   node start-all.mjs --skip-build # 跳过构建，直接使用已有镜像/二进制
 //   node start-all.mjs --no-cache   # 构建镜像时不使用 Docker 缓存
+//   node start-all.mjs --no-auto-fix # 依赖不全时只提示原因，不自动执行 go mod tidy / npm install
+//
+// 依赖不全的处理由 deps-tools.mjs 统一负责：
+//   前端 node_modules 缺失或与 package-lock 不一致 -> 自动 npm install；
+//   go.mod/go.sum 不一致（missing go.sum entry 等）-> 自动 go mod tidy 后重试；
+//   replace 指向的本地模块缺失 -> 直接报出期望路径，交人工准备。
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import {
+  buildComposeImages,
+  createContext,
+  ensureGeoipDatabase,
+  ensureNpmDependencies,
+  runWithRepair,
+} from './deps-tools.mjs';
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 let CLEAN = false;
 let SKIP_BUILD = false;
 let NO_CACHE = false;
+let AUTO_FIX = true;
 for (const arg of process.argv.slice(2)) {
   if (arg === '--clean') CLEAN = true;
   else if (arg === '--skip-build') SKIP_BUILD = true;
   else if (arg === '--no-cache') NO_CACHE = true;
+  else if (arg === '--no-auto-fix') AUTO_FIX = false;
   else {
     console.error(`未知参数: ${arg}`);
     process.exit(1);
   }
 }
+
+const ctx = createContext({ rootDir: ROOT_DIR, autoFix: AUTO_FIX });
 
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, {
@@ -123,13 +140,9 @@ checkCommand('go', 'Go', ['version']);
 checkCommand('node', 'Node.js');
 checkCommand('npm', 'npm');
 
-// 安装前端依赖（若缺失）
-function installDepsIfNeeded(dir) {
-  if (!fs.existsSync(path.join(dir, 'node_modules'))) {
-    console.log(`==> ${dir} 缺少 node_modules，正在安装依赖...`);
-    run('npm', ['install'], { cwd: dir });
-  }
-}
+// 前端子项目目录（依赖检查与构建共用）
+const ADMIN_DIR = path.join(ROOT_DIR, 'src', 'admin');
+const CLIENT_DIR = path.join(ROOT_DIR, 'src', 'client');
 
 // docker exec 辅助（静默执行，返回是否成功）
 function dockerExec(args) {
@@ -146,23 +159,30 @@ function dockerExec(args) {
 fs.mkdirSync(path.join(ROOT_DIR, 'bin', 'attachment'), { recursive: true });
 
 // 构建阶段
+let FRONTEND_REBUILT = false;
 if (!SKIP_BUILD) {
   console.log('==> 构建管理端...');
-  installDepsIfNeeded(path.join(ROOT_DIR, 'src', 'admin'));
-  run('npm', ['run', 'build'], { cwd: path.join(ROOT_DIR, 'src', 'admin') });
+  await ensureNpmDependencies(ctx, ADMIN_DIR);
+  await runWithRepair(ctx, 'npm', ['run', 'build'], { cwd: ADMIN_DIR, step: '构建管理端' });
 
   console.log('==> 构建 C 端 H5...');
-  installDepsIfNeeded(path.join(ROOT_DIR, 'src', 'client'));
-  run('npm', ['run', 'build:h5'], { cwd: path.join(ROOT_DIR, 'src', 'client') });
+  await ensureNpmDependencies(ctx, CLIENT_DIR);
+  await runWithRepair(ctx, 'npm', ['run', 'build:h5'], { cwd: CLIENT_DIR, step: '构建 C 端 H5' });
+  FRONTEND_REBUILT = true;
 
   console.log('==> 构建后端二进制（Linux arm64）...');
-  run(process.execPath, [path.join(ROOT_DIR, 'build.mjs')]);
+  // 依赖预检与 go mod tidy 自愈在 build.mjs 内部完成，这里透传开关保持一致
+  const backendArgs = [path.join(ROOT_DIR, 'build.mjs'), ...(AUTO_FIX ? [] : ['--no-auto-fix'])];
+  await runWithRepair(ctx, process.execPath, backendArgs, { step: '构建后端二进制', allowRepair: false });
 
   console.log('==> 构建 Docker 镜像...');
-  run('docker', ['compose', 'build', ...(NO_CACHE ? ['--no-cache'] : [])]);
+  await buildComposeImages(ctx, NO_CACHE ? ['--no-cache'] : []);
 } else {
   console.log('==> 跳过构建阶段，使用已有镜像/二进制');
 }
+
+// GeoIP 定位库属于可选运行数据，缺失时补下载，失败只告警不阻断启动
+await ensureGeoipDatabase(ctx);
 
 // 清理仅在 --clean 时执行；默认保留 MySQL/Redis 容器运行状态，
 // 业务服务容器由下方 up -d 依据镜像变化自动按需重建
@@ -173,7 +193,14 @@ if (CLEAN) {
 
 // 启动服务
 console.log('==> 启动服务...');
-run('docker', ['compose', 'up', '-d']);
+await runWithRepair(ctx, 'docker', ['compose', 'up', '-d'], { cwd: ROOT_DIR, step: '启动服务' });
+
+// 前端构建脚本会先 rm -rf 产物目录，仍在运行的 gateway 容器绑定的是被删掉的旧 inode，
+// 挂载点因此变成空目录（表现为 /s/ 404）；restart 让容器重新解析 bind mount
+if (FRONTEND_REBUILT) {
+  console.log('==> 重新挂载前端产物（重启 Gateway）...');
+  await runWithRepair(ctx, 'docker', ['compose', 'restart', 'gateway'], { cwd: ROOT_DIR, step: '重启 Gateway' });
+}
 
 // 等待 MySQL 健康
 console.log('==> 等待 MySQL 就绪...');
