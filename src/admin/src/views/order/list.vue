@@ -1,7 +1,8 @@
 <template>
   <n-card title="订单列表">
     <n-space vertical :size="16">
-      <n-space align="center" :wrap="false">
+      <!-- 筛选区：窄屏允许换行，搜索框自适应宽度，避免手机上横向溢出 -->
+      <n-space align="center" :size="12" class="filter-bar">
         <n-radio-group v-model:value="statusFilter" @update:value="onStatusChange">
           <n-radio-button :value="0">全部订单</n-radio-button>
           <n-radio-button v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</n-radio-button>
@@ -10,7 +11,7 @@
           v-model:value="orderNo"
           placeholder="订单号搜索"
           clearable
-          style="width: 200px"
+          class="search-input"
           @keyup.enter="onSearch"
           @clear="onSearch"
         />
@@ -21,6 +22,7 @@
         :data="list"
         :loading="loading"
         remote
+        :scroll-x="1040"
         :pagination="pagination"
         @update:page="onPageChange"
       />
@@ -31,7 +33,7 @@
   <order-detail-modal v-model:show="detailVisible" :order-id="detailId" />
 
   <!-- 发货表单弹窗 -->
-  <n-modal v-model:show="shipVisible" preset="card" title="订单发货" style="width: 460px">
+  <n-modal v-model:show="shipVisible" preset="card" title="订单发货" style="width: min(460px, 94vw)">
     <n-form label-placement="left" label-width="80">
       <n-form-item label="物流公司">
         <n-input v-model:value="shipForm.express_company" placeholder="请输入物流公司" />
@@ -310,3 +312,16 @@ async function loadData() {
 
 onMounted(loadData)
 </script>
+
+<style scoped>
+/* 筛选区允许换行后,窄屏下搜索框撑满剩余宽度,避免固定 200px 挤压 */
+.search-input {
+  width: 200px;
+}
+
+@media (max-width: 768px) {
+  .search-input {
+    width: 100%;
+  }
+}
+</style>

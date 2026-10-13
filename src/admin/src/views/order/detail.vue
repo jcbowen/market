@@ -3,7 +3,8 @@
     <n-spin :show="loading">
       <n-empty v-if="!detail && !loading" description="订单不存在" />
       <n-space v-else-if="detail" vertical :size="16">
-        <n-descriptions label-placement="left" bordered :column="2" size="small">
+        <!-- 描述列表：窄屏自动降为单列，避免两列内容挤压换行难读 -->
+        <n-descriptions label-placement="left" bordered :column="descColumn" size="small">
           <n-descriptions-item label="订单号">{{ detail.order_no }}</n-descriptions-item>
           <n-descriptions-item label="用户">{{ detail.user_name }}</n-descriptions-item>
           <n-descriptions-item label="状态">
@@ -30,11 +31,12 @@
           </n-descriptions-item>
         </n-descriptions>
 
-        <n-data-table :columns="itemColumns" :data="detail.items" size="small" :bordered="true" />
+        <!-- 商品明细：固定列宽,窄屏横向滚动 -->
+        <n-data-table :columns="itemColumns" :data="detail.items" size="small" :bordered="true" :scroll-x="620" />
 
         <div v-if="detail.status_logs && detail.status_logs.length">
           <div class="section-title">状态流转</div>
-          <n-data-table :columns="logColumns" :data="detail.status_logs" size="small" />
+          <n-data-table :columns="logColumns" :data="detail.status_logs" size="small" :scroll-x="620" />
         </div>
       </n-space>
     </n-spin>
@@ -43,7 +45,7 @@
 
 <script setup lang="ts">
 // 页面级组件：订单详情弹窗，供订单列表 / 售后管理复用
-import { ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getOrderDetail } from '@/api/order'
@@ -66,6 +68,18 @@ const emit = defineEmits<{
 
 const loading = ref(false)
 const detail = ref<OrderDetail | null>(null)
+
+// --- 描述列表响应式列数 ---
+// 窄屏（<=768px，与全局布局断点一致）降为单列，宽屏保持两列
+const isNarrow = ref(window.innerWidth <= 768)
+
+/** 描述列表列数：宽屏 2 列，窄屏 1 列 */
+const descColumn = computed(() => (isNarrow.value ? 1 : 2))
+
+/** 窗口尺寸变化时同步窄屏标记 */
+function updateNarrow() {
+  isNarrow.value = window.innerWidth <= 768
+}
 
 const itemColumns: DataTableColumns<OrderItem> = [
   { title: '商品名称', key: 'product_name' },
@@ -176,6 +190,14 @@ watch(
     }
   },
 )
+
+onMounted(() => {
+  window.addEventListener('resize', updateNarrow)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateNarrow)
+})
 </script>
 
 <style scoped>
