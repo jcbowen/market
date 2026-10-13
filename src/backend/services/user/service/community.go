@@ -21,6 +21,7 @@ type CommunityService struct {
 // NewCommunityService 创建社区业务服务
 // 参数：
 //   - db: MySQL 实例
+//
 // 返回：
 //   - *CommunityService: 社区业务服务实例
 func NewCommunityService(db *mysql.Instance) *CommunityService {
@@ -72,6 +73,7 @@ func (s *CommunityService) ListCommunities(ctx context.Context, req *user.ListCo
 // 参数：
 //   - ctx: 上下文
 //   - id: 社区 ID
+//
 // 返回：
 //   - *model.Community: 社区模型
 //   - error: 错误信息
@@ -91,6 +93,7 @@ func (s *CommunityService) GetCommunity(ctx context.Context, id int64) (*model.C
 //   - latitude: 纬度
 //   - page: 页码（已废弃，仅保留兼容签名）
 //   - pageSize: 每页条数（已废弃，仅保留兼容签名）
+//
 // 返回：
 //   - []*model.Community: 社区列表
 //   - int: 总条数
@@ -116,6 +119,7 @@ func (s *CommunityService) ListNearbyCommunities(ctx context.Context, longitude,
 // ToCommunityInfo 将社区模型转换为 proto 社区信息
 // 参数：
 //   - c: 社区模型
+//
 // 返回：
 //   - *user.CommunityInfo: proto 社区信息
 func ToCommunityInfo(c *model.Community) *user.CommunityInfo {
@@ -141,6 +145,9 @@ func ToCommunityInfo(c *model.Community) *user.CommunityInfo {
 		Province:             c.Province,
 		City:                 c.City,
 		District:             c.District,
+		ProvinceCode:         c.ProvinceCode,
+		CityCode:             c.CityCode,
+		DistrictCode:         c.DistrictCode,
 		AllowOutsideDelivery: c.AllowOutsideDelivery,
 	}
 }
@@ -149,29 +156,33 @@ func ToCommunityInfo(c *model.Community) *user.CommunityInfo {
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建社区请求
+//
 // 返回：
 //   - *model.Community: 社区模型
 //   - error: 错误信息
 func (s *CommunityService) CreateCommunity(ctx context.Context, req *user.CreateCommunityReq) (*model.Community, error) {
 	c := &model.Community{
-		Name:            req.Name,
-		Address:         req.Address,
-		Longitude:       req.Longitude,
-		Latitude:        req.Latitude,
-		ContactPhone:    req.ContactPhone,
-		ManagerName:     req.ManagerName,
-		ManagerPhone:    req.ManagerPhone,
-		PickupAddress:   req.PickupAddress,
-		DeliveryFee:     req.DeliveryFee,
-		MinOrderAmount:  req.MinOrderAmount,
-		DeliveryRangeKm: req.DeliveryRangeKm,
-		BusinessHours:   req.BusinessHours,
-		Province:              req.Province,
-		City:                  req.City,
-		District:              req.District,
-		AllowOutsideDelivery:  req.AllowOutsideDelivery,
-		Sort:            req.Sort,
-		Status:          req.Status,
+		Name:                 req.Name,
+		Address:              req.Address,
+		Longitude:            req.Longitude,
+		Latitude:             req.Latitude,
+		ContactPhone:         req.ContactPhone,
+		ManagerName:          req.ManagerName,
+		ManagerPhone:         req.ManagerPhone,
+		PickupAddress:        req.PickupAddress,
+		DeliveryFee:          req.DeliveryFee,
+		MinOrderAmount:       req.MinOrderAmount,
+		DeliveryRangeKm:      req.DeliveryRangeKm,
+		BusinessHours:        req.BusinessHours,
+		Province:             req.Province,
+		City:                 req.City,
+		District:             req.District,
+		ProvinceCode:         req.ProvinceCode,
+		CityCode:             req.CityCode,
+		DistrictCode:         req.DistrictCode,
+		AllowOutsideDelivery: req.AllowOutsideDelivery,
+		Sort:                 req.Sort,
+		Status:               req.Status,
 	}
 	if c.Status == 0 {
 		c.Status = 1
@@ -186,6 +197,7 @@ func (s *CommunityService) CreateCommunity(ctx context.Context, req *user.Create
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新社区请求
+//
 // 返回：
 //   - *model.Community: 社区模型
 //   - error: 错误信息
@@ -214,6 +226,9 @@ func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.Update
 	c.Province = req.Province
 	c.City = req.City
 	c.District = req.District
+	c.ProvinceCode = req.ProvinceCode
+	c.CityCode = req.CityCode
+	c.DistrictCode = req.DistrictCode
 	c.AllowOutsideDelivery = req.AllowOutsideDelivery
 	c.Sort = req.Sort
 	c.Status = req.Status
@@ -227,6 +242,7 @@ func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.Update
 // 参数：
 //   - ctx: 上下文
 //   - id: 社区 ID
+//
 // 返回：
 //   - error: 错误信息
 func (s *CommunityService) DeleteCommunity(ctx context.Context, id int64) error {
@@ -237,6 +253,7 @@ func (s *CommunityService) DeleteCommunity(ctx context.Context, id int64) error 
 // 参数：
 //   - lat1, lon1: 第一点经纬度
 //   - lat2, lon2: 第二点经纬度
+//
 // 返回：
 //   - float64: 距离公里数
 func earthDistanceKm(lat1, lon1, lat2, lon2 float64) float64 {

@@ -21,11 +21,13 @@ type server struct {
 	communityService *service.CommunityService
 	adminService     *service.AdminService
 	roleService      *service.RoleService
+	regionService    *service.RegionService
 }
 
 // newServer 创建用户服务 gRPC 实现
 // 参数：
 //   - db: MySQL 实例
+//
 // 返回：
 //   - *server: gRPC 服务实现
 func newServer(db *mysql.Instance) *server {
@@ -35,6 +37,7 @@ func newServer(db *mysql.Instance) *server {
 		communityService: service.NewCommunityService(db),
 		adminService:     service.NewAdminService(db),
 		roleService:      service.NewRoleService(db),
+		regionService:    service.NewRegionService(db),
 	}
 }
 
@@ -384,6 +387,88 @@ func (s *server) UpdateRole(ctx stdctx.Context, req *user.UpdateRoleReq) (*user.
 // DeleteRole 删除角色
 func (s *server) DeleteRole(ctx stdctx.Context, req *user.DeleteRoleReq) (*common.CommonResponse, error) {
 	if err := s.roleService.DeleteRole(ctx, req.Id); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ListRegionChildren 按父级代码查询下级区划（级联选择器懒加载）
+func (s *server) ListRegionChildren(ctx stdctx.Context, req *user.ListRegionChildrenReq) (*user.ListRegionChildrenResp, error) {
+	list, err := s.regionService.ListChildren(ctx, req.ParentCode)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	resp := &user.ListRegionChildrenResp{List: make([]*user.RegionInfo, 0, len(list))}
+	for _, r := range list {
+		resp.List = append(resp.List, service.ToRegionInfo(r))
+	}
+	return resp, nil
+}
+
+// ListRegions 管理端分页查询区划列表
+func (s *server) ListRegions(ctx stdctx.Context, req *user.ListRegionsReq) (*user.ListRegionsResp, error) {
+	page, pageSize := 1, 20
+	if req.Pagination != nil {
+		page = int(req.Pagination.Page)
+		pageSize = int(req.Pagination.PageSize)
+	}
+	list, total, err := s.regionService.ListRegions(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	resp := &user.ListRegionsResp{
+		List: make([]*user.RegionInfo, 0, len(list)),
+		Pagination: &common.PaginationResponse{
+			Total:    int32(total),
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+	}
+	for _, r := range list {
+		resp.List = append(resp.List, service.ToRegionInfo(r))
+	}
+	return resp, nil
+}
+
+// MatchRegionByName 按名称匹配区划（IP 定位反查区划代码）
+func (s *server) MatchRegionByName(ctx stdctx.Context, req *user.MatchRegionByNameReq) (*user.RegionMatchInfo, error) {
+	city, province, err := s.regionService.MatchRegionByName(ctx, req.Name)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &user.RegionMatchInfo{
+		Province: service.ToRegionInfo(province),
+		City:     service.ToRegionInfo(city),
+	}, nil
+}
+
+// CreateRegionUpdateTask 创建区划更新任务（异步执行，返回任务供前端轮询）
+func (s *server) CreateRegionUpdateTask(ctx stdctx.Context, req *common.Empty) (*user.RegionUpdateTaskInfo, error) {
+	task, err := s.regionService.CreateRegionUpdateTask(ctx)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToRegionUpdateTaskInfo(task), nil
+}
+
+// GetRegionUpdateTask 查询区划更新任务详情（含差异明细）
+func (s *server) GetRegionUpdateTask(ctx stdctx.Context, req *user.GetRegionUpdateTaskReq) (*user.RegionUpdateTaskInfo, error) {
+	task, err := s.regionService.GetRegionUpdateTask(ctx, req.Id)
+	if err != nil {
+		if err.Error() == "任务不存在" {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToRegionUpdateTaskInfo(task), nil
+}
+
+// ApplyRegionUpdateTask 将已完成任务的差异覆盖入库
+func (s *server) ApplyRegionUpdateTask(ctx stdctx.Context, req *user.ApplyRegionUpdateTaskReq) (*common.CommonResponse, error) {
+	if err := s.regionService.ApplyRegionUpdateTask(ctx, req.Id); err != nil {
+		if err.Error() == "任务不存在" || err.Error() == "任务尚未完成，无法应用差异" || err.Error() == "任务差异已应用过，请重新执行检查更新" {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil

@@ -126,6 +126,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat)
 	// IP 定位：本地 GeoLite2-City 数据库，相对路径以可执行文件所在目录为基准
 	geoipHandler := handler.NewGeoIPHandler(resolveBinPath(cfg.GeoIP.DBPath))
+	// 行政区划：级联选择器懒加载、IP 定位反查区划、后台管理（列表/检查更新/差异覆盖）
+	regionHandler := handler.NewRegionHandler(clients.UserClient, resolveBinPath(cfg.GeoIP.DBPath))
 
 	apiV1 := r.Group("/api/v1")
 	{
@@ -145,6 +147,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.GET("/banners", productHandler.ListBanners)
 
 			public.GET("/geoip/locate", geoipHandler.Locate)
+			public.GET("/regions/children", regionHandler.ListChildren)
+			public.GET("/regions/locate", regionHandler.Locate)
 
 			public.POST("/auth/phone-code", authHandler.SendPhoneCode)
 			public.POST("/auth/login/phone", authHandler.PhoneLogin)
@@ -301,6 +305,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/communities/:id", gwMiddleware.RequirePermission("community:update"), adminHandler.UpdateCommunity)
 			authAdmin.DELETE("/communities/:id", gwMiddleware.RequirePermission("community:delete"), adminHandler.DeleteCommunity)
 
+			// 行政区划：列表查看 + 更新任务（检查 → 轮询差异 → 确认覆盖）
+			authAdmin.GET("/regions", gwMiddleware.RequirePermission("region:view"), regionHandler.ListRegions)
+			authAdmin.POST("/regions/update/check", gwMiddleware.RequirePermission("region:update"), regionHandler.CreateUpdateTask)
+			authAdmin.GET("/regions/update/tasks/:id", gwMiddleware.RequirePermission("region:view"), regionHandler.GetUpdateTask)
+			authAdmin.POST("/regions/update/tasks/:id/apply", gwMiddleware.RequirePermission("region:update"), regionHandler.ApplyUpdateTask)
+
 			authAdmin.GET("/refunds", gwMiddleware.RequirePermission("refund:view"), adminHandler.ListRefunds)
 			authAdmin.POST("/refunds/:id/approve", gwMiddleware.RequirePermission("refund:update"), adminHandler.ApproveRefund)
 			authAdmin.POST("/refunds/:id/reject", gwMiddleware.RequirePermission("refund:update"), adminHandler.RejectRefund)
@@ -363,6 +373,7 @@ func getBinDir() string {
 // 用于数据文件（如 GeoLite2-City 数据库）等运行时资源定位
 // 参数：
 //   - p: 配置中的路径
+//
 // 返回：
 //   - string: 绝对路径
 func resolveBinPath(p string) string {
@@ -373,14 +384,16 @@ func resolveBinPath(p string) string {
 }
 
 // staticCacheMiddleware 静态资源缓存策略中间件
-// - 带 hash 文件名的 /b/assets/、/s/assets/ 资源内容不可变，允许一年长缓存（immutable），
-//   避免重复下载大体积 JS/CSS
-// - 前端 HTML 入口与路由兜底页（/b、/s 前缀其余路径）禁止缓存（no-cache），
-//   确保重新构建后浏览器立即获取引用新 hash 资源的最新 HTML，
-//   避免旧 HTML 引用已被构建删除的旧 hash 资源导致 404 白屏
+//   - 带 hash 文件名的 /b/assets/、/s/assets/ 资源内容不可变，允许一年长缓存（immutable），
+//     避免重复下载大体积 JS/CSS
+//   - 前端 HTML 入口与路由兜底页（/b、/s 前缀其余路径）禁止缓存（no-cache），
+//     确保重新构建后浏览器立即获取引用新 hash 资源的最新 HTML，
+//     避免旧 HTML 引用已被构建删除的旧 hash 资源导致 404 白屏
+//
 // 使用示例：r.Use(staticCacheMiddleware())
 // 参数：
 //   - 无
+//
 // 返回：
 //   - gin.HandlerFunc: 中间件处理函数
 func staticCacheMiddleware() gin.HandlerFunc {

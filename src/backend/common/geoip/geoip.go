@@ -29,6 +29,7 @@ type Location struct {
 	Longitude   float64 // 经度
 	Country     string  // ISO 3166-1 alpha-2 国家码，如 CN
 	CountryName string  // 国家名称（中文优先，英文兜底）
+	Province    string  // 一级行政区名称（中文优先，英文兜底；如 "广东"）
 	City        string  // 城市名称（中文优先，英文兜底）
 }
 
@@ -49,6 +50,7 @@ var mgr manager
 // 参数：
 //   - dbPath: mmdb 数据库路径（建议传绝对路径）
 //   - ip:     待查询的 IP
+//
 // 返回：
 //   - *Location: 定位结果，未命中返回 nil
 func Lookup(dbPath string, ip netip.Addr) *Location {
@@ -66,19 +68,25 @@ func Lookup(dbPath string, ip netip.Addr) *Location {
 		return nil
 	}
 
-	return &Location{
+	loc := &Location{
 		Latitude:    derefFloat(record.Location.Latitude),
 		Longitude:   derefFloat(record.Location.Longitude),
 		Country:     record.Country.ISOCode,
 		CountryName: pickName(record.Country.Names),
 		City:        pickName(record.City.Names),
 	}
+	// 一级行政区（省/州）：取第一个 subdivision（中国为省/直辖市/自治区）
+	if len(record.Subdivisions) > 0 {
+		loc.Province = pickName(record.Subdivisions[0].Names)
+	}
+	return loc
 }
 
 // acquireReader 获取可用的数据库读取器，必要时惰性加载或按 mtime 热重载
 // 数据库文件尚未下载（首次部署）时静默返回 nil，并按 mtimeCheckInterval 间隔重试
 // 参数：
 //   - dbPath: mmdb 数据库路径
+//
 // 返回：
 //   - *geoip2.Reader: 读取器，不可用时返回 nil
 func acquireReader(dbPath string) *geoip2.Reader {
@@ -135,6 +143,7 @@ func acquireReader(dbPath string) *geoip2.Reader {
 // pickName 取本地化名称：中文优先，英文兜底
 // 参数：
 //   - names: 数据库记录的多语言名称集合
+//
 // 返回：
 //   - string: 名称，无数据时为空字符串
 func pickName(names geoip2.Names) string {
@@ -147,6 +156,7 @@ func pickName(names geoip2.Names) string {
 // derefFloat 解引用 float64 指针，nil 返回 0
 // 参数：
 //   - p: 指针
+//
 // 返回：
 //   - float64: 解引用结果
 func derefFloat(p *float64) float64 {

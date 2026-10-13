@@ -27,16 +27,12 @@
           </u-form-item>
         </template>
 
-        <!-- 自由模式：社区允许社区外配送，省市区可自由填写 -->
+        <!-- 自由模式：社区允许社区外配送，省市区通过区划选择器按区划代码选择 -->
         <template v-else>
-          <u-form-item label="省份" border-bottom>
-            <u-input v-model="form.province" placeholder="请输入省份" border="none" />
-          </u-form-item>
-          <u-form-item label="城市" border-bottom>
-            <u-input v-model="form.city" placeholder="请输入城市" border="none" />
-          </u-form-item>
-          <u-form-item label="区县" border-bottom>
-            <u-input v-model="form.district" placeholder="请输入区县" border="none" />
+          <u-form-item label="所在地区" prop="region" border-bottom @click="openPicker">
+            <view class="region-display" :class="{ 'region-placeholder': !regionDisplayText }">
+              <text>{{ regionDisplayText || '请选择省 / 市 / 区' }}</text>
+            </view>
           </u-form-item>
           <u-form-item label="详细地址" prop="detail" border-bottom>
             <u-input v-model="form.detail" placeholder="请输入详细地址" border="none" />
@@ -54,6 +50,22 @@
       <u-switch v-model="form.is_default" />
     </view>
 
+    <!-- 行政区划三级联动选择器（省 / 市 / 区县，数据来自区划代码库） -->
+    <u-picker
+      ref="regionPickerRef"
+      :show="regionPickerShow"
+      :columns="regionColumns"
+      :loading="regionLoading"
+      key-name="name"
+      value-name="code"
+      :default-index="regionDefaultIndex"
+      title="选择所在地区"
+      @change="onRegionChange"
+      @confirm="onRegionConfirm"
+      @cancel="regionPickerShow = false"
+      @close="regionPickerShow = false"
+    ></u-picker>
+
     <view class="save-btn" @click="onSave">
       <u-button type="success" text="保存" :loading="saving" />
     </view>
@@ -63,9 +75,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { createAddress, updateAddress, getCommunity } from '@/api/user'
+import { createAddress, updateAddress, getCommunity, listRegionChildren, locateRegion } from '@/api/user'
 import { useUserStore } from '@/stores/user'
-import type { Address, Community } from '@/api/types'
+import type { Address, Community, Region } from '@/api/types'
 
 const userStore = useUserStore()
 const addressId = ref(0)
@@ -79,6 +91,9 @@ const form = ref<Address>({
   province: '',
   city: '',
   district: '',
+  province_code: '',
+  city_code: '',
+  district_code: '',
   detail: '',
   tag: '',
   community_id: 0,
@@ -110,6 +125,222 @@ const prefixText = computed(() => {
   return `${c.province}${c.city}${c.district}`
 })
 
+// --- 行政区划三级联动选择器（基于区划代码库，逐级懒加载） ---
+
+const regionPickerRef = ref()
+const regionPickerShow = ref(false)
+const regionLoading = ref(false)
+/** 三列选项：[省列表, 市列表, 区县列表]，条目为 {code, name} */
+const regionColumns = ref<Region[][]>([[], [], []])
+/** 初始选中索引（仅首次打开生效，之后由组件内部保持） */
+const regionDefaultIndex = ref<number[]>([0, 0, 0])
+/** 当前选择（预选与确认中间态），用于联动加载与回显 */
+const selectedRegion = ref<{ province: Region | null; city: Region | null; district: Region | null }>({
+  province: null,
+  city: null,
+  district: null,
+})
+
+/** 省列表缓存 */
+let provinces: Region[] | null = null
+const cityCache = new Map<string, Region[]>()
+const districtCache = new Map<string, Region[]>()
+
+/** 已选地区展示文案 */
+const regionDisplayText = computed(() =>
+  [form.value.province, form.value.city, form.value.district].filter(Boolean).join(' / ')
+)
+
+async function loadProvinces(): Promise<Region[]> {
+  if (!provinces) {
+    const res = await listRegionChildren('0')
+    provinces = res.data || []
+  }
+  return provinces
+}
+
+async function loadCities(code: string): Promise<Region[]> {
+  if (!cityCache.has(code)) {
+    const res = await listRegionChildren(code)
+    cityCache.set(code, res.data || [])
+  }
+  return cityCache.get(code)!
+}
+
+async function loadDistricts(code: string): Promise<Region[]> {
+  if (!districtCache.has(code)) {
+    const res = await listRegionChildren(code)
+    districtCache.set(code, res.data || [])
+  }
+  return districtCache.get(code)!
+}
+
+/**
+ * 打开区划选择器
+ * 首次打开时按当前选择（或列表首项）组合三列数据并计算初始索引
+ */
+async function openPicker() {
+  regionLoading.value = true
+  regionPickerShow.value = true
+  try {
+    const provList = await loadProvinces()
+    if (!provList.length) return
+
+    const prov =
+      selectedRegion.value.province && provList.some((p) => p.code === selectedRegion.value.province?.code)
+        ? selectedRegion.value.province
+        : provList[0]
+    const cityList = await loadCities(prov.code)
+    // 直辖市无市级层：省下直接挂区县（第二列即区县，第三列留空）
+    const isMunicipality = cityList.length > 0 && cityList[0].level === 3
+
+    let city: Region | null = null
+    let districtList: Region[] = []
+    let district: Region | null = null
+    if (isMunicipality) {
+      district =
+        selectedRegion.value.district && cityList.some((d) => d.code === selectedRegion.value.district?.code)
+          ? selectedRegion.value.district
+          : cityList[0] || null
+    } else {
+      city =
+        selectedRegion.value.city && cityList.some((c) => c.code === selectedRegion.value.city?.code)
+          ? selectedRegion.value.city
+          : cityList[0] || null
+      districtList = city ? await loadDistricts(city.code) : []
+      district =
+        selectedRegion.value.district && districtList.some((d) => d.code === selectedRegion.value.district?.code)
+          ? selectedRegion.value.district
+          : districtList[0] || null
+    }
+
+    regionColumns.value = [provList, cityList, districtList]
+    regionDefaultIndex.value = [
+      provList.findIndex((p) => p.code === prov.code),
+      cityList.findIndex((c) => c.code === (isMunicipality ? district?.code ?? '' : city?.code ?? '')) < 0
+        ? 0
+        : cityList.findIndex((c) => c.code === (isMunicipality ? district?.code ?? '' : city?.code ?? '')),
+      districtList.findIndex((d) => d.code === (district?.code ?? '')) < 0
+        ? 0
+        : districtList.findIndex((d) => d.code === (district?.code ?? '')),
+    ]
+    selectedRegion.value = { province: prov, city, district }
+  } catch {
+    // 错误提示由请求层统一弹出
+  } finally {
+    regionLoading.value = false
+  }
+}
+
+/**
+ * 选择器列变化：省列变化时重载市/区两列，市列变化时重载区列
+ * 通过 setColumnValues 更新后续列，并将后续列选中索引重置为 0
+ */
+async function onRegionChange(e: { columnIndex: number; value: Region[] }) {
+  const columnIndex = e.columnIndex
+  try {
+    regionLoading.value = true
+    if (columnIndex === 0) {
+      const prov = e.value[0] || null
+      selectedRegion.value.province = prov
+      if (!prov) return
+      const cityList = await loadCities(prov.code)
+      // 直辖市：省下直接挂区县，第二列即区县，第三列留空
+      if (cityList.length > 0 && cityList[0].level === 3) {
+        selectedRegion.value.city = null
+        selectedRegion.value.district = cityList[0] || null
+        regionPickerRef.value?.setColumnValues(1, cityList)
+        regionPickerRef.value?.setColumnValues(2, [])
+        return
+      }
+      selectedRegion.value.city = cityList[0] || null
+      regionPickerRef.value?.setColumnValues(1, cityList)
+      if (selectedRegion.value.city) {
+        const districtList = await loadDistricts(selectedRegion.value.city.code)
+        selectedRegion.value.district = districtList[0] || null
+        regionPickerRef.value?.setColumnValues(2, districtList)
+      } else {
+        selectedRegion.value.district = null
+        regionPickerRef.value?.setColumnValues(2, [])
+      }
+    } else if (columnIndex === 1) {
+      const city = e.value[1] || null
+      // 直辖市：第二列滚动到区县，直接作为区县选中
+      if (city && city.level === 3) {
+        selectedRegion.value.city = null
+        selectedRegion.value.district = city
+        regionPickerRef.value?.setColumnValues(2, [])
+        return
+      }
+      selectedRegion.value.city = city
+      if (!city) return
+      const districtList = await loadDistricts(city.code)
+      selectedRegion.value.district = districtList[0] || null
+      regionPickerRef.value?.setColumnValues(2, districtList)
+    } else {
+      selectedRegion.value.district = e.value[2] || null
+    }
+  } finally {
+    regionLoading.value = false
+  }
+}
+
+/**
+ * 确认选择：同步省/市/区名称与区划代码到表单
+ * 直辖市（第二列即区县）时市级为空，名称/代码只填省与区县
+ */
+function onRegionConfirm(e: { value: Region[] }) {
+  const [prov, second, third] = e.value
+  if (!prov) return
+  if (second && second.level === 3) {
+    selectedRegion.value = { province: prov, city: null, district: second }
+    form.value.province = prov.name || ''
+    form.value.city = ''
+    form.value.district = second.name || ''
+    form.value.province_code = prov.code || ''
+    form.value.city_code = ''
+    form.value.district_code = second.code || ''
+    return
+  }
+  const city = second || null
+  const district = third || null
+  selectedRegion.value = { province: prov, city, district }
+  form.value.province = prov.name || ''
+  form.value.city = city?.name || ''
+  form.value.district = district?.name || ''
+  form.value.province_code = prov.code || ''
+  form.value.city_code = city?.code || ''
+  form.value.district_code = district?.code || ''
+}
+
+/**
+ * IP 定位自动填充（仅自由模式且省市区为空时执行，best-effort）
+ * 服务端按出口 IP 反查区划，精度到市，区县需用户补选
+ */
+async function autoLocateRegion() {
+  try {
+    const res = await locateRegion()
+    const loc = res.data
+    if (!loc || !loc.province) return
+    if (form.value.province || form.value.city || form.value.district) return
+    if (loc.city) {
+      // 普通省份：预填省 + 市，区县由用户补选
+      selectedRegion.value = { province: loc.province, city: loc.city, district: null }
+      form.value.province = loc.province.name
+      form.value.city = loc.city.name
+      form.value.province_code = loc.province.code
+      form.value.city_code = loc.city.code
+    } else {
+      // 直辖市等无市级层：仅预填省，区县由用户在省下直接选择
+      selectedRegion.value = { province: loc.province, city: null, district: null }
+      form.value.province = loc.province.name
+      form.value.province_code = loc.province.code
+    }
+  } catch {
+    // 定位失败静默忽略，不影响手动选择
+  }
+}
+
 onLoad((query) => {
   addressId.value = Number(query?.id) || 0
 })
@@ -120,6 +351,20 @@ onMounted(() => {
     const eventChannel = getOpenerEventChannel()
     eventChannel.on('addressData', (data: Address) => {
       form.value = { ...form.value, ...data }
+      // 编辑已有地址时恢复选择器中间态，便于直接微调
+      if (data.province) {
+        selectedRegion.value = {
+          province: data.province_code
+            ? { code: data.province_code, name: data.province, parent_code: '0', level: 1, status: 1 }
+            : null,
+          city: data.city_code
+            ? { code: data.city_code, name: data.city, parent_code: '', level: 2, status: 1 }
+            : null,
+          district: data.district_code
+            ? { code: data.district_code, name: data.district, parent_code: '', level: 3, status: 1 }
+            : null,
+        }
+      }
     })
   }
 })
@@ -141,6 +386,10 @@ async function loadCommunity() {
     community.value = null
   }
   communityChecked.value = true
+  // 新增地址且社区允许外配（自由模式）时，按出口 IP 预填省/市
+  if (!addressId.value && allowOutside.value) {
+    autoLocateRegion()
+  }
 }
 
 /**
@@ -151,16 +400,24 @@ async function onSave() {
     uni.showToast({ title: '请先选择社区', icon: 'none' })
     return
   }
+  // 自由模式下所在地区必选（区划选择器产出，含区划代码）
+  if (allowOutside.value && !form.value.province) {
+    uni.showToast({ title: '请选择所在地区', icon: 'none' })
+    return
+  }
   const valid = await formRef.value?.validate()
   if (!valid) return
 
   saving.value = true
   try {
-    // 锁定模式下前缀由服务端按用户当前社区强制覆盖，这里同步填入社区省市区
+    // 锁定模式下前缀（含区划代码）由服务端按用户当前社区强制覆盖，这里同步填入社区省市区
     if (!allowOutside.value && community.value) {
       form.value.province = community.value.province
       form.value.city = community.value.city
       form.value.district = community.value.district
+      form.value.province_code = community.value.province_code || ''
+      form.value.city_code = community.value.city_code || ''
+      form.value.district_code = community.value.district_code || ''
       form.value.community_id = community.value.id
     }
     if (addressId.value) {
@@ -237,5 +494,15 @@ async function onSave() {
 
 .save-btn .u-button {
   width: 100%;
+}
+
+.region-display {
+  min-height: 48rpx;
+  display: flex;
+  align-items: center;
+}
+
+.region-placeholder {
+  color: #c0c4cc;
 }
 </style>

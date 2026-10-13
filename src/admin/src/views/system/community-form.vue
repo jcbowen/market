@@ -21,19 +21,14 @@
             <n-input v-model:value="form.address" placeholder="社区详细地址" />
           </n-form-item>
 
-          <!-- 省/市/区紧随地址一行排布，作为 C 端锁定地址前缀的数据来源 -->
+          <!-- 省/市/区紧随地址一行排布，作为 C 端锁定地址前缀的数据来源；区划选择器同时产出名称与区划代码 -->
           <n-form-item label="所在地区">
-            <n-grid :cols="3" :x-gap="12" style="flex: 1">
-              <n-gi>
-                <n-input v-model:value="form.province" placeholder="省，如 广东省" />
-              </n-gi>
-              <n-gi>
-                <n-input v-model:value="form.city" placeholder="市，如 广州市" />
-              </n-gi>
-              <n-gi>
-                <n-input v-model:value="form.district" placeholder="区，如 天河区" />
-              </n-gi>
-            </n-grid>
+            <RegionPicker
+              ref="regionPickerRef"
+              style="flex: 1"
+              placeholder="请选择省 / 市 / 区"
+              @select="onRegionSelect"
+            />
           </n-form-item>
 
           <n-grid :cols="2" :x-gap="24">
@@ -137,6 +132,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import { createCommunity, updateCommunity, getCommunity } from '@/api/user'
+import { matchRegionPathByNames } from '@/api/region'
+import RegionPicker from '@/components/RegionPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
 import type { Community } from '@/api/types'
 
@@ -171,10 +168,28 @@ const form = ref<Partial<Community>>({
   province: '',
   city: '',
   district: '',
+  province_code: '',
+  city_code: '',
+  district_code: '',
   allow_outside_delivery: false,
   sort: 0,
   status: 1,
 })
+
+/** 区划选择器实例（存量数据按名称回显用） */
+const regionPickerRef = ref<InstanceType<typeof RegionPicker> | null>(null)
+
+/**
+ * 区划选择器选中回调：同步省/市/区名称与区划代码到表单
+ */
+function onRegionSelect(sel: { province: { code: string; name: string } | null; city: { code: string; name: string } | null; district: { code: string; name: string } | null }) {
+  form.value.province = sel.province?.name ?? ''
+  form.value.city = sel.city?.name ?? ''
+  form.value.district = sel.district?.name ?? ''
+  form.value.province_code = sel.province?.code ?? ''
+  form.value.city_code = sel.city?.code ?? ''
+  form.value.district_code = sel.district?.code ?? ''
+}
 const rules: FormRules = {
   name: { required: true, message: '请输入社区名称', trigger: 'blur' },
 }
@@ -251,6 +266,11 @@ async function loadDetail() {
       form.value = { ...form.value, ...res.data.data }
       // 加载完成后用社区名区分标签页
       tabsStore.rename(route.fullPath, `编辑社区 · ${res.data.data.name}`)
+      // 存量数据可能缺区划代码（历史手填），按名称逐级匹配回显选择器；
+      // 匹配失败时选择器留空，保存时保留原名称、代码置空
+      await regionPickerRef.value?.setValueByPath(
+        await matchRegionPathByNames(form.value.province || '', form.value.city || '', form.value.district || '')
+      )
     } else {
       message.error('社区不存在或已被删除')
       router.back()

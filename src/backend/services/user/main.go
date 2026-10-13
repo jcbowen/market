@@ -40,6 +40,7 @@ func main() {
 // autoMigrate 自动迁移用户服务相关数据表
 // 参数：
 //   - db: MySQL 实例
+//
 // 返回：
 //   - error: 迁移错误信息
 func autoMigrate(db *mysql.Instance) error {
@@ -50,5 +51,7 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.Admin{},
 		&model.AdminCommunity{},
 		&model.Role{},
+		&model.Region{},
+		&model.RegionUpdateTask{},
 	)
 }

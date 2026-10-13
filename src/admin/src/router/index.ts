@@ -171,6 +171,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '社区管理', permission: 'community:view', group: '系统管理' },
       },
       {
+        path: 'system/regions',
+        name: 'RegionList',
+        component: () => import('@/views/system/regions.vue'),
+        meta: { title: '行政区划', permission: 'region:view', group: '系统管理' },
+      },
+      {
         path: 'system/communities/edit/:id',
         name: 'CommunityEdit',
         component: () => import('@/views/system/community-form.vue'),

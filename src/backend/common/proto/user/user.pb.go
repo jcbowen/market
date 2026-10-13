@@ -690,7 +690,11 @@ type CreateAddressReq struct {
 	Tag          string                 `protobuf:"bytes,8,opt,name=tag,proto3" json:"tag,omitempty"`
 	IsDefault    bool                   `protobuf:"varint,9,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
 	// 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
-	CommunityId   int64 `protobuf:"varint,10,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	CommunityId int64 `protobuf:"varint,10,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 省/市/区行政区划代码（来自区划选择器，可选；历史数据允许为空）
+	ProvinceCode  string `protobuf:"bytes,11,opt,name=province_code,json=provinceCode,proto3" json:"province_code,omitempty"`
+	CityCode      string `protobuf:"bytes,12,opt,name=city_code,json=cityCode,proto3" json:"city_code,omitempty"`
+	DistrictCode  string `protobuf:"bytes,13,opt,name=district_code,json=districtCode,proto3" json:"district_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -795,6 +799,27 @@ func (x *CreateAddressReq) GetCommunityId() int64 {
 	return 0
 }
 
+func (x *CreateAddressReq) GetProvinceCode() string {
+	if x != nil {
+		return x.ProvinceCode
+	}
+	return ""
+}
+
+func (x *CreateAddressReq) GetCityCode() string {
+	if x != nil {
+		return x.CityCode
+	}
+	return ""
+}
+
+func (x *CreateAddressReq) GetDistrictCode() string {
+	if x != nil {
+		return x.DistrictCode
+	}
+	return ""
+}
+
 type UpdateAddressReq struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Id           int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -808,7 +833,11 @@ type UpdateAddressReq struct {
 	Tag          string                 `protobuf:"bytes,9,opt,name=tag,proto3" json:"tag,omitempty"`
 	IsDefault    bool                   `protobuf:"varint,10,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
 	// 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
-	CommunityId   int64 `protobuf:"varint,11,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	CommunityId int64 `protobuf:"varint,11,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 省/市/区行政区划代码（来自区划选择器，可选；历史数据允许为空）
+	ProvinceCode  string `protobuf:"bytes,12,opt,name=province_code,json=provinceCode,proto3" json:"province_code,omitempty"`
+	CityCode      string `protobuf:"bytes,13,opt,name=city_code,json=cityCode,proto3" json:"city_code,omitempty"`
+	DistrictCode  string `protobuf:"bytes,14,opt,name=district_code,json=districtCode,proto3" json:"district_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -918,6 +947,27 @@ func (x *UpdateAddressReq) GetCommunityId() int64 {
 		return x.CommunityId
 	}
 	return 0
+}
+
+func (x *UpdateAddressReq) GetProvinceCode() string {
+	if x != nil {
+		return x.ProvinceCode
+	}
+	return ""
+}
+
+func (x *UpdateAddressReq) GetCityCode() string {
+	if x != nil {
+		return x.CityCode
+	}
+	return ""
+}
+
+func (x *UpdateAddressReq) GetDistrictCode() string {
+	if x != nil {
+		return x.DistrictCode
+	}
+	return ""
 }
 
 type DeleteAddressReq struct {
@@ -1040,6 +1090,10 @@ type AddressInfo struct {
 	// 地址所属社区 ID 与名称（按保存时用户当前社区回填，供 C 端按社区分组展示）
 	CommunityId   int64  `protobuf:"varint,12,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	CommunityName string `protobuf:"bytes,13,opt,name=community_name,json=communityName,proto3" json:"community_name,omitempty"`
+	// 省/市/区行政区划代码（历史数据允许为空）
+	ProvinceCode  string `protobuf:"bytes,14,opt,name=province_code,json=provinceCode,proto3" json:"province_code,omitempty"`
+	CityCode      string `protobuf:"bytes,15,opt,name=city_code,json=cityCode,proto3" json:"city_code,omitempty"`
+	DistrictCode  string `protobuf:"bytes,16,opt,name=district_code,json=districtCode,proto3" json:"district_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1165,6 +1219,27 @@ func (x *AddressInfo) GetCommunityName() string {
 	return ""
 }
 
+func (x *AddressInfo) GetProvinceCode() string {
+	if x != nil {
+		return x.ProvinceCode
+	}
+	return ""
+}
+
+func (x *AddressInfo) GetCityCode() string {
+	if x != nil {
+		return x.CityCode
+	}
+	return ""
+}
+
+func (x *AddressInfo) GetDistrictCode() string {
+	if x != nil {
+		return x.DistrictCode
+	}
+	return ""
+}
+
 type ListAddressesResp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	List          []*AddressInfo         `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
@@ -1276,8 +1351,12 @@ type CommunityInfo struct {
 	District string `protobuf:"bytes,18,opt,name=district,proto3" json:"district,omitempty"`
 	// 是否允许社区外配送（false 时 C 端地址前缀锁定为本社区）
 	AllowOutsideDelivery bool `protobuf:"varint,19,opt,name=allow_outside_delivery,json=allowOutsideDelivery,proto3" json:"allow_outside_delivery,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// 省/市/区行政区划代码（历史数据允许为空）
+	ProvinceCode  string `protobuf:"bytes,20,opt,name=province_code,json=provinceCode,proto3" json:"province_code,omitempty"`
+	CityCode      string `protobuf:"bytes,21,opt,name=city_code,json=cityCode,proto3" json:"city_code,omitempty"`
+	DistrictCode  string `protobuf:"bytes,22,opt,name=district_code,json=districtCode,proto3" json:"district_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CommunityInfo) Reset() {
@@ -1443,6 +1522,27 @@ func (x *CommunityInfo) GetAllowOutsideDelivery() bool {
 	return false
 }
 
+func (x *CommunityInfo) GetProvinceCode() string {
+	if x != nil {
+		return x.ProvinceCode
+	}
+	return ""
+}
+
+func (x *CommunityInfo) GetCityCode() string {
+	if x != nil {
+		return x.CityCode
+	}
+	return ""
+}
+
+func (x *CommunityInfo) GetDistrictCode() string {
+	if x != nil {
+		return x.DistrictCode
+	}
+	return ""
+}
+
 // ListCommunitiesReq 社区列表查询请求
 type ListCommunitiesReq struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
@@ -1527,8 +1627,12 @@ type CreateCommunityReq struct {
 	District        string                 `protobuf:"bytes,17,opt,name=district,proto3" json:"district,omitempty"`
 	// 是否允许社区外配送，默认 false
 	AllowOutsideDelivery bool `protobuf:"varint,18,opt,name=allow_outside_delivery,json=allowOutsideDelivery,proto3" json:"allow_outside_delivery,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// 省/市/区行政区划代码（来自区划选择器，可选）
+	ProvinceCode  string `protobuf:"bytes,19,opt,name=province_code,json=provinceCode,proto3" json:"province_code,omitempty"`
+	CityCode      string `protobuf:"bytes,20,opt,name=city_code,json=cityCode,proto3" json:"city_code,omitempty"`
+	DistrictCode  string `protobuf:"bytes,21,opt,name=district_code,json=districtCode,proto3" json:"district_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateCommunityReq) Reset() {
@@ -1687,6 +1791,27 @@ func (x *CreateCommunityReq) GetAllowOutsideDelivery() bool {
 	return false
 }
 
+func (x *CreateCommunityReq) GetProvinceCode() string {
+	if x != nil {
+		return x.ProvinceCode
+	}
+	return ""
+}
+
+func (x *CreateCommunityReq) GetCityCode() string {
+	if x != nil {
+		return x.CityCode
+	}
+	return ""
+}
+
+func (x *CreateCommunityReq) GetDistrictCode() string {
+	if x != nil {
+		return x.DistrictCode
+	}
+	return ""
+}
+
 type UpdateCommunityInfoReq struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1709,8 +1834,12 @@ type UpdateCommunityInfoReq struct {
 	District        string                 `protobuf:"bytes,18,opt,name=district,proto3" json:"district,omitempty"`
 	// 是否允许社区外配送（整表提交全量覆盖）
 	AllowOutsideDelivery bool `protobuf:"varint,19,opt,name=allow_outside_delivery,json=allowOutsideDelivery,proto3" json:"allow_outside_delivery,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// 省/市/区行政区划代码（来自区划选择器，可选）
+	ProvinceCode  string `protobuf:"bytes,20,opt,name=province_code,json=provinceCode,proto3" json:"province_code,omitempty"`
+	CityCode      string `protobuf:"bytes,21,opt,name=city_code,json=cityCode,proto3" json:"city_code,omitempty"`
+	DistrictCode  string `protobuf:"bytes,22,opt,name=district_code,json=districtCode,proto3" json:"district_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateCommunityInfoReq) Reset() {
@@ -1874,6 +2003,27 @@ func (x *UpdateCommunityInfoReq) GetAllowOutsideDelivery() bool {
 		return x.AllowOutsideDelivery
 	}
 	return false
+}
+
+func (x *UpdateCommunityInfoReq) GetProvinceCode() string {
+	if x != nil {
+		return x.ProvinceCode
+	}
+	return ""
+}
+
+func (x *UpdateCommunityInfoReq) GetCityCode() string {
+	if x != nil {
+		return x.CityCode
+	}
+	return ""
+}
+
+func (x *UpdateCommunityInfoReq) GetDistrictCode() string {
+	if x != nil {
+		return x.DistrictCode
+	}
+	return ""
 }
 
 type DeleteCommunityReq struct {
@@ -2918,6 +3068,735 @@ func (x *DeleteRoleReq) GetId() int64 {
 	return 0
 }
 
+// RegionInfo 行政区划条目
+type RegionInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 行政区划代码（GB/T 2260），省级 2 位、市级 4 位、区县级 6 位
+	Code string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// 父级区划代码，省级为 "0"
+	ParentCode string `protobuf:"bytes,3,opt,name=parent_code,json=parentCode,proto3" json:"parent_code,omitempty"`
+	// 层级：1 省 2 市 3 区县
+	Level int32 `protobuf:"varint,4,opt,name=level,proto3" json:"level,omitempty"`
+	// 状态：1 正常 2 停用（上游撤销）
+	Status        int32 `protobuf:"varint,5,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegionInfo) Reset() {
+	*x = RegionInfo{}
+	mi := &file_user_user_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegionInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegionInfo) ProtoMessage() {}
+
+func (x *RegionInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegionInfo.ProtoReflect.Descriptor instead.
+func (*RegionInfo) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *RegionInfo) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *RegionInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RegionInfo) GetParentCode() string {
+	if x != nil {
+		return x.ParentCode
+	}
+	return ""
+}
+
+func (x *RegionInfo) GetLevel() int32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+func (x *RegionInfo) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+type ListRegionChildrenReq struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 父级区划代码，"0" 表示查询省级列表；仅返回正常状态
+	ParentCode    string `protobuf:"bytes,1,opt,name=parent_code,json=parentCode,proto3" json:"parent_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRegionChildrenReq) Reset() {
+	*x = ListRegionChildrenReq{}
+	mi := &file_user_user_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRegionChildrenReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRegionChildrenReq) ProtoMessage() {}
+
+func (x *ListRegionChildrenReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRegionChildrenReq.ProtoReflect.Descriptor instead.
+func (*ListRegionChildrenReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *ListRegionChildrenReq) GetParentCode() string {
+	if x != nil {
+		return x.ParentCode
+	}
+	return ""
+}
+
+type ListRegionChildrenResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	List          []*RegionInfo          `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRegionChildrenResp) Reset() {
+	*x = ListRegionChildrenResp{}
+	mi := &file_user_user_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRegionChildrenResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRegionChildrenResp) ProtoMessage() {}
+
+func (x *ListRegionChildrenResp) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRegionChildrenResp.ProtoReflect.Descriptor instead.
+func (*ListRegionChildrenResp) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *ListRegionChildrenResp) GetList() []*RegionInfo {
+	if x != nil {
+		return x.List
+	}
+	return nil
+}
+
+type ListRegionsReq struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 关键词：区划代码前缀或名称模糊匹配
+	Keyword string `protobuf:"bytes,1,opt,name=keyword,proto3" json:"keyword,omitempty"`
+	// 父级区划代码筛选，空为全部
+	ParentCode string `protobuf:"bytes,2,opt,name=parent_code,json=parentCode,proto3" json:"parent_code,omitempty"`
+	// 层级筛选：0 全部，1 省，2 市，3 区县
+	Level int32 `protobuf:"varint,3,opt,name=level,proto3" json:"level,omitempty"`
+	// 状态筛选：0 全部，1 正常，2 停用
+	Status        int32              `protobuf:"varint,4,opt,name=status,proto3" json:"status,omitempty"`
+	Pagination    *common.Pagination `protobuf:"bytes,5,opt,name=pagination,proto3" json:"pagination,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRegionsReq) Reset() {
+	*x = ListRegionsReq{}
+	mi := &file_user_user_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRegionsReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRegionsReq) ProtoMessage() {}
+
+func (x *ListRegionsReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRegionsReq.ProtoReflect.Descriptor instead.
+func (*ListRegionsReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *ListRegionsReq) GetKeyword() string {
+	if x != nil {
+		return x.Keyword
+	}
+	return ""
+}
+
+func (x *ListRegionsReq) GetParentCode() string {
+	if x != nil {
+		return x.ParentCode
+	}
+	return ""
+}
+
+func (x *ListRegionsReq) GetLevel() int32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+func (x *ListRegionsReq) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+func (x *ListRegionsReq) GetPagination() *common.Pagination {
+	if x != nil {
+		return x.Pagination
+	}
+	return nil
+}
+
+type ListRegionsResp struct {
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	List          []*RegionInfo              `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
+	Pagination    *common.PaginationResponse `protobuf:"bytes,2,opt,name=pagination,proto3" json:"pagination,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListRegionsResp) Reset() {
+	*x = ListRegionsResp{}
+	mi := &file_user_user_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListRegionsResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListRegionsResp) ProtoMessage() {}
+
+func (x *ListRegionsResp) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListRegionsResp.ProtoReflect.Descriptor instead.
+func (*ListRegionsResp) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *ListRegionsResp) GetList() []*RegionInfo {
+	if x != nil {
+		return x.List
+	}
+	return nil
+}
+
+func (x *ListRegionsResp) GetPagination() *common.PaginationResponse {
+	if x != nil {
+		return x.Pagination
+	}
+	return nil
+}
+
+type MatchRegionByNameReq struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 地理库返回的名称（城市或省份，如 "广州"、"广东"），不带行政区划后缀亦可
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MatchRegionByNameReq) Reset() {
+	*x = MatchRegionByNameReq{}
+	mi := &file_user_user_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MatchRegionByNameReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MatchRegionByNameReq) ProtoMessage() {}
+
+func (x *MatchRegionByNameReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MatchRegionByNameReq.ProtoReflect.Descriptor instead.
+func (*MatchRegionByNameReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *MatchRegionByNameReq) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// RegionMatchInfo 名称匹配结果：city 命中时同时返回其上级 province；
+// 仅 province 命中时 city 为空
+type RegionMatchInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Province      *RegionInfo            `protobuf:"bytes,1,opt,name=province,proto3" json:"province,omitempty"`
+	City          *RegionInfo            `protobuf:"bytes,2,opt,name=city,proto3" json:"city,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegionMatchInfo) Reset() {
+	*x = RegionMatchInfo{}
+	mi := &file_user_user_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegionMatchInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegionMatchInfo) ProtoMessage() {}
+
+func (x *RegionMatchInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegionMatchInfo.ProtoReflect.Descriptor instead.
+func (*RegionMatchInfo) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *RegionMatchInfo) GetProvince() *RegionInfo {
+	if x != nil {
+		return x.Province
+	}
+	return nil
+}
+
+func (x *RegionMatchInfo) GetCity() *RegionInfo {
+	if x != nil {
+		return x.City
+	}
+	return nil
+}
+
+// RegionDiffItem 更新任务差异条目
+type RegionDiffItem struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Code  string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 库内当前名称（新增场景为上游名称）
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// 更名后的新名称（仅 updated 场景有值）
+	NewName       string `protobuf:"bytes,3,opt,name=new_name,json=newName,proto3" json:"new_name,omitempty"`
+	ParentCode    string `protobuf:"bytes,4,opt,name=parent_code,json=parentCode,proto3" json:"parent_code,omitempty"`
+	Level         int32  `protobuf:"varint,5,opt,name=level,proto3" json:"level,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegionDiffItem) Reset() {
+	*x = RegionDiffItem{}
+	mi := &file_user_user_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegionDiffItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegionDiffItem) ProtoMessage() {}
+
+func (x *RegionDiffItem) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegionDiffItem.ProtoReflect.Descriptor instead.
+func (*RegionDiffItem) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *RegionDiffItem) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *RegionDiffItem) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RegionDiffItem) GetNewName() string {
+	if x != nil {
+		return x.NewName
+	}
+	return ""
+}
+
+func (x *RegionDiffItem) GetParentCode() string {
+	if x != nil {
+		return x.ParentCode
+	}
+	return ""
+}
+
+func (x *RegionDiffItem) GetLevel() int32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+// RegionUpdateTaskInfo 更新任务信息
+type RegionUpdateTaskInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	// 状态：1 待执行 2 拉取中 3 比对中 4 完成 5 失败
+	Status int32 `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
+	// 数据源 URL
+	Source       string            `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	TotalRemote  int32             `protobuf:"varint,4,opt,name=total_remote,json=totalRemote,proto3" json:"total_remote,omitempty"`
+	TotalLocal   int32             `protobuf:"varint,5,opt,name=total_local,json=totalLocal,proto3" json:"total_local,omitempty"`
+	AddedCount   int32             `protobuf:"varint,6,opt,name=added_count,json=addedCount,proto3" json:"added_count,omitempty"`
+	UpdatedCount int32             `protobuf:"varint,7,opt,name=updated_count,json=updatedCount,proto3" json:"updated_count,omitempty"`
+	RemovedCount int32             `protobuf:"varint,8,opt,name=removed_count,json=removedCount,proto3" json:"removed_count,omitempty"`
+	Added        []*RegionDiffItem `protobuf:"bytes,9,rep,name=added,proto3" json:"added,omitempty"`
+	Updated      []*RegionDiffItem `protobuf:"bytes,10,rep,name=updated,proto3" json:"updated,omitempty"`
+	Removed      []*RegionDiffItem `protobuf:"bytes,11,rep,name=removed,proto3" json:"removed,omitempty"`
+	// 失败原因（status=5 时有值）
+	Error string `protobuf:"bytes,12,opt,name=error,proto3" json:"error,omitempty"`
+	// 差异是否已覆盖入库
+	Applied       bool   `protobuf:"varint,13,opt,name=applied,proto3" json:"applied,omitempty"`
+	CreatedAt     string `protobuf:"bytes,14,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	FinishedAt    string `protobuf:"bytes,15,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegionUpdateTaskInfo) Reset() {
+	*x = RegionUpdateTaskInfo{}
+	mi := &file_user_user_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegionUpdateTaskInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegionUpdateTaskInfo) ProtoMessage() {}
+
+func (x *RegionUpdateTaskInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegionUpdateTaskInfo.ProtoReflect.Descriptor instead.
+func (*RegionUpdateTaskInfo) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *RegionUpdateTaskInfo) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *RegionUpdateTaskInfo) GetStatus() int32 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
+func (x *RegionUpdateTaskInfo) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *RegionUpdateTaskInfo) GetTotalRemote() int32 {
+	if x != nil {
+		return x.TotalRemote
+	}
+	return 0
+}
+
+func (x *RegionUpdateTaskInfo) GetTotalLocal() int32 {
+	if x != nil {
+		return x.TotalLocal
+	}
+	return 0
+}
+
+func (x *RegionUpdateTaskInfo) GetAddedCount() int32 {
+	if x != nil {
+		return x.AddedCount
+	}
+	return 0
+}
+
+func (x *RegionUpdateTaskInfo) GetUpdatedCount() int32 {
+	if x != nil {
+		return x.UpdatedCount
+	}
+	return 0
+}
+
+func (x *RegionUpdateTaskInfo) GetRemovedCount() int32 {
+	if x != nil {
+		return x.RemovedCount
+	}
+	return 0
+}
+
+func (x *RegionUpdateTaskInfo) GetAdded() []*RegionDiffItem {
+	if x != nil {
+		return x.Added
+	}
+	return nil
+}
+
+func (x *RegionUpdateTaskInfo) GetUpdated() []*RegionDiffItem {
+	if x != nil {
+		return x.Updated
+	}
+	return nil
+}
+
+func (x *RegionUpdateTaskInfo) GetRemoved() []*RegionDiffItem {
+	if x != nil {
+		return x.Removed
+	}
+	return nil
+}
+
+func (x *RegionUpdateTaskInfo) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *RegionUpdateTaskInfo) GetApplied() bool {
+	if x != nil {
+		return x.Applied
+	}
+	return false
+}
+
+func (x *RegionUpdateTaskInfo) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *RegionUpdateTaskInfo) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
+}
+
+type GetRegionUpdateTaskReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRegionUpdateTaskReq) Reset() {
+	*x = GetRegionUpdateTaskReq{}
+	mi := &file_user_user_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRegionUpdateTaskReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRegionUpdateTaskReq) ProtoMessage() {}
+
+func (x *GetRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRegionUpdateTaskReq.ProtoReflect.Descriptor instead.
+func (*GetRegionUpdateTaskReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *GetRegionUpdateTaskReq) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+type ApplyRegionUpdateTaskReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyRegionUpdateTaskReq) Reset() {
+	*x = ApplyRegionUpdateTaskReq{}
+	mi := &file_user_user_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyRegionUpdateTaskReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyRegionUpdateTaskReq) ProtoMessage() {}
+
+func (x *ApplyRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyRegionUpdateTaskReq.ProtoReflect.Descriptor instead.
+func (*ApplyRegionUpdateTaskReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *ApplyRegionUpdateTaskReq) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
 var File_user_user_proto protoreflect.FileDescriptor
 
 const file_user_user_proto_rawDesc = "" +
@@ -2975,7 +3854,7 @@ const file_user_user_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\"8\n" +
 	"\rGetAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\xab\x02\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\x92\x03\n" +
 	"\x10CreateAddressReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
 	"\fcontact_name\x18\x02 \x01(\tR\vcontactName\x12#\n" +
@@ -2988,7 +3867,10 @@ const file_user_user_proto_rawDesc = "" +
 	"\n" +
 	"is_default\x18\t \x01(\bR\tisDefault\x12!\n" +
 	"\fcommunity_id\x18\n" +
-	" \x01(\x03R\vcommunityId\"\xbb\x02\n" +
+	" \x01(\x03R\vcommunityId\x12#\n" +
+	"\rprovince_code\x18\v \x01(\tR\fprovinceCode\x12\x1b\n" +
+	"\tcity_code\x18\f \x01(\tR\bcityCode\x12#\n" +
+	"\rdistrict_code\x18\r \x01(\tR\fdistrictCode\"\xa2\x03\n" +
 	"\x10UpdateAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12!\n" +
@@ -3002,13 +3884,16 @@ const file_user_user_proto_rawDesc = "" +
 	"\n" +
 	"is_default\x18\n" +
 	" \x01(\bR\tisDefault\x12!\n" +
-	"\fcommunity_id\x18\v \x01(\x03R\vcommunityId\";\n" +
+	"\fcommunity_id\x18\v \x01(\x03R\vcommunityId\x12#\n" +
+	"\rprovince_code\x18\f \x01(\tR\fprovinceCode\x12\x1b\n" +
+	"\tcity_code\x18\r \x01(\tR\bcityCode\x12#\n" +
+	"\rdistrict_code\x18\x0e \x01(\tR\fdistrictCode\";\n" +
 	"\x10DeleteAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\"?\n" +
 	"\x14SetDefaultAddressReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\xfc\x02\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\xe3\x03\n" +
 	"\vAddressInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12!\n" +
@@ -3025,11 +3910,14 @@ const file_user_user_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\v \x01(\tR\tcreatedAt\x12!\n" +
 	"\fcommunity_id\x18\f \x01(\x03R\vcommunityId\x12%\n" +
-	"\x0ecommunity_name\x18\r \x01(\tR\rcommunityName\":\n" +
+	"\x0ecommunity_name\x18\r \x01(\tR\rcommunityName\x12#\n" +
+	"\rprovince_code\x18\x0e \x01(\tR\fprovinceCode\x12\x1b\n" +
+	"\tcity_code\x18\x0f \x01(\tR\bcityCode\x12#\n" +
+	"\rdistrict_code\x18\x10 \x01(\tR\fdistrictCode\":\n" +
 	"\x11ListAddressesResp\x12%\n" +
 	"\x04list\x18\x01 \x03(\v2\x11.user.AddressInfoR\x04list\"!\n" +
 	"\x0fGetCommunityReq\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\"\xe9\x04\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"\xd0\x05\n" +
 	"\rCommunityInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -3050,13 +3938,16 @@ const file_user_user_proto_rawDesc = "" +
 	"\bprovince\x18\x10 \x01(\tR\bprovince\x12\x12\n" +
 	"\x04city\x18\x11 \x01(\tR\x04city\x12\x1a\n" +
 	"\bdistrict\x18\x12 \x01(\tR\bdistrict\x124\n" +
-	"\x16allow_outside_delivery\x18\x13 \x01(\bR\x14allowOutsideDelivery\"\x8b\x01\n" +
+	"\x16allow_outside_delivery\x18\x13 \x01(\bR\x14allowOutsideDelivery\x12#\n" +
+	"\rprovince_code\x18\x14 \x01(\tR\fprovinceCode\x12\x1b\n" +
+	"\tcity_code\x18\x15 \x01(\tR\bcityCode\x12#\n" +
+	"\rdistrict_code\x18\x16 \x01(\tR\fdistrictCode\"\x8b\x01\n" +
 	"\x12ListCommunitiesReq\x122\n" +
 	"\n" +
 	"pagination\x18\x01 \x01(\v2\x12.common.PaginationR\n" +
 	"pagination\x12)\n" +
 	"\x10include_disabled\x18\x02 \x01(\bR\x0fincludeDisabled\x12\x16\n" +
-	"\x06status\x18\x03 \x01(\x05R\x06status\"\xde\x04\n" +
+	"\x06status\x18\x03 \x01(\x05R\x06status\"\xc5\x05\n" +
 	"\x12CreateCommunityReq\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x1c\n" +
@@ -3076,7 +3967,10 @@ const file_user_user_proto_rawDesc = "" +
 	"\bprovince\x18\x0f \x01(\tR\bprovince\x12\x12\n" +
 	"\x04city\x18\x10 \x01(\tR\x04city\x12\x1a\n" +
 	"\bdistrict\x18\x11 \x01(\tR\bdistrict\x124\n" +
-	"\x16allow_outside_delivery\x18\x12 \x01(\bR\x14allowOutsideDelivery\"\xf2\x04\n" +
+	"\x16allow_outside_delivery\x18\x12 \x01(\bR\x14allowOutsideDelivery\x12#\n" +
+	"\rprovince_code\x18\x13 \x01(\tR\fprovinceCode\x12\x1b\n" +
+	"\tcity_code\x18\x14 \x01(\tR\bcityCode\x12#\n" +
+	"\rdistrict_code\x18\x15 \x01(\tR\fdistrictCode\"\xd9\x05\n" +
 	"\x16UpdateCommunityInfoReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -3097,7 +3991,10 @@ const file_user_user_proto_rawDesc = "" +
 	"\bprovince\x18\x10 \x01(\tR\bprovince\x12\x12\n" +
 	"\x04city\x18\x11 \x01(\tR\x04city\x12\x1a\n" +
 	"\bdistrict\x18\x12 \x01(\tR\bdistrict\x124\n" +
-	"\x16allow_outside_delivery\x18\x13 \x01(\bR\x14allowOutsideDelivery\"$\n" +
+	"\x16allow_outside_delivery\x18\x13 \x01(\bR\x14allowOutsideDelivery\x12#\n" +
+	"\rprovince_code\x18\x14 \x01(\tR\fprovinceCode\x12\x1b\n" +
+	"\tcity_code\x18\x15 \x01(\tR\bcityCode\x12#\n" +
+	"\rdistrict_code\x18\x16 \x01(\tR\fdistrictCode\"$\n" +
 	"\x12DeleteCommunityReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\x88\x01\n" +
 	"\x18ListNearbyCommunitiesReq\x12\x1c\n" +
@@ -3180,7 +4077,71 @@ const file_user_user_proto_rawDesc = "" +
 	"\vpermissions\x18\x04 \x03(\tR\vpermissions\x12 \n" +
 	"\vdescription\x18\x05 \x01(\tR\vdescription\"\x1f\n" +
 	"\rDeleteRoleReq\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id2\xdc\r\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"\x83\x01\n" +
+	"\n" +
+	"RegionInfo\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
+	"\vparent_code\x18\x03 \x01(\tR\n" +
+	"parentCode\x12\x14\n" +
+	"\x05level\x18\x04 \x01(\x05R\x05level\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\x05R\x06status\"8\n" +
+	"\x15ListRegionChildrenReq\x12\x1f\n" +
+	"\vparent_code\x18\x01 \x01(\tR\n" +
+	"parentCode\">\n" +
+	"\x16ListRegionChildrenResp\x12$\n" +
+	"\x04list\x18\x01 \x03(\v2\x10.user.RegionInfoR\x04list\"\xad\x01\n" +
+	"\x0eListRegionsReq\x12\x18\n" +
+	"\akeyword\x18\x01 \x01(\tR\akeyword\x12\x1f\n" +
+	"\vparent_code\x18\x02 \x01(\tR\n" +
+	"parentCode\x12\x14\n" +
+	"\x05level\x18\x03 \x01(\x05R\x05level\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\x05R\x06status\x122\n" +
+	"\n" +
+	"pagination\x18\x05 \x01(\v2\x12.common.PaginationR\n" +
+	"pagination\"s\n" +
+	"\x0fListRegionsResp\x12$\n" +
+	"\x04list\x18\x01 \x03(\v2\x10.user.RegionInfoR\x04list\x12:\n" +
+	"\n" +
+	"pagination\x18\x02 \x01(\v2\x1a.common.PaginationResponseR\n" +
+	"pagination\"*\n" +
+	"\x14MatchRegionByNameReq\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"e\n" +
+	"\x0fRegionMatchInfo\x12,\n" +
+	"\bprovince\x18\x01 \x01(\v2\x10.user.RegionInfoR\bprovince\x12$\n" +
+	"\x04city\x18\x02 \x01(\v2\x10.user.RegionInfoR\x04city\"\x8a\x01\n" +
+	"\x0eRegionDiffItem\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x19\n" +
+	"\bnew_name\x18\x03 \x01(\tR\anewName\x12\x1f\n" +
+	"\vparent_code\x18\x04 \x01(\tR\n" +
+	"parentCode\x12\x14\n" +
+	"\x05level\x18\x05 \x01(\x05R\x05level\"\x81\x04\n" +
+	"\x14RegionUpdateTaskInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\x12\x16\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\x12!\n" +
+	"\ftotal_remote\x18\x04 \x01(\x05R\vtotalRemote\x12\x1f\n" +
+	"\vtotal_local\x18\x05 \x01(\x05R\n" +
+	"totalLocal\x12\x1f\n" +
+	"\vadded_count\x18\x06 \x01(\x05R\n" +
+	"addedCount\x12#\n" +
+	"\rupdated_count\x18\a \x01(\x05R\fupdatedCount\x12#\n" +
+	"\rremoved_count\x18\b \x01(\x05R\fremovedCount\x12*\n" +
+	"\x05added\x18\t \x03(\v2\x14.user.RegionDiffItemR\x05added\x12.\n" +
+	"\aupdated\x18\n" +
+	" \x03(\v2\x14.user.RegionDiffItemR\aupdated\x12.\n" +
+	"\aremoved\x18\v \x03(\v2\x14.user.RegionDiffItemR\aremoved\x12\x14\n" +
+	"\x05error\x18\f \x01(\tR\x05error\x12\x18\n" +
+	"\aapplied\x18\r \x01(\bR\aapplied\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x0e \x01(\tR\tcreatedAt\x12\x1f\n" +
+	"\vfinished_at\x18\x0f \x01(\tR\n" +
+	"finishedAt\"(\n" +
+	"\x16GetRegionUpdateTaskReq\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"*\n" +
+	"\x18ApplyRegionUpdateTaskReq\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id2\x98\x11\n" +
 	"\vUserService\x123\n" +
 	"\vGetUserById\x12\x14.user.GetUserByIdReq\x1a\x0e.user.UserInfo\x129\n" +
 	"\x0eGetUserByPhone\x12\x17.user.GetUserByPhoneReq\x1a\x0e.user.UserInfo\x129\n" +
@@ -3200,7 +4161,13 @@ const file_user_user_proto_rawDesc = "" +
 	"\x0fCreateCommunity\x12\x18.user.CreateCommunityReq\x1a\x13.user.CommunityInfo\x12D\n" +
 	"\x0fUpdateCommunity\x12\x1c.user.UpdateCommunityInfoReq\x1a\x13.user.CommunityInfo\x12C\n" +
 	"\x0fDeleteCommunity\x12\x18.user.DeleteCommunityReq\x1a\x16.common.CommonResponse\x12?\n" +
-	"\x11UpdateUserProfile\x12\x1a.user.UpdateUserProfileReq\x1a\x0e.user.UserInfo\x12B\n" +
+	"\x11UpdateUserProfile\x12\x1a.user.UpdateUserProfileReq\x1a\x0e.user.UserInfo\x12O\n" +
+	"\x12ListRegionChildren\x12\x1b.user.ListRegionChildrenReq\x1a\x1c.user.ListRegionChildrenResp\x12:\n" +
+	"\vListRegions\x12\x14.user.ListRegionsReq\x1a\x15.user.ListRegionsResp\x12F\n" +
+	"\x11MatchRegionByName\x12\x1a.user.MatchRegionByNameReq\x1a\x15.user.RegionMatchInfo\x12C\n" +
+	"\x16CreateRegionUpdateTask\x12\r.common.Empty\x1a\x1a.user.RegionUpdateTaskInfo\x12O\n" +
+	"\x13GetRegionUpdateTask\x12\x1c.user.GetRegionUpdateTaskReq\x1a\x1a.user.RegionUpdateTaskInfo\x12O\n" +
+	"\x15ApplyRegionUpdateTask\x12\x1e.user.ApplyRegionUpdateTaskReq\x1a\x16.common.CommonResponse\x12B\n" +
 	"\x12GetAdminByUsername\x12\x1b.user.GetAdminByUsernameReq\x1a\x0f.user.AdminInfo\x127\n" +
 	"\n" +
 	"ListAdmins\x12\x13.user.ListAdminsReq\x1a\x14.user.ListAdminsResp\x124\n" +
@@ -3228,7 +4195,7 @@ func file_user_user_proto_rawDescGZIP() []byte {
 	return file_user_user_proto_rawDescData
 }
 
-var file_user_user_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_user_user_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_user_user_proto_goTypes = []any{
 	(*GetUserByIdReq)(nil),            // 0: user.GetUserByIdReq
 	(*GetUserByPhoneReq)(nil),         // 1: user.GetUserByPhoneReq
@@ -3267,85 +4234,117 @@ var file_user_user_proto_goTypes = []any{
 	(*CreateRoleReq)(nil),             // 34: user.CreateRoleReq
 	(*UpdateRoleReq)(nil),             // 35: user.UpdateRoleReq
 	(*DeleteRoleReq)(nil),             // 36: user.DeleteRoleReq
-	(*common.Pagination)(nil),         // 37: common.Pagination
-	(*common.PaginationResponse)(nil), // 38: common.PaginationResponse
-	(*common.Empty)(nil),              // 39: common.Empty
-	(*common.CommonResponse)(nil),     // 40: common.CommonResponse
+	(*RegionInfo)(nil),                // 37: user.RegionInfo
+	(*ListRegionChildrenReq)(nil),     // 38: user.ListRegionChildrenReq
+	(*ListRegionChildrenResp)(nil),    // 39: user.ListRegionChildrenResp
+	(*ListRegionsReq)(nil),            // 40: user.ListRegionsReq
+	(*ListRegionsResp)(nil),           // 41: user.ListRegionsResp
+	(*MatchRegionByNameReq)(nil),      // 42: user.MatchRegionByNameReq
+	(*RegionMatchInfo)(nil),           // 43: user.RegionMatchInfo
+	(*RegionDiffItem)(nil),            // 44: user.RegionDiffItem
+	(*RegionUpdateTaskInfo)(nil),      // 45: user.RegionUpdateTaskInfo
+	(*GetRegionUpdateTaskReq)(nil),    // 46: user.GetRegionUpdateTaskReq
+	(*ApplyRegionUpdateTaskReq)(nil),  // 47: user.ApplyRegionUpdateTaskReq
+	(*common.Pagination)(nil),         // 48: common.Pagination
+	(*common.PaginationResponse)(nil), // 49: common.PaginationResponse
+	(*common.Empty)(nil),              // 50: common.Empty
+	(*common.CommonResponse)(nil),     // 51: common.CommonResponse
 }
 var file_user_user_proto_depIdxs = []int32{
-	37, // 0: user.ListUsersReq.pagination:type_name -> common.Pagination
+	48, // 0: user.ListUsersReq.pagination:type_name -> common.Pagination
 	4,  // 1: user.ListUsersResp.list:type_name -> user.UserInfo
-	38, // 2: user.ListUsersResp.pagination:type_name -> common.PaginationResponse
+	49, // 2: user.ListUsersResp.pagination:type_name -> common.PaginationResponse
 	14, // 3: user.ListAddressesResp.list:type_name -> user.AddressInfo
-	37, // 4: user.ListCommunitiesReq.pagination:type_name -> common.Pagination
-	37, // 5: user.ListNearbyCommunitiesReq.pagination:type_name -> common.Pagination
+	48, // 4: user.ListCommunitiesReq.pagination:type_name -> common.Pagination
+	48, // 5: user.ListNearbyCommunitiesReq.pagination:type_name -> common.Pagination
 	17, // 6: user.ListCommunitiesResp.list:type_name -> user.CommunityInfo
-	38, // 7: user.ListCommunitiesResp.pagination:type_name -> common.PaginationResponse
-	37, // 8: user.ListAdminsReq.pagination:type_name -> common.Pagination
+	49, // 7: user.ListCommunitiesResp.pagination:type_name -> common.PaginationResponse
+	48, // 8: user.ListAdminsReq.pagination:type_name -> common.Pagination
 	25, // 9: user.ListAdminsResp.list:type_name -> user.AdminInfo
-	38, // 10: user.ListAdminsResp.pagination:type_name -> common.PaginationResponse
+	49, // 10: user.ListAdminsResp.pagination:type_name -> common.PaginationResponse
 	32, // 11: user.ListRolesResp.list:type_name -> user.RoleInfo
-	0,  // 12: user.UserService.GetUserById:input_type -> user.GetUserByIdReq
-	1,  // 13: user.UserService.GetUserByPhone:input_type -> user.GetUserByPhoneReq
-	2,  // 14: user.UserService.CreateOrUpdateUser:input_type -> user.CreateUserReq
-	3,  // 15: user.UserService.UpdateUserCommunity:input_type -> user.UpdateCommunityReq
-	6,  // 16: user.UserService.ListUsers:input_type -> user.ListUsersReq
-	8,  // 17: user.UserService.ListAddresses:input_type -> user.ListAddressesReq
-	9,  // 18: user.UserService.GetAddress:input_type -> user.GetAddressReq
-	10, // 19: user.UserService.CreateAddress:input_type -> user.CreateAddressReq
-	11, // 20: user.UserService.UpdateAddress:input_type -> user.UpdateAddressReq
-	12, // 21: user.UserService.DeleteAddress:input_type -> user.DeleteAddressReq
-	13, // 22: user.UserService.SetDefaultAddress:input_type -> user.SetDefaultAddressReq
-	18, // 23: user.UserService.ListCommunities:input_type -> user.ListCommunitiesReq
-	16, // 24: user.UserService.GetCommunity:input_type -> user.GetCommunityReq
-	22, // 25: user.UserService.ListNearbyCommunities:input_type -> user.ListNearbyCommunitiesReq
-	19, // 26: user.UserService.CreateCommunity:input_type -> user.CreateCommunityReq
-	20, // 27: user.UserService.UpdateCommunity:input_type -> user.UpdateCommunityInfoReq
-	21, // 28: user.UserService.DeleteCommunity:input_type -> user.DeleteCommunityReq
-	5,  // 29: user.UserService.UpdateUserProfile:input_type -> user.UpdateUserProfileReq
-	24, // 30: user.UserService.GetAdminByUsername:input_type -> user.GetAdminByUsernameReq
-	26, // 31: user.UserService.ListAdmins:input_type -> user.ListAdminsReq
-	28, // 32: user.UserService.CreateAdmin:input_type -> user.CreateAdminReq
-	29, // 33: user.UserService.UpdateAdmin:input_type -> user.UpdateAdminReq
-	30, // 34: user.UserService.DeleteAdmin:input_type -> user.DeleteAdminReq
-	31, // 35: user.UserService.ChangeAdminPassword:input_type -> user.ChangeAdminPasswordReq
-	39, // 36: user.UserService.ListRoles:input_type -> common.Empty
-	34, // 37: user.UserService.CreateRole:input_type -> user.CreateRoleReq
-	35, // 38: user.UserService.UpdateRole:input_type -> user.UpdateRoleReq
-	36, // 39: user.UserService.DeleteRole:input_type -> user.DeleteRoleReq
-	4,  // 40: user.UserService.GetUserById:output_type -> user.UserInfo
-	4,  // 41: user.UserService.GetUserByPhone:output_type -> user.UserInfo
-	4,  // 42: user.UserService.CreateOrUpdateUser:output_type -> user.UserInfo
-	40, // 43: user.UserService.UpdateUserCommunity:output_type -> common.CommonResponse
-	7,  // 44: user.UserService.ListUsers:output_type -> user.ListUsersResp
-	15, // 45: user.UserService.ListAddresses:output_type -> user.ListAddressesResp
-	14, // 46: user.UserService.GetAddress:output_type -> user.AddressInfo
-	14, // 47: user.UserService.CreateAddress:output_type -> user.AddressInfo
-	14, // 48: user.UserService.UpdateAddress:output_type -> user.AddressInfo
-	40, // 49: user.UserService.DeleteAddress:output_type -> common.CommonResponse
-	40, // 50: user.UserService.SetDefaultAddress:output_type -> common.CommonResponse
-	23, // 51: user.UserService.ListCommunities:output_type -> user.ListCommunitiesResp
-	17, // 52: user.UserService.GetCommunity:output_type -> user.CommunityInfo
-	23, // 53: user.UserService.ListNearbyCommunities:output_type -> user.ListCommunitiesResp
-	17, // 54: user.UserService.CreateCommunity:output_type -> user.CommunityInfo
-	17, // 55: user.UserService.UpdateCommunity:output_type -> user.CommunityInfo
-	40, // 56: user.UserService.DeleteCommunity:output_type -> common.CommonResponse
-	4,  // 57: user.UserService.UpdateUserProfile:output_type -> user.UserInfo
-	25, // 58: user.UserService.GetAdminByUsername:output_type -> user.AdminInfo
-	27, // 59: user.UserService.ListAdmins:output_type -> user.ListAdminsResp
-	25, // 60: user.UserService.CreateAdmin:output_type -> user.AdminInfo
-	25, // 61: user.UserService.UpdateAdmin:output_type -> user.AdminInfo
-	40, // 62: user.UserService.DeleteAdmin:output_type -> common.CommonResponse
-	40, // 63: user.UserService.ChangeAdminPassword:output_type -> common.CommonResponse
-	33, // 64: user.UserService.ListRoles:output_type -> user.ListRolesResp
-	32, // 65: user.UserService.CreateRole:output_type -> user.RoleInfo
-	32, // 66: user.UserService.UpdateRole:output_type -> user.RoleInfo
-	40, // 67: user.UserService.DeleteRole:output_type -> common.CommonResponse
-	40, // [40:68] is the sub-list for method output_type
-	12, // [12:40] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	37, // 12: user.ListRegionChildrenResp.list:type_name -> user.RegionInfo
+	48, // 13: user.ListRegionsReq.pagination:type_name -> common.Pagination
+	37, // 14: user.ListRegionsResp.list:type_name -> user.RegionInfo
+	49, // 15: user.ListRegionsResp.pagination:type_name -> common.PaginationResponse
+	37, // 16: user.RegionMatchInfo.province:type_name -> user.RegionInfo
+	37, // 17: user.RegionMatchInfo.city:type_name -> user.RegionInfo
+	44, // 18: user.RegionUpdateTaskInfo.added:type_name -> user.RegionDiffItem
+	44, // 19: user.RegionUpdateTaskInfo.updated:type_name -> user.RegionDiffItem
+	44, // 20: user.RegionUpdateTaskInfo.removed:type_name -> user.RegionDiffItem
+	0,  // 21: user.UserService.GetUserById:input_type -> user.GetUserByIdReq
+	1,  // 22: user.UserService.GetUserByPhone:input_type -> user.GetUserByPhoneReq
+	2,  // 23: user.UserService.CreateOrUpdateUser:input_type -> user.CreateUserReq
+	3,  // 24: user.UserService.UpdateUserCommunity:input_type -> user.UpdateCommunityReq
+	6,  // 25: user.UserService.ListUsers:input_type -> user.ListUsersReq
+	8,  // 26: user.UserService.ListAddresses:input_type -> user.ListAddressesReq
+	9,  // 27: user.UserService.GetAddress:input_type -> user.GetAddressReq
+	10, // 28: user.UserService.CreateAddress:input_type -> user.CreateAddressReq
+	11, // 29: user.UserService.UpdateAddress:input_type -> user.UpdateAddressReq
+	12, // 30: user.UserService.DeleteAddress:input_type -> user.DeleteAddressReq
+	13, // 31: user.UserService.SetDefaultAddress:input_type -> user.SetDefaultAddressReq
+	18, // 32: user.UserService.ListCommunities:input_type -> user.ListCommunitiesReq
+	16, // 33: user.UserService.GetCommunity:input_type -> user.GetCommunityReq
+	22, // 34: user.UserService.ListNearbyCommunities:input_type -> user.ListNearbyCommunitiesReq
+	19, // 35: user.UserService.CreateCommunity:input_type -> user.CreateCommunityReq
+	20, // 36: user.UserService.UpdateCommunity:input_type -> user.UpdateCommunityInfoReq
+	21, // 37: user.UserService.DeleteCommunity:input_type -> user.DeleteCommunityReq
+	5,  // 38: user.UserService.UpdateUserProfile:input_type -> user.UpdateUserProfileReq
+	38, // 39: user.UserService.ListRegionChildren:input_type -> user.ListRegionChildrenReq
+	40, // 40: user.UserService.ListRegions:input_type -> user.ListRegionsReq
+	42, // 41: user.UserService.MatchRegionByName:input_type -> user.MatchRegionByNameReq
+	50, // 42: user.UserService.CreateRegionUpdateTask:input_type -> common.Empty
+	46, // 43: user.UserService.GetRegionUpdateTask:input_type -> user.GetRegionUpdateTaskReq
+	47, // 44: user.UserService.ApplyRegionUpdateTask:input_type -> user.ApplyRegionUpdateTaskReq
+	24, // 45: user.UserService.GetAdminByUsername:input_type -> user.GetAdminByUsernameReq
+	26, // 46: user.UserService.ListAdmins:input_type -> user.ListAdminsReq
+	28, // 47: user.UserService.CreateAdmin:input_type -> user.CreateAdminReq
+	29, // 48: user.UserService.UpdateAdmin:input_type -> user.UpdateAdminReq
+	30, // 49: user.UserService.DeleteAdmin:input_type -> user.DeleteAdminReq
+	31, // 50: user.UserService.ChangeAdminPassword:input_type -> user.ChangeAdminPasswordReq
+	50, // 51: user.UserService.ListRoles:input_type -> common.Empty
+	34, // 52: user.UserService.CreateRole:input_type -> user.CreateRoleReq
+	35, // 53: user.UserService.UpdateRole:input_type -> user.UpdateRoleReq
+	36, // 54: user.UserService.DeleteRole:input_type -> user.DeleteRoleReq
+	4,  // 55: user.UserService.GetUserById:output_type -> user.UserInfo
+	4,  // 56: user.UserService.GetUserByPhone:output_type -> user.UserInfo
+	4,  // 57: user.UserService.CreateOrUpdateUser:output_type -> user.UserInfo
+	51, // 58: user.UserService.UpdateUserCommunity:output_type -> common.CommonResponse
+	7,  // 59: user.UserService.ListUsers:output_type -> user.ListUsersResp
+	15, // 60: user.UserService.ListAddresses:output_type -> user.ListAddressesResp
+	14, // 61: user.UserService.GetAddress:output_type -> user.AddressInfo
+	14, // 62: user.UserService.CreateAddress:output_type -> user.AddressInfo
+	14, // 63: user.UserService.UpdateAddress:output_type -> user.AddressInfo
+	51, // 64: user.UserService.DeleteAddress:output_type -> common.CommonResponse
+	51, // 65: user.UserService.SetDefaultAddress:output_type -> common.CommonResponse
+	23, // 66: user.UserService.ListCommunities:output_type -> user.ListCommunitiesResp
+	17, // 67: user.UserService.GetCommunity:output_type -> user.CommunityInfo
+	23, // 68: user.UserService.ListNearbyCommunities:output_type -> user.ListCommunitiesResp
+	17, // 69: user.UserService.CreateCommunity:output_type -> user.CommunityInfo
+	17, // 70: user.UserService.UpdateCommunity:output_type -> user.CommunityInfo
+	51, // 71: user.UserService.DeleteCommunity:output_type -> common.CommonResponse
+	4,  // 72: user.UserService.UpdateUserProfile:output_type -> user.UserInfo
+	39, // 73: user.UserService.ListRegionChildren:output_type -> user.ListRegionChildrenResp
+	41, // 74: user.UserService.ListRegions:output_type -> user.ListRegionsResp
+	43, // 75: user.UserService.MatchRegionByName:output_type -> user.RegionMatchInfo
+	45, // 76: user.UserService.CreateRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
+	45, // 77: user.UserService.GetRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
+	51, // 78: user.UserService.ApplyRegionUpdateTask:output_type -> common.CommonResponse
+	25, // 79: user.UserService.GetAdminByUsername:output_type -> user.AdminInfo
+	27, // 80: user.UserService.ListAdmins:output_type -> user.ListAdminsResp
+	25, // 81: user.UserService.CreateAdmin:output_type -> user.AdminInfo
+	25, // 82: user.UserService.UpdateAdmin:output_type -> user.AdminInfo
+	51, // 83: user.UserService.DeleteAdmin:output_type -> common.CommonResponse
+	51, // 84: user.UserService.ChangeAdminPassword:output_type -> common.CommonResponse
+	33, // 85: user.UserService.ListRoles:output_type -> user.ListRolesResp
+	32, // 86: user.UserService.CreateRole:output_type -> user.RoleInfo
+	32, // 87: user.UserService.UpdateRole:output_type -> user.RoleInfo
+	51, // 88: user.UserService.DeleteRole:output_type -> common.CommonResponse
+	55, // [55:89] is the sub-list for method output_type
+	21, // [21:55] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_user_user_proto_init() }
@@ -3359,7 +4358,7 @@ func file_user_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_user_user_proto_rawDesc), len(file_user_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   37,
+			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

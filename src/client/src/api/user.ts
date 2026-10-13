@@ -75,6 +75,40 @@ export interface IpLocation {
   city?: string
 }
 
+/** 行政区划条目（省/市/区县三级，GB/T 2260 口径） */
+export interface Region {
+  code: string
+  name: string
+  parent_code: string
+  /** 层级：1 省 2 市 3 区县 */
+  level: number
+  /** 状态：1 正常 2 停用 */
+  status: number
+}
+
+/** IP 定位反查行政区划结果（城市级精度，区县需用户补选） */
+export interface RegionLocateResult {
+  longitude: number
+  latitude: number
+  province: Region | null
+  city: Region | null
+}
+
+/**
+ * 查询下级区划（公开接口，供地区选择器逐级懒加载）
+ * @param parentCode 父级区划代码，'0' 表示省级
+ */
+export function listRegionChildren(parentCode: string) {
+  return get<Region[]>('/regions/children', { parent_code: parentCode })
+}
+
+/**
+ * 按出口 IP 定位反查行政区划（公开接口，城市级精度）
+ */
+export function locateRegion() {
+  return get<RegionLocateResult | null>('/regions/locate')
+}
+
 /**
  * 按出口 IP 定位大致经纬度（best-effort 兜底）
  * 服务端未就绪或未命中时 data 为 null

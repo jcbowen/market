@@ -19,6 +19,7 @@ type AddressService struct {
 // NewAddressService 创建地址业务服务
 // 参数：
 //   - db: MySQL 实例
+//
 // 返回：
 //   - *AddressService: 地址业务服务实例
 func NewAddressService(db *mysql.Instance) *AddressService {
@@ -29,6 +30,7 @@ func NewAddressService(db *mysql.Instance) *AddressService {
 // 参数：
 //   - ctx: 上下文
 //   - userID: 用户 ID
+//
 // 返回：
 //   - []*model.Address: 地址列表
 //   - map[int64]string: 地址所属社区 ID -> 社区名称（供按社区分组展示）
@@ -56,6 +58,7 @@ func (s *AddressService) ListAddresses(ctx context.Context, userID int64) ([]*mo
 // 参数：
 //   - ctx: 上下文
 //   - ids: 社区 ID 列表
+//
 // 返回：
 //   - map[int64]string: 社区 ID -> 名称
 func (s *AddressService) ListCommunityNames(ctx context.Context, ids []int64) map[int64]string {
@@ -80,6 +83,7 @@ func (s *AddressService) ListCommunityNames(ctx context.Context, ids []int64) ma
 // 参数：
 //   - ctx: 上下文
 //   - id: 社区 ID
+//
 // 返回：
 //   - string: 社区名称（不存在时为空串）
 func (s *AddressService) GetCommunityName(ctx context.Context, id int64) string {
@@ -93,6 +97,7 @@ func (s *AddressService) GetCommunityName(ctx context.Context, id int64) string 
 // 参数：
 //   - ctx: 上下文
 //   - userID: 用户 ID
+//
 // 返回：
 //   - *model.Community: 用户所属社区（未选择社区或社区已删除时返回错误）
 //   - error: 错误信息
@@ -116,6 +121,7 @@ func (s *AddressService) getUserCommunity(ctx context.Context, userID int64) (*m
 //   - ctx: 上下文
 //   - id: 地址 ID
 //   - userID: 用户 ID
+//
 // 返回：
 //   - *model.Address: 地址模型
 //   - error: 错误信息
@@ -136,11 +142,13 @@ func (s *AddressService) GetAddress(ctx context.Context, id, userID int64) (*mod
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建地址请求
+//
 // 返回：
 //   - *model.Address: 地址模型
 //   - error: 错误信息
 func (s *AddressService) CreateAddress(ctx context.Context, req *user.CreateAddressReq) (*model.Address, error) {
-	community, province, city, district, err := s.resolveAddressRegion(ctx, req.UserId, req.Province, req.City, req.District)
+	community, province, city, district, provinceCode, cityCode, districtCode, err :=
+		s.resolveAddressRegion(ctx, req.UserId, req.Province, req.City, req.District, req.ProvinceCode, req.CityCode, req.DistrictCode)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +159,9 @@ func (s *AddressService) CreateAddress(ctx context.Context, req *user.CreateAddr
 		Province:     province,
 		City:         city,
 		District:     district,
+		ProvinceCode: provinceCode,
+		CityCode:     cityCode,
+		DistrictCode: districtCode,
 		Detail:       req.Detail,
 		Tag:          req.Tag,
 		CommunityID:  community.ID,
@@ -176,11 +187,13 @@ func (s *AddressService) CreateAddress(ctx context.Context, req *user.CreateAddr
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新地址请求
+//
 // 返回：
 //   - *model.Address: 地址模型
 //   - error: 错误信息
 func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddressReq) (*model.Address, error) {
-	community, province, city, district, err := s.resolveAddressRegion(ctx, req.UserId, req.Province, req.City, req.District)
+	community, province, city, district, provinceCode, cityCode, districtCode, err :=
+		s.resolveAddressRegion(ctx, req.UserId, req.Province, req.City, req.District, req.ProvinceCode, req.CityCode, req.DistrictCode)
 	if err != nil {
 		return nil, err
 	}
@@ -194,6 +207,9 @@ func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddr
 	addr.Province = province
 	addr.City = city
 	addr.District = district
+	addr.ProvinceCode = provinceCode
+	addr.CityCode = cityCode
+	addr.DistrictCode = districtCode
 	addr.Detail = req.Detail
 	addr.Tag = req.Tag
 	addr.CommunityID = community.ID
@@ -219,6 +235,7 @@ func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddr
 //   - ctx: 上下文
 //   - id: 地址 ID
 //   - userID: 用户 ID
+//
 // 返回：
 //   - error: 错误信息
 func (s *AddressService) DeleteAddress(ctx context.Context, id, userID int64) error {
@@ -232,6 +249,7 @@ func (s *AddressService) DeleteAddress(ctx context.Context, id, userID int64) er
 //   - ctx: 上下文
 //   - id: 地址 ID
 //   - userID: 用户 ID
+//
 // 返回：
 //   - error: 错误信息
 func (s *AddressService) SetDefaultAddress(ctx context.Context, id, userID int64) error {
@@ -247,34 +265,40 @@ func (s *AddressService) SetDefaultAddress(ctx context.Context, id, userID int64
 	})
 }
 
-// resolveAddressRegion 按用户当前社区裁决地址省市区前缀与归属社区
+// resolveAddressRegion 按用户当前社区裁决地址省市区前缀（含区划代码）与归属社区
 // 语义：用户必须已选择社区；社区不允许外配（默认）时，
-// 省/市/区强制取社区配置值，忽略请求中传入的前缀。
+// 省/市/区名称与区划代码强制取社区配置值，忽略请求中传入的前缀。
 // 参数：
 //   - ctx: 上下文
 //   - userID: 用户 ID
-//   - province, city, district: 请求中的省市区
+//   - province, city, district: 请求中的省市区名称
+//   - provinceCode, cityCode, districtCode: 请求中的省市区区划代码
+//
 // 返回：
 //   - *model.Community: 用户所属社区
-//   - string, string, string: 裁决后的省、市、区
+//   - string × 6: 裁决后的省、市、区名称与区划代码
 //   - error: 错误信息
-func (s *AddressService) resolveAddressRegion(ctx context.Context, userID int64, province, city, district string) (*model.Community, string, string, string, error) {
+func (s *AddressService) resolveAddressRegion(ctx context.Context, userID int64, province, city, district, provinceCode, cityCode, districtCode string) (*model.Community, string, string, string, string, string, string, error) {
 	community, err := s.getUserCommunity(ctx, userID)
 	if err != nil {
-		return nil, "", "", "", err
+		return nil, "", "", "", "", "", "", err
 	}
 	if !community.AllowOutsideDelivery {
 		province = community.Province
 		city = community.City
 		district = community.District
+		provinceCode = community.ProvinceCode
+		cityCode = community.CityCode
+		districtCode = community.DistrictCode
 	}
-	return community, province, city, district, nil
+	return community, province, city, district, provinceCode, cityCode, districtCode, nil
 }
 
 // ToAddressInfo 将地址模型转换为 proto 地址信息
 // 参数：
 //   - addr: 地址模型
 //   - communityName: 地址所属社区名称（用于按社区分组展示，可为空）
+//
 // 返回：
 //   - *user.AddressInfo: proto 地址信息
 func ToAddressInfo(addr *model.Address, communityName string) *user.AddressInfo {
@@ -289,6 +313,9 @@ func ToAddressInfo(addr *model.Address, communityName string) *user.AddressInfo 
 		Province:      addr.Province,
 		City:          addr.City,
 		District:      addr.District,
+		ProvinceCode:  addr.ProvinceCode,
+		CityCode:      addr.CityCode,
+		DistrictCode:  addr.DistrictCode,
 		Detail:        addr.Detail,
 		Tag:           addr.Tag,
 		CommunityId:   addr.CommunityID,

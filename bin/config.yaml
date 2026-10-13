@@ -52,6 +52,8 @@ upload:
         - webp
     storage: local
     local_path: static/uploads/
+geoip:
+    db_path: data/geoip/GeoLite2-City.mmdb
 wechat:
     app_id: wx_test_appid
     app_secret: ""

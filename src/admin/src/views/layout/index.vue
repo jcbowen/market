@@ -401,9 +401,10 @@ const menuOptions = computed<MenuOption[]>(() => {
       label: '系统管理',
       key: '/system',
       icon: renderIcon(StorefrontOutline),
-      permission: 'community:view',
+      // 分组不设权限门槛：按子项权限过滤，无任何可见子项时整组隐藏
       children: [
         { label: '社区管理', key: '/system/communities', permission: 'community:view' },
+        { label: '行政区划', key: '/system/regions', permission: 'region:view' },
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
         { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
         { label: '管理员', key: '/system/admins', permission: 'admin:view' },

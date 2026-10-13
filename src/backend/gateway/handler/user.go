@@ -28,6 +28,9 @@ type addressItem struct {
 	Province      string `json:"province"`
 	City          string `json:"city"`
 	District      string `json:"district"`
+	ProvinceCode  string `json:"province_code"`
+	CityCode      string `json:"city_code"`
+	DistrictCode  string `json:"district_code"`
 	Detail        string `json:"detail"`
 	Tag           string `json:"tag"`
 	CommunityID   int64  `json:"community_id"`
@@ -54,6 +57,9 @@ func toAddressItem(addr *user.AddressInfo) addressItem {
 		Province:      addr.Province,
 		City:          addr.City,
 		District:      addr.District,
+		ProvinceCode:  addr.ProvinceCode,
+		CityCode:      addr.CityCode,
+		DistrictCode:  addr.DistrictCode,
 		Detail:        addr.Detail,
 		Tag:           addr.Tag,
 		CommunityID:   addr.CommunityId,
@@ -192,6 +198,9 @@ type CreateAddressReq struct {
 	Province     string `json:"province"`
 	City         string `json:"city"`
 	District     string `json:"district"`
+	ProvinceCode string `json:"province_code"`
+	CityCode     string `json:"city_code"`
+	DistrictCode string `json:"district_code"`
 	Detail       string `json:"detail" binding:"required"`
 	Tag          string `json:"tag"`
 	IsDefault    bool   `json:"is_default"`
@@ -216,6 +225,9 @@ func (h *UserHandler) CreateAddress(c *gin.Context) {
 		Province:     req.Province,
 		City:         req.City,
 		District:     req.District,
+		ProvinceCode: req.ProvinceCode,
+		CityCode:     req.CityCode,
+		DistrictCode: req.DistrictCode,
 		Detail:       req.Detail,
 		Tag:          req.Tag,
 		IsDefault:    req.IsDefault,
@@ -234,6 +246,9 @@ type UpdateAddressReq struct {
 	Province     string `json:"province"`
 	City         string `json:"city"`
 	District     string `json:"district"`
+	ProvinceCode string `json:"province_code"`
+	CityCode     string `json:"city_code"`
+	DistrictCode string `json:"district_code"`
 	Detail       string `json:"detail"`
 	Tag          string `json:"tag"`
 	IsDefault    bool   `json:"is_default"`
@@ -265,6 +280,9 @@ func (h *UserHandler) UpdateAddress(c *gin.Context) {
 		Province:     req.Province,
 		City:         req.City,
 		District:     req.District,
+		ProvinceCode: req.ProvinceCode,
+		CityCode:     req.CityCode,
+		DistrictCode: req.DistrictCode,
 		Detail:       req.Detail,
 		Tag:          req.Tag,
 		IsDefault:    req.IsDefault,

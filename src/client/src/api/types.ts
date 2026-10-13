@@ -22,6 +22,10 @@ export interface Community {
   province: string
   city: string
   district: string
+  /** 省/市/区行政区划代码（历史数据允许为空） */
+  province_code?: string
+  city_code?: string
+  district_code?: string
   /** 是否允许社区外配送（false 时地址前缀锁定为本社区） */
   allow_outside_delivery: boolean
 }
@@ -34,6 +38,10 @@ export interface Address {
   province: string
   city: string
   district: string
+  /** 省/市/区行政区划代码（来自区划选择器，历史数据允许为空） */
+  province_code?: string
+  city_code?: string
+  district_code?: string
   detail: string
   tag: string
   /** 地址所属社区（保存时由服务端按用户当前社区回填） */

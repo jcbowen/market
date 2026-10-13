@@ -66,6 +66,8 @@ const permissionOptions = [
   { label: '社区创建', value: 'community:create' },
   { label: '社区更新', value: 'community:update' },
   { label: '社区删除', value: 'community:delete' },
+  { label: '区划查看', value: 'region:view' },
+  { label: '区划更新', value: 'region:update' },
   { label: '管理员查看', value: 'admin:view' },
   { label: '管理员创建', value: 'admin:create' },
   { label: '管理员更新', value: 'admin:update' },

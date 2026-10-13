@@ -32,6 +32,14 @@ service UserService {
   // 用户资料
   rpc UpdateUserProfile(UpdateUserProfileReq) returns (UserInfo);
 
+  // 行政区划
+  rpc ListRegionChildren(ListRegionChildrenReq) returns (ListRegionChildrenResp);
+  rpc ListRegions(ListRegionsReq) returns (ListRegionsResp);
+  rpc MatchRegionByName(MatchRegionByNameReq) returns (RegionMatchInfo);
+  rpc CreateRegionUpdateTask(common.Empty) returns (RegionUpdateTaskInfo);
+  rpc GetRegionUpdateTask(GetRegionUpdateTaskReq) returns (RegionUpdateTaskInfo);
+  rpc ApplyRegionUpdateTask(ApplyRegionUpdateTaskReq) returns (common.CommonResponse);
+
   // 管理员
   rpc GetAdminByUsername(GetAdminByUsernameReq) returns (AdminInfo);
   rpc ListAdmins(ListAdminsReq) returns (ListAdminsResp);
@@ -126,6 +134,10 @@ message CreateAddressReq {
   bool is_default = 9;
   // 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
   int64 community_id = 10;
+  // 省/市/区行政区划代码（来自区划选择器，可选；历史数据允许为空）
+  string province_code = 11;
+  string city_code = 12;
+  string district_code = 13;
 }
 
 message UpdateAddressReq {
@@ -141,6 +153,10 @@ message UpdateAddressReq {
   bool is_default = 10;
   // 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
   int64 community_id = 11;
+  // 省/市/区行政区划代码（来自区划选择器，可选；历史数据允许为空）
+  string province_code = 12;
+  string city_code = 13;
+  string district_code = 14;
 }
 
 message DeleteAddressReq {
@@ -168,6 +184,10 @@ message AddressInfo {
   // 地址所属社区 ID 与名称（按保存时用户当前社区回填，供 C 端按社区分组展示）
   int64 community_id = 12;
   string community_name = 13;
+  // 省/市/区行政区划代码（历史数据允许为空）
+  string province_code = 14;
+  string city_code = 15;
+  string district_code = 16;
 }
 
 message ListAddressesResp {
@@ -200,6 +220,10 @@ message CommunityInfo {
   string district = 18;
   // 是否允许社区外配送（false 时 C 端地址前缀锁定为本社区）
   bool allow_outside_delivery = 19;
+  // 省/市/区行政区划代码（历史数据允许为空）
+  string province_code = 20;
+  string city_code = 21;
+  string district_code = 22;
 }
 
 // ListCommunitiesReq 社区列表查询请求
@@ -231,6 +255,10 @@ message CreateCommunityReq {
   string district = 17;
   // 是否允许社区外配送，默认 false
   bool allow_outside_delivery = 18;
+  // 省/市/区行政区划代码（来自区划选择器，可选）
+  string province_code = 19;
+  string city_code = 20;
+  string district_code = 21;
 }
 
 message UpdateCommunityInfoReq {
@@ -254,6 +282,10 @@ message UpdateCommunityInfoReq {
   string district = 18;
   // 是否允许社区外配送（整表提交全量覆盖）
   bool allow_outside_delivery = 19;
+  // 省/市/区行政区划代码（来自区划选择器，可选）
+  string province_code = 20;
+  string city_code = 21;
+  string district_code = 22;
 }
 
 message DeleteCommunityReq {
@@ -361,5 +393,100 @@ message UpdateRoleReq {
 }
 
 message DeleteRoleReq {
+  int64 id = 1;
+}
+
+// --- 行政区划 ---
+
+// RegionInfo 行政区划条目
+message RegionInfo {
+  // 行政区划代码（GB/T 2260），省级 2 位、市级 4 位、区县级 6 位
+  string code = 1;
+  string name = 2;
+  // 父级区划代码，省级为 "0"
+  string parent_code = 3;
+  // 层级：1 省 2 市 3 区县
+  int32 level = 4;
+  // 状态：1 正常 2 停用（上游撤销）
+  int32 status = 5;
+}
+
+message ListRegionChildrenReq {
+  // 父级区划代码，"0" 表示查询省级列表；仅返回正常状态
+  string parent_code = 1;
+}
+
+message ListRegionChildrenResp {
+  repeated RegionInfo list = 1;
+}
+
+message ListRegionsReq {
+  // 关键词：区划代码前缀或名称模糊匹配
+  string keyword = 1;
+  // 父级区划代码筛选，空为全部
+  string parent_code = 2;
+  // 层级筛选：0 全部，1 省，2 市，3 区县
+  int32 level = 3;
+  // 状态筛选：0 全部，1 正常，2 停用
+  int32 status = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListRegionsResp {
+  repeated RegionInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message MatchRegionByNameReq {
+  // 地理库返回的名称（城市或省份，如 "广州"、"广东"），不带行政区划后缀亦可
+  string name = 1;
+}
+
+// RegionMatchInfo 名称匹配结果：city 命中时同时返回其上级 province；
+// 仅 province 命中时 city 为空
+message RegionMatchInfo {
+  RegionInfo province = 1;
+  RegionInfo city = 2;
+}
+
+// RegionDiffItem 更新任务差异条目
+message RegionDiffItem {
+  string code = 1;
+  // 库内当前名称（新增场景为上游名称）
+  string name = 2;
+  // 更名后的新名称（仅 updated 场景有值）
+  string new_name = 3;
+  string parent_code = 4;
+  int32 level = 5;
+}
+
+// RegionUpdateTaskInfo 更新任务信息
+message RegionUpdateTaskInfo {
+  int64 id = 1;
+  // 状态：1 待执行 2 拉取中 3 比对中 4 完成 5 失败
+  int32 status = 2;
+  // 数据源 URL
+  string source = 3;
+  int32 total_remote = 4;
+  int32 total_local = 5;
+  int32 added_count = 6;
+  int32 updated_count = 7;
+  int32 removed_count = 8;
+  repeated RegionDiffItem added = 9;
+  repeated RegionDiffItem updated = 10;
+  repeated RegionDiffItem removed = 11;
+  // 失败原因（status=5 时有值）
+  string error = 12;
+  // 差异是否已覆盖入库
+  bool applied = 13;
+  string created_at = 14;
+  string finished_at = 15;
+}
+
+message GetRegionUpdateTaskReq {
+  int64 id = 1;
+}
+
+message ApplyRegionUpdateTaskReq {
   int64 id = 1;
 }

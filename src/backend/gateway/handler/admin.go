@@ -286,12 +286,12 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 // CreateAdminReq 创建管理员请求
 // 包含管理员基础信息字段
 type CreateAdminReq struct {
-	Username    string  `json:"username" binding:"required"`
-	Password    string  `json:"password" binding:"required,min=6"`
-	RealName    string  `json:"real_name"`
-	Phone       string  `json:"phone"`
-	RoleID      int64   `json:"role_id" binding:"required"`
-	CommunityID int64   `json:"community_id"`
+	Username    string `json:"username" binding:"required"`
+	Password    string `json:"password" binding:"required,min=6"`
+	RealName    string `json:"real_name"`
+	Phone       string `json:"phone"`
+	RoleID      int64  `json:"role_id" binding:"required"`
+	CommunityID int64  `json:"community_id"`
 	// 绑定的全部社区 ID 列表（写入 admin_communities 关联表）
 	CommunityIDs []int64 `json:"community_ids"`
 }
@@ -325,11 +325,11 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 // UpdateAdminReq 更新管理员请求
 // 包含管理员可更新字段
 type UpdateAdminReq struct {
-	RealName    string  `json:"real_name"`
-	Phone       string  `json:"phone"`
-	RoleID      int64   `json:"role_id"`
-	CommunityID int64   `json:"community_id"`
-	Status      int32   `json:"status"`
+	RealName    string `json:"real_name"`
+	Phone       string `json:"phone"`
+	RoleID      int64  `json:"role_id"`
+	CommunityID int64  `json:"community_id"`
+	Status      int32  `json:"status"`
 	// 重新绑定的全部社区 ID 列表；空表示不修改绑定关系
 	CommunityIDs []int64 `json:"community_ids"`
 }
@@ -2165,6 +2165,13 @@ type CreateCommunityReq struct {
 	BusinessHours   string  `json:"business_hours"`
 	Sort            int32   `json:"sort"`
 	Status          int32   `json:"status"`
+	// 省/市/区名称与区划代码（来自区划选择器；历史数据允许代码为空）
+	Province     string `json:"province"`
+	City         string `json:"city"`
+	District     string `json:"district"`
+	ProvinceCode string `json:"province_code"`
+	CityCode     string `json:"city_code"`
+	DistrictCode string `json:"district_code"`
 }
 
 // CreateCommunity 创建社区
@@ -2192,6 +2199,12 @@ func (h *AdminHandler) CreateCommunity(c *gin.Context) {
 		BusinessHours:   req.BusinessHours,
 		Sort:            req.Sort,
 		Status:          req.Status,
+		Province:        req.Province,
+		City:            req.City,
+		District:        req.District,
+		ProvinceCode:    req.ProvinceCode,
+		CityCode:        req.CityCode,
+		DistrictCode:    req.DistrictCode,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2234,6 +2247,13 @@ type UpdateAdminCommunityReq struct {
 	BusinessHours   string  `json:"business_hours"`
 	Sort            int32   `json:"sort"`
 	Status          int32   `json:"status"`
+	// 省/市/区名称与区划代码（来自区划选择器；历史数据允许代码为空）
+	Province     string `json:"province"`
+	City         string `json:"city"`
+	District     string `json:"district"`
+	ProvinceCode string `json:"province_code"`
+	CityCode     string `json:"city_code"`
+	DistrictCode string `json:"district_code"`
 }
 
 // UpdateCommunity 更新社区
@@ -2268,6 +2288,12 @@ func (h *AdminHandler) UpdateCommunity(c *gin.Context) {
 		BusinessHours:   req.BusinessHours,
 		Sort:            req.Sort,
 		Status:          req.Status,
+		Province:        req.Province,
+		City:            req.City,
+		District:        req.District,
+		ProvinceCode:    req.ProvinceCode,
+		CityCode:        req.CityCode,
+		DistrictCode:    req.DistrictCode,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

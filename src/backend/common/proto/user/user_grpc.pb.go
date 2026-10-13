@@ -20,34 +20,40 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	UserService_GetUserById_FullMethodName           = "/user.UserService/GetUserById"
-	UserService_GetUserByPhone_FullMethodName        = "/user.UserService/GetUserByPhone"
-	UserService_CreateOrUpdateUser_FullMethodName    = "/user.UserService/CreateOrUpdateUser"
-	UserService_UpdateUserCommunity_FullMethodName   = "/user.UserService/UpdateUserCommunity"
-	UserService_ListUsers_FullMethodName             = "/user.UserService/ListUsers"
-	UserService_ListAddresses_FullMethodName         = "/user.UserService/ListAddresses"
-	UserService_GetAddress_FullMethodName            = "/user.UserService/GetAddress"
-	UserService_CreateAddress_FullMethodName         = "/user.UserService/CreateAddress"
-	UserService_UpdateAddress_FullMethodName         = "/user.UserService/UpdateAddress"
-	UserService_DeleteAddress_FullMethodName         = "/user.UserService/DeleteAddress"
-	UserService_SetDefaultAddress_FullMethodName     = "/user.UserService/SetDefaultAddress"
-	UserService_ListCommunities_FullMethodName       = "/user.UserService/ListCommunities"
-	UserService_GetCommunity_FullMethodName          = "/user.UserService/GetCommunity"
-	UserService_ListNearbyCommunities_FullMethodName = "/user.UserService/ListNearbyCommunities"
-	UserService_CreateCommunity_FullMethodName       = "/user.UserService/CreateCommunity"
-	UserService_UpdateCommunity_FullMethodName       = "/user.UserService/UpdateCommunity"
-	UserService_DeleteCommunity_FullMethodName       = "/user.UserService/DeleteCommunity"
-	UserService_UpdateUserProfile_FullMethodName     = "/user.UserService/UpdateUserProfile"
-	UserService_GetAdminByUsername_FullMethodName    = "/user.UserService/GetAdminByUsername"
-	UserService_ListAdmins_FullMethodName            = "/user.UserService/ListAdmins"
-	UserService_CreateAdmin_FullMethodName           = "/user.UserService/CreateAdmin"
-	UserService_UpdateAdmin_FullMethodName           = "/user.UserService/UpdateAdmin"
-	UserService_DeleteAdmin_FullMethodName           = "/user.UserService/DeleteAdmin"
-	UserService_ChangeAdminPassword_FullMethodName   = "/user.UserService/ChangeAdminPassword"
-	UserService_ListRoles_FullMethodName             = "/user.UserService/ListRoles"
-	UserService_CreateRole_FullMethodName            = "/user.UserService/CreateRole"
-	UserService_UpdateRole_FullMethodName            = "/user.UserService/UpdateRole"
-	UserService_DeleteRole_FullMethodName            = "/user.UserService/DeleteRole"
+	UserService_GetUserById_FullMethodName            = "/user.UserService/GetUserById"
+	UserService_GetUserByPhone_FullMethodName         = "/user.UserService/GetUserByPhone"
+	UserService_CreateOrUpdateUser_FullMethodName     = "/user.UserService/CreateOrUpdateUser"
+	UserService_UpdateUserCommunity_FullMethodName    = "/user.UserService/UpdateUserCommunity"
+	UserService_ListUsers_FullMethodName              = "/user.UserService/ListUsers"
+	UserService_ListAddresses_FullMethodName          = "/user.UserService/ListAddresses"
+	UserService_GetAddress_FullMethodName             = "/user.UserService/GetAddress"
+	UserService_CreateAddress_FullMethodName          = "/user.UserService/CreateAddress"
+	UserService_UpdateAddress_FullMethodName          = "/user.UserService/UpdateAddress"
+	UserService_DeleteAddress_FullMethodName          = "/user.UserService/DeleteAddress"
+	UserService_SetDefaultAddress_FullMethodName      = "/user.UserService/SetDefaultAddress"
+	UserService_ListCommunities_FullMethodName        = "/user.UserService/ListCommunities"
+	UserService_GetCommunity_FullMethodName           = "/user.UserService/GetCommunity"
+	UserService_ListNearbyCommunities_FullMethodName  = "/user.UserService/ListNearbyCommunities"
+	UserService_CreateCommunity_FullMethodName        = "/user.UserService/CreateCommunity"
+	UserService_UpdateCommunity_FullMethodName        = "/user.UserService/UpdateCommunity"
+	UserService_DeleteCommunity_FullMethodName        = "/user.UserService/DeleteCommunity"
+	UserService_UpdateUserProfile_FullMethodName      = "/user.UserService/UpdateUserProfile"
+	UserService_ListRegionChildren_FullMethodName     = "/user.UserService/ListRegionChildren"
+	UserService_ListRegions_FullMethodName            = "/user.UserService/ListRegions"
+	UserService_MatchRegionByName_FullMethodName      = "/user.UserService/MatchRegionByName"
+	UserService_CreateRegionUpdateTask_FullMethodName = "/user.UserService/CreateRegionUpdateTask"
+	UserService_GetRegionUpdateTask_FullMethodName    = "/user.UserService/GetRegionUpdateTask"
+	UserService_ApplyRegionUpdateTask_FullMethodName  = "/user.UserService/ApplyRegionUpdateTask"
+	UserService_GetAdminByUsername_FullMethodName     = "/user.UserService/GetAdminByUsername"
+	UserService_ListAdmins_FullMethodName             = "/user.UserService/ListAdmins"
+	UserService_CreateAdmin_FullMethodName            = "/user.UserService/CreateAdmin"
+	UserService_UpdateAdmin_FullMethodName            = "/user.UserService/UpdateAdmin"
+	UserService_DeleteAdmin_FullMethodName            = "/user.UserService/DeleteAdmin"
+	UserService_ChangeAdminPassword_FullMethodName    = "/user.UserService/ChangeAdminPassword"
+	UserService_ListRoles_FullMethodName              = "/user.UserService/ListRoles"
+	UserService_CreateRole_FullMethodName             = "/user.UserService/CreateRole"
+	UserService_UpdateRole_FullMethodName             = "/user.UserService/UpdateRole"
+	UserService_DeleteRole_FullMethodName             = "/user.UserService/DeleteRole"
 )
 
 // UserServiceClient is the client API for UserService service.
@@ -75,6 +81,13 @@ type UserServiceClient interface {
 	DeleteCommunity(ctx context.Context, in *DeleteCommunityReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 用户资料
 	UpdateUserProfile(ctx context.Context, in *UpdateUserProfileReq, opts ...grpc.CallOption) (*UserInfo, error)
+	// 行政区划
+	ListRegionChildren(ctx context.Context, in *ListRegionChildrenReq, opts ...grpc.CallOption) (*ListRegionChildrenResp, error)
+	ListRegions(ctx context.Context, in *ListRegionsReq, opts ...grpc.CallOption) (*ListRegionsResp, error)
+	MatchRegionByName(ctx context.Context, in *MatchRegionByNameReq, opts ...grpc.CallOption) (*RegionMatchInfo, error)
+	CreateRegionUpdateTask(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*RegionUpdateTaskInfo, error)
+	GetRegionUpdateTask(ctx context.Context, in *GetRegionUpdateTaskReq, opts ...grpc.CallOption) (*RegionUpdateTaskInfo, error)
+	ApplyRegionUpdateTask(ctx context.Context, in *ApplyRegionUpdateTaskReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 管理员
 	GetAdminByUsername(ctx context.Context, in *GetAdminByUsernameReq, opts ...grpc.CallOption) (*AdminInfo, error)
 	ListAdmins(ctx context.Context, in *ListAdminsReq, opts ...grpc.CallOption) (*ListAdminsResp, error)
@@ -277,6 +290,66 @@ func (c *userServiceClient) UpdateUserProfile(ctx context.Context, in *UpdateUse
 	return out, nil
 }
 
+func (c *userServiceClient) ListRegionChildren(ctx context.Context, in *ListRegionChildrenReq, opts ...grpc.CallOption) (*ListRegionChildrenResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRegionChildrenResp)
+	err := c.cc.Invoke(ctx, UserService_ListRegionChildren_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) ListRegions(ctx context.Context, in *ListRegionsReq, opts ...grpc.CallOption) (*ListRegionsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRegionsResp)
+	err := c.cc.Invoke(ctx, UserService_ListRegions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) MatchRegionByName(ctx context.Context, in *MatchRegionByNameReq, opts ...grpc.CallOption) (*RegionMatchInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegionMatchInfo)
+	err := c.cc.Invoke(ctx, UserService_MatchRegionByName_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) CreateRegionUpdateTask(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*RegionUpdateTaskInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegionUpdateTaskInfo)
+	err := c.cc.Invoke(ctx, UserService_CreateRegionUpdateTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) GetRegionUpdateTask(ctx context.Context, in *GetRegionUpdateTaskReq, opts ...grpc.CallOption) (*RegionUpdateTaskInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegionUpdateTaskInfo)
+	err := c.cc.Invoke(ctx, UserService_GetRegionUpdateTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) ApplyRegionUpdateTask(ctx context.Context, in *ApplyRegionUpdateTaskReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, UserService_ApplyRegionUpdateTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *userServiceClient) GetAdminByUsername(ctx context.Context, in *GetAdminByUsernameReq, opts ...grpc.CallOption) (*AdminInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AdminInfo)
@@ -402,6 +475,13 @@ type UserServiceServer interface {
 	DeleteCommunity(context.Context, *DeleteCommunityReq) (*common.CommonResponse, error)
 	// 用户资料
 	UpdateUserProfile(context.Context, *UpdateUserProfileReq) (*UserInfo, error)
+	// 行政区划
+	ListRegionChildren(context.Context, *ListRegionChildrenReq) (*ListRegionChildrenResp, error)
+	ListRegions(context.Context, *ListRegionsReq) (*ListRegionsResp, error)
+	MatchRegionByName(context.Context, *MatchRegionByNameReq) (*RegionMatchInfo, error)
+	CreateRegionUpdateTask(context.Context, *common.Empty) (*RegionUpdateTaskInfo, error)
+	GetRegionUpdateTask(context.Context, *GetRegionUpdateTaskReq) (*RegionUpdateTaskInfo, error)
+	ApplyRegionUpdateTask(context.Context, *ApplyRegionUpdateTaskReq) (*common.CommonResponse, error)
 	// 管理员
 	GetAdminByUsername(context.Context, *GetAdminByUsernameReq) (*AdminInfo, error)
 	ListAdmins(context.Context, *ListAdminsReq) (*ListAdminsResp, error)
@@ -477,6 +557,24 @@ func (UnimplementedUserServiceServer) DeleteCommunity(context.Context, *DeleteCo
 }
 func (UnimplementedUserServiceServer) UpdateUserProfile(context.Context, *UpdateUserProfileReq) (*UserInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateUserProfile not implemented")
+}
+func (UnimplementedUserServiceServer) ListRegionChildren(context.Context, *ListRegionChildrenReq) (*ListRegionChildrenResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRegionChildren not implemented")
+}
+func (UnimplementedUserServiceServer) ListRegions(context.Context, *ListRegionsReq) (*ListRegionsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRegions not implemented")
+}
+func (UnimplementedUserServiceServer) MatchRegionByName(context.Context, *MatchRegionByNameReq) (*RegionMatchInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method MatchRegionByName not implemented")
+}
+func (UnimplementedUserServiceServer) CreateRegionUpdateTask(context.Context, *common.Empty) (*RegionUpdateTaskInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateRegionUpdateTask not implemented")
+}
+func (UnimplementedUserServiceServer) GetRegionUpdateTask(context.Context, *GetRegionUpdateTaskReq) (*RegionUpdateTaskInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRegionUpdateTask not implemented")
+}
+func (UnimplementedUserServiceServer) ApplyRegionUpdateTask(context.Context, *ApplyRegionUpdateTaskReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApplyRegionUpdateTask not implemented")
 }
 func (UnimplementedUserServiceServer) GetAdminByUsername(context.Context, *GetAdminByUsernameReq) (*AdminInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetAdminByUsername not implemented")
@@ -853,6 +951,114 @@ func _UserService_UpdateUserProfile_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_ListRegionChildren_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRegionChildrenReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).ListRegionChildren(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_ListRegionChildren_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).ListRegionChildren(ctx, req.(*ListRegionChildrenReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_ListRegions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRegionsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).ListRegions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_ListRegions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).ListRegions(ctx, req.(*ListRegionsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_MatchRegionByName_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MatchRegionByNameReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).MatchRegionByName(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_MatchRegionByName_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).MatchRegionByName(ctx, req.(*MatchRegionByNameReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_CreateRegionUpdateTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(common.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).CreateRegionUpdateTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_CreateRegionUpdateTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).CreateRegionUpdateTask(ctx, req.(*common.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_GetRegionUpdateTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRegionUpdateTaskReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetRegionUpdateTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetRegionUpdateTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetRegionUpdateTask(ctx, req.(*GetRegionUpdateTaskReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_ApplyRegionUpdateTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApplyRegionUpdateTaskReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).ApplyRegionUpdateTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_ApplyRegionUpdateTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).ApplyRegionUpdateTask(ctx, req.(*ApplyRegionUpdateTaskReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UserService_GetAdminByUsername_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetAdminByUsernameReq)
 	if err := dec(in); err != nil {
@@ -1111,6 +1317,30 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateUserProfile",
 			Handler:    _UserService_UpdateUserProfile_Handler,
+		},
+		{
+			MethodName: "ListRegionChildren",
+			Handler:    _UserService_ListRegionChildren_Handler,
+		},
+		{
+			MethodName: "ListRegions",
+			Handler:    _UserService_ListRegions_Handler,
+		},
+		{
+			MethodName: "MatchRegionByName",
+			Handler:    _UserService_MatchRegionByName_Handler,
+		},
+		{
+			MethodName: "CreateRegionUpdateTask",
+			Handler:    _UserService_CreateRegionUpdateTask_Handler,
+		},
+		{
+			MethodName: "GetRegionUpdateTask",
+			Handler:    _UserService_GetRegionUpdateTask_Handler,
+		},
+		{
+			MethodName: "ApplyRegionUpdateTask",
+			Handler:    _UserService_ApplyRegionUpdateTask_Handler,
 		},
 		{
 			MethodName: "GetAdminByUsername",

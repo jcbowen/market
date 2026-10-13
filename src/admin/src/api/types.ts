@@ -399,6 +399,10 @@ export interface Community {
   province: string
   city: string
   district: string
+  /** 省/市/区行政区划代码（来自区划选择器，历史数据允许为空） */
+  province_code?: string
+  city_code?: string
+  district_code?: string
   allow_outside_delivery: boolean
   sort: number
   status: number
