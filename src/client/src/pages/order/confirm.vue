@@ -1,7 +1,44 @@
 <template>
   <view class="confirm-page">
-    <!-- 收货地址 -->
-    <view class="address-card" @click="goAddressList">
+    <!-- 配送方式：社区自提 / 送货上门 -->
+    <view class="delivery-card">
+      <view
+        :class="['delivery-option', deliveryType === DELIVERY_TYPE_PICKUP ? 'active' : '']"
+        @click="deliveryType = DELIVERY_TYPE_PICKUP"
+      >
+        <u-icon
+          :name="deliveryType === DELIVERY_TYPE_PICKUP ? 'checkmark-circle-fill' : 'circle'"
+          size="18"
+          :color="deliveryType === DELIVERY_TYPE_PICKUP ? '#07c160' : '#cccccc'"
+        />
+        <text class="delivery-option-text">社区自提</text>
+      </view>
+      <view
+        :class="['delivery-option', deliveryType === DELIVERY_TYPE_DELIVERY ? 'active' : '']"
+        @click="deliveryType = DELIVERY_TYPE_DELIVERY"
+      >
+        <u-icon
+          :name="deliveryType === DELIVERY_TYPE_DELIVERY ? 'checkmark-circle-fill' : 'circle'"
+          size="18"
+          :color="deliveryType === DELIVERY_TYPE_DELIVERY ? '#07c160' : '#cccccc'"
+        />
+        <text class="delivery-option-text">送货上门</text>
+      </view>
+    </view>
+
+    <!-- 自提点信息（社区自提时展示，替代收货地址卡） -->
+    <view v-if="deliveryType === DELIVERY_TYPE_PICKUP" class="address-card">
+      <view class="address-info">
+        <view class="address-top">
+          <text class="name">{{ userStore.communityInfo?.name || '当前社区' }}</text>
+        </view>
+        <text class="address-text">{{ userStore.communityInfo?.address || '社区地址暂未配置' }}</text>
+        <text class="address-tip">商品备好后凭取货信息到点自提</text>
+      </view>
+    </view>
+
+    <!-- 收货地址（送货上门时展示） -->
+    <view v-else class="address-card" @click="goAddressList">
       <view v-if="selectedAddress" class="address-info">
         <view class="address-top">
           <text class="name">{{ selectedAddress.contact_name }}</text>
@@ -47,6 +84,14 @@
         <text class="extra-value">{{ couponText }}</text>
         <u-icon name="arrow-right" size="14" color="#999999" />
       </view>
+      <view v-if="deliveryType === DELIVERY_TYPE_DELIVERY" class="extra-item">
+        <text>配送费</text>
+        <text class="extra-value" :class="{ 'discount-value': false }">{{ formatPrice(deliveryFee) }}</text>
+      </view>
+      <view v-else class="extra-item">
+        <text>配送费</text>
+        <text class="extra-value">免运费</text>
+      </view>
       <view class="extra-item" @click="onSelectChannel">
         <text>支付方式</text>
         <text class="extra-value">{{ selectedChannelName }}</text>
@@ -66,14 +111,55 @@
     <!-- 底部结算 -->
     <view class="footer-bar">
       <view class="total-wrap">
-        <text class="total-label">合计:</text>
-        <text class="total-price">{{ formatPrice(payAmount) }}</text>
-        <text v-if="couponDiscount > 0" class="discount-tag">已优惠 {{ formatPrice(couponDiscount) }}</text>
+        <view class="total-line">
+          <text class="total-label">合计:</text>
+          <text class="total-price">{{ formatPrice(payAmount) }}</text>
+          <text v-if="totalDiscount > 0" class="discount-tag">已优惠 {{ formatPrice(totalDiscount) }}</text>
+        </view>
+        <text v-if="belowMinAmount > 0" class="min-order-tip">还差 {{ formatPrice(belowMinAmount) }} 起送</text>
       </view>
       <view class="submit-btn">
-        <u-button type="success" text="提交订单" :loading="submitting" @click="onSubmit" />
+        <u-button
+          type="success"
+          text="提交订单"
+          :loading="submitting"
+          :disabled="belowMinAmount > 0"
+          @click="onSubmit"
+        />
       </view>
     </view>
+
+    <!-- 优惠券选择弹窗（ActionSheet 上限 6 项，券多时不可用，改用弹窗列表） -->
+    <u-popup :show="couponPopupVisible" mode="bottom" :round="16" @close="couponPopupVisible = false">
+      <view class="coupon-popup">
+        <view class="coupon-popup-header">
+          <text class="coupon-popup-title">选择优惠券</text>
+          <u-icon name="close" size="20" color="#999999" @click="couponPopupVisible = false" />
+        </view>
+        <scroll-view scroll-y class="coupon-popup-body">
+          <view class="coupon-option" @click="onPickCoupon(null)">
+            <text class="coupon-option-name">暂不使用</text>
+          </view>
+          <view
+            v-for="coupon in validCoupons"
+            :key="coupon.id"
+            class="coupon-option"
+            @click="onPickCoupon(coupon)"
+          >
+            <view class="coupon-option-main">
+              <text class="coupon-option-name">{{ coupon.name }}</text>
+              <text class="coupon-option-desc">{{ couponTitle(coupon) }}，有效期至 {{ formatDate(coupon.end_time) }}</text>
+            </view>
+            <u-icon
+              v-if="selectedCoupon?.id === coupon.id"
+              name="checkmark"
+              size="18"
+              color="#07c160"
+            />
+          </view>
+        </scroll-view>
+      </view>
+    </u-popup>
   </view>
 </template>
 
@@ -81,16 +167,20 @@
 import { ref, computed } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
+import { useCartStore } from '@/stores/cart'
 import { getAddressList } from '@/api/user'
-import { getCart } from '@/api/cart'
+import { getCart, removeCartItem } from '@/api/cart'
 import { getFullReductions, getProductDetail, getSkuById } from '@/api/product'
 import { createOrder } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
-import { formatPrice } from '@/utils/format'
+import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goAddressList, goOrderDetail, goLogin } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
+import { removeLocalCartItem } from '@/utils/localCart'
+import { calcCouponDiscount, couponTitle, isCouponExpired } from '@/utils/coupon'
+import { DELIVERY_TYPE_PICKUP, DELIVERY_TYPE_DELIVERY } from '@/utils/order'
 import type { Address, FullReduction, PaymentChannel, UserCoupon } from '@/api/types'
 
 /** 结算页商品展示结构（购物车/直购中间态，无订单侧 id/total_price 字段） */
@@ -105,36 +195,62 @@ interface SettleItem {
 }
 
 const userStore = useUserStore()
+const cartStore = useCartStore()
 const addresses = ref<Address[]>([])
 const orderItems = ref<SettleItem[]>([])
 const remark = ref('')
 const submitting = ref(false)
+/** 结算来源的购物车项 ID（下单成功后据此清理服务端购物车） */
 const cartItemIds = ref<number[]>([])
 const productId = ref(0)
 const skuId = ref(0)
 const quantity = ref(1)
+/** 配送方式：1 社区自提 2 送货上门，默认自提（无运费、无起送门槛） */
+const deliveryType = ref<1 | 2>(DELIVERY_TYPE_PICKUP)
 
+// 优先使用用户在地址列表页选择的地址，其次默认地址（避免选择动作无效）
 const selectedAddress = computed(() => {
-  return addresses.value.find((item) => item.is_default) || addresses.value[0]
+  const picked = addresses.value.find((item) => item.id === userStore.addressInfo?.id)
+  return picked || addresses.value.find((item) => item.is_default) || addresses.value[0]
 })
 
 const totalAmount = computed(() => {
   return orderItems.value.reduce((sum, item) => sum + item.price * item.quantity, 0)
 })
 
+// 社区配送费/起送金额：proto 为 omitempty，值为 0 时字段缺省，必须 ?? 0
+const deliveryFee = computed(() => {
+  if (deliveryType.value !== DELIVERY_TYPE_DELIVERY) return 0
+  return userStore.communityInfo?.delivery_fee ?? 0
+})
+
+const minOrderAmount = computed(() => {
+  if (deliveryType.value !== DELIVERY_TYPE_DELIVERY) return 0
+  return userStore.communityInfo?.min_order_amount ?? 0
+})
+
+/** 配送单未达起送门槛的差额，> 0 时禁用提交（校验前置，替代后端报错） */
+const belowMinAmount = computed(() => {
+  if (minOrderAmount.value <= 0 || totalAmount.value >= minOrderAmount.value) return 0
+  return minOrderAmount.value - totalAmount.value
+})
+
 const channels = ref<PaymentChannel[]>([])
 const selectedChannel = ref<PaymentChannel | null>(null)
 const selectedCoupon = ref<UserCoupon | null>(null)
 const fullReductions = ref<FullReduction[]>([])
+const couponPopupVisible = ref(false)
+const validCoupons = ref<UserCoupon[]>([])
 
 const couponText = computed(() => {
   if (!selectedCoupon.value) return '暂不使用'
-  return `满${formatPrice(selectedCoupon.value.threshold)}减${formatPrice(selectedCoupon.value.value)}`
+  return couponTitle(selectedCoupon.value)
 })
 
 /**
  * 计算当前订单可享的满减优惠
- * 规则与后端一致：在生效且满足门槛的满减活动中取减免金额最大的一项，不超过商品总额
+ * 规则与后端一致（service/order.go calculateFullReduction）：
+ * 在生效且满足门槛的满减活动中取减免金额最大的一项，不超过商品总额
  */
 const fullReductionDiscount = computed(() => {
   const communityId = userStore.communityInfo?.id
@@ -159,14 +275,22 @@ const fullReductionText = computed(() => {
   return `- ${formatPrice(fullReductionDiscount.value)}`
 })
 
+// 券抵扣按类型计算，与后端 calculateDiscount 逐行一致（utils/coupon.ts 有注释锚定）
 const couponDiscount = computed(() => {
-  if (!selectedCoupon.value) return 0
-  if (totalAmount.value < selectedCoupon.value.threshold) return 0
-  return Math.min(totalAmount.value, selectedCoupon.value.value)
+  return calcCouponDiscount(totalAmount.value, selectedCoupon.value)
 })
 
+/**
+ * 实付金额：与后端 service/order.go CreateOrder 的
+ * payAmount = totalAmount + deliveryFee - fullReductionAmount - discountAmount（负数取 0）保持一致
+ */
 const payAmount = computed(() => {
-  return Math.max(0, totalAmount.value - fullReductionDiscount.value - couponDiscount.value)
+  return Math.max(0, totalAmount.value + deliveryFee.value - fullReductionDiscount.value - couponDiscount.value)
+})
+
+/** 合计优惠展示（满减 + 券，不含运费） */
+const totalDiscount = computed(() => {
+  return fullReductionDiscount.value + couponDiscount.value
 })
 
 const selectedChannelName = computed(() => {
@@ -221,14 +345,15 @@ async function loadItems() {
 }
 
 /**
- * 从购物车加载所有选中商品
- * 用于未携带 cartItemIds 的结算入口（如本地购物车登录同步后结算）
+ * 从购物车加载全部选中商品（未携带 cartItemIds 的结算入口兜底路径）
+ * 选中项的 id 回填到 cartItemIds，保证下单成功后能清理购物车
  */
 async function loadSelectedCartItems() {
   try {
     const res = await getCart(userStore.communityInfo?.id)
     const cartItems = res.data?.items || []
     const selected = cartItems.filter((item) => item.selected)
+    cartItemIds.value = selected.map((item) => item.id).filter((id) => id > 0)
     orderItems.value = selected.map((item) => ({
       product_id: item.product_id,
       product_name: item.product_name,
@@ -244,7 +369,7 @@ async function loadSelectedCartItems() {
 }
 
 /**
- * 从购物车加载选中商品
+ * 从购物车按 URL 参数加载选中商品
  */
 async function loadCartItems() {
   try {
@@ -331,35 +456,34 @@ async function loadFullReductions() {
 }
 
 /**
- * 选择优惠券
- * 加载当前用户未使用且满足门槛的优惠券列表，使用 ActionSheet 选择
+ * 打开优惠券选择弹窗
+ * 仅加载未使用且未过期、满足门槛的优惠券
  */
 async function onSelectCoupon() {
   try {
     const res = await getUserCoupons({ status: 1 })
     const list = res.data?.list || []
-    const validList = list.filter((c) => totalAmount.value >= c.threshold)
-    if (validList.length === 0) {
-      uni.showToast({ title: '暂无可用优惠券', icon: 'none' })
-      return
-    }
-    const itemList = validList.map((c) => `满${formatPrice(c.threshold)}减${formatPrice(c.value)}`)
-    itemList.unshift('暂不使用')
-    const coupons = [null, ...validList]
-    uni.showActionSheet({
-      itemList,
-      success: (res) => {
-        selectedCoupon.value = coupons[res.tapIndex] || null
-      },
-    })
+    validCoupons.value = list.filter(
+      (c) => totalAmount.value >= c.threshold && !isCouponExpired(c),
+    )
+    couponPopupVisible.value = true
   } catch {
     uni.showToast({ title: '加载优惠券失败', icon: 'none' })
   }
 }
 
 /**
+ * 弹窗内选择优惠券
+ * @param coupon 优惠券，null 表示不使用
+ */
+function onPickCoupon(coupon: UserCoupon | null) {
+  selectedCoupon.value = coupon
+  couponPopupVisible.value = false
+}
+
+/**
  * 选择支付方式
- * 当前仅开启货到付款时自动选中，多渠道时弹出 ActionSheet
+ * 当前仅开启货到付款时自动选中，多渠道时弹出 ActionSheet（渠道数有限，暂不超 6 项上限）
  */
 function onSelectChannel() {
   if (!channels.value.length) {
@@ -371,7 +495,29 @@ function onSelectChannel() {
     success: (res) => {
       selectedChannel.value = channels.value[res.tapIndex]
     },
+    fail: () => {
+      // 用户取消或超限失败，静默即可
+    },
   })
+}
+
+/**
+ * 下单成功后清理购物车：
+ * 删除本次结算对应的服务端购物车项，并同步清理本地购物车与角标
+ */
+async function clearSettledCart() {
+  const communityId = userStore.communityInfo?.id
+  for (const id of cartItemIds.value) {
+    try {
+      await removeCartItem(id)
+    } catch {
+      // 单条删除失败不阻断支付流程，购物车残留可手动删除
+    }
+  }
+  for (const item of orderItems.value) {
+    removeLocalCartItem(item.sku_id, communityId)
+  }
+  cartStore.syncCartCount()
 }
 
 /**
@@ -380,7 +526,8 @@ function onSelectChannel() {
  * 统一跳转订单详情，便于用户在待支付状态下重新支付
  */
 async function onSubmit() {
-  if (!selectedAddress.value) {
+  // 地址仅送货上门时必填，自提无需收货地址
+  if (deliveryType.value === DELIVERY_TYPE_DELIVERY && !selectedAddress.value) {
     uni.showToast({ title: '请选择收货地址', icon: 'none' })
     return
   }
@@ -395,7 +542,9 @@ async function onSubmit() {
   submitting.value = true
   try {
     const res = await createOrder({
-      address_id: selectedAddress.value.id,
+      delivery_type: deliveryType.value,
+      // 自提单地址传 0，后端对 AddressId > 0 才查询地址
+      address_id: deliveryType.value === DELIVERY_TYPE_DELIVERY ? selectedAddress.value!.id : 0,
       items: orderItems.value.map((item) => ({
         product_id: item.product_id,
         sku_id: item.sku_id,
@@ -403,11 +552,15 @@ async function onSubmit() {
       })),
       remark: remark.value,
       coupon_id: selectedCoupon.value?.coupon_id,
+      cart_item_ids: cartItemIds.value,
     })
     if (!res.data) {
       uni.showToast({ title: '下单失败', icon: 'none' })
       return
     }
+    // 下单成功后清理购物车与临时地址选择，避免重复下单或沿用上次选择
+    await clearSettledCart()
+    userStore.setAddress(null)
     const outcome = await payOrder(res.data.id, selectedChannel.value.channel)
     notifyPayOutcome(outcome)
     goOrderDetail(res.data.id)
@@ -422,8 +575,33 @@ async function onSubmit() {
 <style scoped>
 .confirm-page {
   min-height: 100vh;
-  padding-bottom: 120rpx;
+  padding-bottom: 140rpx;
   background-color: #f5f5f5;
+}
+
+.delivery-card {
+  display: flex;
+  background-color: #ffffff;
+}
+
+.delivery-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  padding: 24rpx 0;
+  font-size: 28rpx;
+  color: #666666;
+}
+
+.delivery-option.active {
+  color: #07c160;
+  font-weight: bold;
+}
+
+.delivery-option-text {
+  font-size: 28rpx;
 }
 
 .address-card {
@@ -431,6 +609,7 @@ async function onSubmit() {
   align-items: center;
   padding: 30rpx;
   background-color: #ffffff;
+  border-top: 1rpx solid #f5f5f5;
 }
 
 .address-info {
@@ -459,6 +638,13 @@ async function onSubmit() {
   font-size: 26rpx;
   color: #666666;
   line-height: 1.4;
+}
+
+.address-tip {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #999999;
 }
 
 .address-empty {
@@ -570,6 +756,11 @@ async function onSubmit() {
   overflow: hidden;
 }
 
+.total-line {
+  display: flex;
+  align-items: center;
+}
+
 .total-label {
   font-size: 28rpx;
   color: #666666;
@@ -591,6 +782,13 @@ async function onSubmit() {
   background-color: rgba(255, 77, 79, 0.1);
 }
 
+.min-order-tip {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #ff9800;
+}
+
 .submit-btn {
   flex-shrink: 0;
   width: 200rpx;
@@ -599,5 +797,52 @@ async function onSubmit() {
 
 .submit-btn .u-button {
   width: 100%;
+}
+
+.coupon-popup {
+  padding: 30rpx 30rpx calc(30rpx + env(safe-area-inset-bottom));
+}
+
+.coupon-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20rpx;
+}
+
+.coupon-popup-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
+.coupon-popup-body {
+  max-height: 60vh;
+}
+
+.coupon-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 20rpx;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+
+.coupon-option-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.coupon-option-name {
+  display: block;
+  font-size: 28rpx;
+  color: #333333;
+}
+
+.coupon-option-desc {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #999999;
 }
 </style>

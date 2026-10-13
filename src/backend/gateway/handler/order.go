@@ -3,6 +3,7 @@ package handler
 import (
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -20,6 +21,9 @@ type OrderHandler struct {
 	orderClient   order.OrderServiceClient
 	userClient    user.UserServiceClient
 	paymentClient payment.PaymentServiceClient
+	// orderTimeoutSec 订单超时未支付时间（秒），与 order-service 读同一份配置，
+	// 用于详情响应生成待支付订单的 expire_at
+	orderTimeoutSec int
 }
 
 // NewOrderHandler 创建订单处理器
@@ -27,11 +31,20 @@ type OrderHandler struct {
 //   - orderClient: order-service gRPC 客户端
 //   - userClient: user-service gRPC 客户端
 //   - paymentClient: payment-service gRPC 客户端，用于订单详情展示支付方式
+//   - orderTimeoutSec: 订单超时未支付时间（秒）
 //
 // 返回值：
 //   - *OrderHandler: 订单处理器实例
-func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient, paymentClient payment.PaymentServiceClient) *OrderHandler {
-	return &OrderHandler{orderClient: orderClient, userClient: userClient, paymentClient: paymentClient}
+func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient, paymentClient payment.PaymentServiceClient, orderTimeoutSec int) *OrderHandler {
+	if orderTimeoutSec <= 0 {
+		orderTimeoutSec = 1800
+	}
+	return &OrderHandler{
+		orderClient:     orderClient,
+		userClient:      userClient,
+		paymentClient:   paymentClient,
+		orderTimeoutSec: orderTimeoutSec,
+	}
 }
 
 // CreateOrderReq 创建订单请求
@@ -112,26 +125,32 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		items := make([]gin.H, 0)
 		if err == nil && detail != nil {
 			for _, item := range detail.Items {
+				// 键名与购物车/商品接口及前端 types.ts 的 OrderItem 保持一致
 				items = append(items, gin.H{
-					"product_id":   item.ProductId,
-					"product_name": item.ProductName,
-					"sku_id":       item.SkuId,
-					"sku_name":     item.SpecName,
-					"price":        item.Price,
-					"quantity":     item.Quantity,
-					"image":        item.ProductImage,
+					"id":            item.Id,
+					"product_id":    item.ProductId,
+					"product_name":  item.ProductName,
+					"sku_id":        item.SkuId,
+					"spec_name":     item.SpecName,
+					"price":         item.Price,
+					"quantity":      item.Quantity,
+					"total_price":   item.TotalPrice,
+					"product_image": item.ProductImage,
 				})
 			}
 		}
 		list = append(list, gin.H{
-			"id":           o.Id,
-			"order_no":     o.OrderNo,
-			"status":       o.Status,
-			"status_text":  clientOrderStatusText(o.Status),
-			"total_amount": o.TotalAmount,
-			"pay_amount":   o.PayAmount,
-			"items":        items,
-			"created_at":   o.CreatedAt,
+			"id":            o.Id,
+			"order_no":      o.OrderNo,
+			"status":        o.Status,
+			"status_text":   clientOrderStatusText(o.Status, o.DeliveryType),
+			"delivery_type": o.DeliveryType,
+			"total_amount":  o.TotalAmount,
+			"pay_amount":    o.PayAmount,
+			"items":         items,
+			"created_at":    o.CreatedAt,
+			// 待支付订单的超时截止时间，供前端展示倒计时（与 order-service 超时取消同一配置）
+			"expire_at": orderExpireAt(o.Status, o.CreatedAt, h.orderTimeoutSec),
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
@@ -169,7 +188,13 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"tag":           "",
 		"is_default":    false,
 	}
-	if o != nil && o.ContactName != "" {
+	if o != nil && o.DeliveryType == 1 {
+		// 自提单：地址卡展示自提点信息（社区名称 + 社区地址）
+		if community, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: o.CommunityId}); err == nil && community != nil {
+			address["contact_name"] = community.Name
+			address["detail"] = community.Address
+		}
+	} else if o != nil && o.ContactName != "" {
 		address["contact_name"] = o.ContactName
 		address["contact_phone"] = o.ContactPhone
 		address["detail"] = o.ContactAddress
@@ -177,16 +202,17 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 	items := make([]gin.H, 0, len(resp.Items))
 	for _, item := range resp.Items {
+		// 键名与购物车/商品接口及前端 types.ts 的 OrderItem 保持一致
 		items = append(items, gin.H{
-			"id":           item.Id,
-			"product_id":   item.ProductId,
-			"product_name": item.ProductName,
-			"sku_id":       item.SkuId,
-			"sku_name":     item.SpecName,
-			"price":        item.Price,
-			"quantity":     item.Quantity,
-			"total_price":  item.TotalPrice,
-			"image":        item.ProductImage,
+			"id":            item.Id,
+			"product_id":    item.ProductId,
+			"product_name":  item.ProductName,
+			"sku_id":        item.SkuId,
+			"spec_name":     item.SpecName,
+			"price":         item.Price,
+			"quantity":      item.Quantity,
+			"total_price":   item.TotalPrice,
+			"product_image": item.ProductImage,
 		})
 	}
 
@@ -194,12 +220,15 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"id":              o.Id,
 		"order_no":        o.OrderNo,
 		"status":          o.Status,
-		"status_text":     clientOrderStatusText(o.Status),
+		"status_text":     clientOrderStatusText(o.Status, o.DeliveryType),
 		"total_amount":    o.TotalAmount,
 		"discount_amount": o.DiscountAmount,
 		"delivery_fee":    o.DeliveryFee,
 		"pay_amount":      o.PayAmount,
 		"delivery_type":   o.DeliveryType,
+		"delivery_time":   o.DeliveryTime,
+		"cancel_reason":   o.CancelReason,
+		"cancel_time":     o.CancelTime,
 		"pay_type_text":   h.orderPayTypeText(c, o.Id),
 		"items":           items,
 		"address":         address,
@@ -208,8 +237,30 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"paid_at":         o.PayTime,
 		"delivered_at":    o.DeliverTime,
 		"received_at":     o.CompleteTime,
+		// 待支付订单的超时截止时间，供前端展示倒计时（与 order-service 超时取消同一配置）
+		"expire_at": orderExpireAt(o.Status, o.CreatedAt, h.orderTimeoutSec),
 	}
 	response.Success(c, data)
+}
+
+// orderExpireAt 计算待支付订单的超时截止时间
+// 仅 status=1（待支付）时返回 created_at + order_timeout，其余状态返回空串
+// 参数：
+//   - status: 订单状态
+//   - createdAt: 订单创建时间（格式 2006-01-02 15:04:05）
+//   - orderTimeoutSec: 超时秒数
+//
+// 返回值：
+//   - string: 截止时间字符串，非待支付订单返回空串
+func orderExpireAt(status int32, createdAt string, orderTimeoutSec int) string {
+	if status != 1 || createdAt == "" {
+		return ""
+	}
+	created, err := time.ParseInLocation("2006-01-02 15:04:05", createdAt, time.Local)
+	if err != nil {
+		return ""
+	}
+	return created.Add(time.Duration(orderTimeoutSec) * time.Second).Format("2006-01-02 15:04:05")
 }
 
 // orderPayTypeText 查询订单支付方式文案
@@ -391,20 +442,29 @@ func (h *OrderHandler) GetRefundConfig(c *gin.Context) {
 }
 
 // clientOrderStatusText 将订单状态码转换为 C 端展示文案
+// 注意：status 入参只会是业务值域 1-8（9/90 是查询聚合虚拟状态，100/101 是调度器
+// 处理中状态且会被回滚，均不会作为订单实际状态返回给 C 端）
 // 参数：
 //   - status: 状态码
+//   - deliveryType: 配送方式（1 自提 2 配送），用于区分自提单的"待自提"文案
 //
 // 返回值：
 //   - string: 状态中文描述
-func clientOrderStatusText(status int32) string {
+func clientOrderStatusText(status, deliveryType int32) string {
 	switch status {
 	case 1:
 		return "待支付"
 	case 2:
+		if deliveryType == 1 {
+			return "待自提"
+		}
 		return "待发货"
 	case 3:
 		return "备货中"
 	case 4:
+		if deliveryType == 1 {
+			return "待自提"
+		}
 		return "待收货"
 	case 5:
 		return "已完成"
@@ -414,8 +474,6 @@ func clientOrderStatusText(status int32) string {
 		return "退款中"
 	case 8:
 		return "已退款"
-	case 9:
-		return "退款/售后"
 	default:
 		return "未知"
 	}

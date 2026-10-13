@@ -46,7 +46,6 @@ import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { phoneLogin } from '@/api/auth'
 import { addCartItem } from '@/api/cart'
-import { getCommunityList } from '@/api/user'
 import { getAllLocalCartItems, clearLocalCart } from '@/utils/localCart'
 
 const userStore = useUserStore()
@@ -121,18 +120,9 @@ async function handleLoginSuccess(data?: {
     community_name: user.community_name,
   })
 
-  // 如果登录响应中缺少社区名称，但用户已绑定社区，则拉取社区列表补全名称
-  if (user.community_id && !user.community_name) {
-    try {
-      const res = await getCommunityList({ page: 1, page_size: 100 })
-      const matched = res.data?.list?.find((item) => item.id === user.community_id)
-      if (matched) {
-        userStore.setCommunity(matched)
-      }
-    } catch {
-      // 补全失败不影响登录流程
-    }
-  }
+  // 拉取用户绑定社区的完整信息（含 delivery_fee/min_order_amount），
+  // 无条件执行：登录响应里的 community_name 只够展示，缺运费与起送门槛字段
+  await userStore.syncBoundCommunity()
 
   // 登录成功后，将本地购物车数据同步到服务端
   await syncLocalCartToServer()

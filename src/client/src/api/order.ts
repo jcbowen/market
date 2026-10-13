@@ -9,10 +9,16 @@ import type { Order, Address } from './types'
 
 /** 创建订单参数 */
 export interface CreateOrderParams {
+  /** 配送方式：1 社区自提 2 送货上门 */
+  delivery_type: 1 | 2
+  /** 收货地址 ID；自提单传 0 */
   address_id: number
+  /** 期望配送时间（可选） */
+  delivery_time?: string
   items: { product_id: number; sku_id: number; quantity: number }[]
   coupon_id?: number
   remark?: string
+  /** 结算来源的购物车项 ID（下单成功后前端据此清理购物车） */
   cart_item_ids?: number[]
 }
 
@@ -48,9 +54,10 @@ export function getOrderDetail(id: number) {
 /**
  * 取消订单
  * @param id 订单 ID
+ * @param reason 取消原因（可选）
  */
-export function cancelOrder(id: number) {
-  return put<Order>(`/orders/${id}/cancel`)
+export function cancelOrder(id: number, reason?: string) {
+  return put<Order>(`/orders/${id}/cancel`, { reason } as Record<string, unknown>)
 }
 
 /** 申请退款参数 */

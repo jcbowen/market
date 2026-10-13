@@ -104,14 +104,17 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	// 分别计算满减与优惠券优惠，两者均按商品总价校验门槛并可叠加
 	fullReductionAmount := s.calculateFullReduction(ctx, req.CommunityId, totalAmount)
 
+	// 优惠券是用户主动选择，校验失败（券不存在/已使用/门槛不满足）直接中断下单，
+	// 避免页面展示优惠与订单实付不符的静默失败
 	var discountAmount float64
 	var userCouponID int64
 	if req.CouponId > 0 {
 		couponDiscount, ucID, err := s.applyCoupon(ctx, req.UserId, req.CouponId, totalAmount)
-		if err == nil {
-			discountAmount = couponDiscount
-			userCouponID = ucID
+		if err != nil {
+			return nil, bizerr.New(codes.FailedPrecondition, err.Error())
 		}
+		discountAmount = couponDiscount
+		userCouponID = ucID
 	}
 
 	payAmount := totalAmount + deliveryFee - fullReductionAmount - discountAmount
@@ -222,6 +225,14 @@ func (s *OrderService) GetOrder(ctx context.Context, id, userID int64) (*model.O
 	return &o, items, logs, nil
 }
 
+// 查询专用虚拟状态：仅在 ListOrders 入参中用于聚合筛选，不落库、不参与流转
+//   - 9  → 退款/售后聚合（7 退款中、8 已退款）
+//   - 90 → 待发货聚合（2 已支付、3 备货中）
+const (
+	queryStatusRefundAggregate   int32 = 9
+	queryStatusShippingAggregate int32 = 90
+)
+
 // ListOrders 查询订单列表
 // 参数：
 //   - ctx: 上下文
@@ -245,7 +256,12 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
 	}
-	if req.Status > 0 {
+	switch {
+	case req.Status == queryStatusRefundAggregate:
+		db = db.Where("status IN ?", []int32{7, 8})
+	case req.Status == queryStatusShippingAggregate:
+		db = db.Where("status IN ?", []int32{2, 3})
+	case req.Status > 0:
 		db = db.Where("status = ?", req.Status)
 	}
 

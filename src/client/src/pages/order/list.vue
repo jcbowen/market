@@ -34,6 +34,10 @@
         <view class="order-total">
           <text>合计: {{ formatPrice(order.pay_amount) }}</text>
         </view>
+        <!-- 待支付展示剩余支付时间，归零前提醒用户及时支付 -->
+        <view v-if="order.status === 1 && remainingText(order)" class="order-expire">
+          <text>{{ remainingText(order) }}后未支付将自动取消</text>
+        </view>
         <view class="order-actions">
           <u-button
             v-if="order.status === 1"
@@ -49,11 +53,11 @@
             @click.stop="onCancel(order.id)"
           />
           <u-button
-            v-if="order.status === 4"
+            v-if="canReceive(order)"
             type="success"
             size="small"
-            text="确认收货"
-            @click.stop="onReceive(order.id)"
+            :text="receiveButtonText(order)"
+            @click.stop="onReceive(order)"
           />
           <u-button
             v-if="[2, 3, 4].includes(order.status)"
@@ -68,28 +72,36 @@
 
     <!-- 申请退款弹窗 -->
     <RefundModal v-model:show="refundVisible" :order-id="refundOrderId" @success="refreshList" />
+    <!-- 取消订单弹窗（需选择原因） -->
+    <CancelOrderModal v-model:show="cancelVisible" :order-id="cancelOrderId" @success="refreshList" />
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { onLoad, onShow } from '@dcloudio/uni-app'
+import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getOrders, cancelOrder, confirmReceive } from '@/api/order'
+import { getOrders, confirmReceive } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderDetail, goLogin } from '@/utils/navigate'
+import { canReceive, receiveButtonText } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
+import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
 
 const userStore = useUserStore()
 const refundVisible = ref(false)
 const refundOrderId = ref(0)
+const cancelVisible = ref(false)
+const cancelOrderId = ref(0)
+// tab value 说明：0 全部；9 = 退款/售后聚合（后端翻译为 7 退款中 + 8 已退款）；
+// 90 = 待发货聚合（后端翻译为 2 已支付 + 3 备货中）；均为查询专用虚拟状态，不落库
 const tabs = ref([
   { name: '全部', value: 0 },
   { name: '待支付', value: 1 },
-  { name: '待发货', value: 2 },
+  { name: '待发货', value: 90 },
   { name: '待收货', value: 4 },
   { name: '已完成', value: 5 },
   { name: '退款/售后', value: 9 },
@@ -99,6 +111,9 @@ const orders = ref<Order[]>([])
 const page = ref(1)
 const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
+/** 倒计时基准时间（每分钟校准一次，避免列表每秒重渲染） */
+const nowTick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | null = null
 
 onLoad((query) => {
   const status = Number(query?.status) || 0
@@ -112,7 +127,39 @@ onShow(() => {
     return
   }
   resetAndReload()
+  // 列表待支付剩余时间每分钟刷新一次
+  if (!tickTimer) {
+    tickTimer = setInterval(() => {
+      nowTick.value = Date.now()
+    }, 60 * 1000)
+  }
 })
+
+onHide(() => {
+  if (tickTimer) {
+    clearInterval(tickTimer)
+    tickTimer = null
+  }
+})
+
+/**
+ * 计算待支付订单剩余支付时间的展示文案
+ * @param order 订单（status=1 时 expire_at 有值）
+ * @returns 如"29 分钟"；已过期或无截止时间返回空串
+ */
+function remainingText(order: Order): string {
+  if (order.status !== 1 || !order.expire_at) return ''
+  const expire = new Date(order.expire_at.replace(' ', 'T')).getTime()
+  if (Number.isNaN(expire)) return ''
+  const remainMs = expire - nowTick.value
+  if (remainMs <= 0) return ''
+  const minutes = Math.ceil(remainMs / (60 * 1000))
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60)
+    return `${hours} 小时 ${minutes % 60} 分钟`
+  }
+  return `${minutes} 分钟`
+}
 
 /**
  * 重置分页状态并回到第 1 页刷新（切 tab / onShow 共用）
@@ -212,31 +259,35 @@ async function onPay(order: Order) {
 }
 
 /**
- * 取消订单
+ * 取消订单：打开原因选择弹窗（不可逆操作，需明确原因）
  * @param id 订单 ID
  */
-async function onCancel(id: number) {
-  try {
-    await cancelOrder(id)
-    uni.showToast({ title: '已取消', icon: 'success' })
-    resetAndReload()
-  } catch {
-    // ignore
-  }
+function onCancel(id: number) {
+  cancelOrderId.value = id
+  cancelVisible.value = true
 }
 
 /**
- * 确认收货
- * @param id 订单 ID
+ * 确认收货：二次确认后再调接口
+ * 完成后退款入口关闭，避免误触
+ * @param order 订单对象
  */
-async function onReceive(id: number) {
-  try {
-    await confirmReceive(id)
-    uni.showToast({ title: '已确认收货', icon: 'success' })
-    resetAndReload()
-  } catch {
-    // ignore
-  }
+function onReceive(order: Order) {
+  const tip = order.delivery_type === 1 ? '确认已到点自提？确认后订单将完成' : '确认已收到商品？确认后订单将完成'
+  uni.showModal({
+    title: receiveButtonText(order),
+    content: tip,
+    success: async (res) => {
+      if (!res.confirm) return
+      try {
+        await confirmReceive(order.id)
+        uni.showToast({ title: '操作成功', icon: 'success' })
+        resetAndReload()
+      } catch {
+        // request 已统一提示错误
+      }
+    },
+  })
 }
 
 /**
@@ -249,7 +300,7 @@ function onRefund(id: number) {
 }
 
 /**
- * 退款申请提交成功后回到第 1 页刷新列表
+ * 退款/取消申请提交成功后回到第 1 页刷新列表
  */
 function refreshList() {
   resetAndReload()
@@ -350,6 +401,13 @@ function refreshList() {
   padding: 16rpx 0;
   font-size: 28rpx;
   color: #333333;
+}
+
+.order-expire {
+  padding: 0 0 8rpx;
+  font-size: 22rpx;
+  color: #ff9800;
+  text-align: right;
 }
 
 .order-actions {

@@ -37,39 +37,15 @@ async function initCommunity() {
 }
 
 /**
- * 已登录时从用户信息恢复最近使用的社区
+ * 已登录时恢复最近使用的社区
+ * 本地缓存命中则直接沿用；未命中时按用户绑定的 community_id 拉取完整社区对象。
+ * 不再用字面量拼残缺 Community：那样会漏掉 delivery_fee/min_order_amount，
+ * 且被持久化后长期存在，导致结算页运费与起送门槛失效
  * @param userStore 用户状态
  */
 async function restoreLoginCommunity(userStore: ReturnType<typeof useUserStore>) {
   if (userStore.communityInfo?.id && userStore.communityInfo?.name) return
-
-  // 本地无社区缓存，先从用户信息中恢复 ID，再拉取社区名称补全信息
-  const info = userStore.userInfo
-  if (!info?.community_id) return
-
-  let communityName = info.community_name || ''
-  if (!communityName) {
-    try {
-      const res = await getCommunityList({ page: 1, page_size: 100 })
-      const list = res.data?.list || []
-      const matched = list.find((item) => item.id === info.community_id)
-      if (matched) {
-        userStore.setCommunity(matched)
-        return
-      }
-      communityName = matched?.name || ''
-    } catch {
-      // 拉取失败时回退到空名称
-    }
-  }
-
-  userStore.setCommunity({
-    id: info.community_id,
-    name: communityName,
-    address: '',
-    longitude: 0,
-    latitude: 0,
-  })
+  await userStore.syncBoundCommunity()
 }
 
 /**

@@ -121,7 +121,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	userHandler := handler.NewUserHandler(clients.UserClient)
 	productHandler := handler.NewProductHandler(clients.ProductClient)
 	cartHandler := handler.NewCartHandler(clients.CartClient)
-	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient)
+	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient, cfg.Business.OrderTimeout)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
 	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat)
 	// IP 定位：本地 GeoLite2-City 数据库，相对路径以可执行文件所在目录为基准

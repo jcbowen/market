@@ -11,7 +11,8 @@
           class="coupon-card"
         >
           <view class="coupon-left">
-            <text class="coupon-value">{{ item.value }}</text>
+            <!-- 面额按券类型展示：满减券 ¥20.00，折扣券 8.5折 -->
+            <text class="coupon-value">{{ couponValueText(item) }}</text>
             <text class="coupon-threshold">满 {{ formatPrice(item.threshold) }} 可用</text>
           </view>
           <view class="coupon-right">
@@ -36,13 +37,14 @@
           class="coupon-card used"
         >
           <view class="coupon-left">
-            <text class="coupon-value">{{ item.value }}</text>
+            <!-- 面额按券类型展示：满减券 ¥20.00，折扣券 8.5折（type=2 折扣率） -->
+            <text class="coupon-value">{{ couponValueText(item) }}</text>
             <text class="coupon-threshold">满 {{ formatPrice(item.threshold) }} 可用</text>
           </view>
           <view class="coupon-right">
             <text class="coupon-name">{{ item.name }}</text>
-            <text class="coupon-time">{{ formatDate(item.start_time) }} ~ {{ formatDate(item.end_time) }}</text>
-            <text class="coupon-status">{{ item.status === 1 ? '未使用' : '已使用' }}</text>
+            <text class="coupon-time">有效期至 {{ formatDate(item.end_time) }}</text>
+            <text class="coupon-status">{{ couponStatusText(item) }}</text>
           </view>
         </view>
       </template>
@@ -58,6 +60,7 @@ import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getCoupons, receiveCoupon, getUserCoupons } from '@/api/marketing'
 import { formatDate, formatPrice } from '@/utils/format'
+import { couponValueText, couponStatusText } from '@/utils/coupon'
 import type { Coupon, UserCoupon } from '@/api/types'
 
 const userStore = useUserStore()
@@ -116,7 +119,11 @@ async function loadData() {
     } else {
       const res = await getUserCoupons({ page: page.value, page_size: pageSize })
       const list = res.data?.list || []
-      if (seq === requestSeq) appendList(userCoupons, list)
+      if (seq !== requestSeq) return
+      // /user/coupons 后端当前返回全量不分页，直接置 nomore，
+      // 避免全量结果进入分页判断后滚动加载重复追加
+      userCoupons.value = page.value === 1 ? list : [...userCoupons.value, ...list]
+      loadStatus.value = 'nomore'
     }
   } catch {
     if (seq !== requestSeq) return
@@ -207,11 +214,6 @@ async function onReceive(id: number) {
   font-size: 48rpx;
   font-weight: bold;
   color: #ff4d4f;
-}
-
-.coupon-value::before {
-  content: '¥';
-  font-size: 24rpx;
 }
 
 .coupon-threshold {

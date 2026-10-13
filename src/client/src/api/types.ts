@@ -28,6 +28,10 @@ export interface Community {
   district_code?: string
   /** 是否允许社区外配送（false 时地址前缀锁定为本社区） */
   allow_outside_delivery: boolean
+  /** 配送费（proto omitempty，值为 0 时字段缺省，取值须用 ?? 0） */
+  delivery_fee?: number
+  /** 起送金额（proto omitempty，值为 0 时字段缺省，取值须用 ?? 0；0 表示无起送门槛） */
+  min_order_amount?: number
 }
 
 /** 收货地址 */
@@ -158,7 +162,10 @@ export interface Order {
   total_amount: number
   discount_amount: number
   delivery_fee: number
+  /** 配送方式：1 社区自提 2 送货上门 */
   delivery_type: number
+  /** 期望配送时间（自提单为空） */
+  delivery_time?: string
   pay_amount: number
   pay_type_text?: string
   items: OrderItem[]
@@ -168,6 +175,12 @@ export interface Order {
   paid_at: string
   delivered_at: string
   received_at: string
+  /** 取消原因（仅已取消订单返回） */
+  cancel_reason?: string
+  /** 取消时间（仅已取消订单返回） */
+  cancel_time?: string
+  /** 待支付订单的超时截止时间（仅 status=1 返回，用于倒计时） */
+  expire_at?: string
 }
 
 /** 优惠券 */
@@ -188,11 +201,16 @@ export interface UserCoupon {
   id: number
   coupon_id: number
   name: string
+  /** 券类型：1 满减券（value 为减免金额） 2 折扣券（value 为折扣率，如 0.85 表示 85 折） */
   type: number
+  /** 面额语义随 type 变化：满减券为减免金额，折扣券为折扣率 */
   value: number
   threshold: number
+  /** 后端未提供生效起始时间，恒为空串 */
   start_time: string
+  /** 有效期截止时间 */
   end_time: string
+  /** 使用状态：1 未使用 2 已使用（已过期用 end_time 与当前时间判断） */
   status: number
 }
 

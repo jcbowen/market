@@ -5,12 +5,15 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getUserInfo, updateCommunity } from '@/api/user'
+import { getUserInfo, updateCommunity, getCommunityById } from '@/api/user'
 import type { UserInfo, Community, Address } from '@/api/types'
 
 const TOKEN_KEY = 'access_token'
 const USER_KEY = 'user_info'
-const COMMUNITY_KEY = 'community_info'
+// v2：旧版本曾把只含 id/name/address/longitude/latitude 的残缺社区对象写进缓存，
+// 而 Community 全字段均为 proto omitempty，无法靠字段存在性判断完整性，
+// 故直接换 key 让历史缓存失效，启动时重新拉取完整对象
+const COMMUNITY_KEY = 'community_info_v2'
 const ADDRESS_KEY = 'address_info'
 
 export const useUserStore = defineStore('user', () => {
@@ -86,21 +89,29 @@ export const useUserStore = defineStore('user', () => {
 
   /**
    * 登录成功后统一写入 token 与用户信息
+   * 不在此处写 communityInfo：登录响应只带 community_id/community_name，
+   * 缺 delivery_fee/min_order_amount，写残缺对象会被持久化并导致结算页运费恒为 0，
+   * 社区信息由调用方随后 await syncBoundCommunity() 拉取完整对象写入
    * @param accessToken 访问令牌
    * @param info 用户信息
    */
   function login(accessToken: string, info: UserInfo) {
     setToken(accessToken)
     setUserInfo(info)
-    if (info.community_id && info.community_name) {
-      setCommunity({
-        id: info.community_id,
-        name: info.community_name,
-        address: '',
-        longitude: 0,
-        latitude: 0,
-      })
-    }
+  }
+
+  /**
+   * 按用户绑定的社区 ID 拉取完整社区信息并写入 store
+   * 拉取失败时保留原有 communityInfo 不覆盖（安全降级）
+   * @returns 是否成功写入完整社区对象
+   */
+  async function syncBoundCommunity(): Promise<boolean> {
+    const id = userInfo.value?.community_id
+    if (!id) return false
+    const community = await getCommunityById(id)
+    if (!community) return false
+    setCommunity(community)
+    return true
   }
 
   /**
@@ -130,12 +141,21 @@ export const useUserStore = defineStore('user', () => {
 
   /**
    * 切换当前社区
-   * 已登录时同步到服务端，未登录时仅更新本地
+   * 已登录时同步到服务端，未登录时仅更新本地。
+   * 同时刷新本地 userInfo 的社区字段：服务端绑定已变更，若本地 userInfo 仍是旧值，
+   * 下次启动 syncBoundCommunity 会按旧 ID 把用户切回原社区
    * @param community 社区信息
    */
   async function switchCommunity(community: Community) {
     if (isLogin.value) {
       await updateCommunity(community.id)
+      if (userInfo.value) {
+        setUserInfo({
+          ...userInfo.value,
+          community_id: community.id,
+          community_name: community.name,
+        })
+      }
     }
     setCommunity(community)
   }
@@ -153,6 +173,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     logout,
     fetchUserInfo,
+    syncBoundCommunity,
     switchCommunity,
   }
 })

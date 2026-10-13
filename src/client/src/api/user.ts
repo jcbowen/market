@@ -130,3 +130,22 @@ export function getCommunityList(params?: {
 }) {
   return get<PageData<Community>>('/communities', params as Record<string, unknown>)
 }
+
+/**
+ * 按 ID 获取完整社区信息
+ * 后端只有列表接口，故取列表后本地匹配。
+ * 登录响应与用户信息只携带 community_id / community_name，缺 delivery_fee、min_order_amount
+ * 等字段，而结算页运费与起送门槛依赖它们，因此凡是需要写入 store 的社区都必须走本方法，
+ * 禁止用字面量拼装残缺对象（会被持久化，导致运费恒为 0）
+ * @param id 社区 ID
+ * @returns 完整社区对象；id 为空、未匹配到或请求失败时返回 null
+ */
+export async function getCommunityById(id: number): Promise<Community | null> {
+  if (!id) return null
+  try {
+    const res = await getCommunityList({ page: 1, page_size: 100 })
+    return res.data?.list?.find((item) => item.id === id) || null
+  } catch {
+    return null
+  }
+}

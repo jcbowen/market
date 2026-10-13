@@ -16,11 +16,23 @@ import (
 	"github.com/jcbowen/market/src/backend/services/order/model"
 )
 
+// 调度器处理中状态（不占用业务状态值域 1-8，避免污染 C 端展示与查询）
+// 抢占后若处理失败会立即回滚；进程被 kill 等异常场景由 recoverStuckOrders 兜底恢复
+const (
+	// processingStatusCancel 超时取消处理中（原状态 1 待支付）
+	processingStatusCancel int32 = 100
+	// processingStatusComplete 自动完成处理中（原状态 4 配送中）
+	processingStatusComplete int32 = 101
+)
+
+// stuckRecoverAfter 处理中状态停留超过该时长视为进程异常中断，兜底恢复原状态
+const stuckRecoverAfter = 10 * time.Minute
+
 // Scheduler 订单定时任务调度器
 // 负责超时未支付订单自动取消、发货后超时自动完成
-// 采用 Redis 分布式锁 + 数据库原子抢占 + 失败重试机制
+// 采用 Redis 分布式锁 + 数据库原子抢占 + 失败回滚重试机制
 type Scheduler struct {
-	db  *mysql.Instance
+	db          *mysql.Instance
 	redisClient *redis.Client
 }
 
@@ -73,8 +85,35 @@ func (s *Scheduler) Start(ctx context.Context, orderTimeout int, autoCompleteDay
 
 // runOnce 单次执行两类的定时任务
 func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteDays int) {
+	// 兜底恢复：进程异常中断导致回滚未执行的订单，先恢复原状态再进入本轮调度
+	s.recoverStuckOrders(ctx)
 	s.cancelTimeoutOrders(ctx, orderTimeout)
 	s.autoCompleteOrders(ctx, autoCompleteDays)
+}
+
+// recoverStuckOrders 兜底扫描：将停留在处理中状态超过阈值的订单批量恢复为原状态
+// 覆盖进程被 kill 导致 claimOrders 后回滚逻辑未执行的场景
+// 参数：
+//   - ctx: 上下文
+func (s *Scheduler) recoverStuckOrders(ctx context.Context) {
+	deadline := time.Now().Add(-stuckRecoverAfter).Format("2006-01-02 15:04:05")
+	pairs := []struct{ processing, from int32 }{
+		{processingStatusCancel, 1},
+		{processingStatusComplete, 4},
+	}
+	for _, p := range pairs {
+		res := s.db.GetDb().WithContext(ctx).Exec(
+			"UPDATE orders SET status = ?, updated_at = NOW() WHERE status = ? AND updated_at < ?",
+			p.from, p.processing, deadline,
+		)
+		if res.Error != nil {
+			log.Printf("[order-scheduler] 兜底恢复处理中订单 (status %d -> %d) 失败: %v", p.processing, p.from, res.Error)
+			continue
+		}
+		if res.RowsAffected > 0 {
+			log.Printf("[order-scheduler] 兜底恢复 %d 个停留超时的处理中订单 (status %d -> %d)", res.RowsAffected, p.processing, p.from)
+		}
+	}
 }
 
 // cancelTimeoutOrders 取消超时未支付订单
@@ -92,16 +131,17 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 	// 1. 优先处理历史失败记录
 	s.retryFailures(ctx, "timeout_cancel", 0)
 
-	// 2. 原子抢占一批待取消订单（status=1 → 9 处理中）
-	orders := s.claimOrders(ctx, 1, 9, "created_at < ?", time.Now().Add(-time.Duration(orderTimeout)*time.Second).Format("2006-01-02 15:04:05"))
+	// 2. 原子抢占一批待取消订单（status=1 → 100 处理中）
+	orders := s.claimOrders(ctx, 1, processingStatusCancel, "created_at < ?", time.Now().Add(-time.Duration(orderTimeout)*time.Second).Format("2006-01-02 15:04:05"))
 	if len(orders) == 0 {
 		return
 	}
 
-	// 3. 处理抢占到的订单
+	// 3. 处理抢占到的订单；失败时回滚原状态，避免订单永久卡在处理中
 	for _, o := range orders {
-		if err := s.cancelOrderTx(ctx, o); err != nil {
+		if err := s.cancelOrderTx(ctx, o, 1); err != nil {
 			log.Printf("[order-scheduler] 自动取消订单 %d 失败: %v", o.ID, err)
+			s.rollbackStatus(ctx, o.ID, processingStatusCancel, 1)
 			s.recordFailure(ctx, o.ID, "timeout_cancel", err.Error())
 			continue
 		}
@@ -124,17 +164,18 @@ func (s *Scheduler) autoCompleteOrders(ctx context.Context, autoCompleteDays int
 	// 1. 优先处理历史失败记录
 	s.retryFailures(ctx, "auto_complete", autoCompleteDays)
 
-	// 2. 原子抢占一批待自动完成订单（status=4 → 10 处理中）
+	// 2. 原子抢占一批待自动完成订单（status=4 → 101 处理中）
 	deadline := time.Now().AddDate(0, 0, -autoCompleteDays).Format("2006-01-02 15:04:05")
-	orders := s.claimOrders(ctx, 4, 10, "deliver_time IS NOT NULL AND deliver_time < ?", deadline)
+	orders := s.claimOrders(ctx, 4, processingStatusComplete, "deliver_time IS NOT NULL AND deliver_time < ?", deadline)
 	if len(orders) == 0 {
 		return
 	}
 
-	// 3. 处理抢占到的订单
+	// 3. 处理抢占到的订单；失败时回滚原状态，避免订单永久卡在处理中
 	for _, o := range orders {
-		if err := s.completeOrderTx(ctx, o, autoCompleteDays); err != nil {
+		if err := s.completeOrderTx(ctx, o, 4, autoCompleteDays); err != nil {
 			log.Printf("[order-scheduler] 自动完成订单 %d 失败: %v", o.ID, err)
+			s.rollbackStatus(ctx, o.ID, processingStatusComplete, 4)
 			s.recordFailure(ctx, o.ID, "auto_complete", err.Error())
 			continue
 		}
@@ -188,10 +229,11 @@ func (s *Scheduler) claimOrders(ctx context.Context, fromStatus, processingStatu
 // 参数：
 //   - ctx: 上下文
 //   - o: 待取消订单
+//   - fromStatus: 流转起点状态（真实原状态，用于状态日志）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order) error {
+func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatus int32) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().Format("2006-01-02 15:04:05")
 		o.Status = 6
@@ -218,7 +260,7 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order) error {
 
 		log := &model.OrderStatusLog{
 			OrderID:      o.ID,
-			FromStatus:   1,
+			FromStatus:   fromStatus,
 			ToStatus:     6,
 			OperatorType: "system",
 			OperatorID:   0,
@@ -234,11 +276,12 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order) error {
 // 参数：
 //   - ctx: 上下文
 //   - o: 待完成订单
+//   - fromStatus: 流转起点状态（真实原状态，用于状态日志）
 //   - autoCompleteDays: 自动完成天数，用于备注
 //
 // 返回值：
 //   - error: 错误信息
-func (s *Scheduler) completeOrderTx(ctx context.Context, o *model.Order, autoCompleteDays int) error {
+func (s *Scheduler) completeOrderTx(ctx context.Context, o *model.Order, fromStatus int32, autoCompleteDays int) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().Format("2006-01-02 15:04:05")
 		o.Status = 5
@@ -250,7 +293,7 @@ func (s *Scheduler) completeOrderTx(ctx context.Context, o *model.Order, autoCom
 
 		statusLog := &model.OrderStatusLog{
 			OrderID:      o.ID,
-			FromStatus:   4,
+			FromStatus:   fromStatus,
 			ToStatus:     5,
 			OperatorType: "system",
 			OperatorID:   0,
@@ -259,6 +302,23 @@ func (s *Scheduler) completeOrderTx(ctx context.Context, o *model.Order, autoCom
 		}
 		return tx.Create(statusLog).Error
 	})
+}
+
+// rollbackStatus 将仍处于处理中状态的订单回滚为原状态
+// 仅当订单仍处于 processing 状态时生效，避免覆盖并发场景下的其他流转
+//
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//   - processingStatus: 处理中状态
+//   - fromStatus: 原状态
+func (s *Scheduler) rollbackStatus(ctx context.Context, orderID int64, processingStatus, fromStatus int32) {
+	if err := s.db.GetDb().WithContext(ctx).Exec(
+		"UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND status = ?",
+		fromStatus, orderID, processingStatus,
+	).Error; err != nil {
+		log.Printf("[order-scheduler] 回滚订单 %d 状态 (%d -> %d) 失败: %v", orderID, processingStatus, fromStatus, err)
+	}
 }
 
 // retryFailures 重试历史失败记录
@@ -286,6 +346,22 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 			continue
 		}
 
+		// 历史遗留的处理中状态（回滚未执行的异常场景）：先恢复原状态再走正常重试判断
+		switch {
+		case taskType == "timeout_cancel" && o.Status == processingStatusCancel:
+			s.rollbackStatus(ctx, o.ID, processingStatusCancel, 1)
+			if err := s.db.GetDb().WithContext(ctx).First(&o, f.OrderID).Error; err != nil {
+				log.Printf("[order-scheduler] 重试时回查订单 %d 失败: %v", f.OrderID, err)
+				continue
+			}
+		case taskType == "auto_complete" && o.Status == processingStatusComplete:
+			s.rollbackStatus(ctx, o.ID, processingStatusComplete, 4)
+			if err := s.db.GetDb().WithContext(ctx).First(&o, f.OrderID).Error; err != nil {
+				log.Printf("[order-scheduler] 重试时回查订单 %d 失败: %v", f.OrderID, err)
+				continue
+			}
+		}
+
 		var err error
 		switch taskType {
 		case "timeout_cancel":
@@ -293,13 +369,13 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 				s.markFailureStatus(ctx, f.ID, 2)
 				continue
 			}
-			err = s.cancelOrderTx(ctx, &o)
+			err = s.cancelOrderTx(ctx, &o, 1)
 		case "auto_complete":
 			if o.Status != 4 {
 				s.markFailureStatus(ctx, f.ID, 2)
 				continue
 			}
-			err = s.completeOrderTx(ctx, &o, autoCompleteDays)
+			err = s.completeOrderTx(ctx, &o, 4, autoCompleteDays)
 		}
 
 		if err != nil {
