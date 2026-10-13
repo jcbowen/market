@@ -90,6 +90,7 @@ import {
   goCoupon,
   goFlash,
   goFullReduction,
+  goPage,
 } from '@/utils/navigate'
 import type { Banner, Category, Product } from '@/api/types'
 
@@ -156,16 +157,7 @@ async function loadBanners() {
 function onBannerClick(index: number) {
   const link = bannerImages.value[index]?.link
   if (!link) return
-  if (link.startsWith('/pages')) {
-    uni.navigateTo({ url: link })
-  } else if (link.startsWith('http')) {
-    // #ifdef H5
-    window.open(link, '_blank')
-    // #endif
-    // #ifndef H5
-    uni.showToast({ title: '暂不支持外部链接', icon: 'none' })
-    // #endif
-  }
+  goPage(link)
 }
 
 /** 请求序号：防止快速切换页面时旧响应覆盖新数据 */

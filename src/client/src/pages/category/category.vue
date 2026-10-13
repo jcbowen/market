@@ -216,7 +216,7 @@ import { getBanners, getCategories, getProducts, getProductDetail, searchProduct
 import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart'
 import { getCommunityList } from '@/api/user'
 import { formatPrice } from '@/utils/format'
-import { goOrderConfirm, goLogin, goCommunitySelect } from '@/utils/navigate'
+import { goOrderConfirm, goLogin, goCommunitySelect, goPage } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
 import {
   addLocalCartItem,
@@ -357,16 +357,7 @@ async function loadBanners() {
 function onBannerClick(index: number) {
   const link = bannerImages.value[index]?.link
   if (!link) return
-  if (link.startsWith('/pages')) {
-    uni.navigateTo({ url: link })
-  } else if (link.startsWith('http')) {
-    // #ifdef H5
-    window.open(link, '_blank')
-    // #endif
-    // #ifndef H5
-    uni.showToast({ title: '暂不支持外部链接', icon: 'none' })
-    // #endif
-  }
+  goPage(link)
 }
 
 /**

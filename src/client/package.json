@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "description": "社区商超用户端",
   "scripts": {
-    "dev:mp-weixin": "uni -p mp-weixin",
-    "dev:mp-alipay": "uni -p mp-alipay",
-    "dev:h5": "uni",
-    "dev:app": "uni -p app",
-    "build:mp-weixin": "uni build -p mp-weixin",
-    "build:mp-alipay": "uni build -p mp-alipay",
-    "build:h5": "uni build && node scripts/build-h5.js",
-    "build:app": "uni build -p app"
+    "dev:mp-weixin": "node scripts/gen-tab-bar-paths.js && uni -p mp-weixin",
+    "dev:mp-alipay": "node scripts/gen-tab-bar-paths.js && uni -p mp-alipay",
+    "dev:h5": "node scripts/gen-tab-bar-paths.js && uni",
+    "dev:app": "node scripts/gen-tab-bar-paths.js && uni -p app",
+    "build:mp-weixin": "node scripts/gen-tab-bar-paths.js && uni build -p mp-weixin",
+    "build:mp-alipay": "node scripts/gen-tab-bar-paths.js && uni build -p mp-alipay",
+    "build:h5": "node scripts/gen-tab-bar-paths.js && uni build && node scripts/build-h5.js",
+    "build:app": "node scripts/gen-tab-bar-paths.js && uni build -p app"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-alpha-5030120260930001",

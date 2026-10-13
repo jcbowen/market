@@ -18,7 +18,7 @@
           <ImageUploadInput v-model:value="form.image_url" placeholder="图片 URL 或点击上传" hint="建议尺寸 750×320（21:9）" />
         </n-form-item>
         <n-form-item label="链接地址">
-          <n-input v-model:value="form.link_url" placeholder="请输入跳转链接" />
+          <LinkSelector v-model:value="form.link_url" placeholder="请输入或选择跳转链接" />
         </n-form-item>
         <n-form-item label="展示位置">
           <n-select v-model:value="form.position" :options="positionOptions" placeholder="请选择展示位置" />
@@ -53,6 +53,7 @@ import { h, onMounted, reactive, ref, computed } from 'vue'
 import { useMessage } from 'naive-ui'
 import { NButton, NSpace, NTag } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
+import LinkSelector from '@/components/LinkSelector.vue'
 import type { DataTableColumns } from 'naive-ui'
 import { getBannerList, createBanner, updateBanner, deleteBanner } from '@/api/marketing'
 import type { Banner } from '@/api/types'
