@@ -76,6 +76,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { createAddress, updateAddress, getCommunity, listRegionChildren, locateRegion } from '@/api/user'
+import { joinRegionAddress } from '@/utils/region'
 import { useUserStore } from '@/stores/user'
 import type { Address, Community, Region } from '@/api/types'
 
@@ -118,11 +119,11 @@ const communityChecked = ref(false)
 /** 是否允许社区外配送（默认不允许：未取到社区信息时同样锁定） */
 const allowOutside = computed(() => !!community.value?.allow_outside_delivery)
 
-/** 锁定模式展示的地址前缀（省市区） */
+/** 锁定模式展示的地址前缀（省市区，直辖市市省同名时相邻去重） */
 const prefixText = computed(() => {
   const c = community.value
   if (!c) return ''
-  return `${c.province}${c.city}${c.district}`
+  return joinRegionAddress(c.province, c.city, c.district)
 })
 
 // --- 行政区划三级联动选择器（基于区划代码库，逐级懒加载） ---
@@ -146,10 +147,13 @@ let provinces: Region[] | null = null
 const cityCache = new Map<string, Region[]>()
 const districtCache = new Map<string, Region[]>()
 
-/** 已选地区展示文案 */
-const regionDisplayText = computed(() =>
-  [form.value.province, form.value.city, form.value.district].filter(Boolean).join(' / ')
-)
+/** 已选地区展示文案（相邻重复层级去重，如直辖市市省同名） */
+const regionDisplayText = computed(() => {
+  const parts = [form.value.province, form.value.city, form.value.district]
+    .map((p) => (p || '').trim())
+    .filter(Boolean)
+  return parts.filter((p, i) => i === 0 || p !== parts[i - 1]).join(' / ')
+})
 
 async function loadProvinces(): Promise<Region[]> {
   if (!provinces) {
@@ -287,18 +291,18 @@ async function onRegionChange(e: { columnIndex: number; value: Region[] }) {
 
 /**
  * 确认选择：同步省/市/区名称与区划代码到表单
- * 直辖市（第二列即区县）时市级为空，名称/代码只填省与区县
+ * 直辖市（第二列即区县）无市级层：市与省同名同码落库，保证 city 字段始终有值
  */
 function onRegionConfirm(e: { value: Region[] }) {
   const [prov, second, third] = e.value
   if (!prov) return
   if (second && second.level === 3) {
-    selectedRegion.value = { province: prov, city: null, district: second }
+    selectedRegion.value = { province: prov, city: prov, district: second }
     form.value.province = prov.name || ''
-    form.value.city = ''
+    form.value.city = prov.name || ''
     form.value.district = second.name || ''
     form.value.province_code = prov.code || ''
-    form.value.city_code = ''
+    form.value.city_code = prov.code || ''
     form.value.district_code = second.code || ''
     return
   }
@@ -331,10 +335,12 @@ async function autoLocateRegion() {
       form.value.province_code = loc.province.code
       form.value.city_code = loc.city.code
     } else {
-      // 直辖市等无市级层：仅预填省，区县由用户在省下直接选择
-      selectedRegion.value = { province: loc.province, city: null, district: null }
+      // 直辖市等无市级层：省预填后市与省同名同码（落库口径），区县由用户在省下直接选择
+      selectedRegion.value = { province: loc.province, city: loc.province, district: null }
       form.value.province = loc.province.name
+      form.value.city = loc.province.name
       form.value.province_code = loc.province.code
+      form.value.city_code = loc.province.code
     }
   } catch {
     // 定位失败静默忽略，不影响手动选择

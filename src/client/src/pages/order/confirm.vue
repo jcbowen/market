@@ -8,7 +8,7 @@
           <text class="phone">{{ selectedAddress.contact_phone }}</text>
         </view>
         <text class="address-text">
-          {{ selectedAddress.province }}{{ selectedAddress.city }}{{ selectedAddress.district }}{{ selectedAddress.detail }}
+          {{ joinRegionAddress(selectedAddress.province, selectedAddress.city, selectedAddress.district, selectedAddress.detail) }}
         </text>
       </view>
       <view v-else class="address-empty">
@@ -90,6 +90,7 @@ import { getUserCoupons } from '@/api/marketing'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goAddressList, goOrderDetail, goLogin } from '@/utils/navigate'
+import { joinRegionAddress } from '@/utils/region'
 import type { Address, FullReduction, PaymentChannel, UserCoupon } from '@/api/types'
 
 /** 结算页商品展示结构（购物车/直购中间态，无订单侧 id/total_price 字段） */

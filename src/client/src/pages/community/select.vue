@@ -53,7 +53,7 @@ const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 onShow(() => {
   page.value = 1
   communities.value = []
-  loadCommunities()
+  locateAndLoad()
 })
 
 /**
@@ -110,10 +110,11 @@ function loadMore() {
 }
 
 /**
- * 获取附近社区
- * 网页定位失败时按出口 IP 估算大致坐标兜底（best-effort），仍失败则提示手动搜索
+ * 进页自动定位排序：优先系统定位，失败按出口 IP 兜底（best-effort），
+ * 两者均失败时回退默认列表（C 端社区列表按定位距离排序）
+ * @param manual 是否用户手动触发「附近社区」（全部失败时给出 toast 反馈）
  */
-function getNearby() {
+function locateAndLoad(manual = false) {
   uni.getLocation({
     type: 'gcj02',
     success: (res) => {
@@ -127,11 +128,23 @@ function getNearby() {
         page.value = 1
         communities.value = []
         loadCommunitiesWithLocation(ipLoc.longitude, ipLoc.latitude)
-      } else {
-        uni.showToast({ title: '定位失败，请手动搜索社区', icon: 'none' })
+        return
       }
+      if (manual) {
+        uni.showToast({ title: '定位失败，请手动搜索社区', icon: 'none' })
+        return
+      }
+      // 自动定位全失败：静默回退默认列表，不打断浏览
+      loadCommunities()
     },
   })
+}
+
+/**
+ * 手动触发附近社区（顶部「附近社区」入口）
+ */
+function getNearby() {
+  locateAndLoad(true)
 }
 
 /**

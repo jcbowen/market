@@ -20,7 +20,10 @@ type Community struct {
 	DeliveryFee     float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0" json:"delivery_fee"`
 	MinOrderAmount  float64 `gorm:"column:min_order_amount;type:decimal(10,2);default:0" json:"min_order_amount"`
 	DeliveryRangeKm float64 `gorm:"column:delivery_range_km;type:decimal(6,2);default:0" json:"delivery_range_km"`
-	BusinessHours   string  `gorm:"column:business_hours;type:varchar(50)" json:"business_hours"`
+	// 营业时间：管理端支持一天内多个运营时间段，序列化为 JSON 存储（如
+	// [{"start":"08:00","end":"12:00"},{"start":"14:00","end":"22:00"}]）；
+	// 兼容存量 "HH:mm-HH:mm" 单段文本，由展示端解析
+	BusinessHours string `gorm:"column:business_hours;type:varchar(255)" json:"business_hours"`
 	// 社区所在省/市/区（C 端锁定收货地址前缀用）
 	Province string `gorm:"column:province;type:varchar(50)" json:"province"`
 	City     string `gorm:"column:city;type:varchar(50)" json:"city"`

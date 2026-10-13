@@ -11,7 +11,7 @@
         <text class="phone">{{ order.address?.contact_phone }}</text>
       </view>
       <text class="address-text">
-        {{ order.address?.province }}{{ order.address?.city }}{{ order.address?.district }}{{ order.address?.detail }}
+        {{ joinRegionAddress(order.address?.province, order.address?.city, order.address?.district, order.address?.detail) }}
       </text>
     </view>
 
@@ -82,6 +82,7 @@ import { getPaymentChannels, getPaymentDetail } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderList } from '@/utils/navigate'
+import { joinRegionAddress } from '@/utils/region'
 import RefundModal from '@/components/RefundModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
 

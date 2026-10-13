@@ -2,11 +2,12 @@
   <n-cascader
     v-model:value="inner"
     :options="options"
-    :load-data="loadData"
     check-strategy="child"
     show-path
+    filterable
     clearable
-    :placeholder="placeholder || '请选择省 / 市 / 区'"
+    :loading="loading"
+    :placeholder="placeholder || '请选择省 / 市 / 区，可输入名称搜索'"
     @update:value="handleChange"
   />
 </template>
@@ -14,12 +15,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import type { CascaderOption } from 'naive-ui'
-import { listRegionChildren } from '@/api/region'
+import { getAllRegions } from '@/api/region'
 import type { Region, RegionSelection } from '@/api/region'
 
 /**
- * 行政区划三级联动选择器（省 / 市 / 区县）
- * 数据从 /regions/children 接口逐级懒加载（省级首屏加载），
+ * 行政区划三级联动选择器（省 / 市 / 区县），支持输入名称搜索
+ * 数据来源：管理端 /admin/regions 分页接口一次性拉全量（约 3400 条），
+ * 前端本地建树后交给 n-cascader filterable 过滤——懒加载模式下级联
+ * 搜索只能命中已展开的节点，因此这里放弃逐级懒加载。
  * v-model 语义为区划代码（value），选中或回显时通过 select 事件
  * 回传完整路径（省/市/区的代码与名称），供表单同时提交名称与代码。
  * 存量数据（只有名称没有代码）通过 setValueByPath 按名称逐级匹配回显。
@@ -40,6 +43,7 @@ const emit = defineEmits<{
 
 const inner = ref<string | null>(props.value ?? null)
 const options = ref<CascaderOption[]>([])
+const loading = ref(false)
 
 /** 区划代码 → 区划信息映射（构建 options 时登记，用于回传路径） */
 const regionMap = new Map<string, Region>()
@@ -54,27 +58,47 @@ function toOption(r: Region): CascaderOption {
   }
 }
 
-/** 拉取指定父级下的子区划并登记映射 */
-async function fetchChildren(parentCode: string): Promise<CascaderOption[]> {
-  const res = await listRegionChildren(parentCode)
-  const list = res.data.data || []
-  return list.map((r) => toOption(r))
-}
-
-async function loadProvinces() {
-  if (options.value.length > 0) return
-  options.value = await fetchChildren('0')
-}
-
-onMounted(loadProvinces)
-
 /**
- * 级联懒加载：展开未加载过子级的节点时调用
+ * 拉取全量区划并本地建树（仅正常状态）
+ * 父级缺失（被停用等）的节点直接丢弃，与旧懒加载「父级不可达则子级不可见」的行为一致
+ * 并发安全：组件初始化与外部 setValueByPath 可能同时触发，共享同一在途 Promise，
+ * 避免后者拿到未就绪的空树导致名称匹配落空（回显失败）
  */
-async function loadData(option: CascaderOption) {
-  const children = await fetchChildren(String(option.value))
-  option.children = children
+let loadPromise: Promise<void> | null = null
+
+function loadAll(): Promise<void> {
+  if (options.value.length > 0) return Promise.resolve()
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      loading.value = true
+      try {
+        const list = (await getAllRegions()).filter((r) => r.status === 1)
+        const nodeByCode = new Map<string, CascaderOption>()
+        for (const r of list) nodeByCode.set(r.code, toOption(r))
+
+        const roots: CascaderOption[] = []
+        for (const r of list) {
+          const opt = nodeByCode.get(r.code)!
+          if (r.parent_code === '0') {
+            roots.push(opt)
+            continue
+          }
+          const parent = nodeByCode.get(r.parent_code)
+          if (!parent) continue
+          if (!parent.children) parent.children = []
+          parent.children.push(opt)
+        }
+        options.value = roots
+      } finally {
+        loading.value = false
+        loadPromise = null
+      }
+    })()
+  }
+  return loadPromise
 }
+
+onMounted(loadAll)
 
 function findRegionByCode(code: string | number | null | undefined): Region | null {
   if (code === null || code === undefined) return null
@@ -84,7 +108,9 @@ function findRegionByCode(code: string | number | null | undefined): Region | nu
 /**
  * 选中变化：按路径组装省/市/区选择结果并回传
  * 通过父级代码逐级回溯 regionMap，各节点层级按自身代码位数判定
- * （2 位省 / 4 位市 / 6 位区县；直辖市无市级层时 city 为 null）
+ * （2 位省 / 4 位市 / 6 位区县）
+ * 直辖市无市级层（区县直挂省）时，市回传为省的同名同码别名，
+ * 保证落库的 city 字段始终有值（市与省同名口径）
  */
 function handleChange(value: string | number | null) {
   emit('update:value', value === null ? null : String(value))
@@ -106,6 +132,8 @@ function handleChange(value: string | number | null) {
     }
     node = parent
   }
+  // 直辖市：市与省同名同码（仅在有省有区且无市时套用）
+  if (!city && province && district) city = province
   emit('select', { province, city, district })
 }
 
@@ -116,7 +144,7 @@ function handleChange(value: string | number | null) {
  * @param selection 含省/市/区名称的选择结果（code 可为空，按名称逐级匹配）
  */
 async function setValueByPath(selection: { province: Region | null; city: Region | null; district: Region | null }) {
-  await loadProvinces()
+  await loadAll()
 
   const { province, city, district } = selection
   if (!province || !district) {
@@ -124,7 +152,7 @@ async function setValueByPath(selection: { province: Region | null; city: Region
     return
   }
 
-  // 逐级确保路径上的 options 已加载，否则级联无法显示选中态
+  // 全量树已就绪，直接在本地 options 中逐级匹配
   const provOpt =
     options.value.find((o) => String(o.value) === province.code) ??
     options.value.find((o) => o.label === province.name)
@@ -132,8 +160,7 @@ async function setValueByPath(selection: { province: Region | null; city: Region
     inner.value = null
     return
   }
-  const levelOneChildren = await fetchChildren(String(provOpt.value))
-  provOpt.children = levelOneChildren
+  const levelOneChildren = provOpt.children ?? []
 
   // 市级存在且为正常地级（4 位码）时走 省→市→区 三级路径
   const cityOpt =
@@ -143,8 +170,7 @@ async function setValueByPath(selection: { province: Region | null; city: Region
       : undefined
   let districtOpt: CascaderOption | undefined
   if (cityOpt) {
-    const districtChildren = await fetchChildren(String(cityOpt.value))
-    cityOpt.children = districtChildren
+    const districtChildren = cityOpt.children ?? []
     districtOpt =
       districtChildren.find((o) => String(o.value) === district.code) ??
       districtChildren.find((o) => o.label === district.name)
@@ -160,13 +186,12 @@ async function setValueByPath(selection: { province: Region | null; city: Region
   }
 
   inner.value = String(districtOpt.value)
-  // 触发一次 select，让表单同步代码（存量数据可能缺代码）
+  // 触发一次 select，让表单同步代码（存量数据可能缺代码）；
+  // 直辖市（市级节点不存在）时市回传为省的同名同码别名，与 handleChange 口径一致
   const districtRegion = findRegionByCode(districtOpt.value)
-  const matchedCity =
-    cityOpt != null ? findRegionByCode(cityOpt.value) : null
   emit('select', {
     province: findRegionByCode(provOpt.value),
-    city: matchedCity,
+    city: cityOpt ? findRegionByCode(cityOpt.value) : findRegionByCode(provOpt.value),
     district: districtRegion,
   })
 }

@@ -65,7 +65,8 @@ func (s *CommunityService) ListCommunities(ctx context.Context, req *user.ListCo
 		return nil, 0, err
 	}
 	offset := (page - 1) * pageSize
-	err := db.Order("sort desc, id desc").Offset(offset).Limit(pageSize).Find(&list).Error
+	// 排序字段已废弃：C 端按定位距离排序，默认列表按创建时间倒序
+	err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error
 	return list, int(total), err
 }
 
@@ -108,9 +109,10 @@ func (s *CommunityService) ListNearbyCommunities(ctx context.Context, longitude,
 	}
 
 	var list []*model.Community
-	// 按经纬度平面距离近似排序，固定返回最近的 10 个社区
+	// 按经纬度平面距离近似排序，固定返回最近的 10 个社区；
+	// 排序字段已废弃，同距离时按 id 倒序兜底
 	err := db.Order(fmt.Sprintf(
-		"POWER(longitude - %v, 2) + POWER(latitude - %v, 2) ASC, sort desc, id desc",
+		"POWER(longitude - %v, 2) + POWER(latitude - %v, 2) ASC, id desc",
 		longitude, latitude,
 	)).Limit(limit).Find(&list).Error
 	return list, int(total), err

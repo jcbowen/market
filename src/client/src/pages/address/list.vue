@@ -20,7 +20,7 @@
           <text v-if="item.is_default" class="default-tag">默认</text>
         </view>
         <text class="address-text">
-          {{ item.province }}{{ item.city }}{{ item.district }}{{ item.detail }}
+          {{ joinRegionAddress(item.province, item.city, item.district, item.detail) }}
         </text>
         <view class="address-actions">
           <text class="action" @click.stop="onEdit(item.id)">编辑</text>
@@ -41,6 +41,7 @@ import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getAddressList, deleteAddress } from '@/api/user'
 import { goAddressEdit, goLogin, goBack } from '@/utils/navigate'
+import { joinRegionAddress } from '@/utils/region'
 import type { Address } from '@/api/types'
 
 const userStore = useUserStore()
