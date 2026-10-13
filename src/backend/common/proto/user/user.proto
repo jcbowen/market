@@ -36,7 +36,7 @@ service UserService {
   rpc ListRegionChildren(ListRegionChildrenReq) returns (ListRegionChildrenResp);
   rpc ListRegions(ListRegionsReq) returns (ListRegionsResp);
   rpc MatchRegionByName(MatchRegionByNameReq) returns (RegionMatchInfo);
-  rpc CreateRegionUpdateTask(common.Empty) returns (RegionUpdateTaskInfo);
+  rpc CreateRegionUpdateTask(CreateRegionUpdateTaskReq) returns (RegionUpdateTaskInfo);
   rpc GetRegionUpdateTask(GetRegionUpdateTaskReq) returns (RegionUpdateTaskInfo);
   rpc ApplyRegionUpdateTask(ApplyRegionUpdateTaskReq) returns (common.CommonResponse);
 
@@ -485,6 +485,12 @@ message RegionUpdateTaskInfo {
 
 message GetRegionUpdateTaskReq {
   int64 id = 1;
+}
+
+// CreateRegionUpdateTaskReq 创建区划更新任务请求
+message CreateRegionUpdateTaskReq {
+  // 数据源类型：default 常规多源镜像（默认）/ official 民政部官方源（兜底修正）
+  string source_type = 1;
 }
 
 message ApplyRegionUpdateTaskReq {

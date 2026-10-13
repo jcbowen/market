@@ -443,8 +443,8 @@ func (s *server) MatchRegionByName(ctx stdctx.Context, req *user.MatchRegionByNa
 }
 
 // CreateRegionUpdateTask 创建区划更新任务（异步执行，返回任务供前端轮询）
-func (s *server) CreateRegionUpdateTask(ctx stdctx.Context, req *common.Empty) (*user.RegionUpdateTaskInfo, error) {
-	task, err := s.regionService.CreateRegionUpdateTask(ctx)
+func (s *server) CreateRegionUpdateTask(ctx stdctx.Context, req *user.CreateRegionUpdateTaskReq) (*user.RegionUpdateTaskInfo, error) {
+	task, err := s.regionService.CreateRegionUpdateTask(ctx, req.SourceType)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}

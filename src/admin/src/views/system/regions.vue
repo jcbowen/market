@@ -12,6 +12,12 @@
         <n-select v-model:value="statusFilter" :options="statusFilterOptions" style="width: 140px" />
         <n-button :disabled="shouldAutoExpand" @click="toggleExpandAll">{{ allExpanded ? '收起全部' : '展开全部' }}</n-button>
         <n-button type="primary" :loading="checking" @click="startCheck">检查更新</n-button>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button :loading="checkingOfficial" @click="startCheck('official')">官方数据修正</n-button>
+          </template>
+          从民政部官方接口拉取数据修正差异（较慢，仅作镜像源异常时的兜底）
+        </n-tooltip>
         <n-text depth="3" style="font-size: 12px">
           共 {{ regions.length }} 条<template v-if="hasFilter">，命中 {{ matchCount }} 条</template>
         </n-text>
@@ -309,6 +315,7 @@ async function loadData() {
 // --- 更新任务 ---
 
 const checking = ref(false)
+const checkingOfficial = ref(false)
 const taskModal = ref(false)
 const applying = ref(false)
 const task = ref<RegionUpdateTask | null>(null)
@@ -339,9 +346,14 @@ const removedColumns: DataTableColumns<RegionDiffItem> = [
   { title: '名称', key: 'name' },
 ]
 
-function startCheck() {
-  checking.value = true
-  createRegionUpdateTask()
+/**
+ * 发起更新检查任务
+ * @param sourceType default 常规多源镜像 / official 民政部官方源（兜底修正，较慢）
+ */
+function startCheck(sourceType: 'default' | 'official' = 'default') {
+  const flag = sourceType === 'official' ? checkingOfficial : checking
+  flag.value = true
+  createRegionUpdateTask(sourceType)
     .then((res) => {
       if (res.data.code === 0) {
         task.value = res.data.data
@@ -350,7 +362,7 @@ function startCheck() {
       }
     })
     .finally(() => {
-      checking.value = false
+      flag.value = false
     })
 }
 

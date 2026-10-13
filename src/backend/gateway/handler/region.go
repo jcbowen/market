@@ -175,12 +175,16 @@ func (h *RegionHandler) ListRegions(c *gin.Context) {
 }
 
 // CreateUpdateTask 创建区划更新检查任务（管理端）
+// source_type 指定数据源：default 常规多源镜像（默认）/ official 民政部官方源（兜底修正，较慢）
 // 返回新建（或已存在的进行中）任务，前端据 id 轮询任务详情展示差异
-// 使用示例：POST /api/v1/admin/regions/update/check
+// 使用示例：POST /api/v1/admin/regions/update/check?source_type=official
 // 参数：
 //   - c: gin 上下文
 func (h *RegionHandler) CreateUpdateTask(c *gin.Context) {
-	resp, err := h.userClient.CreateRegionUpdateTask(c.Request.Context(), &common.Empty{})
+	resp, err := h.userClient.CreateRegionUpdateTask(c.Request.Context(), &user.CreateRegionUpdateTaskReq{
+		// 与 service 层 RegionSourceType* 常量对应，网关层不引入 service 依赖故用字面量
+		SourceType: c.DefaultQuery("source_type", "default"),
+	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return

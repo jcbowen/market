@@ -41,6 +41,14 @@ const (
 	regionRepoFile = "Dist/pca-code.json"
 )
 
+// 区划更新任务数据源类型（前端 source_type 参数）
+const (
+	// RegionSourceTypeDefault 常规多源镜像（Gitee/jsDelivr/GitHub），日常同步用
+	RegionSourceTypeDefault = "default"
+	// RegionSourceTypeOfficial 民政部官方源，仅作兜底修正（请求慢，带重试）
+	RegionSourceTypeOfficial = "official"
+)
+
 // regionHTTPTimeout 拉取上游数据的超时时间
 const regionHTTPTimeout = 30 * time.Second
 
@@ -233,15 +241,17 @@ func (s *RegionService) getRegionByCode(ctx context.Context, code string) (*mode
 }
 
 // CreateRegionUpdateTask 创建区划更新任务
-// 同一时刻仅允许一个进行中的任务（待执行/拉取中/比对中）；
-// 已存在进行中任务时直接返回该任务（幂等），避免重复拉取
+// 同一时刻仅允许一个进行中的任务（待执行/拉取中/比对中），
+// 已存在进行中任务时直接返回该任务（幂等），避免重复拉取；
+// sourceType 决定拉取通道：default 常规多源镜像 / official 民政部官方源（兜底修正）
 // 参数：
 //   - ctx: 上下文
+//   - sourceType: 数据源类型，空值按 default 处理
 //
 // 返回：
 //   - *model.RegionUpdateTask: 新建或进行中的任务
 //   - error: 错误信息
-func (s *RegionService) CreateRegionUpdateTask(ctx context.Context) (*model.RegionUpdateTask, error) {
+func (s *RegionService) CreateRegionUpdateTask(ctx context.Context, sourceType string) (*model.RegionUpdateTask, error) {
 	var existing model.RegionUpdateTask
 	err := s.db.GetDb().WithContext(ctx).
 		Where("status IN (?)", []int32{model.RegionTaskStatusPending, model.RegionTaskStatusFetching, model.RegionTaskStatusDiffing}).
@@ -254,16 +264,22 @@ func (s *RegionService) CreateRegionUpdateTask(ctx context.Context) (*model.Regi
 		return nil, err
 	}
 
+	source := regionDataSource
+	if sourceType == RegionSourceTypeOfficial {
+		source = regionOfficialBaseURL + regionOfficialListPath
+	} else {
+		sourceType = RegionSourceTypeDefault
+	}
 	task := &model.RegionUpdateTask{
 		Status: model.RegionTaskStatusPending,
-		Source: regionDataSource,
+		Source: source,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(task).Error; err != nil {
 		return nil, err
 	}
 
 	// 异步执行拉取与比对：任务表自身记录状态，前端轮询任务详情
-	go s.runUpdateTask(task.ID)
+	go s.runUpdateTask(task.ID, sourceType)
 	return task, nil
 }
 
@@ -366,11 +382,13 @@ func (s *RegionService) ApplyRegionUpdateTask(ctx context.Context, id int64) err
 	})
 }
 
-// runUpdateTask 执行更新任务：拉取上游数据 → 与库内比对 → 差异写回任务表
+// runUpdateTask 执行更新任务：按 sourceType 拉取上游数据 → 与库内比对 → 差异写回任务表
+// default 走镜像多源，official 走民政部官方源（慢、带重试，仅兜底）
 // 状态流转：待执行 → 拉取中 → 比对中 → 完成/失败
 // 参数：
 //   - taskID: 任务 ID
-func (s *RegionService) runUpdateTask(taskID int64) {
+//   - sourceType: 数据源类型（default / official）
+func (s *RegionService) runUpdateTask(taskID int64, sourceType string) {
 	fail := func(err error) {
 		_ = s.db.GetDb().Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
 			"status":      model.RegionTaskStatusFailed,
@@ -379,14 +397,23 @@ func (s *RegionService) runUpdateTask(taskID int64) {
 		}).Error
 	}
 
-	// 比对中：锁定任务为执行状态，防止期间被重复应用
+	// 拉取中：锁定任务为执行状态，防止期间被重复应用
 	if err := s.db.GetDb().Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).
 		Update("status", model.RegionTaskStatusFetching).Error; err != nil {
 		fail(err)
 		return
 	}
 
-	nodes, source, err := fetchRemoteRegions()
+	var (
+		nodes  []*remoteRegionNode
+		source string
+		err    error
+	)
+	if sourceType == RegionSourceTypeOfficial {
+		nodes, source, err = fetchOfficialRegions()
+	} else {
+		nodes, source, err = fetchRemoteRegions()
+	}
 	if err != nil {
 		fail(err)
 		return

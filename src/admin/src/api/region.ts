@@ -120,11 +120,13 @@ export async function getAllRegions(): Promise<Region[]> {
 
 /**
  * 创建区划更新检查任务（存在进行中任务时幂等返回该任务）
+ * @param sourceType 数据源类型：default 常规多源镜像（默认）/ official 民政部官方源（兜底修正，较慢）
  */
-export function createRegionUpdateTask() {
+export function createRegionUpdateTask(sourceType: 'default' | 'official' = 'default') {
   return request<ApiResult<RegionUpdateTask>>({
     url: '/api/v1/admin/regions/update/check',
     method: 'POST',
+    params: { source_type: sourceType },
   })
 }
 
