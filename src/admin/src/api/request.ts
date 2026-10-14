@@ -51,14 +51,36 @@ service.interceptors.request.use(
 )
 
 /**
+ * 认证失败业务码
+ * 后端认证中间件以 HTTP 200 + 业务错误码返回认证失败（见 gateway/middleware/auth.go）：
+ * 11001 未登录或 token 已过期，11002 token 无效
+ */
+const CODE_NOT_LOGIN_OR_EXPIRED = 11001
+const CODE_INVALID_TOKEN = 11002
+
+/**
+ * 清除登录凭证并跳转登录页
+ * 与 HTTP 401 分支保持同一处理：静默跳转，不弹错误提示
+ */
+function redirectToLogin() {
+  Cookies.remove('access_token')
+  window.location.href = '/b/#/login'
+}
+
+/**
  * 响应拦截器
- * 统一处理 401 跳转登录、错误提示
+ * 统一处理认证失效跳转登录、错误提示
  */
 service.interceptors.response.use(
   (response: AxiosResponse) => {
     const data = response.data
     // 若后端返回业务错误码，统一抛出
     if (data && typeof data.code === 'number' && data.code !== 0 && data.code !== 200) {
+      // 认证失效（HTTP 200 + 业务码）：清凭证并跳转登录
+      if (data.code === CODE_NOT_LOGIN_OR_EXPIRED || data.code === CODE_INVALID_TOKEN) {
+        redirectToLogin()
+        return Promise.reject(new Error(data.message || '未登录或登录已过期'))
+      }
       const message = data.message || '请求失败'
       tryShowError(message)
       return Promise.reject(new Error(message))
@@ -70,8 +92,7 @@ service.interceptors.response.use(
     const message = (error.response?.data as { message?: string })?.message || error.message || '网络异常'
 
     if (status === 401) {
-      Cookies.remove('access_token')
-      window.location.href = '/b/#/login'
+      redirectToLogin()
       return Promise.reject(error)
     }
 
