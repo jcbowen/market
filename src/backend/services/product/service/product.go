@@ -196,18 +196,8 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 		Sort:         req.Sort,
 	}
 
-	// show_sales 为 bool 零值 + default:1 标签时，GORM Create 会跳过该列（落 DB 默认值 1）
-	// 并把默认值回填进结构体，这里先取期望值，事务内显式回写保证 false 可落库
-	wantShowSales := p.ShowSales
-
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(p).Error; err != nil {
-			return err
-		}
-		// 显式回写 show_sales，绕过 Create 的零值跳过行为
-		if err := tx.Model(&model.Product{}).
-			Where("id = ?", p.ID).
-			Update("show_sales", wantShowSales).Error; err != nil {
 			return err
 		}
 		if len(req.Images) > 0 {

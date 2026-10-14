@@ -20,10 +20,10 @@ type Product struct {
 	MinPrice         float64 `gorm:"column:min_price;type:decimal(10,2);default:0;comment:价格区间下限(汇总)" json:"min_price"`
 	MaxPrice         float64 `gorm:"column:max_price;type:decimal(10,2);default:0;comment:价格区间上限(汇总)" json:"max_price"`
 	MinOriginalPrice float64 `gorm:"column:min_original_price;type:decimal(10,2);default:0;comment:划线价(汇总，最低价SKU的划线价，0 不展示)" json:"min_original_price"`
-	ShowSales        bool    `gorm:"column:show_sales;type:tinyint(1);default:1;comment:C端是否显示销量，默认1" json:"show_sales"`
+	ShowSales        bool    `gorm:"column:show_sales;type:tinyint(1);comment:C端是否显示销量" json:"show_sales"`
 	VirtualSales     int32   `gorm:"column:virtual_sales;type:int;default:0;comment:虚拟销量（展示口径=真实销量+虚拟销量）" json:"virtual_sales"`
 	Stock            int32   `gorm:"column:stock;type:int;default:0;comment:汇总库存(所有SKU之和)" json:"stock"`
-	MinBuy           int32   `gorm:"column:min_buy;type:int;default:1;comment:最低购买份数" json:"min_buy"`
+	MinBuy           int32   `gorm:"column:min_buy;type:int;comment:最低购买份数" json:"min_buy"`
 	Status           int32   `gorm:"column:status;type:tinyint;default:1;comment:0下架 1上架 2删除" json:"status"`
 	Sort             int32   `gorm:"column:sort;type:int;default:0;comment:排序，默认0" json:"sort"`
 	SalesCount       int32   `gorm:"column:sales_count;type:int;default:0;comment:累计销量，默认0" json:"sales_count"`
