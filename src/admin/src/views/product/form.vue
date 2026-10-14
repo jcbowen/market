@@ -25,11 +25,23 @@
       <n-form-item label="排序">
         <n-input-number v-model:value="form.sort" />
       </n-form-item>
+      <n-form-item label="显示销量">
+        <n-switch v-model:value="form.show_sales" />
+        <span class="field-hint">关闭后 C 端不展示「已售 x」</span>
+      </n-form-item>
+      <n-form-item label="虚拟销量">
+        <n-input-number v-model:value="form.virtual_sales" :min="0" :precision="0" />
+        <span class="field-hint">展示销量 = 真实销量 + 虚拟销量</span>
+      </n-form-item>
 
       <!-- 单规格：直接填写价格库存 -->
       <template v-if="!form.is_multi_spec">
         <n-form-item label="售价（元）" required>
           <n-input-number v-model:value="singleSku.price" :min="0.01" :precision="2" />
+        </n-form-item>
+        <n-form-item label="划线价（元）">
+          <n-input-number v-model:value="singleSku.original_price" :min="0" :precision="2" />
+          <span class="field-hint">原价展示，0 或留空表示不显示划线价</span>
         </n-form-item>
         <n-form-item label="成本价（元）">
           <n-input-number v-model:value="singleSku.cost_price" :min="0" :precision="2" />
@@ -75,6 +87,7 @@
                 <th v-for="spec in specs" :key="spec.tempId">{{ spec.name || '规格' }}</th>
                 <th>规格图片</th>
                 <th>售价（元）</th>
+                <th>划线价（元）</th>
                 <th>成本价（元）</th>
                 <th>库存</th>
                 <th>安全库存</th>
@@ -109,6 +122,15 @@
                     :precision="2"
                     size="small"
                     placeholder="售价"
+                  />
+                </td>
+                <td>
+                  <n-input-number
+                    v-model:value="row.original_price"
+                    :min="0"
+                    :precision="2"
+                    size="small"
+                    placeholder="划线价"
                   />
                 </td>
                 <td>
@@ -206,6 +228,7 @@ interface SkuRow {
   id: number
   values: { id: number; tempId: string; name: string }[]
   price: number | null
+  original_price: number | null
   cost_price: number | null
   stock: number | null
   safety_stock: number | null
@@ -230,12 +253,15 @@ const form = reactive({
   is_multi_spec: false,
   min_buy: 1,
   sort: 0,
+  show_sales: true,
+  virtual_sales: 0,
 })
 
 /** 单规格默认 SKU（编辑时回填 id 以更新而非新建） */
 const singleSku = reactive({
   id: 0,
   price: null as number | null,
+  original_price: null as number | null,
   cost_price: null as number | null,
   stock: null as number | null,
   safety_stock: 0,
@@ -327,6 +353,7 @@ function rebuildSkuRows(): void {
       id: old?.id ?? 0,
       values: combo,
       price: old?.price ?? null,
+      original_price: old?.original_price ?? null,
       cost_price: old?.cost_price ?? null,
       stock: old?.stock ?? null,
       safety_stock: old?.safety_stock ?? null,
@@ -382,6 +409,8 @@ async function loadDetail(): Promise<void> {
     is_multi_spec: !!p.is_multi_spec,
     min_buy: p.min_buy ?? 1,
     sort: p.sort ?? 0,
+    show_sales: p.show_sales ?? true,
+    virtual_sales: p.virtual_sales ?? 0,
   })
 
   // 编辑态加载完成后用商品名区分标签页（create 模式不加载详情，不会执行到这里）
@@ -421,6 +450,7 @@ async function loadDetail(): Promise<void> {
         id: sku.id,
         values: combo,
         price: sku.price,
+        original_price: sku.original_price ?? 0,
         cost_price: sku.cost_price,
         stock: sku.stock,
         safety_stock: sku.safety_stock,
@@ -433,6 +463,7 @@ async function loadDetail(): Promise<void> {
     if (sku) {
       singleSku.id = sku.id
       singleSku.price = sku.price
+      singleSku.original_price = sku.original_price ?? 0
       singleSku.cost_price = sku.cost_price
       singleSku.stock = sku.stock
       singleSku.safety_stock = sku.safety_stock
@@ -464,6 +495,8 @@ function buildPayload(): ProductSavePayload | null {
     is_multi_spec: form.is_multi_spec,
     min_buy: form.min_buy,
     sort: form.sort,
+    show_sales: form.show_sales,
+    virtual_sales: form.virtual_sales ?? 0,
     specs: [],
     sku_items: [],
   }
@@ -483,6 +516,7 @@ function buildPayload(): ProductSavePayload | null {
         spec_value_ids: [],
         sku_code: '',
         price: singleSku.price,
+        original_price: singleSku.original_price ?? 0,
         cost_price: singleSku.cost_price ?? 0,
         stock: singleSku.stock,
         safety_stock: singleSku.safety_stock ?? 0,
@@ -540,6 +574,7 @@ function buildPayload(): ProductSavePayload | null {
     spec_value_ids: row.values.map((v) => (v.id ? String(v.id) : v.tempId)),
     sku_code: '',
     price: row.price ?? 0,
+    original_price: row.original_price ?? 0,
     cost_price: row.cost_price ?? 0,
     stock: row.stock ?? 0,
     safety_stock: row.safety_stock ?? 0,
@@ -605,6 +640,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.field-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #999;
+}
 .spec-block {
   flex: 1;
 }

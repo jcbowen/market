@@ -181,21 +181,33 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 
 	imagesJSON, _ := json.Marshal(req.Images)
 	p := &model.Product{
-		CommunityID: req.CommunityId,
-		CategoryID:  req.CategoryId,
-		Name:        req.Name,
-		Description: req.Description,
-		CoverImage:  req.CoverImage,
-		Images:      string(imagesJSON),
-		Unit:        req.Unit,
-		IsMultiSpec: req.IsMultiSpec,
-		MinBuy:      req.MinBuy,
-		Status:      1,
-		Sort:        req.Sort,
+		CommunityID:  req.CommunityId,
+		CategoryID:   req.CategoryId,
+		Name:         req.Name,
+		Description:  req.Description,
+		CoverImage:   req.CoverImage,
+		Images:       string(imagesJSON),
+		Unit:         req.Unit,
+		IsMultiSpec:  req.IsMultiSpec,
+		MinBuy:       req.MinBuy,
+		ShowSales:    req.ShowSales,
+		VirtualSales: req.VirtualSales,
+		Status:       1,
+		Sort:         req.Sort,
 	}
+
+	// show_sales 为 bool 零值 + default:1 标签时，GORM Create 会跳过该列（落 DB 默认值 1）
+	// 并把默认值回填进结构体，这里先取期望值，事务内显式回写保证 false 可落库
+	wantShowSales := p.ShowSales
 
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(p).Error; err != nil {
+			return err
+		}
+		// 显式回写 show_sales，绕过 Create 的零值跳过行为
+		if err := tx.Model(&model.Product{}).
+			Where("id = ?", p.ID).
+			Update("show_sales", wantShowSales).Error; err != nil {
 			return err
 		}
 		if len(req.Images) > 0 {
@@ -254,6 +266,9 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 		p.MinBuy = req.MinBuy
 	}
 	p.IsMultiSpec = req.IsMultiSpec
+	// 销量展示配置：admin 保存时全量提交，直接赋值
+	p.ShowSales = req.ShowSales
+	p.VirtualSales = req.VirtualSales
 
 	// images 为空数组时视为"不变更"，保留商品现有图片，避免编辑接口意外清空图片
 	if len(req.Images) > 0 {
@@ -388,23 +403,26 @@ func ToProductInfo(p *model.Product, categoryName string, images []string) *prod
 		return nil
 	}
 	return &product.ProductInfo{
-		Id:           p.ID,
-		CommunityId:  p.CommunityID,
-		CategoryId:   p.CategoryID,
-		Name:         p.Name,
-		Description:  p.Description,
-		CoverImage:   p.CoverImage,
-		Images:       images,
-		Unit:         p.Unit,
-		IsMultiSpec:  p.IsMultiSpec,
-		MinBuy:       p.MinBuy,
-		Status:       p.Status,
-		Sort:         p.Sort,
-		SalesCount:   p.SalesCount,
-		Price:        p.MinPrice,
-		Stock:        p.Stock,
-		MinPrice:     p.MinPrice,
-		MaxPrice:     p.MaxPrice,
-		CategoryName: categoryName,
+		Id:            p.ID,
+		CommunityId:   p.CommunityID,
+		CategoryId:    p.CategoryID,
+		Name:          p.Name,
+		Description:   p.Description,
+		CoverImage:    p.CoverImage,
+		Images:        images,
+		Unit:          p.Unit,
+		IsMultiSpec:   p.IsMultiSpec,
+		MinBuy:        p.MinBuy,
+		Status:        p.Status,
+		Sort:          p.Sort,
+		SalesCount:    p.SalesCount,
+		Price:         p.MinPrice,
+		Stock:         p.Stock,
+		MinPrice:      p.MinPrice,
+		MaxPrice:      p.MaxPrice,
+		OriginalPrice: p.MinOriginalPrice,
+		ShowSales:     p.ShowSales,
+		VirtualSales:  p.VirtualSales,
+		CategoryName:  categoryName,
 	}
 }

@@ -69,7 +69,7 @@
           <view class="product-info">
             <text class="product-name">{{ item.name }}</text>
             <text class="product-price">{{ formatPrice(item.price) }}</text>
-            <text class="product-original">{{ formatPrice(item.original_price) }}</text>
+            <text v-if="item.original_price > 0" class="product-original">{{ formatPrice(item.original_price) }}</text>
           </view>
         </view>
       </view>

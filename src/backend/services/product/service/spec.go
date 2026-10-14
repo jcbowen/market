@@ -17,7 +17,7 @@ import (
 )
 
 // specAliveCond 规格表存活记录过滤条件（deleted_at 为 NULL 视为存活）
-// 注意：不能用 `deleted_at = ''` 比较 —— datetime 列与空串比较在 strict 模式下报 Error 1292
+// 注意：不能用 `deleted_at = ”` 比较 —— datetime 列与空串比较在 strict 模式下报 Error 1292
 const specAliveCond = "deleted_at IS NULL"
 
 // saveSpecsAndSkus 在事务内保存商品的规格树与 SKU 组合，并回写商品汇总字段
@@ -62,7 +62,7 @@ func (s *ProductService) saveSpecsAndSkus(tx *gorm.DB, p *model.Product, specs [
 	}
 
 	// 落 SKU 并统计汇总
-	keepSkuIDs, minPrice, maxPrice, totalStock, err := s.saveSkus(tx, p, skuItems, tempMap, specNameMap, valueNameMap, valueSpecMap)
+	keepSkuIDs, minPrice, maxPrice, minOriginalPrice, totalStock, err := s.saveSkus(tx, p, skuItems, tempMap, specNameMap, valueNameMap, valueSpecMap)
 	if err != nil {
 		return err
 	}
@@ -81,9 +81,10 @@ func (s *ProductService) saveSpecsAndSkus(tx *gorm.DB, p *model.Product, specs [
 	return tx.Model(&model.Product{}).
 		Where("id = ?", p.ID).
 		Updates(map[string]interface{}{
-			"min_price": minPrice,
-			"max_price": maxPrice,
-			"stock":     totalStock,
+			"min_price":          minPrice,
+			"max_price":          maxPrice,
+			"min_original_price": minOriginalPrice,
+			"stock":              totalStock,
 		}).Error
 }
 
@@ -200,6 +201,7 @@ func (s *ProductService) saveSpecTree(
 //   - []int64: 本次保留的 SKU ID 列表
 //   - float64: 最低价
 //   - float64: 最高价
+//   - float64: 划线价（最低价 SKU 的划线价，0 表示未配置）
 //   - int32: 汇总库存
 //   - error: 校验或落库错误信息
 func (s *ProductService) saveSkus(
@@ -209,14 +211,15 @@ func (s *ProductService) saveSkus(
 	tempMap map[string]int64,
 	specNameMap, valueNameMap map[int64]string,
 	valueSpecMap map[int64]int64,
-) ([]int64, float64, float64, int32, error) {
+) ([]int64, float64, float64, float64, int32, error) {
 	var (
-		keepSkuIDs   = make([]int64, 0, len(skuItems))
-		minPrice     = 0.0
-		maxPrice     = 0.0
-		totalStock   = int32(0)
-		seenCombo    = make(map[string]bool)
-		defaultSkuID = int64(0)
+		keepSkuIDs       = make([]int64, 0, len(skuItems))
+		minPrice         = 0.0
+		maxPrice         = 0.0
+		minOriginalPrice = 0.0
+		totalStock       = int32(0)
+		seenCombo        = make(map[string]bool)
+		defaultSkuID     = int64(0)
 	)
 
 	// 单规格：定位现有默认 SKU（spec_value_ids 为空/NULL 且启用），避免重复创建
@@ -232,10 +235,10 @@ func (s *ProductService) saveSkus(
 
 	for i, item := range skuItems {
 		if item.Price <= 0 {
-			return nil, 0, 0, 0, fmt.Errorf("第 %d 个 SKU 的价格必须大于 0", i+1)
+			return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU 的价格必须大于 0", i+1)
 		}
 		if item.Stock < 0 {
-			return nil, 0, 0, 0, fmt.Errorf("第 %d 个 SKU 的库存不能为负数", i+1)
+			return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU 的库存不能为负数", i+1)
 		}
 
 		// 解析规格值 ID：临时 ID 替换为真实 ID
@@ -243,7 +246,7 @@ func (s *ProductService) saveSkus(
 		for _, raw := range item.SpecValueIds {
 			id, err := resolveSpecValueID(raw, tempMap, valueNameMap)
 			if err != nil {
-				return nil, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%v", i+1, err)
+				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%v", i+1, err)
 			}
 			resolved = append(resolved, id)
 		}
@@ -253,7 +256,7 @@ func (s *ProductService) saveSkus(
 		comboKey := joinSpecValueIDs(resolved)
 		if comboKey != "" {
 			if seenCombo[comboKey] {
-				return nil, 0, 0, 0, fmt.Errorf("SKU 规格组合重复: %s", skuDisplayName(resolved, valueNameMap))
+				return nil, 0, 0, 0, 0, fmt.Errorf("SKU 规格组合重复: %s", skuDisplayName(resolved, valueNameMap))
 			}
 			seenCombo[comboKey] = true
 		}
@@ -280,6 +283,7 @@ func (s *ProductService) saveSkus(
 			"spec_name":      specName,
 			"spec_json":      specJSON,
 			"price":          item.Price,
+			"original_price": item.OriginalPrice,
 			"cost_price":     item.CostPrice,
 			"stock":          item.Stock,
 			"safety_stock":   item.SafetyStock,
@@ -296,47 +300,50 @@ func (s *ProductService) saveSkus(
 			if err := tx.Model(&model.Sku{}).
 				Where("id = ? AND product_id = ?", skuID, p.ID).
 				Count(&cnt).Error; err != nil {
-				return nil, 0, 0, 0, err
+				return nil, 0, 0, 0, 0, err
 			}
 			if cnt == 0 {
-				return nil, 0, 0, 0, fmt.Errorf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID)
+				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID)
 			}
 			if err := tx.Model(&model.Sku{}).
 				Where("id = ? AND product_id = ?", skuID, p.ID).
 				Updates(updates).Error; err != nil {
-				return nil, 0, 0, 0, err
+				return nil, 0, 0, 0, 0, err
 			}
 		} else {
 			row := &model.Sku{
-				ProductID:    p.ID,
-				CommunityID:  p.CommunityID,
-				SkuCode:      skuCode,
-				SpecValueIDs: comboKey,
-				SpecName:     specName,
-				SpecJSON:     specJSON,
-				Price:        item.Price,
-				CostPrice:    item.CostPrice,
-				Stock:        item.Stock,
-				SafetyStock:  item.SafetyStock,
-				Image:        item.Image,
-				Status:       1,
+				ProductID:     p.ID,
+				CommunityID:   p.CommunityID,
+				SkuCode:       skuCode,
+				SpecValueIDs:  comboKey,
+				SpecName:      specName,
+				SpecJSON:      specJSON,
+				Price:         item.Price,
+				OriginalPrice: item.OriginalPrice,
+				CostPrice:     item.CostPrice,
+				Stock:         item.Stock,
+				SafetyStock:   item.SafetyStock,
+				Image:         item.Image,
+				Status:        1,
 			}
 			if err := tx.Create(row).Error; err != nil {
-				return nil, 0, 0, 0, err
+				return nil, 0, 0, 0, 0, err
 			}
 			skuID = row.ID
 		}
 
 		keepSkuIDs = append(keepSkuIDs, skuID)
+		// 划线价取最低价 SKU 的划线价，与列表展示口径（price=min_price）保持同一规格
 		if minPrice == 0 || item.Price < minPrice {
 			minPrice = item.Price
+			minOriginalPrice = item.OriginalPrice
 		}
 		if item.Price > maxPrice {
 			maxPrice = item.Price
 		}
 		totalStock += item.Stock
 	}
-	return keepSkuIDs, minPrice, maxPrice, totalStock, nil
+	return keepSkuIDs, minPrice, maxPrice, minOriginalPrice, totalStock, nil
 }
 
 // softDeleteSpecs 软删除商品下未保留的规格名与规格值

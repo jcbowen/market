@@ -47,7 +47,13 @@ interface RawProduct {
   category_id?: number
   category_name?: string
   description?: string
+  /** 后端返回的是 sales_count（累计真实销量） */
+  sales_count?: number
   sales?: number
+  /** C 端是否显示销量 */
+  show_sales?: boolean
+  /** 虚拟销量（展示口径 = 真实销量 + 虚拟销量） */
+  virtual_sales?: number
   is_multi_spec?: boolean
   min_buy?: number
   skus?: RawSku[]
@@ -109,7 +115,9 @@ function normalizeProduct(p: RawProduct): Product {
     category_id: p.category_id || 0,
     category_name: p.category_name || '',
     description: p.description || '',
-    sales: p.sales || 0,
+    // 展示口径：真实销量（sales_count）+ 虚拟销量；后端历史字段名为 sales，做兼容
+    sales: (p.sales_count ?? p.sales ?? 0) + (p.virtual_sales ?? 0),
+    show_sales: p.show_sales !== false,
     is_multi_spec: p.is_multi_spec || false,
     min_buy: p.min_buy || 1,
     skus: (p.skus || []).map(normalizeSku),

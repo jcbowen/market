@@ -170,6 +170,8 @@ message CreateProductReq {
   repeated SpecReq specs = 12;         // 规格树（多规格时必填）
   repeated SkuItemReq sku_items = 13; // SKU 组合列表（单规格时仅一条，不带规格值）
   int32 min_buy = 11;
+  bool show_sales = 14;   // C端是否显示销量
+  int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
 }
 
 message UpdateProductReq {
@@ -186,6 +188,8 @@ message UpdateProductReq {
   bool is_multi_spec = 11;
   repeated SpecReq specs = 12;         // 规格树（多规格时必填，全量提交）
   repeated SkuItemReq sku_items = 13; // SKU 组合列表（全量提交）
+  bool show_sales = 14;     // C端是否显示销量
+  int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
 }
 
 message DeleteProductReq {
@@ -216,6 +220,9 @@ message ProductInfo {
   int32 min_buy = 16;
   double min_price = 17; // 价格区间下限（汇总字段）
   double max_price = 18; // 价格区间上限（汇总字段）
+  double original_price = 19; // 划线价（汇总字段：最低价 SKU 的划线价，0 表示不展示）
+  bool show_sales = 20;       // C端是否显示销量
+  int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
 }
 
 message ProductDetail {
@@ -257,6 +264,7 @@ message SkuItemReq {
   int32 stock = 6;
   int32 safety_stock = 7;
   string image = 8;
+  double original_price = 9; // 划线价（原价，0 表示不展示）
 }
 
 // SpecValueInfo 规格值信息（详情返回）
@@ -321,6 +329,7 @@ message SkuInfo {
   string image = 11;
   int32 status = 12;
   string spec_value_ids = 13; // 逗号分隔的规格值 ID（多规格组合键，单规格为空）
+  double original_price = 14; // 划线价（原价，0 表示不展示）
 }
 
 message ListSkusResp {

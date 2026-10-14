@@ -17,7 +17,7 @@
         <text v-if="product.original_price > 0" class="original">{{ formatPrice(product.original_price) }}</text>
       </view>
       <text class="name">{{ product.name }}</text>
-      <text class="sales">已售 {{ product.sales || 0 }}</text>
+      <text v-if="product.show_sales" class="sales">已售 {{ product.sales || 0 }}</text>
     </view>
 
     <!-- 规格选择 -->
@@ -115,6 +115,7 @@ const product = ref<Product>({
   skus: [],
   specs: [],
   sales: 0,
+  show_sales: true,
   is_multi_spec: false,
   min_buy: 1,
 })

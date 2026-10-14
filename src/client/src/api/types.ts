@@ -113,6 +113,8 @@ export interface Product {
   /** 规格树（多规格时非空） */
   specs: Spec[]
   sales: number
+  /** C 端是否显示「已售 x」（后端 show_sales，未返回时默认显示） */
+  show_sales: boolean
   is_multi_spec: boolean
   min_buy: number
 }

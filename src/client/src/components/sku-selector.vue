@@ -144,6 +144,7 @@ const emptyProduct: Product = {
   skus: [],
   specs: [],
   sales: 0,
+  show_sales: true,
   is_multi_spec: false,
   min_buy: 1,
 }

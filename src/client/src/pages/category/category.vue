@@ -77,7 +77,7 @@
             <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" />
             <view class="product-info">
               <text class="product-name">{{ item.name }}</text>
-              <text class="product-sales">已售 {{ item.sales || 0 }}</text>
+              <text v-if="item.show_sales" class="product-sales">已售 {{ item.sales || 0 }}</text>
               <view class="product-bottom">
                   <text class="product-price">{{ formatPrice(item.price) }}</text>
                   <view class="add-btn" @click.stop="onAddClick(item)">
@@ -110,7 +110,7 @@
           <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" />
           <view class="product-info">
             <text class="product-name">{{ item.name }}</text>
-            <text class="product-sales">已售 {{ item.sales || 0 }}</text>
+            <text v-if="item.show_sales" class="product-sales">已售 {{ item.sales || 0 }}</text>
             <view class="product-bottom">
               <text class="product-price">{{ formatPrice(item.price) }}</text>
               <view class="add-btn" @click.stop="onAddClick(item)">

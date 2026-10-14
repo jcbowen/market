@@ -109,6 +109,10 @@ export interface Product {
   min_buy?: number
   sort?: number
   sales_count?: number
+  /** C端是否显示销量 */
+  show_sales?: boolean
+  /** 虚拟销量（展示口径=真实销量+虚拟销量） */
+  virtual_sales?: number
 }
 
 /**
@@ -142,6 +146,8 @@ export interface Sku {
   spec_name: string
   spec_json: string
   price: number
+  /** 划线价（原价，0 表示不展示） */
+  original_price: number
   cost_price: number
   stock: number
   safety_stock: number
@@ -178,6 +184,8 @@ export interface SkuSaveItem {
   spec_value_ids: string[]
   sku_code: string
   price: number
+  /** 划线价（原价，0 表示不展示） */
+  original_price: number
   cost_price: number
   stock: number
   safety_stock: number
@@ -197,6 +205,10 @@ export interface ProductSavePayload {
   is_multi_spec: boolean
   min_buy: number
   sort: number
+  /** C端是否显示销量 */
+  show_sales: boolean
+  /** 虚拟销量（展示口径=真实销量+虚拟销量） */
+  virtual_sales: number
   specs: SpecSaveItem[]
   sku_items: SkuSaveItem[]
 }

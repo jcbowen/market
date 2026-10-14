@@ -59,8 +59,16 @@
           <n-form-item label="售价" style="width: 240px;">
             <n-input-number v-model:value="productForm.price" placeholder="售价" style="width: 100%;" />
           </n-form-item>
-          <n-form-item label="原价" style="width: 240px;">
-            <n-input-number v-model:value="productForm.original_price" placeholder="原价" style="width: 100%;" />
+          <n-form-item label="划线价" style="width: 240px;">
+            <n-input-number v-model:value="productForm.original_price" :min="0" placeholder="原价，0 不显示" style="width: 100%;" />
+          </n-form-item>
+        </n-space>
+        <n-space>
+          <n-form-item label="显示销量" style="width: 240px;">
+            <n-switch v-model:value="productForm.show_sales" />
+          </n-form-item>
+          <n-form-item label="虚拟销量" style="width: 240px;">
+            <n-input-number v-model:value="productForm.virtual_sales" :min="0" :precision="0" style="width: 100%;" />
           </n-form-item>
         </n-space>
         <n-space>
@@ -98,6 +106,7 @@
 
 <script setup lang="ts">
 import { h, onMounted, reactive, ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
@@ -115,6 +124,7 @@ import { useAuthStore } from '@/stores/auth'
 
 const message = useMessage()
 const authStore = useAuthStore()
+const router = useRouter()
 const pageSize = 10
 
 const categories = ref<Category[]>([])
@@ -209,6 +219,8 @@ const productForm = reactive<Partial<Product>>({
   category_id: undefined,
   price: undefined,
   original_price: undefined,
+  show_sales: true,
+  virtual_sales: 0,
   stock: undefined,
   cover_image: '',
   unit: '',
@@ -287,15 +299,23 @@ async function saveCategory() {
 
 /**
  * 打开商品编辑弹窗
+ * 多规格商品禁止走快速弹窗：此弹窗固定以单规格保存，会把商品转为单规格、
+ * 软删全部规格树并禁用原 SKU，因此统一跳转完整编辑页处理
  * @param row 商品数据
  */
 function openProductModal(row?: Product) {
+  if (row?.is_multi_spec) {
+    router.push(`/products/detail/${row.id}`)
+    return
+  }
   productForm.id = row?.id
   productForm.name = row?.name || ''
   productForm.category_id = row?.category_id
   productForm.cover_image = row?.cover_image || ''
   productForm.price = row?.price
   productForm.original_price = row?.original_price
+  productForm.show_sales = row?.show_sales ?? true
+  productForm.virtual_sales = row?.virtual_sales ?? 0
   productForm.stock = row?.stock
   productForm.unit = row?.unit || ''
   productForm.description = row?.description || ''
@@ -330,6 +350,8 @@ async function saveProduct() {
       is_multi_spec: false,
       min_buy: productForm.min_buy ?? 1,
       sort: productForm.sort ?? 0,
+      show_sales: productForm.show_sales ?? true,
+      virtual_sales: productForm.virtual_sales ?? 0,
       specs: [],
       sku_items: [
         {
@@ -337,6 +359,7 @@ async function saveProduct() {
           spec_value_ids: [],
           sku_code: '',
           price: productForm.price,
+          original_price: productForm.original_price ?? 0,
           cost_price: 0,
           stock: productForm.stock,
           safety_stock: 0,

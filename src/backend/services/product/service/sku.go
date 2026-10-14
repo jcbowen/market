@@ -147,18 +147,19 @@ func ToSkuInfo(sku *model.Sku) *product.SkuInfo {
 		return nil
 	}
 	return &product.SkuInfo{
-		Id:           sku.ID,
-		ProductId:    sku.ProductID,
-		CommunityId:  sku.CommunityID,
-		SkuCode:      sku.SkuCode,
-		SpecName:     sku.SpecName,
-		SpecJson:     sku.SpecJSON,
-		Price:        sku.Price,
-		CostPrice:    sku.CostPrice,
-		Stock:        sku.Stock,
-		SafetyStock:  sku.SafetyStock,
-		Image:        sku.Image,
-		Status:       sku.Status,
-		SpecValueIds: sku.SpecValueIDs,
+		Id:            sku.ID,
+		ProductId:     sku.ProductID,
+		CommunityId:   sku.CommunityID,
+		SkuCode:       sku.SkuCode,
+		SpecName:      sku.SpecName,
+		SpecJson:      sku.SpecJSON,
+		Price:         sku.Price,
+		OriginalPrice: sku.OriginalPrice,
+		CostPrice:     sku.CostPrice,
+		Stock:         sku.Stock,
+		SafetyStock:   sku.SafetyStock,
+		Image:         sku.Image,
+		Status:        sku.Status,
+		SpecValueIds:  sku.SpecValueIDs,
 	}
 }
