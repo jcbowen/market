@@ -28,6 +28,8 @@ export interface Community {
   district_code?: string
   /** 是否允许社区外配送（false 时地址前缀锁定为本社区） */
   allow_outside_delivery: boolean
+  /** 营业状态：0 停业，1 营业（历史本地缓存可能缺省，判断时仅识别显式 0） */
+  status?: number
   /** 配送费（proto omitempty，值为 0 时字段缺省，取值须用 ?? 0） */
   delivery_fee?: number
   /** 起送金额（proto omitempty，值为 0 时字段缺省，取值须用 ?? 0；0 表示无起送门槛） */

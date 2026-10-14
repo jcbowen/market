@@ -16,19 +16,38 @@ onLaunch(() => {
 
 /**
  * 初始化社区信息
- * - 已登录：本地无社区缓存时，尝试从用户信息恢复最近一次使用的社区
+ * - 已登录：本地无社区缓存时，尝试从用户信息恢复最近一次使用的社区；
+ *   恢复失败（如绑定社区已停业，营业列表中匹配不到）时走自动选社区兜底
  * - 未登录：本地无社区缓存时自动定位选社区（系统定位 → IP 定位 → 默认第一个），
  *   仅写本地缓存不落库，选中后 toast 轻提示，用户可随时在首页/分类页手动切换
+ * - 已有社区缓存时统一校验营业状态：社区已停业则自动切换到可用社区并提示
  */
 async function initCommunity() {
   const userStore = useUserStore()
   if (userStore.isLogin) {
-    await restoreLoginCommunity(userStore)
+    if (userStore.communityInfo?.id && userStore.communityInfo?.name) {
+      await ensureCommunityOpen(userStore)
+      return
+    }
+    // 本地无社区缓存：按用户绑定社区恢复；恢复失败（绑定社区停业/不存在）时自动兜底选社区
+    const restored = await userStore.syncBoundCommunity()
+    if (!restored) {
+      const fallback = await autoPickCommunity()
+      if (fallback) {
+        await userStore.switchCommunity(fallback)
+        uni.showToast({ title: `已为您选择「${fallback.name}」，点击顶部可切换`, icon: 'none' })
+      }
+      return
+    }
+    await ensureCommunityOpen(userStore)
     return
   }
 
-  // 未登录且本地已有社区缓存（store 初始化已从 storage 恢复）时不重复选择
-  if (userStore.communityInfo?.id) return
+  // 未登录且本地已有社区缓存（store 初始化已从 storage 恢复）时不重复选择，仅校验停业状态
+  if (userStore.communityInfo?.id) {
+    await ensureCommunityOpen(userStore)
+    return
+  }
 
   const community = await autoPickCommunity()
   if (!community) return
@@ -37,15 +56,31 @@ async function initCommunity() {
 }
 
 /**
- * 已登录时恢复最近使用的社区
- * 本地缓存命中则直接沿用；未命中时按用户绑定的 community_id 拉取完整社区对象。
- * 不再用字面量拼残缺 Community：那样会漏掉 delivery_fee/min_order_amount，
- * 且被持久化后长期存在，导致结算页运费与起送门槛失效
+ * 校验当前社区营业状态：已停业时自动切换到可用社区并提示
+ * 停业判断仅识别显式 status === 0（历史本地缓存无 status 字段时不误判）
+ * 自动切换复用 switchCommunity：已登录同步服务端绑定（避免下次启动被切回停业社区），
+ * 未登录仅写本地；自动重选无可用社区时仅提示，保留原社区由用户手动处理
  * @param userStore 用户状态
  */
-async function restoreLoginCommunity(userStore: ReturnType<typeof useUserStore>) {
-  if (userStore.communityInfo?.id && userStore.communityInfo?.name) return
-  await userStore.syncBoundCommunity()
+async function ensureCommunityOpen(userStore: ReturnType<typeof useUserStore>) {
+  const current = userStore.communityInfo
+  if (!current || current.status !== 0) return
+
+  const next = await autoPickCommunity()
+  if (next && next.id !== current.id) {
+    await userStore.switchCommunity(next)
+    uni.showToast({
+      title: `社区「${current.name}」已停业，已为您切换至「${next.name}」`,
+      icon: 'none',
+      duration: 3000,
+    })
+  } else {
+    uni.showToast({
+      title: `社区「${current.name}」已停业，暂无其他可用社区`,
+      icon: 'none',
+      duration: 3000,
+    })
+  }
 }
 
 /**

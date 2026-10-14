@@ -48,6 +48,19 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		return nil, bizerr.New(codes.InvalidArgument, "配送类型不合法，仅支持 1（自提）或 2（配送）")
 	}
 
+	// 社区信息统一获取（一次 RPC，自提/配送共用）：
+	// - 停业状态校验：无论自提还是配送，停业社区一律不允许下单。
+	//   C 端本地缓存的社区可能已停业（前端缓存无法实时感知后台停业操作），此处做服务端兜底
+	// - 配送订单还需起送金额与配送费
+	// 放在商品循环之前：停业时直接短路，不必白跑逐个商品的 RPC
+	communityInfo, err := grpcclient.UserClient.GetCommunity(ctx, &user.GetCommunityReq{Id: req.CommunityId})
+	if err != nil {
+		return nil, fmt.Errorf("获取社区信息失败: %w", err)
+	}
+	if communityInfo.Status != 1 {
+		return nil, bizerr.New(codes.FailedPrecondition, "当前社区已停业，暂不支持下单，请切换社区")
+	}
+
 	now := time.Now().Format("2006-01-02 15:04:05")
 	var totalAmount float64
 	var orderItems []*model.OrderItem
@@ -89,16 +102,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	}
 
 	// 配送订单需计算配送费并校验起送金额（按商品总额校验，优惠不影响起送门槛）
+	// 社区信息已在方法开头统一获取（communityInfo），此处不再重复调用
 	var deliveryFee float64
 	if req.DeliveryType == 2 {
-		community, err := grpcclient.UserClient.GetCommunity(ctx, &user.GetCommunityReq{Id: req.CommunityId})
-		if err != nil {
-			return nil, fmt.Errorf("获取社区信息失败: %w", err)
+		if communityInfo.MinOrderAmount > 0 && totalAmount < communityInfo.MinOrderAmount {
+			return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单金额未满 %.2f 元起送金额", communityInfo.MinOrderAmount))
 		}
-		if community.MinOrderAmount > 0 && totalAmount < community.MinOrderAmount {
-			return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单金额未满 %.2f 元起送金额", community.MinOrderAmount))
-		}
-		deliveryFee = community.DeliveryFee
+		deliveryFee = communityInfo.DeliveryFee
 	}
 
 	// 分别计算满减与优惠券优惠，两者均按商品总价校验门槛并可叠加
