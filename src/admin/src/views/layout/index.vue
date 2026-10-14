@@ -305,6 +305,8 @@ interface MenuItemConfig {
   label: string
   key: string
   permission: string
+  /** 仅超管可见（系统级入口，社区管理员即便持有对应权限码也不展示） */
+  superOnly?: boolean
 }
 
 interface MenuGroupConfig {
@@ -401,12 +403,23 @@ const menuOptions = computed<MenuOption[]>(() => {
       label: '系统管理',
       key: '/system',
       icon: renderIcon(StorefrontOutline),
-      // 分组不设权限门槛：按子项权限过滤，无任何可见子项时整组隐藏
+      // 分组不设权限门槛：按子项权限过滤，无任何可见子项时整组隐藏。
+      // 系统级入口（社区权限/全局角色）superOnly，社区管理员不可见
       children: [
         { label: '社区管理', key: '/system/communities', permission: 'community:view' },
+        { label: '社区权限', key: '/system/community-permissions', permission: 'community:view', superOnly: true },
         { label: '行政区划', key: '/system/regions', permission: 'region:view' },
+        { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
         { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
+      ],
+    },
+    {
+      label: '员工与角色',
+      key: '/staff',
+      icon: renderIcon(PeopleOutline),
+      // 社区门店级：员工管理与本社区私有角色管理
+      children: [
         { label: '员工管理', key: '/system/admins', permission: 'admin:view' },
         { label: '角色管理', key: '/system/roles', permission: 'role:view' },
       ],
@@ -416,7 +429,9 @@ const menuOptions = computed<MenuOption[]>(() => {
   return groups
     .filter((group) => !group.permission || checkPermission(group.permission))
     .map((group) => {
-      const children = group.children.filter((child) => checkPermission(child.permission))
+      const children = group.children.filter(
+        (child) => checkPermission(child.permission) && (!child.superOnly || authStore.isSuperAdmin),
+      )
       if (children.length === 0) return null
       return {
         label: group.label,

@@ -352,7 +352,9 @@ func (s *AdminService) ListAdminCommunityIDs(ctx context.Context, adminID int64)
 }
 
 // GetAdminContext 实时解析管理员在指定社区的权限上下文
-// 超管不受社区约束；普通管理员权限 = 该社区全部任职角色的权限并集
+// 超管不受社区约束；普通管理员权限 = 该社区全部任职角色的权限并集，
+// 再与本社区权限上限（内置社区管理员角色的权限集）取交集——
+// 超管在「社区权限」页收紧上限后立即对全员生效，无需清理存量角色
 //
 // 参数：
 //   - ctx: 上下文
@@ -362,7 +364,7 @@ func (s *AdminService) ListAdminCommunityIDs(ctx context.Context, adminID int64)
 // 返回：
 //   - isSuper: 是否超管
 //   - roleIDs: 任职角色 ID 列表
-//   - permissions: 权限并集（可能含 "*" 通配）
+//   - permissions: 有效权限（可能含 "*" 通配；存在上限且上限不含 "*" 时为并集 ∩ 上限）
 //   - bound: 是否在该社区有任职
 //   - err: 错误信息
 func (s *AdminService) GetAdminContext(ctx context.Context, adminID, communityID int64) (isSuper bool, roleIDs []int64, permissions []string, bound bool, err error) {
@@ -411,7 +413,65 @@ func (s *AdminService) GetAdminContext(ctx context.Context, adminID, communityID
 	for p := range permSet {
 		permissions = append(permissions, p)
 	}
+
+	// 社区权限上限（内置社区管理员角色）：communityID = 0（未指定社区语境）时不做交集
+	ceiling, err := s.roleService.GetBuiltinCommunityAdminRole(ctx, communityID)
+	if err != nil {
+		return false, nil, nil, false, err
+	}
+	if ceiling != nil {
+		var ceilingPerms []string
+		_ = json.Unmarshal([]byte(ceiling.Permissions), &ceilingPerms)
+		permissions = intersectPermissions(permissions, ceilingPerms)
+	}
+
 	return false, roleIDs, permissions, true, nil
+}
+
+// intersectPermissions 有效权限与社区权限上限取交集
+// 任一侧含 "*" 通配时视为该侧无限制：上限含 "*" 直接返回有效权限；
+// 有效权限含 "*"（如任职角色仍为旧的全量内置角色）则收敛为上限本身
+//
+// 参数：
+//   - effective: 角色权限并集
+//   - ceiling: 社区权限上限（内置角色权限集）
+//
+// 返回：
+//   - []string: 交集结果（保序去重）
+func intersectPermissions(effective, ceiling []string) []string {
+	if len(ceiling) == 0 {
+		// 无上限配置：不限制（兼容未初始化内置角色的存量社区）
+		return effective
+	}
+	ceilingSet := make(map[string]struct{}, len(ceiling))
+	for _, p := range ceiling {
+		ceilingSet[p] = struct{}{}
+	}
+	if _, ok := ceilingSet["*"]; ok {
+		return effective
+	}
+
+	result := make([]string, 0, len(effective))
+	seen := make(map[string]struct{}, len(effective))
+	for _, p := range effective {
+		if p == "*" {
+			// 有效权限为通配但上限有限：收敛为上限全部权限点
+			for _, cp := range ceiling {
+				if _, ok := seen[cp]; !ok {
+					seen[cp] = struct{}{}
+					result = append(result, cp)
+				}
+			}
+			return result
+		}
+		if _, ok := ceilingSet[p]; ok {
+			if _, ok := seen[p]; !ok {
+				seen[p] = struct{}{}
+				result = append(result, p)
+			}
+		}
+	}
+	return result
 }
 
 // validateRolesForCommunity 校验角色列表可被分配到指定社区：

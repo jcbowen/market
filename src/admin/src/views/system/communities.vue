@@ -71,6 +71,7 @@ const columns: DataTableColumns<Community> = [
       return h(NSpace, null, {
         default: () => [
           h(NButton, { size: 'small', onClick: () => router.push(`/system/communities/edit/${row.id}`) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', type: 'primary', secondary: true, onClick: () => router.push({ path: '/system/community-permissions', query: { community_id: row.id } }) }, { default: () => '权限分配' }),
           h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' }),
         ],
       })

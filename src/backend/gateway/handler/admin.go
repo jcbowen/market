@@ -457,7 +457,8 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 }
 
 // ListRoles 获取角色列表
-// 默认返回当前社区的角色；超管可传 scope=global 仅查看全局角色
+// 默认返回当前社区的角色；超管可传 scope=global 查看全局角色，
+// 或传 community_id 查看任意社区的角色（社区权限分配页使用）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListRoles(c *gin.Context) {
@@ -471,6 +472,13 @@ func (h *AdminHandler) ListRoles(c *gin.Context) {
 			return
 		}
 		req.CommunityId = 0
+	}
+	if id, err := strconv.ParseInt(c.Query("community_id"), 10, 64); err == nil && id > 0 {
+		if !isSuper {
+			response.Error(c, errcode.NoPermission)
+			return
+		}
+		req.CommunityId = id
 	}
 	resp, err := h.userClient.ListRoles(c.Request.Context(), req)
 	if err != nil {
@@ -626,6 +634,127 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"id": id})
+}
+
+// GetCommunityPermissions 获取社区权限分配详情（超管专用）
+// 返回该社区的权限上限（内置社区管理员角色的权限集）及全部社区角色概览；
+// 内置角色不存在时（存量社区）role_id 返回 0、permissions 返回空数组
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GetCommunityPermissions(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	if uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+
+	resp, err := h.userClient.ListRoles(c.Request.Context(), &user.ListRolesReq{CommunityId: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	var ceiling *user.RoleInfo
+	for _, r := range resp.List {
+		if r.Code == "community_admin" {
+			ceiling = r
+			break
+		}
+	}
+
+	permissions := []string{}
+	var ceilingID int64
+	if ceiling != nil {
+		ceilingID = ceiling.Id
+		if len(ceiling.Permissions) > 0 {
+			permissions = ceiling.Permissions
+		}
+	}
+	response.Success(c, gin.H{
+		"community_id": id,
+		"role_id":      ceilingID,
+		"permissions":  permissions,
+		"roles":        resp.List,
+	})
+}
+
+// UpdateCommunityPermissionsReq 设置社区权限请求
+type UpdateCommunityPermissionsReq struct {
+	Permissions []string `json:"permissions"`
+}
+
+// UpdateCommunityPermissions 设置社区权限上限（超管专用）
+// 即更新该社区内置社区管理员角色的权限集；内置角色不存在时自动创建
+// 权限解析运行时与上限取交集，保存后立即对社区全员生效
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) UpdateCommunityPermissions(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req UpdateCommunityPermissionsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	if uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	if len(req.Permissions) == 0 {
+		response.Error(c, errcode.ParamError, "至少保留一个权限点，否则社区管理员将无法登录后台")
+		return
+	}
+
+	resp, err := h.userClient.ListRoles(c.Request.Context(), &user.ListRolesReq{CommunityId: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	var ceilingID int64
+	for _, r := range resp.List {
+		if r.Code == "community_admin" {
+			ceilingID = r.Id
+			break
+		}
+	}
+
+	if ceilingID <= 0 {
+		// 存量社区未初始化内置角色：随本次分配自动创建
+		created, err := h.userClient.CreateRole(c.Request.Context(), &user.CreateRoleReq{
+			Name:        "社区管理员",
+			Code:        "community_admin",
+			Permissions: req.Permissions,
+			Description: "内置角色：负责本社区的日常运营与员工管理；其权限即本社区权限上限",
+			CommunityId: id,
+		})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		ceilingID = created.Id
+	} else if _, err := h.userClient.UpdateRole(c.Request.Context(), &user.UpdateRoleReq{
+		Id:          ceilingID,
+		Permissions: req.Permissions,
+	}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"community_id": id, "role_id": ceilingID})
 }
 
 // validatePermissionsSubset 校验权限点列表不超出操作者在指定社区的权限范围

@@ -100,11 +100,12 @@ export function changeAdminPassword(id: number, data: { old_password: string; ne
 
 /**
  * 获取角色列表
- * 默认返回当前社区的角色；超管可传 scope=global 查看全局角色
+ * 默认返回当前社区的角色；超管可传 scope=global 查看全局角色，
+ * 或传 community_id 查看任意社区的角色（社区权限分配页使用）
  * @param params 查询参数
  * @returns 角色列表
  */
-export function getRoleList(params?: { scope?: 'global' }) {
+export function getRoleList(params?: { scope?: 'global'; community_id?: number }) {
   return request<ApiResult<Role[]>>({
     url: '/api/v1/admin/roles',
     method: 'GET',
@@ -148,6 +149,40 @@ export function deleteRole(id: number) {
   return request<ApiResult<null>>({
     url: `/api/v1/admin/roles/${id}`,
     method: 'DELETE',
+  })
+}
+
+/**
+ * 获取社区权限分配详情（超管专用）
+ * 返回该社区的权限上限（内置社区管理员角色权限集）及社区角色概览
+ * @param id 社区 ID
+ * @returns 权限上限与角色列表
+ */
+export function getCommunityPermissions(id: number) {
+  return request<
+    ApiResult<{
+      community_id: number
+      role_id: number
+      permissions: string[]
+      roles: Role[]
+    }>
+  >({
+    url: `/api/v1/admin/communities/${id}/permissions`,
+    method: 'GET',
+  })
+}
+
+/**
+ * 设置社区权限上限（超管专用）
+ * 即更新该社区内置社区管理员角色的权限集，保存后运行时立即对社区全员生效
+ * @param id 社区 ID
+ * @param permissions 权限编码列表
+ */
+export function setCommunityPermissions(id: number, permissions: string[]) {
+  return request<ApiResult<{ community_id: number; role_id: number }>>({
+    url: `/api/v1/admin/communities/${id}/permissions`,
+    method: 'PUT',
+    data: { permissions },
   })
 }
 

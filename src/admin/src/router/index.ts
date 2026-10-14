@@ -192,13 +192,25 @@ const routes: RouteRecordRaw[] = [
         path: 'system/admins',
         name: 'AdminList',
         component: () => import('@/views/system/admins.vue'),
-        meta: { title: '管理员列表', permission: 'admin:view', group: '系统管理' },
+        meta: { title: '员工管理', permission: 'admin:view', group: '员工与角色' },
       },
       {
         path: 'system/roles',
         name: 'RoleList',
         component: () => import('@/views/system/roles.vue'),
-        meta: { title: '角色管理', permission: 'role:view', group: '系统管理' },
+        meta: { title: '角色管理', permission: 'role:view', group: '员工与角色' },
+      },
+      {
+        path: 'system/roles-global',
+        name: 'RoleListGlobal',
+        component: () => import('@/views/system/roles.vue'),
+        meta: { title: '全局角色', permission: 'role:view', group: '系统管理' },
+      },
+      {
+        path: 'system/community-permissions',
+        name: 'CommunityPermission',
+        component: () => import('@/views/system/community-permissions.vue'),
+        meta: { title: '社区权限', permission: 'community:view', group: '系统管理' },
       },
       {
         path: 'system/payment',

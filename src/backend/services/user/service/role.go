@@ -12,6 +12,23 @@ import (
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
 
+// DefaultCommunityAdminPermissions 内置社区管理员角色的默认权限集
+// 即「新社区的权限上限」默认值：覆盖社区门店日常运营所需，
+// 不含系统级权限（社区管理 community:*、行政区划 region:*、系统配置 settings:*），
+// 这些仅能由超管在「社区权限」页按社区显式下发
+var DefaultCommunityAdminPermissions = []string{
+	"dashboard:view",
+	"product:view", "product:create", "product:update", "product:delete",
+	"inventory:view", "inventory:create", "inventory:update",
+	"order:view", "order:update",
+	"refund:view", "refund:update",
+	"user:view",
+	"marketing:view", "marketing:create", "marketing:update", "marketing:delete",
+	"statistics:view",
+	"admin:view", "admin:create", "admin:update", "admin:delete",
+	"role:view", "role:create", "role:update", "role:delete",
+}
+
 // RoleService 角色业务服务
 type RoleService struct {
 	db *mysql.Instance
@@ -186,8 +203,35 @@ func (s *RoleService) DeleteRole(ctx context.Context, id int64) error {
 	return s.db.GetDb().WithContext(ctx).Delete(&model.Role{}, id).Error
 }
 
+// GetBuiltinCommunityAdminRole 只读查询指定社区的内置社区管理员角色（不存在返回 nil，不自动创建）
+// 该角色的权限即「社区权限上限」：普通管理员的有效权限运行时与其取交集
+//
+// 参数：
+//   - ctx: 上下文
+//   - communityID: 社区 ID
+//
+// 返回：
+//   - *model.Role: 内置角色，不存在时返回 nil
+//   - error: 错误信息
+func (s *RoleService) GetBuiltinCommunityAdminRole(ctx context.Context, communityID int64) (*model.Role, error) {
+	if communityID <= 0 {
+		return nil, nil
+	}
+	var r model.Role
+	err := s.db.GetDb().WithContext(ctx).
+		Where("community_id = ? AND code = ?", communityID, model.RoleCodeCommunityAdmin).
+		First(&r).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // EnsureCommunityAdminRole 获取（或创建）指定社区的内置社区管理员角色
-// 每个社区仅一条（code = community_admin），权限默认全量，可由超管调整
+// 每个社区仅一条（code = community_admin），权限默认社区级运营集合，可由超管调整
 //
 // 参数：
 //   - ctx: 上下文
@@ -214,8 +258,8 @@ func (s *RoleService) EnsureCommunityAdminRole(ctx context.Context, communityID 
 		Name:        "社区管理员",
 		Code:        model.RoleCodeCommunityAdmin,
 		CommunityID: communityID,
-		Permissions: `["*"]`,
-		Description: "内置角色：负责本社区的日常运营与员工管理",
+		Permissions: PermissionsMustToJSON(DefaultCommunityAdminPermissions),
+		Description: "内置角色：负责本社区的日常运营与员工管理；其权限即本社区权限上限",
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(&r).Error; err != nil {
 		return nil, err
@@ -248,6 +292,7 @@ func ToRoleInfo(r *model.Role) *user.RoleInfo {
 // PermissionsToJSON 将权限切片序列化为 JSON 字符串
 // 参数：
 //   - permissions: 权限编码列表
+//
 // 返回：
 //   - string: JSON 字符串
 //   - error: 错误信息
@@ -257,4 +302,20 @@ func PermissionsToJSON(permissions []string) (string, error) {
 	}
 	b, err := json.Marshal(permissions)
 	return string(b), err
+}
+
+// PermissionsMustToJSON 将权限切片序列化为 JSON 字符串，序列化失败时返回空数组
+// 供内部默认值构造等不可能失败的场景使用
+//
+// 参数：
+//   - permissions: 权限编码列表
+//
+// 返回：
+//   - string: JSON 字符串
+func PermissionsMustToJSON(permissions []string) string {
+	b, err := json.Marshal(permissions)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }

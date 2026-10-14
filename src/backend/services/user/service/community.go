@@ -15,7 +15,8 @@ import (
 
 // CommunityService 社区业务服务
 type CommunityService struct {
-	db *mysql.Instance
+	db          *mysql.Instance
+	roleService *RoleService
 }
 
 // NewCommunityService 创建社区业务服务
@@ -25,7 +26,7 @@ type CommunityService struct {
 // 返回：
 //   - *CommunityService: 社区业务服务实例
 func NewCommunityService(db *mysql.Instance) *CommunityService {
-	return &CommunityService{db: db}
+	return &CommunityService{db: db, roleService: NewRoleService(db)}
 }
 
 // ListCommunities 分页查询社区列表
@@ -197,6 +198,10 @@ func (s *CommunityService) CreateCommunity(ctx context.Context, req *user.Create
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(c).Error; err != nil {
 		return nil, err
+	}
+	// 随社区初始化内置社区管理员角色（社区权限上限的载体，默认社区级运营权限集）
+	if _, err := s.roleService.EnsureCommunityAdminRole(ctx, c.ID); err != nil {
+		return nil, fmt.Errorf("初始化社区管理员角色失败: %w", err)
 	}
 	return c, nil
 }
