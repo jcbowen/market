@@ -154,7 +154,9 @@ func (h *UserHandler) UpdateUserProfile(c *gin.Context) {
 }
 
 // ListAddresses 获取当前用户地址列表
-// 调用 user.ListAddresses 并按通用分页格式返回
+// 调用 user.ListAddresses 返回全量数组（与满减、分类等不分页列表接口口径一致），
+// 不做内存分页：地址数量天然有限，分页壳会导致前端误按数组解析而崩溃，
+// 且默认 page_size=10 会静默截断超出部分
 // 参数：
 //   - c: gin 上下文
 func (h *UserHandler) ListAddresses(c *gin.Context) {
@@ -165,30 +167,11 @@ func (h *UserHandler) ListAddresses(c *gin.Context) {
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
-
-	total := len(resp.List)
-	start := (page - 1) * pageSize
-	end := start + pageSize
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
-	}
-
-	list := make([]addressItem, 0, end-start)
-	for _, addr := range resp.List[start:end] {
+	list := make([]addressItem, 0, len(resp.List))
+	for _, addr := range resp.List {
 		list = append(list, toAddressItem(addr))
 	}
-	response.SuccessWithPage(c, list, total, page, pageSize)
+	response.Success(c, list)
 }
 
 // CreateAddressReq 创建地址请求
