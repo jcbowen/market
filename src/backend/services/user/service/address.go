@@ -179,6 +179,10 @@ func (s *AddressService) CreateAddress(ctx context.Context, req *user.CreateAddr
 	}); err != nil {
 		return nil, err
 	}
+	// 记录会员-社区关联：在该社区添加过收货地址即视为该社区会员（幂等）
+	if err := NewUserService(s.db).MarkUserCommunity(ctx, addr.UserID, addr.CommunityID, "address"); err != nil {
+		return nil, err
+	}
 	return addr, nil
 }
 
@@ -225,6 +229,10 @@ func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddr
 		}
 		return tx.Save(addr).Error
 	}); err != nil {
+		return nil, err
+	}
+	// 记录会员-社区关联：地址改绑社区时同样建立新社区的会员关联（幂等）
+	if err := NewUserService(s.db).MarkUserCommunity(ctx, addr.UserID, addr.CommunityID, "address"); err != nil {
 		return nil, err
 	}
 	return addr, nil

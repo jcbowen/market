@@ -47,8 +47,8 @@
           </n-breadcrumb>
         </div>
         <div class="header-right">
-          <!-- 当前社区：点击弹出所属社区列表，在弹窗中切换 -->
-          <n-button v-if="showCommunitySwitch" text class="community-trigger" @click="showCommunityModal = true">
+          <!-- 当前社区：点击进入社区选择页（多社区账号切换入口） -->
+          <n-button v-if="showCommunitySwitch" text class="community-trigger" @click="goSelectCommunity">
             <n-icon size="16" class="community-trigger-icon">
               <location-outline />
             </n-icon>
@@ -97,25 +97,6 @@
         </router-view>
       </n-layout-content>
     </n-layout>
-
-    <!-- 切换社区弹窗：列出自己所属的社区（超管为全部社区），点击即切换 -->
-    <n-modal v-model:show="showCommunityModal" preset="card" title="切换社区" style="width: 380px; max-width: 90vw">
-      <div class="community-list">
-        <div
-          v-for="opt in communityOptions"
-          :key="opt.value"
-          class="community-item"
-          :class="{ active: opt.value === authStore.currentCommunityId }"
-          @click="onCommunityPick(opt.value)"
-        >
-          <span class="community-item-name">{{ opt.label }}</span>
-          <n-icon v-if="opt.value === authStore.currentCommunityId" size="18" color="#07c160">
-            <checkmark-circle />
-          </n-icon>
-        </div>
-        <n-empty v-if="communityOptions.length === 0" description="暂无可选社区" style="padding: 24px 0" />
-      </div>
-    </n-modal>
   </n-layout>
 </template>
 
@@ -124,7 +105,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, CheckmarkCircle, ArrowBackOutline } from '@vicons/ionicons5'
+import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, ArrowBackOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
@@ -145,14 +126,9 @@ const activeKey = computed(() => route.path)
 
 /** 社区 ID → 名称映射（无 community:view 权限时拉取失败，降级显示"社区 #id"） */
 const communityNameMap = ref<Map<number, string>>(new Map())
-/** 超管的全部社区 ID 列表（来自社区管理接口，仅超管使用） */
-const superCommunityIds = ref<number[]>([])
 
 /** 是否展示当前社区入口：超管必选社区（始终展示），绑定了社区的管理员展示并可点击切换 */
 const showCommunitySwitch = computed(() => authStore.isSuperAdmin || authStore.communityIds.length > 0)
-
-/** 切换社区弹窗可见性 */
-const showCommunityModal = ref(false)
 
 /** 当前社区显示名 */
 const currentCommunityName = computed(() => {
@@ -161,60 +137,33 @@ const currentCommunityName = computed(() => {
   return communityNameMap.value.get(id) ?? `社区 #${id}`
 })
 
-/** 切换器选项列表 */
-const communityOptions = computed(() => {
-  const ids = authStore.isSuperAdmin ? superCommunityIds.value : authStore.communityIds
-  return ids.map((id) => ({
-    label: communityNameMap.value.get(id) ?? `社区 #${id}`,
-    value: id,
-  }))
-})
+/**
+ * 进入社区选择页（顶栏"切换社区"入口）
+ * 选择页选完社区后整页刷新，保证 keep-alive 缓存的页面不残留旧社区数据
+ */
+function goSelectCommunity() {
+  // force=1：已选定社区时守卫默认会弹回首页，主动切换须携带标记放行
+  router.push({ path: '/select-community', query: { force: '1' } })
+}
 
 /**
  * 加载社区名称映射
  * 仅在有 community:view 权限（或超管）时调用社区管理接口；
  * 无权限的普通管理员静默降级为"社区 #id"文案，避免每次进入都弹权限错误提示。
- * 超管当前未选定社区（首次使用或异常残留的 0）时，自动选定列表第一个社区并刷新，
- * 保证"当前在操作哪个社区"始终明确。
+ * 社区未选定（0）时由路由守卫强制进入社区选择页，此处不做自动补选
  */
 async function loadCommunityNames() {
   if (!authStore.hasPermission('community:view')) return
   try {
     const res = await getCommunityList({ page: 1, page_size: 200 })
     const map = new Map<number, string>()
-    const ids: number[] = []
     for (const item of res.data.data.list) {
       map.set(item.id, item.name)
-      ids.push(item.id)
     }
     communityNameMap.value = map
-    if (authStore.isSuperAdmin) {
-      superCommunityIds.value = ids
-      if (authStore.currentCommunityId <= 0 && ids.length > 0 && authStore.switchCommunity(ids[0])) {
-        window.location.reload()
-      }
-    }
   } catch {
     // 拉取失败（网络异常等）静默降级，不影响主流程
   }
-}
-
-/**
- * 弹窗中点击社区项切换当前社区
- * 点击当前社区仅关闭弹窗；切换成功后整页刷新：
- * keep-alive 缓存的标签页持有旧社区数据，reload 是最可靠的刷新方式
- * @param value 目标社区 ID
- */
-function onCommunityPick(value: number) {
-  if (value === authStore.currentCommunityId) {
-    showCommunityModal.value = false
-    return
-  }
-  if (!authStore.switchCommunity(value)) {
-    message.error('无权切换到该社区')
-    return
-  }
-  window.location.reload()
 }
 
 // Layout 挂载即按账号兜底首页初始化固定标签（登录切换账号时随 Layout 重建天然重置）
@@ -451,6 +400,7 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
       children: [
         { label: '社区管理', key: '/system/communities', permission: 'community:view' },
         { label: '社区权限', key: '/system/community-permissions', permission: 'community:view', superOnly: true },
+        { label: '账号管理', key: '/system/accounts', permission: 'admin:view', superOnly: true },
         { label: '行政区划', key: '/system/regions', permission: 'region:view' },
         { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
@@ -584,40 +534,6 @@ function onUserAction(key: string) {
   color: #07c160;
 }
 .community-trigger-name {
-  font-size: 14px;
-  color: #333;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.community-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 50vh;
-  overflow-y: auto;
-}
-.community-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  &:hover {
-    background: #f2f9f4;
-  }
-  &.active {
-    background: #e8f7ee;
-    .community-item-name {
-      color: #07c160;
-      font-weight: 600;
-    }
-  }
-}
-.community-item-name {
   font-size: 14px;
   color: #333;
   overflow: hidden;

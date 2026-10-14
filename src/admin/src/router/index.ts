@@ -213,6 +213,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/system/roles.vue'),
         meta: { title: '全局角色', permission: 'role:view', group: '系统管理', space: 'system' },
       },
+      // 账号管理：全局账号维度（超管专用，处理器与服务端双重限制）
+      {
+        path: 'system/accounts',
+        name: 'AccountList',
+        component: () => import('@/views/system/accounts.vue'),
+        meta: { title: '账号管理', permission: 'admin:view', group: '系统管理', space: 'system' },
+      },
       {
         path: 'system/community-permissions',
         name: 'CommunityPermission',
@@ -259,6 +266,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '无权限', hidden: true },
       },
     ],
+  },
+  // 社区选择页：独立全屏页面（不套后台框架）。
+  // 多社区账号登录后未选定社区时由守卫强制进入；顶栏"切换社区"携带 force=1 主动进入
+  {
+    path: '/select-community',
+    name: 'SelectCommunity',
+    component: () => import('@/views/select-community/index.vue'),
+    meta: { title: '选择社区' },
   },
   {
     path: '/login',
@@ -317,6 +332,15 @@ router.beforeEach(async (to) => {
   // restoring：幂等恢复登录态，失败时 ensureReady 已登出
   if (!(await authStore.ensureReady())) {
     return { path: '/login', query: { redirect: to.fullPath } }
+  }
+
+  // ready：社区未选定（多社区账号无上次选择/超管首次进入）时强制进入社区选择页
+  if (authStore.needsCommunitySelection && to.path !== '/select-community') {
+    return { path: '/select-community', query: { redirect: to.fullPath } }
+  }
+  // 已选定社区后访问选择页：仅主动进入（顶栏"切换社区"带 force=1）时放行，其余回兜底首页
+  if (to.path === '/select-community' && !authStore.needsCommunitySelection && to.query.force !== '1') {
+    return { path: resolveHomePath(authStore) ?? '/dashboard' }
   }
 
   // ready：系统管理空间仅超管可入（与菜单入口、后端超管专用接口对应，防止直连 URL 越权进入）

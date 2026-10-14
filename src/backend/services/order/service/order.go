@@ -199,6 +199,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		return nil, err
 	}
 
+	// 记录会员-社区关联：在该社区下过单即视为该社区会员（幂等，尽力而为不阻塞下单结果）
+	if _, mErr := grpcclient.UserClient.MarkUserCommunity(ctx, &user.MarkUserCommunityReq{
+		UserId:      req.UserId,
+		CommunityId: req.CommunityId,
+		Source:      "order",
+	}); mErr != nil {
+		fmt.Printf("记录会员-社区关联失败（订单 %d）: %v\n", orderModel.ID, mErr)
+	}
+
 	return orderModel, nil
 }
 

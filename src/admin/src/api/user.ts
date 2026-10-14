@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, Community, PageParams, PageResult, User } from './types'
+import type { ApiResult, Account, Community, PageParams, PageResult, User } from './types'
 
 /**
  * 用户管理相关 API
@@ -98,13 +98,152 @@ export function updateCommunityProfile(data: Partial<Community>) {
 
 /**
  * 获取用户列表
+ * 服务端按当前社区语境（X-Community-Id 请求头）过滤会员-社区关联
  * @param params 查询参数
  * @returns 分页用户列表
  */
-export function getUserList(params: PageParams & { keyword?: string; community_id?: number; status?: number }) {
+export function getUserList(params: PageParams & { keyword?: string; status_filter?: number }) {
   return request<ApiResult<PageResult<User>>>({
     url: '/api/v1/admin/users',
     method: 'GET',
     params,
+  })
+}
+
+/**
+ * 添加会员（注册到当前社区）
+ * @param data 会员基础信息（手机号必填）
+ * @returns 新建会员信息
+ */
+export function createUser(data: { phone: string; nickname?: string; gender?: number }) {
+  return request<ApiResult<User>>({
+    url: '/api/v1/admin/users',
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 拉黑/恢复会员
+ * 拉黑后该会员 C 端登录与所有已登录请求均被拦截
+ * @param id 会员 ID
+ * @param status 0 拉黑 1 恢复
+ * @returns 操作结果
+ */
+export function setUserStatus(id: number, status: number) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/users/${id}/status`,
+    method: 'PUT',
+    data: { status },
+  })
+}
+
+/**
+ * 获取当前账号可进入的社区列表（社区选择页用）
+ * 普通管理员返回其任职社区；超管返回全部社区（含停业，附状态标识）
+ * @returns 社区简表
+ */
+export function getMyCommunities() {
+  return request<ApiResult<Pick<Community, 'id' | 'name' | 'status'>[]>>({
+    url: '/api/v1/admin/my/communities',
+    method: 'GET',
+  })
+}
+
+/**
+ * 获取全局账号列表（超管）
+ * @param params 查询参数
+ * @returns 分页账号列表
+ */
+export function getAccountList(params: PageParams & { keyword?: string }) {
+  return request<ApiResult<PageResult<Account>>>({
+    url: '/api/v1/admin/accounts',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 新增后台账号（超管）
+ * 仅创建账号本身，不在任何社区任职；任职由各社区员工管理页分配
+ * @param data 账号信息
+ * @returns 新建账号
+ */
+export function createAccount(data: { username: string; password: string; real_name?: string; phone?: string }) {
+  return request<ApiResult<Account>>({
+    url: '/api/v1/admin/accounts',
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 停用/启用后台账号（超管）
+ * @param id 账号 ID
+ * @param status 0 停用 1 启用
+ * @returns 操作结果
+ */
+export function updateAccountStatus(id: number, status: number) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/accounts/${id}/status`,
+    method: 'PUT',
+    data: { status },
+  })
+}
+
+/**
+ * 重置后台账号密码（超管，免旧密码）
+ * @param id 账号 ID
+ * @param newPassword 新密码
+ * @returns 操作结果
+ */
+export function resetAccountPassword(id: number, newPassword: string) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/accounts/${id}/password`,
+    method: 'PUT',
+    data: { new_password: newPassword },
+  })
+}
+
+/**
+ * 查询社区现任管理员列表（超管，社区编辑页用）
+ * @param communityId 社区 ID
+ * @returns 管理员列表
+ */
+export function getCommunityAdmins(communityId: number) {
+  return request<ApiResult<Account[]>>({
+    url: `/api/v1/admin/communities/${communityId}/admins`,
+    method: 'GET',
+  })
+}
+
+/**
+ * 指定社区管理员（超管）
+ * username 已存在时复用账号；授予社区内置管理员角色（每社区仅一人，自动替换原任职者）
+ * @param communityId 社区 ID
+ * @param data 账号信息
+ * @returns 操作结果
+ */
+export function addCommunityAdmin(
+  communityId: number,
+  data: { username: string; password?: string; real_name?: string; phone?: string },
+) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/communities/${communityId}/admins`,
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 移除社区管理员任职（超管）
+ * @param communityId 社区 ID
+ * @param adminId 管理员账号 ID
+ * @returns 操作结果
+ */
+export function removeCommunityAdmin(communityId: number, adminId: number) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/communities/${communityId}/admins/${adminId}`,
+    method: 'DELETE',
   })
 }

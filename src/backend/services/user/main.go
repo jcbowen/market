@@ -1,6 +1,7 @@
 package main
 
 import (
+	stdctx "context"
 	"log"
 
 	"google.golang.org/grpc"
@@ -10,6 +11,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 	"github.com/jcbowen/market/src/backend/services/user/model"
+	"github.com/jcbowen/market/src/backend/services/user/service"
 )
 
 /**
@@ -25,6 +27,10 @@ func main() {
 	}
 	if err := autoMigrate(db); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
+	}
+	// 存量会员-社区关联幂等回填（users.community_id > 0 且无关联记录的会员）
+	if err := service.NewUserService(db).BackfillUserCommunities(stdctx.Background()); err != nil {
+		log.Printf("会员-社区关联回填失败（不阻塞启动）: %v", err)
 	}
 	_ = bootstrap.InitRedis(cfg)
 
@@ -46,6 +52,7 @@ func main() {
 func autoMigrate(db *mysql.Instance) error {
 	return db.GetDb().AutoMigrate(
 		&model.User{},
+		&model.UserCommunity{},
 		&model.Address{},
 		&model.Community{},
 		&model.Admin{},

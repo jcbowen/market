@@ -86,14 +86,14 @@ func (s *server) UpdateUserProfile(ctx stdctx.Context, req *user.UpdateUserProfi
 	return service.ToUserInfo(u), nil
 }
 
-// ListUsers 获取用户列表
+// ListUsers 获取会员列表（按社区关联过滤，返回过滤语境社区名称）
 func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.ListUsersResp, error) {
 	page, pageSize := 1, 10
 	if req.Pagination != nil {
 		page = int(req.Pagination.Page)
 		pageSize = int(req.Pagination.PageSize)
 	}
-	list, total, err := s.userService.ListUsers(ctx, req.CommunityId, req.Keyword, req.Status, page, pageSize)
+	list, total, communityName, err := s.userService.ListUsers(ctx, req.CommunityId, req.Keyword, req.Status, req.StatusFilter, page, pageSize)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -107,9 +107,36 @@ func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.Li
 		},
 	}
 	for _, u := range list {
-		resp.List = append(resp.List, service.ToUserInfo(u))
+		info := service.ToUserInfo(u)
+		info.CommunityName = communityName
+		resp.List = append(resp.List, info)
 	}
 	return resp, nil
+}
+
+// MarkUserCommunity 幂等记录会员-社区关联
+func (s *server) MarkUserCommunity(ctx stdctx.Context, req *user.MarkUserCommunityReq) (*common.CommonResponse, error) {
+	if err := s.userService.MarkUserCommunity(ctx, req.UserId, req.CommunityId, req.Source); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// SetUserStatus 设置会员状态（拉黑/恢复）
+func (s *server) SetUserStatus(ctx stdctx.Context, req *user.SetUserStatusReq) (*common.CommonResponse, error) {
+	if err := s.userService.SetUserStatus(ctx, req.Id, req.Status); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// CreateMember 后台添加会员（手机号注册到指定社区）
+func (s *server) CreateMember(ctx stdctx.Context, req *user.CreateMemberReq) (*user.UserInfo, error) {
+	u, err := s.userService.CreateMember(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToUserInfo(u), nil
 }
 
 // ListAddresses 获取地址列表（附带社区名称，供 C 端按社区分组）
@@ -368,9 +395,9 @@ func (s *server) DeleteAdmin(ctx stdctx.Context, req *user.DeleteAdminReq) (*com
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
-// ChangeAdminPassword 修改管理员密码
+// ChangeAdminPassword 修改管理员密码（force=true 时跳过旧密码校验，须由网关校验超管身份）
 func (s *server) ChangeAdminPassword(ctx stdctx.Context, req *user.ChangeAdminPasswordReq) (*common.CommonResponse, error) {
-	if err := s.adminService.ChangeAdminPassword(ctx, req.Id, req.OldPassword, req.NewPassword); err != nil {
+	if err := s.adminService.ChangeAdminPassword(ctx, req.Id, req.OldPassword, req.NewPassword, req.Force); err != nil {
 		if err.Error() == "旧密码错误" || err.Error() == "管理员不存在" {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}

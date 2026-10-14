@@ -132,6 +132,20 @@
             </n-space>
           </n-form-item>
         </n-tab-pane>
+
+        <!-- 管理员（仅编辑模式）：指定/移除本社区管理员 -->
+        <n-tab-pane v-if="isEdit" name="admins" tab="管理员">
+          <n-space vertical>
+            <n-alert type="info" :show-icon="false">
+              每个社区仅设一名「社区管理员」，指定新管理员后原管理员自动卸任；被指定的账号须可登录后台（不存在时将自动创建）。
+            </n-alert>
+            <n-space>
+              <n-button type="primary" secondary @click="showAdminModal = true">指定管理员</n-button>
+              <n-button quaternary @click="loadAdmins">刷新</n-button>
+            </n-space>
+            <n-data-table :columns="adminColumns" :data="admins" :loading="adminsLoading" />
+          </n-space>
+        </n-tab-pane>
       </n-tabs>
 
       <n-form-item :show-label="false" style="margin-top: 8px">
@@ -142,28 +156,46 @@
       </n-form-item>
     </n-form>
 
+    <!-- 指定管理员弹窗：账号不存在时自动创建（需填写初始密码） -->
+    <n-modal v-model:show="showAdminModal" title="指定社区管理员" preset="card" style="width: 480px; max-width: 90vw">
+      <n-space vertical>
+        <n-input v-model:value="adminForm.username" placeholder="用户名（登录账号；已存在则复用该账号）" />
+        <n-input
+          v-model:value="adminForm.password"
+          type="password"
+          show-password-on="click"
+          placeholder="初始密码（仅新建账号时需要，至少 6 位）"
+        />
+        <n-input v-model:value="adminForm.real_name" placeholder="真实姓名" />
+        <n-input v-model:value="adminForm.phone" placeholder="手机号" />
+        <n-button type="primary" :loading="adminSaving" @click="submitAddAdmin">确定指定</n-button>
+      </n-space>
+    </n-modal>
+
   </n-card>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useMessage } from 'naive-ui'
-import type { FormInst, FormRules } from 'naive-ui'
-import { createCommunity, updateCommunity, getCommunity } from '@/api/user'
+import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
+import type { FormInst, FormRules, DataTableColumns } from 'naive-ui'
+import { createCommunity, updateCommunity, getCommunity, getCommunityAdmins, addCommunityAdmin, removeCommunityAdmin } from '@/api/user'
 import { matchRegionPathByNames } from '@/api/region'
 import RegionPicker from '@/components/RegionPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
-import type { Community } from '@/api/types'
+import type { Community, Account } from '@/api/types'
 
 /**
  * 社区新增/编辑页面
- * 表单按 Tab 分组：基本信息（名称/省市区/地址/联系人/状态）、配送设置（自提点/经纬度/费用/营业时间/外配开关）
+ * 表单按 Tab 分组：基本信息（名称/省市区/地址/联系人/状态）、配送设置（自提点/经纬度/费用/营业时间/外配开关）、
+ * 管理员（仅编辑模式：指定/移除本社区管理员）
  * 排序字段已移除：C 端社区列表按定位距离排序，不再依赖人工排序
  */
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 const tabsStore = useTabsStore()
 const isEdit = ref(false)
 const formRef = ref<FormInst | null>(null)
@@ -377,6 +409,7 @@ async function loadDetail() {
       await regionPickerRef.value?.setValueByPath(
         await matchRegionPathByNames(form.value.province || '', form.value.city || '', form.value.district || '')
       )
+      loadAdmins()
     } else {
       message.error('社区不存在或已被删除')
       router.back()
@@ -385,6 +418,104 @@ async function loadDetail() {
     // 错误提示由响应拦截器统一弹出
     router.back()
   }
+}
+
+// --- 社区管理员（仅编辑模式） ---
+
+const adminsLoading = ref(false)
+const admins = ref<Account[]>([])
+const showAdminModal = ref(false)
+const adminSaving = ref(false)
+const adminForm = ref({ username: '', password: '', real_name: '', phone: '' })
+
+const adminColumns: DataTableColumns<Account> = [
+  { title: 'ID', key: 'id', width: 80 },
+  { title: '用户名', key: 'username', width: 140 },
+  { title: '真实姓名', key: 'real_name', width: 120 },
+  { title: '手机号', key: 'phone', width: 130 },
+  {
+    title: '状态',
+    key: 'status',
+    width: 80,
+    render: (row) =>
+      h(NTag, { type: row.status === 1 ? 'success' : 'error', size: 'small' }, { default: () => (row.status === 1 ? '正常' : '已停用') }),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 90,
+    render: (row) =>
+      h(
+        NButton,
+        { size: 'small', type: 'error', secondary: true, onClick: () => confirmRemoveAdmin(row) },
+        { default: () => '卸任' },
+      ),
+  },
+]
+
+/**
+ * 加载本社区现任管理员
+ */
+async function loadAdmins() {
+  const id = Number(route.params.id)
+  if (!id) return
+  adminsLoading.value = true
+  try {
+    const res = await getCommunityAdmins(id)
+    if (res.data.code === 0) {
+      admins.value = res.data.data
+    }
+  } finally {
+    adminsLoading.value = false
+  }
+}
+
+/**
+ * 提交指定管理员（账号不存在时自动创建）
+ */
+async function submitAddAdmin() {
+  const username = adminForm.value.username.trim()
+  if (!username) {
+    message.warning('请填写用户名')
+    return
+  }
+  if (adminForm.value.password && adminForm.value.password.length < 6) {
+    message.warning('初始密码长度至少 6 位')
+    return
+  }
+  adminSaving.value = true
+  try {
+    await addCommunityAdmin(Number(route.params.id), {
+      username,
+      password: adminForm.value.password || undefined,
+      real_name: adminForm.value.real_name.trim(),
+      phone: adminForm.value.phone.trim(),
+    })
+    message.success('已指定社区管理员，原管理员已自动卸任')
+    showAdminModal.value = false
+    adminForm.value = { username: '', password: '', real_name: '', phone: '' }
+    loadAdmins()
+  } finally {
+    adminSaving.value = false
+  }
+}
+
+/**
+ * 卸任社区管理员（二次确认）
+ * @param row 目标管理员
+ */
+function confirmRemoveAdmin(row: Account) {
+  dialog.warning({
+    title: '卸任确认',
+    content: `确定将「${row.real_name || row.username}」的本社区管理员身份卸任吗？其账号与其他社区任职不受影响。`,
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      await removeCommunityAdmin(Number(route.params.id), row.id)
+      message.success('已卸任')
+      loadAdmins()
+    },
+  })
 }
 
 async function submit() {

@@ -450,10 +450,27 @@ export interface User {
   id: number
   nickname: string
   phone: string
+  gender?: number
   community_id: number
   community_name: string
   status: number
   created_at: string
+  last_login_at?: string
+}
+
+/**
+ * 后台账号信息（系统管理·账号管理页，仅账号本身维度）
+ */
+export interface Account {
+  id: number
+  username: string
+  real_name: string
+  phone: string
+  is_super: boolean
+  status: number
+  last_login_at: string
+  /** 任职社区 ID 列表（超管为空数组，表示不限制社区） */
+  community_ids: number[]
 }
 
 /**

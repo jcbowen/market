@@ -6,7 +6,7 @@
       </n-alert>
       <n-alert v-else type="info" :show-icon="false">
         以下为当前社区的私有角色；可分配的权限点不超出你自身的权限范围（并受社区权限上限约束）。
-        社区整体的权限上限由超级管理员在「系统管理 → 社区权限」中分配
+        内置「社区管理员」角色仅展示不可编辑，权限上限由超级管理员在「系统管理 → 社区权限」中分配
       </n-alert>
       <n-space align="center">
         <n-button type="primary" @click="openCreate">{{ isGlobalPage ? '新增全局角色' : '新增角色' }}</n-button>
@@ -115,7 +115,8 @@ const columns = computed<DataTableColumns<Role>>(() => [
       const builtin = row.code === 'community_admin' && (row.community_id ?? 0) > 0
       return h(NSpace, null, {
         default: () => [
-          h(NButton, { size: 'small', onClick: () => edit(row) }, { default: () => '编辑' }),
+          // 内置社区管理员角色在业务页仅展示禁编辑：其权限由超管在「系统管理 → 社区权限」调整
+          h(NButton, { size: 'small', disabled: builtin, onClick: () => edit(row) }, { default: () => '编辑' }),
           !builtin &&
             h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' }),
         ].filter(Boolean),

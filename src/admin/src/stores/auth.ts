@@ -75,8 +75,9 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * 归一化当前社区 ID
    * 校验已选社区是否仍对当前管理员合法：
-   * - 普通管理员：须在绑定列表内，不合法回退绑定列表第一个（无绑定时回退默认社区字段）
-   * - 超管：已选具体社区保持；0（未选定）保留，由 Layout 加载社区列表后补选
+   * - 超管：已选具体社区保持；0（未选定）保留，由社区选择页强制选定
+   * - 普通管理员：仅绑定一个社区（或旧字段有值）时自动选定；
+   *   绑定多个社区且本地无上次选择记录时保持 0，由社区选择页手动选定
    */
   function normalizeCommunityId() {
     if (isSuperAdmin.value) {
@@ -88,11 +89,24 @@ export const useAuthStore = defineStore('auth', () => {
     }
     const ids = communityIds.value
     const valid = currentCommunityId.value > 0 && ids.includes(currentCommunityId.value)
-    if (!valid) {
-      currentCommunityId.value = ids.length > 0 ? ids[0] : admin.value?.community_id ?? 0
+    if (valid) {
+      persistCommunityId()
+      return
     }
+    // 仅绑定一个社区：自动选定；绑定多个社区且无上次选择：保持 0 交由社区选择页；
+    // 无绑定（存量账号）：回退旧默认社区字段
+    const fallback = ids.length === 1 ? ids[0] : (ids.length === 0 ? (admin.value?.community_id ?? 0) : 0)
+    currentCommunityId.value = fallback
     persistCommunityId()
   }
+
+  /**
+   * 是否需要进入社区选择页
+   * 登录态就绪且当前社区未选定（0）时为 true：
+   * - 普通管理员：绑定多个社区且本地无上次选择记录
+   * - 超管：尚未选定社区（含首次进入与主动进入选择页）
+   */
+  const needsCommunitySelection = computed(() => isReady.value && currentCommunityId.value <= 0)
 
   /**
    * 切换当前社区
@@ -237,6 +251,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     isReady,
     isSuperAdmin,
+    needsCommunitySelection,
     login,
     logout,
     refreshToken,

@@ -163,6 +163,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		// 用户端需登录
 		authUser := apiV1.Group("")
 		authUser.Use(gwMiddleware.AuthMiddleware(jwtManager, jwt.TokenTypeUser))
+		// 拦截被拉黑会员：登录后的所有请求统一返回「系统错误，请联系工作人员」
+		authUser.Use(gwMiddleware.UserStatusMiddleware(clients.UserClient))
 		{
 			authUser.GET("/user/profile", userHandler.Profile)
 			authUser.PUT("/user/profile", userHandler.UpdateUserProfile)
@@ -211,6 +213,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		{
 			// 当前管理员信息：仅要求登录，不要求具体权限（前端刷新页面后恢复状态使用）
 			authAdmin.GET("/auth/info", adminHandler.Info)
+			// 当前账号可进入的社区列表（社区选择页用，仅要求登录）
+			authAdmin.GET("/my/communities", adminHandler.MyCommunities)
 			authAdmin.GET("/dashboard", gwMiddleware.RequirePermission("dashboard:view"), adminHandler.GetDashboard)
 			authAdmin.GET("/roles", gwMiddleware.RequirePermission("role:view"), adminHandler.ListRoles)
 			authAdmin.POST("/roles", gwMiddleware.RequirePermission("role:create"), adminHandler.CreateRole)
@@ -304,6 +308,14 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/attachment/migrate/:id/delete-local", gwMiddleware.RequirePermission("settings:update"), attachmentHandler.DeleteAttachmentLocal)
 
 			authAdmin.GET("/users", gwMiddleware.RequirePermission("user:view"), adminHandler.ListUsers)
+			authAdmin.POST("/users", gwMiddleware.RequirePermission("user:create"), adminHandler.CreateUser)
+			authAdmin.PUT("/users/:id/status", gwMiddleware.RequirePermission("user:update"), adminHandler.SetUserStatus)
+
+			// 全局账号管理（系统管理空间，处理器内强制超管）：仅管账号本身，任职走各社区员工管理
+			authAdmin.GET("/accounts", adminHandler.ListAllAccounts)
+			authAdmin.POST("/accounts", adminHandler.CreateAccount)
+			authAdmin.PUT("/accounts/:id/status", adminHandler.UpdateAccountStatus)
+			authAdmin.PUT("/accounts/:id/password", adminHandler.ResetAccountPassword)
 
 			authAdmin.GET("/communities", gwMiddleware.RequirePermission("community:view"), adminHandler.ListAdminCommunities)
 			authAdmin.GET("/communities/:id", gwMiddleware.RequirePermission("community:view"), adminHandler.GetCommunity)
@@ -317,6 +329,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 社区权限分配：读写该社区权限上限（内置社区管理员角色权限集），处理器内强制超管
 			authAdmin.GET("/communities/:id/permissions", gwMiddleware.RequirePermission("community:view"), adminHandler.GetCommunityPermissions)
 			authAdmin.PUT("/communities/:id/permissions", gwMiddleware.RequirePermission("community:view"), adminHandler.UpdateCommunityPermissions)
+			// 社区管理员指定（社区编辑页，处理器内强制超管）
+			authAdmin.GET("/communities/:id/admins", adminHandler.ListCommunityAdmins)
+			authAdmin.POST("/communities/:id/admins", adminHandler.AddCommunityAdmin)
+			authAdmin.DELETE("/communities/:id/admins/:adminId", adminHandler.RemoveCommunityAdmin)
 
 			// 行政区划：列表查看 + 更新任务（检查 → 轮询差异 → 确认覆盖）
 			authAdmin.GET("/regions", gwMiddleware.RequirePermission("region:view"), regionHandler.ListRegions)

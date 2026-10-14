@@ -22,7 +22,7 @@ var DefaultCommunityAdminPermissions = []string{
 	"inventory:view", "inventory:create", "inventory:update",
 	"order:view", "order:update",
 	"refund:view", "refund:update",
-	"user:view",
+	"user:view", "user:create", "user:update",
 	"marketing:view", "marketing:create", "marketing:update", "marketing:delete",
 	"statistics:view",
 	"admin:view", "admin:create", "admin:update", "admin:delete",

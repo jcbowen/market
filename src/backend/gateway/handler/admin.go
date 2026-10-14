@@ -23,6 +23,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
+	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 )
 
 // AdminHandler 管理员接口处理器
@@ -456,6 +457,381 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 	response.Success(c, gin.H{"id": id})
 }
 
+// adminHoldsRole 判断管理员是否在指定社区担任指定角色
+// 参数：
+//   - ctx: 上下文
+//   - adminID: 管理员 ID
+//   - communityID: 社区 ID
+//   - roleID: 角色 ID
+//
+// 返回值：
+//   - bool: 是否担任
+func (h *AdminHandler) adminHoldsRole(ctx context.Context, adminID, communityID, roleID int64) bool {
+	resp, err := h.userClient.GetAdminContext(ctx, &user.GetAdminContextReq{
+		AdminId:     adminID,
+		CommunityId: communityID,
+	})
+	if err != nil || resp == nil {
+		return false
+	}
+	for _, rid := range resp.RoleIds {
+		if rid == roleID {
+			return true
+		}
+	}
+	return false
+}
+
+// ListAllAccountsReq 全局账号列表查询参数
+type ListAllAccountsReq struct{}
+
+// ListAllAccounts 全局账号列表（超管专用，系统管理·账号管理页）
+// community_id = 0 查询全部账号，不限定社区任职
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ListAllAccounts(c *gin.Context) {
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	keyword := c.Query("keyword")
+
+	resp, err := h.userClient.ListAdmins(c.Request.Context(), &user.ListAdminsReq{
+		CommunityId: 0,
+		Keyword:     keyword,
+		Pagination: &common.Pagination{
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	list := make([]gin.H, 0, len(resp.List))
+	for _, a := range resp.List {
+		communityIDs := a.CommunityIds
+		if communityIDs == nil {
+			communityIDs = []int64{}
+		}
+		list = append(list, gin.H{
+			"id":            a.Id,
+			"username":      a.Username,
+			"real_name":     a.RealName,
+			"phone":         a.Phone,
+			"is_super":      a.IsSuper,
+			"status":        a.Status,
+			"last_login_at": a.LastLoginAt,
+			"community_ids": communityIDs,
+		})
+	}
+	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
+}
+
+// CreateAccountReq 全局新增账号请求（仅建账号，不在任何社区任职）
+type CreateAccountReq struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required,min=6"`
+	RealName string `json:"real_name"`
+	Phone    string `json:"phone"`
+}
+
+// CreateAccount 新增账号（超管专用）
+// 仅创建账号本身；任职由各社区员工管理页分配
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) CreateAccount(c *gin.Context) {
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+
+	var req CreateAccountReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	admin, err := h.userClient.CreateAdmin(c.Request.Context(), &user.CreateAdminReq{
+		Username:        req.Username,
+		Password:        req.Password,
+		RealName:        req.RealName,
+		Phone:           req.Phone,
+		AccountOnly:     true,
+		OperatorIsSuper: true,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, h.toAdminVO(admin))
+}
+
+// UpdateAccountStatusReq 账号停用/启用请求
+type UpdateAccountStatusReq struct {
+	// 0 停用 1 启用（指针绑定：0 为合法值，不能用 required 校验）
+	Status *int32 `json:"status" binding:"required"`
+}
+
+// UpdateAccountStatus 停用/启用账号（超管专用）
+// 仅更新状态，不触碰姓名/手机号/角色任职
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) UpdateAccountStatus(c *gin.Context) {
+	uc := appcontext.GetUserContext(c)
+	if uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req UpdateAccountStatusReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	if req.Status == nil || (*req.Status != 0 && *req.Status != 1) {
+		response.Error(c, errcode.ParamError, "状态取值非法")
+		return
+	}
+	if uc.UserID == id && *req.Status == 0 {
+		response.Error(c, errcode.OperationNotAllowed, "不能停用自己的账号")
+		return
+	}
+
+	admin, err := h.userClient.UpdateAdmin(c.Request.Context(), &user.UpdateAdminReq{
+		Id:               id,
+		Status:           *req.Status,
+		UpdateStatusOnly: true,
+		OperatorIsSuper:  true,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, h.toAdminVO(admin))
+}
+
+// ResetAccountPasswordReq 超管重置账号密码请求
+type ResetAccountPasswordReq struct {
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// ResetAccountPassword 重置账号密码（超管专用，免旧密码）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ResetAccountPassword(c *gin.Context) {
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req ResetAccountPasswordReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	if _, err = h.userClient.ChangeAdminPassword(c.Request.Context(), &user.ChangeAdminPasswordReq{
+		Id:          id,
+		NewPassword: req.NewPassword,
+		Force:       true,
+	}); err != nil {
+		if grpcErr, ok := status.FromError(err); ok && grpcErr.Code() == codes.InvalidArgument {
+			response.Error(c, errcode.ParamError, grpcErr.Message())
+			return
+		}
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id})
+}
+
+// ListCommunityAdmins 查询社区现任管理员（超管专用，社区编辑页使用）
+// 仅返回担任该社区内置社区管理员角色的账号
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ListCommunityAdmins(c *gin.Context) {
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	communityID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || communityID <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	resp, err := h.userClient.ListAdmins(c.Request.Context(), &user.ListAdminsReq{
+		CommunityId: communityID,
+		Pagination: &common.Pagination{Page: 1, PageSize: 100},
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	list := make([]gin.H, 0, len(resp.List))
+	for _, a := range resp.List {
+		isAdmin := false
+		for _, r := range a.Roles {
+			if r.Code == "community_admin" {
+				isAdmin = true
+				break
+			}
+		}
+		if !isAdmin {
+			continue
+		}
+		list = append(list, gin.H{
+			"id":            a.Id,
+			"username":      a.Username,
+			"real_name":     a.RealName,
+			"phone":         a.Phone,
+			"status":        a.Status,
+			"last_login_at": a.LastLoginAt,
+		})
+	}
+	response.SuccessWithList(c, list)
+}
+
+// AddCommunityAdminReq 指定社区管理员请求
+type AddCommunityAdminReq struct {
+	Username string `json:"username" binding:"required"`
+	// 新建账号时的初始密码；username 已存在（复用账号）时可省略
+	Password string `json:"password"`
+	RealName string `json:"real_name"`
+	Phone    string `json:"phone"`
+}
+
+// AddCommunityAdmin 指定社区管理员（超管专用，社区编辑页使用）
+// username 已存在时复用账号；授予该社区内置社区管理员角色（每社区仅一人，自动替换原任职者）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) AddCommunityAdmin(c *gin.Context) {
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	communityID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || communityID <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req AddCommunityAdminReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	admin, err := h.userClient.CreateAdmin(c.Request.Context(), &user.CreateAdminReq{
+		Username:            req.Username,
+		Password:            req.Password,
+		RealName:            req.RealName,
+		Phone:               req.Phone,
+		CommunityId:         communityID,
+		AssignCommunityAdmin: true,
+		OperatorIsSuper:     true,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, h.toAdminVO(admin))
+}
+
+// RemoveCommunityAdmin 移除社区管理员任职（超管专用，社区编辑页使用）
+// 仅摘除该社区的内置社区管理员角色；若摘除后该社区无其他任职则移除全部任职
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) RemoveCommunityAdmin(c *gin.Context) {
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	communityID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || communityID <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	adminID, err := strconv.ParseInt(c.Param("adminId"), 10, 64)
+	if err != nil || adminID <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	// 定位该社区内置社区管理员角色（不存在则说明无任职可移除）
+	rolesResp, err := h.userClient.ListRoles(c.Request.Context(), &user.ListRolesReq{CommunityId: communityID})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	var builtinID int64
+	for _, r := range rolesResp.List {
+		if r.Code == "community_admin" {
+			builtinID = r.Id
+			break
+		}
+	}
+	if builtinID == 0 {
+		response.Error(c, errcode.NotFound, "该社区未初始化社区管理员角色")
+		return
+	}
+
+	// 取该账号在社区的现有任职，剔除内置角色后保留其余角色
+	ctxResp, err := h.userClient.GetAdminContext(c.Request.Context(), &user.GetAdminContextReq{
+		AdminId:     adminID,
+		CommunityId: communityID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	remaining := make([]int64, 0, len(ctxResp.RoleIds))
+	for _, rid := range ctxResp.RoleIds {
+		if rid != builtinID {
+			remaining = append(remaining, rid)
+		}
+	}
+
+	if len(remaining) == 0 {
+		// 该社区仅担任社区管理员：移除全部任职
+		if _, err = h.userClient.DeleteAdmin(c.Request.Context(), &user.DeleteAdminReq{
+			Id:          adminID,
+			CommunityId: communityID,
+		}); err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+	} else {
+		// 兼任其他角色：保留其余任职，仅摘除社区管理员
+		if _, err = h.userClient.UpdateAdmin(c.Request.Context(), &user.UpdateAdminReq{
+			Id:              adminID,
+			CommunityId:     communityID,
+			RoleIds:         remaining,
+			OperatorIsSuper: true,
+		}); err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+	}
+	response.Success(c, gin.H{"id": adminID, "community_id": communityID})
+}
+
 // ListRoles 获取角色列表
 // 默认返回当前社区的角色；超管可传 scope=global 查看全局角色，
 // 或传 community_id 查看任意社区的角色（社区权限分配页使用）
@@ -580,6 +956,11 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 		}
 		if role.Code == "community_admin" {
 			response.Error(c, errcode.NoPermission, "内置社区管理员角色仅超级管理员可修改")
+			return
+		}
+		// 社区管理员不得编辑自己担任角色的权限（防止变相自我提权）
+		if h.adminHoldsRole(c.Request.Context(), uc.UserID, role.CommunityId, id) {
+			response.Error(c, errcode.NoPermission, "不能编辑自己担任的角色的权限")
 			return
 		}
 		if err := h.validatePermissionsSubset(c, role.CommunityId, req.Permissions); err != nil {
@@ -2436,20 +2817,66 @@ func (h *AdminHandler) DeleteBanner(c *gin.Context) {
 
 // --- 社区管理 ---
 
+// MyCommunities 当前账号可进入的社区列表（社区选择页用，仅要求登录）
+// 普通管理员返回其任职社区；超管返回全部社区（含停业，前端展示状态标识）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) MyCommunities(c *gin.Context) {
+	uc := appcontext.GetUserContext(c)
+	var boundIDs []int64
+	if uc != nil && uc.Role != "super_admin" {
+		// 任职关系可能较 token 签发时发生变化，按用户名实时反查
+		if username, ok := c.Get("admin_username"); ok {
+			if name, _ := username.(string); name != "" {
+				if a, err := h.userClient.GetAdminByUsername(c.Request.Context(), &user.GetAdminByUsernameReq{Username: name}); err == nil {
+					boundIDs = a.CommunityIds
+				}
+			}
+		}
+		if boundIDs == nil {
+			boundIDs = uc.CommunityIDs
+		}
+	}
+
+	resp, err := h.userClient.ListCommunities(c.Request.Context(), &user.ListCommunitiesReq{
+		Pagination:      &common.Pagination{Page: 1, PageSize: 500},
+		IncludeDisabled: true,
+		Status:          -1,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	list := make([]gin.H, 0, len(resp.List))
+	for _, cm := range resp.List {
+		if uc != nil && uc.Role != "super_admin" && !containsInt64(boundIDs, cm.Id) {
+			continue
+		}
+		list = append(list, gin.H{
+			"id":     cm.Id,
+			"name":   cm.Name,
+			"status": cm.Status,
+		})
+	}
+	response.SuccessWithList(c, list)
+}
+
 // ListUsers 获取会员列表
+// 多社区模型：按当前社区语境（X-Community-Id）过滤会员-社区关联；
+// status_filter：-1 全部（默认），0 拉黑，1 正常
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListUsers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 	keyword := c.DefaultQuery("keyword", "")
-	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
-	communityID, _ := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64)
+	statusFilter, _ := strconv.Atoi(c.DefaultQuery("status_filter", "-1"))
 
 	resp, err := h.userClient.ListUsers(c.Request.Context(), &user.ListUsersReq{
-		CommunityId: communityID,
-		Keyword:     keyword,
-		Status:      int32(status),
+		CommunityId:  h.getAdminCommunityID(c),
+		Keyword:      keyword,
+		StatusFilter: int32(statusFilter),
 		Pagination: &common.Pagination{
 			Page:     int32(page),
 			PageSize: int32(pageSize),
@@ -2470,13 +2897,95 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"avatar":         u.Avatar,
 			"gender":         u.Gender,
 			"community_id":   u.CommunityId,
-			"community_name": "",
+			"community_name": u.CommunityName,
 			"status":         u.Status,
 			"last_login_at":  u.LastLoginAt,
 			"created_at":     u.CreatedAt,
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
+}
+
+// CreateUserReq 后台添加会员请求
+type CreateUserReq struct {
+	// 手机号（唯一）
+	Phone    string `json:"phone" binding:"required"`
+	Nickname string `json:"nickname"`
+	Gender   int32  `json:"gender"`
+}
+
+// CreateUser 添加会员（注册到当前社区）
+// 手机号已注册时报错；注册成功即建立会员-当前社区关联
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) CreateUser(c *gin.Context) {
+	var req CreateUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	if !isValidPhone(req.Phone) {
+		response.Error(c, errcode.ParamError, "手机号格式错误")
+		return
+	}
+
+	u, err := h.userClient.CreateMember(c.Request.Context(), &user.CreateMemberReq{
+		Phone:       req.Phone,
+		Nickname:    req.Nickname,
+		Gender:      req.Gender,
+		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"id":         u.Id,
+		"phone":      u.Phone,
+		"nickname":   u.Nickname,
+		"gender":     u.Gender,
+		"status":     u.Status,
+		"created_at": u.CreatedAt,
+	})
+}
+
+// SetUserStatusReq 会员拉黑/恢复请求
+type SetUserStatusReq struct {
+	// 0 拉黑 1 恢复（指针绑定：0 为合法值，不能用 required 校验）
+	Status *int32 `json:"status" binding:"required"`
+}
+
+// SetUserStatus 拉黑/恢复会员
+// 拉黑后该会员 C 端登录与所有已登录请求均被拦截，提示「系统错误，请联系工作人员」
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) SetUserStatus(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req SetUserStatusReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	if req.Status == nil || (*req.Status != 0 && *req.Status != 1) {
+		response.Error(c, errcode.ParamError, "状态取值非法")
+		return
+	}
+
+	if _, err = h.userClient.SetUserStatus(c.Request.Context(), &user.SetUserStatusReq{
+		Id:     id,
+		Status: *req.Status,
+	}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	// 清除状态缓存，使拦截立即生效
+	gwMiddleware.InvalidateUserStatusCache(id)
+	response.Success(c, gin.H{"id": id, "status": *req.Status})
 }
 
 // ListAdminCommunities 获取社区列表

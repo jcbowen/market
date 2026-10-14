@@ -28,7 +28,7 @@
       <n-select v-model:value="form.role_ids" multiple :options="roleOptions" placeholder="本社区角色（可多选）" />
       <n-select v-if="isEdit" v-model:value="form.status" :options="statusOptions" placeholder="账号状态" />
       <n-alert v-if="assignBuiltinWarn" type="warning" :show-icon="false">
-        「社区管理员」为内置角色，每个社区仅一人；保存后当前社区管理员将替换为该员工。
+        该员工担任「社区管理员」，此角色不在上方列表中：如需更换社区管理员，请超级管理员在「系统管理 → 社区管理 → 编辑社区」中操作
       </n-alert>
       <n-button type="primary" @click="submit">保存</n-button>
     </n-space>
@@ -56,7 +56,6 @@ import type { AdminInfo, Role } from '@/api/types'
 const message = useMessage()
 const dialog = useDialog()
 const authStore = useAuthStore()
-const isSuper = computed(() => authStore.isSuperAdmin)
 
 const keyword = ref('')
 const list = ref<AdminInfo[]>([])
@@ -90,13 +89,13 @@ const statusOptions = [
 
 const roleOptions = computed(() =>
   roles.value
-    // 内置社区管理员角色仅超管可分配；全局角色兜底过滤（后端已隔离，此处双保险）
-    .filter((r) => (r.community_id ?? 0) > 0)
-    .filter((r) => !(r.code === 'community_admin') || isSuper.value)
+    // 内置社区管理员角色不进入员工分配下拉（指定社区管理员在「系统管理 → 社区编辑」操作）；
+    // 全局角色兜底过滤（后端已隔离，此处双保险）
+    .filter((r) => (r.community_id ?? 0) > 0 && r.code !== 'community_admin')
     .map((r) => ({ label: r.name, value: r.id })),
 )
 
-/** 表单是否选中了内置社区管理员角色（提示替换语义） */
+/** 编辑表单是否携带内置社区管理员角色（提示该角色不可在此页调整） */
 const assignBuiltinWarn = computed(() => {
   const builtin = roles.value.find((r) => r.code === 'community_admin' && (r.community_id ?? 0) > 0)
   return !!builtin && form.value.role_ids.includes(builtin.id)

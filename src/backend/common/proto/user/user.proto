@@ -56,6 +56,14 @@ service UserService {
   rpc CreateRole(CreateRoleReq) returns (RoleInfo);
   rpc UpdateRole(UpdateRoleReq) returns (RoleInfo);
   rpc DeleteRole(DeleteRoleReq) returns (common.CommonResponse);
+
+  // 会员-社区关联与状态
+  // MarkUserCommunity 幂等记录会员与社区的关联（收货地址/下单/后台添加会员时调用）
+  rpc MarkUserCommunity(MarkUserCommunityReq) returns (common.CommonResponse);
+  // SetUserStatus 设置会员状态（拉黑/恢复）
+  rpc SetUserStatus(SetUserStatusReq) returns (common.CommonResponse);
+  // CreateMember 后台添加会员（手机号注册到指定社区）
+  rpc CreateMember(CreateMemberReq) returns (UserInfo);
 }
 
 message GetUserByIdReq {
@@ -95,6 +103,8 @@ message UserInfo {
   int32 status = 10;
   string last_login_at = 11;
   string created_at = 12;
+  // 当前过滤语境下的社区名称（ListUsers 按社区过滤时由服务端填充）
+  string community_name = 13;
 }
 
 message UpdateUserProfileReq {
@@ -108,6 +118,8 @@ message ListUsersReq {
   int64 community_id = 1;
   string keyword = 2;
   int32 status = 3;
+  // 状态筛选：-1 全部，0 拉黑，1 正常（提供时优先于 status 字段）
+  int32 status_filter = 5;
   common.Pagination pagination = 4;
 }
 
@@ -359,6 +371,10 @@ message CreateAdminReq {
   repeated int64 community_ids = 7;
   // 在 community_id 社区内担任的角色 ID 列表（须为该社区的角色）
   repeated int64 role_ids = 8;
+  // 仅创建账号不在任何社区任职（超管全局账号管理用，community_id 传 0）
+  bool account_only = 10;
+  // 指定为目标社区的内置社区管理员（服务端自动解析/创建内置角色，忽略 role_ids）
+  bool assign_community_admin = 11;
   // 操作者是否超管（网关注入；决定能否分配内置社区管理员角色）
   bool operator_is_super = 9;
 }
@@ -378,6 +394,8 @@ message UpdateAdminReq {
   repeated int64 role_ids = 8;
   // 操作者是否超管（网关注入）
   bool operator_is_super = 9;
+  // 仅更新状态（超管账号管理：停用/启用，不触碰姓名/手机号/角色任职）
+  bool update_status_only = 10;
 }
 
 message DeleteAdminReq {
@@ -390,6 +408,8 @@ message ChangeAdminPasswordReq {
   int64 id = 1;
   string old_password = 2;
   string new_password = 3;
+  // 超管重置密码：跳过旧密码校验（由网关校验操作者身份后注入）
+  bool force = 4;
 }
 
 // GetAdminContextReq 实时权限上下文查询
@@ -555,4 +575,32 @@ message CreateRegionUpdateTaskReq {
 
 message ApplyRegionUpdateTaskReq {
   int64 id = 1;
+}
+
+// --- 会员-社区关联与会员管理 ---
+
+// MarkUserCommunityReq 会员-社区关联记录请求（幂等，重复记录不报错）
+message MarkUserCommunityReq {
+  int64 user_id = 1;
+  int64 community_id = 2;
+  // 记录来源：address 收货地址 / order 下单 / admin 后台添加 / backfill 存量回填
+  string source = 3;
+}
+
+// SetUserStatusReq 设置会员状态请求
+message SetUserStatusReq {
+  int64 id = 1;
+  // 0 拉黑 1 正常
+  int32 status = 2;
+}
+
+// CreateMemberReq 后台添加会员请求
+message CreateMemberReq {
+  // 手机号（唯一，已注册时报错）
+  string phone = 1;
+  string nickname = 2;
+  // 0未知 1男 2女
+  int32 gender = 3;
+  // 注册归属社区（后台当前社区语境）
+  int64 community_id = 4;
 }

@@ -131,6 +131,10 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
+	if u.Status != 1 {
+		response.Error(c, errcode.UserBlocked)
+		return
+	}
 
 	h.successResponse(c, u)
 }
@@ -180,6 +184,10 @@ func (h *AuthHandler) PhoneLogin(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
+	if u.Status != 1 {
+		response.Error(c, errcode.UserBlocked)
+		return
+	}
 
 	h.successResponse(c, u)
 }
@@ -209,6 +217,10 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: claims.UserID})
 	if err != nil {
 		response.GRPCError(c, err)
+		return
+	}
+	if u.Status != 1 {
+		response.Error(c, errcode.UserBlocked)
 		return
 	}
 

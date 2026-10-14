@@ -20,6 +20,8 @@ const (
 	NoPermission           = 11005
 	AccountDisabled        = 11006
 	IncorrectUsernameOrPassword = 11007
+	// UserBlocked 会员已被拉黑（C 端访问拦截，文案按需求伪装为系统错误）
+	UserBlocked = 11008
 
 	// ----- 商品模块 -----
 	ProductNotFoundOrOffline = 12001
@@ -78,6 +80,7 @@ var Message = map[int]string{
 	NoPermission:           "无权限访问",
 	AccountDisabled:        "账号已被禁用",
 	IncorrectUsernameOrPassword: "用户名或密码错误",
+	UserBlocked:                 "系统错误，请联系工作人员",
 	ProductNotFoundOrOffline: "商品不存在或已下架",
 	ProductStockInsufficient: "商品库存不足",
 	CategoryNotFound:       "分类不存在",

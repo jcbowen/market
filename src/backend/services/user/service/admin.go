@@ -114,7 +114,9 @@ func (s *AdminService) ListAdmins(ctx context.Context, communityID int64, keywor
 
 // CreateAdmin 创建员工（含社区任职）
 // username 已存在时复用该账号（不修改其密码与状态），仅追加任职——
-// 支持同一人在多个社区任职；不存在时以给定信息新建账号
+// 支持同一人在多个社区任职；不存在时以给定信息新建账号；
+// req.AccountOnly = true 时仅创建账号不在任何社区任职（全局账号管理场景，
+// 此时忽略 role_ids，密码必填）
 //
 // 参数：
 //   - ctx: 上下文
@@ -124,8 +126,46 @@ func (s *AdminService) ListAdmins(ctx context.Context, communityID int64, keywor
 //   - *model.Admin: 员工账号
 //   - error: 错误信息
 func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq) (*model.Admin, error) {
+	// 仅建账号：跳过任职校验与写入
+	if req.AccountOnly {
+		var account model.Admin
+		err := s.db.GetDb().WithContext(ctx).Where("username = ?", req.Username).First(&account).Error
+		if err == nil {
+			return nil, fmt.Errorf("用户名已存在")
+		}
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		if len(req.Password) < 6 {
+			return nil, fmt.Errorf("新账号密码长度至少 6 位")
+		}
+		hashed, err := hashPassword(req.Password)
+		if err != nil {
+			return nil, err
+		}
+		a := &model.Admin{
+			Username: req.Username,
+			Password: hashed,
+			RealName: req.RealName,
+			Phone:    req.Phone,
+			Status:   1,
+		}
+		if err := s.db.GetDb().WithContext(ctx).Create(a).Error; err != nil {
+			return nil, err
+		}
+		return a, nil
+	}
+
 	if req.CommunityId <= 0 {
 		return nil, fmt.Errorf("缺少任职社区")
+	}
+	// 指定为内置社区管理员：自动解析/创建内置角色（角色 ID 由服务端裁决，忽略 role_ids）
+	if req.AssignCommunityAdmin {
+		builtin, err := s.roleService.EnsureCommunityAdminRole(ctx, req.CommunityId)
+		if err != nil {
+			return nil, err
+		}
+		req.RoleIds = []int64{builtin.ID}
 	}
 	if len(req.RoleIds) == 0 {
 		return nil, fmt.Errorf("请至少分配一个角色")
@@ -186,6 +226,20 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 	a, err := s.getAdminByID(ctx, req.Id)
 	if err != nil {
 		return nil, err
+	}
+
+	// 仅更新状态（超管账号管理：停用/启用），不触碰姓名/手机号/角色任职
+	if req.UpdateStatusOnly {
+		if req.Status != 0 && req.Status != 1 {
+			return nil, fmt.Errorf("状态取值非法")
+		}
+		if err := s.db.GetDb().WithContext(ctx).
+			Model(&model.Admin{}).
+			Where("id = ?", req.Id).
+			Update("status", req.Status).Error; err != nil {
+			return nil, err
+		}
+		return s.getAdminByID(ctx, req.Id)
 	}
 
 	if req.CommunityId > 0 && req.RoleIds != nil {
@@ -251,22 +305,27 @@ func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID in
 }
 
 // ChangeAdminPassword 修改管理员密码
+// force = true 时跳过旧密码校验（超管重置密码场景，调用方须自行校验操作者身份）
+//
 // 参数：
 //   - ctx: 上下文
 //   - id: 管理员 ID
 //   - oldPassword: 旧密码
 //   - newPassword: 新密码
+//   - force: 是否跳过旧密码校验
 //
 // 返回：
 //   - error: 错误信息
-func (s *AdminService) ChangeAdminPassword(ctx context.Context, id int64, oldPassword, newPassword string) error {
+func (s *AdminService) ChangeAdminPassword(ctx context.Context, id int64, oldPassword, newPassword string, force bool) error {
 	a, err := s.getAdminByID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	if err := CheckPassword(oldPassword, a.Password); err != nil {
-		return fmt.Errorf("旧密码错误")
+	if !force {
+		if err := CheckPassword(oldPassword, a.Password); err != nil {
+			return fmt.Errorf("旧密码错误")
+		}
 	}
 
 	hashed, err := hashPassword(newPassword)

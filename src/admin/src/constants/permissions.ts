@@ -47,7 +47,11 @@ export const permissionGroups: PermissionGroup[] = [
   },
   {
     label: '会员',
-    options: [{ label: '会员查看', value: 'user:view' }],
+    options: [
+      { label: '会员查看', value: 'user:view' },
+      { label: '会员创建', value: 'user:create' },
+      { label: '会员更新', value: 'user:update' },
+    ],
   },
   {
     label: '营销',
