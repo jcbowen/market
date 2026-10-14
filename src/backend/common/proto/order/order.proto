@@ -15,6 +15,8 @@ service OrderService {
 
   // 退款
   rpc ApplyRefund(ApplyRefundReq) returns (RefundInfo);
+  // 后台代客退款：发起即执行（免审核），items 为空表示整单退
+  rpc AdminCreateRefund(AdminCreateRefundReq) returns (RefundInfo);
   rpc ListRefunds(ListRefundsReq) returns (ListRefundsResp);
   rpc ApproveRefund(ApproveRefundReq) returns (common.CommonResponse);
   rpc RejectRefund(RejectRefundReq) returns (common.CommonResponse);
@@ -205,6 +207,19 @@ message RefundLogInfo {
   int64 operator_id = 4;
   string remark = 5;
   string created_at = 6;
+}
+
+// AdminCreateRefundReq 后台代客退款请求（发起即执行，免审核）
+// 金额与运费口径与 C 端申请一致：服务端汇算为准，amount 仅允许调低
+message AdminCreateRefundReq {
+  int64 order_id = 1;
+  double amount = 2;
+  string reason = 3;
+  // 退款商品明细；为空表示整单退
+  repeated ApplyRefundItem items = 4;
+  // 运费退还策略为 user_decide 时是否退还运费
+  bool refund_freight = 5;
+  int64 operator_id = 6;
 }
 
 message ListRefundsReq {

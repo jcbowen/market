@@ -58,9 +58,10 @@
     </n-spin>
   </n-modal>
 
-  <!-- 发货 / 取消订单弹窗（与列表页共用） -->
+  <!-- 发货 / 取消订单 / 代客退款弹窗（与列表页共用） -->
   <ship-modal v-model:show="shipVisible" :order-ids="shipOrderIds" @success="onActionSuccess" />
   <cancel-order-modal v-model:show="cancelVisible" :order-id="cancelOrderId" @success="onActionSuccess" />
+  <refund-modal v-model:show="refundVisible" :order-id="refundOrderId" @success="onActionSuccess" />
 </template>
 
 <script setup lang="ts">
@@ -76,6 +77,7 @@ import { formatDateTime } from '@/utils/datetime'
 import { DELIVERY_TYPE, ORDER_STATUS, deliveryTypeText, orderStatusTagType, orderStatusText } from '@/constants/order'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
+import RefundModal from './components/RefundModal.vue'
 
 /**
  * 订单详情弹窗组件
@@ -101,6 +103,8 @@ const shipVisible = ref(false)
 const shipOrderIds = ref<number[]>([])
 const cancelVisible = ref(false)
 const cancelOrderId = ref<number | null>(null)
+const refundVisible = ref(false)
+const refundOrderId = ref<number | null>(null)
 
 // --- 描述列表响应式列数 ---
 // 窄屏（<=768px，与全局布局断点一致）降为单列，宽屏保持两列
@@ -153,6 +157,10 @@ const actions = computed(() => {
   if (d.status === ORDER_STATUS.SHIPPING) {
     list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d, false) })
   }
+  // 已支付/备货中/配送中允许后台代客退款（与后端可退状态一致）
+  if (d.status === ORDER_STATUS.PAID || d.status === ORDER_STATUS.STOCKING || d.status === ORDER_STATUS.SHIPPING) {
+    list.push({ key: 'refund', label: '退款', type: 'error', run: () => openRefund(d.id) })
+  }
   return list
 })
 
@@ -164,6 +172,11 @@ function openShip(id: number) {
 function openCancel(id: number) {
   cancelOrderId.value = id
   cancelVisible.value = true
+}
+
+function openRefund(id: number) {
+  refundOrderId.value = id
+  refundVisible.value = true
 }
 
 function confirmComplete(d: OrderDetail, isPickup: boolean) {

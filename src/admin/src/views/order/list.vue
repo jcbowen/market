@@ -1,9 +1,9 @@
 <template>
   <n-card title="订单列表">
     <n-space vertical :size="16">
-      <!-- 状态概览卡片：点击卡片即筛选对应状态 -->
-      <n-grid v-if="stats" :cols="6" :x-gap="12">
-        <n-gi v-for="card in statCards" :key="card.label">
+      <!-- 状态概览卡片：点击卡片即筛选对应状态；窄屏每行 3 张，桌面每行 6 张 -->
+      <n-grid v-if="stats" :cols="6" :x-gap="12" item-responsive>
+        <n-gi v-for="card in statCards" :key="card.label" span="2" l="1">
           <n-card size="small" :class="['stat-card', { active: statusFilter === card.value }]" @click="setStatusFilter(card.value)">
             <n-space vertical :size="2">
               <span class="stat-value">{{ card.count }}</span>
@@ -15,7 +15,15 @@
 
       <!-- 筛选区：窄屏允许换行，避免横向溢出 -->
       <n-space align="center" :size="12" class="filter-bar">
-        <n-radio-group v-model:value="statusFilter" @update:value="onStatusChange">
+        <!-- 窄屏用下拉替代状态按钮组，避免 6 个按钮横向溢出 -->
+        <n-select
+          v-if="isNarrow"
+          v-model:value="statusFilter"
+          :options="statusFilterOptions"
+          class="status-select"
+          @update:value="onStatusChange"
+        />
+        <n-radio-group v-else v-model:value="statusFilter" @update:value="onStatusChange">
           <n-radio-button :value="0">全部订单</n-radio-button>
           <n-radio-button v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</n-radio-button>
         </n-radio-group>
@@ -43,7 +51,7 @@
           @keyup.enter="onSearch"
           @clear="onSearch"
         />
-        <n-date-picker v-model:value="dateRange" type="daterange" clearable style="width: 260px" />
+        <n-date-picker v-model:value="dateRange" type="daterange" clearable class="date-picker" />
         <n-button type="primary" @click="onSearch">查询</n-button>
         <n-button :loading="exporting" @click="exportCsv">导出 CSV</n-button>
       </n-space>
@@ -56,12 +64,12 @@
       </n-space>
 
       <n-data-table
-        :columns="columns"
+        :columns="tableColumns"
         :data="list"
         :loading="loading"
         remote
         :row-key="(row: Order) => row.id"
-        :scroll-x="1200"
+        :scroll-x="isNarrow ? 670 : 1200"
         :pagination="pagination"
         v-model:checked-row-keys="checkedRowKeys"
         @update:page="onPageChange"
@@ -86,12 +94,15 @@
 
   <!-- 取消订单弹窗（取消原因必填） -->
   <cancel-order-modal v-model:show="cancelVisible" :order-id="cancelOrderId" @success="onActionSuccess" />
+
+  <!-- 后台代客退款弹窗（发起即执行，免审核） -->
+  <refund-modal v-model:show="refundVisible" :order-id="refundOrderId" @success="onActionSuccess" />
 </template>
 
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'OrderList' })
-import { computed, h, onMounted, reactive, ref } from 'vue'
+import { computed, h, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { completeOrder, getOrderList } from '@/api/order'
@@ -99,6 +110,7 @@ import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
 import OrderDetailModal from './detail.vue'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
+import RefundModal from './components/RefundModal.vue'
 import type { Order } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import { DELIVERY_TYPE, ORDER_STATUS, QUERY_STATUS, orderStatusTagType } from '@/constants/order'
@@ -128,9 +140,18 @@ const shipVisible = ref(false)
 const shipOrderIds = ref<number[]>([])
 const cancelVisible = ref(false)
 const cancelOrderId = ref<number | null>(null)
+const refundVisible = ref(false)
+const refundOrderId = ref<number | null>(null)
 
 const checkedRowKeys = ref<number[]>([])
 const selectedRows = computed(() => list.value.filter((row) => checkedRowKeys.value.includes(row.id)))
+
+// --- 窄屏适配（<=768px，与全局布局断点一致）---
+const isNarrow = ref(window.innerWidth <= 768)
+
+function updateNarrow() {
+  isNarrow.value = window.innerWidth <= 768
+}
 
 /** 状态筛选项：与后端聚合虚拟状态口径一致（90=待发货 9=售后） */
 const statusOptions = [
@@ -141,6 +162,9 @@ const statusOptions = [
   { label: '已取消', value: ORDER_STATUS.CANCELLED },
   { label: '售后', value: QUERY_STATUS.REFUND_AGGREGATE },
 ]
+
+/** 状态筛选下拉选项（窄屏替代按钮组） */
+const statusFilterOptions = [{ label: '全部订单', value: 0 }, ...statusOptions]
 
 // --- 状态概览卡片 ---
 const stats = ref<OrderStatistics | null>(null)
@@ -242,6 +266,16 @@ const columns: DataTableColumns<Order> = [
           ),
         )
       }
+      // 已支付/备货中/配送中允许后台代客退款（与后端可退状态一致）
+      if (row.status === ORDER_STATUS.PAID || row.status === ORDER_STATUS.STOCKING || row.status === ORDER_STATUS.SHIPPING) {
+        buttons.push(
+          h(
+            NButton,
+            { size: 'small', type: 'error', onClick: () => openRefund(row.id) },
+            { default: () => '退款' },
+          ),
+        )
+      }
       if (row.status === ORDER_STATUS.PENDING_PAY) {
         buttons.push(
           h(
@@ -255,6 +289,15 @@ const columns: DataTableColumns<Order> = [
     },
   },
 ]
+
+/**
+ * 表格列：窄屏隐藏次要列（用户/配送方式/订单金额/创建时间），保留关键列与操作列
+ */
+const tableColumns = computed<DataTableColumns<Order>>(() => {
+  if (!isNarrow.value) return columns
+  const hiddenKeys = new Set(['user_name', 'delivery_type', 'total_amount', 'created_at'])
+  return columns.filter((col) => !hiddenKeys.has((col as { key?: string }).key ?? ''))
+})
 
 /**
  * 切换状态按钮组后回到第 1 页并刷新
@@ -359,6 +402,15 @@ function openBatchShip() {
 function openCancel(id: number) {
   cancelOrderId.value = id
   cancelVisible.value = true
+}
+
+/**
+ * 打开后台代客退款弹窗
+ * @param id 订单 ID
+ */
+function openRefund(id: number) {
+  refundOrderId.value = id
+  refundVisible.value = true
 }
 
 /**
@@ -498,6 +550,11 @@ async function loadData() {
 onMounted(() => {
   loadData()
   loadStats()
+  window.addEventListener('resize', updateNarrow)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateNarrow)
 })
 </script>
 
@@ -507,8 +564,17 @@ onMounted(() => {
   width: 160px;
 }
 
+.date-picker {
+  width: 260px;
+}
+
+.status-select {
+  width: 100%;
+}
+
 @media (max-width: 768px) {
-  .search-input {
+  .search-input,
+  .date-picker {
     width: 100%;
   }
 }

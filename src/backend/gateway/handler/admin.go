@@ -2818,6 +2818,63 @@ func (h *AdminHandler) UpdateRefundSetting(c *gin.Context) {
 	response.Success(c, gin.H{"refund_freight_policy": req.RefundFreightPolicy})
 }
 
+// AdminCreateRefundReq 后台代客退款请求
+// items 为空表示整单退；金额由 order-service 服务端汇算，amount 仅允许调低
+type AdminCreateRefundReq struct {
+	Amount        float64              `json:"amount"`
+	Reason        string               `json:"reason" binding:"required"`
+	Items         []AdminRefundItemReq `json:"items"`
+	RefundFreight bool                 `json:"refund_freight"`
+}
+
+// AdminRefundItemReq 后台代客退款商品明细项
+type AdminRefundItemReq struct {
+	OrderItemID int64 `json:"order_item_id"`
+	Quantity    int32 `json:"quantity"`
+}
+
+// AdminCreateRefund 后台代客退款（发起即执行，免审核）
+//
+// 接口: POST /api/v1/admin/orders/:id/refund
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) AdminCreateRefund(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req AdminCreateRefundReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	pbReq := &order.AdminCreateRefundReq{
+		OrderId:       id,
+		Amount:        req.Amount,
+		Reason:        req.Reason,
+		RefundFreight: req.RefundFreight,
+		OperatorId:    uc.UserID,
+	}
+	for _, item := range req.Items {
+		pbReq.Items = append(pbReq.Items, &order.ApplyRefundItem{
+			OrderItemId: item.OrderItemID,
+			Quantity:    item.Quantity,
+		})
+	}
+
+	resp, err := h.orderClient.AdminCreateRefund(c.Request.Context(), pbReq)
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
 // ListRefunds 查询退款列表（透传 order-service，含 order_no/明细等字段）
 // 参数：
 //   - c: gin 上下文

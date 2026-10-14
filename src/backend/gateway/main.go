@@ -241,6 +241,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/orders/:id/cancel", gwMiddleware.RequirePermission("order:update"), adminHandler.AdminCancelOrder)
 			authAdmin.POST("/orders/:id/ship", gwMiddleware.RequirePermission("order:update"), adminHandler.ShipOrder)
 			authAdmin.PUT("/orders/:id/complete", gwMiddleware.RequirePermission("order:update"), adminHandler.CompleteOrder)
+			authAdmin.POST("/orders/:id/refund", gwMiddleware.RequirePermission("refund:update"), adminHandler.AdminCreateRefund)
 
 			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetOrderStatistics)
 			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetSalesStatistics)

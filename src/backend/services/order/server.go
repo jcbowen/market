@@ -155,6 +155,15 @@ func (s *server) ApplyRefund(ctx stdctx.Context, req *order.ApplyRefundReq) (*or
 	return ToRefundInfo(refund), nil
 }
 
+// AdminCreateRefund 后台代客退款（发起即执行，免审核）
+func (s *server) AdminCreateRefund(ctx stdctx.Context, req *order.AdminCreateRefundReq) (*order.RefundInfo, error) {
+	refund, err := s.refundService.AdminCreateRefund(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return ToRefundInfo(refund), nil
+}
+
 // ListRefunds 查询退款列表
 func (s *server) ListRefunds(ctx stdctx.Context, req *order.ListRefundsReq) (*order.ListRefundsResp, error) {
 	list, total, err := s.refundService.ListRefunds(ctx, req)

@@ -86,52 +86,11 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		return nil, fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
 	}
 
-	var orderItems []*model.OrderItem
-	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", o.ID).Find(&orderItems).Error; err != nil {
-		return nil, err
-	}
-	itemMap := make(map[int64]*model.OrderItem, len(orderItems))
-	for _, item := range orderItems {
-		itemMap[item.ID] = item
-	}
-
-	refundedQty, refundedGoods, err := s.refundedStat(ctx, o.ID)
+	calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
 	if err != nil {
 		return nil, err
 	}
-
-	lines, isFull, err := buildRefundLines(&o, orderItems, itemMap, req, refundedQty)
-	if err != nil {
-		return nil, err
-	}
-
-	// 商品部分应退合计：整单退以"商品实付总额 - 已退商品金额"为准（尾差在最后一行兜底）
-	goodsRefund := sumRefundLines(lines)
-	if isFull {
-		goodsRefund = round2(o.TotalAmount - o.DiscountAmount - refundedGoods)
-		fixLastLineTailDiff(lines, goodsRefund)
-	}
-
-	// 运费：仅整单退按策略退还
-	freight := s.resolveFreight(ctx, &o, isFull, req.RefundFreight)
-	refundable := round2(goodsRefund + freight)
-
-	// 客户端金额仅允许调低
-	amount := refundable
-	if req.Amount > 0 && req.Amount < refundable {
-		amount = round2(req.Amount)
-	}
-	cut := round2(refundable - amount)
-	if cut > goodsRefund {
-		return nil, fmt.Errorf("退款金额不能低于运费金额")
-	}
-	if cut > 0 {
-		last := lines[len(lines)-1]
-		if last.amount < cut {
-			return nil, fmt.Errorf("调整金额过低，最后一行商品应退不足抵扣")
-		}
-		last.amount = round2(last.amount - cut)
-	}
+	lines, isFull, freight, amount := calc.lines, calc.isFull, calc.freight, calc.amount
 
 	paymentNo := ""
 	if s.paymentClient != nil {
@@ -194,21 +153,213 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 	return refund, nil
 }
 
+// AdminCreateRefund 后台代客退款（发起即执行，免审核）
+// 整单退/部分退金额口径与 C 端申请一致（calcRefundOrder 服务端汇算）；
+// 创建即置为退款中(4)并直接调用渠道退款，成功后走统一收尾（置已退款、回补库存、更新订单状态）；
+// 渠道调用失败时退款单保留在退款中，由后台「重试退款」或调度器兜底
+// 参数：
+//   - ctx: 上下文
+//   - req: 后台代客退款请求
+//
+// 返回值：
+//   - *model.Refund: 退款模型（含明细）
+//   - error: 错误信息
+func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminCreateRefundReq) (*model.Refund, error) {
+	if req.Reason == "" {
+		return nil, fmt.Errorf("请填写退款原因")
+	}
+
+	var o model.Order
+	if err := s.db.GetDb().WithContext(ctx).First(&o, req.OrderId).Error; err != nil {
+		return nil, err
+	}
+	if o.Status != 2 && o.Status != 3 && o.Status != 4 {
+		return nil, fmt.Errorf("订单状态不允许退款")
+	}
+
+	// 存在未完结退款申请（待审核/退款中）时禁止重复发起
+	var pending int64
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+		Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
+		Count(&pending).Error; err != nil {
+		return nil, err
+	}
+	if pending > 0 {
+		return nil, fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
+	}
+
+	calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
+	if err != nil {
+		return nil, err
+	}
+
+	paymentNo := ""
+	if s.paymentClient != nil {
+		if p, err := s.paymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: req.OrderId}); err == nil && p != nil {
+			paymentNo = p.PaymentNo
+		}
+	}
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	refundType := int32(2)
+	if calc.isFull {
+		refundType = 1
+	}
+	refund := &model.Refund{
+		RefundNo:      generateRefundNo(),
+		OrderID:       o.ID,
+		UserID:        o.UserID,
+		PaymentNo:     paymentNo,
+		Amount:        calc.amount,
+		FreightAmount: calc.freight,
+		Type:          refundType,
+		Reason:        req.Reason,
+		// 后台发起即执行：直接进入退款中，无需审核
+		Status:    4,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	for _, line := range calc.lines {
+		refund.Items = append(refund.Items, &model.RefundItem{
+			OrderItemID:  line.item.ID,
+			SkuID:        line.item.SkuID,
+			ProductName:  line.item.ProductName,
+			SpecName:     line.item.SpecName,
+			Quantity:     line.qty,
+			RefundAmount: line.amount,
+			CreatedAt:    now,
+		})
+	}
+
+	fromStatus := o.Status
+	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(refund).Error; err != nil {
+			return err
+		}
+		for _, item := range refund.Items {
+			item.RefundID = refund.ID
+			if err := tx.Create(item).Error; err != nil {
+				return err
+			}
+		}
+		o.Status = 7
+		o.UpdatedAt = now
+		if err := tx.Save(&o).Error; err != nil {
+			return err
+		}
+		return createStatusLogTx(tx, o.ID, fromStatus, 7, "admin", req.OperatorId, "后台代客退款: "+req.Reason)
+	}); err != nil {
+		return nil, err
+	}
+	refund.OrderNo = o.OrderNo
+
+	if err := s.createRefundLog(ctx, refund.ID, "create", "admin", req.OperatorId, "后台代客退款: "+req.Reason); err != nil {
+		return refund, err
+	}
+
+	// 发起即执行：直接发起渠道退款
+	if err := s.processChannelRefund(ctx, refund); err != nil {
+		// 渠道失败：退款单保留在退款中，审批日志留痕，由「重试退款」兜底
+		_ = s.createRefundLog(ctx, refund.ID, "create", "admin", req.OperatorId, "渠道退款调用失败: "+err.Error())
+		return refund, err
+	}
+
+	if err := s.completeRefundSuccess(ctx, refund, refund.Items, "admin", req.OperatorId); err != nil {
+		return refund, err
+	}
+	// 同步内存状态：completeRefundSuccess 只更新 DB，返回给网关的模型需反映最终状态
+	refund.Status = 5
+	_ = s.createRefundLog(ctx, refund.ID, "create", "admin", req.OperatorId, "后台代客退款成功")
+	return refund, nil
+}
+
+// refundCalc 退款汇算结果（C 端申请与后台代客退款共用）
+type refundCalc struct {
+	lines   []*refundLine
+	isFull  bool
+	freight float64
+	amount  float64
+}
+
+// calcRefundOrder 汇算一笔退款的退款行、运费与最终金额
+// 金额以服务端汇算为准（行小计按比例分摊订单优惠，整单退尾差减法兜底），
+// reqAmount 仅允许调低，调低差额从最后一行明细扣减；
+// 运费仅整单退时按 refund_freight_policy 策略退还（user_decide 时按 refundFreight 勾选）
+// 参数：
+//   - ctx: 上下文
+//   - o: 订单
+//   - reqItems: 退款商品明细（为空表示整单退）
+//   - reqAmount: 客户端传入金额（仅允许调低）
+//   - refundFreight: user_decide 策略下是否退运费
+//
+// 返回值：
+//   - *refundCalc: 汇算结果
+//   - error: 校验失败时返回错误
+func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, reqItems []*order.ApplyRefundItem, reqAmount float64, refundFreight bool) (*refundCalc, error) {
+	var orderItems []*model.OrderItem
+	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", o.ID).Find(&orderItems).Error; err != nil {
+		return nil, err
+	}
+	itemMap := make(map[int64]*model.OrderItem, len(orderItems))
+	for _, item := range orderItems {
+		itemMap[item.ID] = item
+	}
+
+	refundedQty, refundedGoods, err := s.refundedStat(ctx, o.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	lines, isFull, err := buildRefundLines(o, orderItems, itemMap, reqItems, refundedQty)
+	if err != nil {
+		return nil, err
+	}
+
+	// 商品部分应退合计：整单退以"商品实付总额 - 已退商品金额"为准（尾差在最后一行兜底）
+	goodsRefund := sumRefundLines(lines)
+	if isFull {
+		goodsRefund = round2(o.TotalAmount - o.DiscountAmount - refundedGoods)
+		fixLastLineTailDiff(lines, goodsRefund)
+	}
+
+	// 运费：仅整单退按策略退还
+	freight := s.resolveFreight(ctx, o, isFull, refundFreight)
+	refundable := round2(goodsRefund + freight)
+
+	// 客户端金额仅允许调低
+	amount := refundable
+	if reqAmount > 0 && reqAmount < refundable {
+		amount = round2(reqAmount)
+	}
+	cut := round2(refundable - amount)
+	if cut > goodsRefund {
+		return nil, fmt.Errorf("退款金额不能低于运费金额")
+	}
+	if cut > 0 {
+		last := lines[len(lines)-1]
+		if last.amount < cut {
+			return nil, fmt.Errorf("调整金额过低，最后一行商品应退不足抵扣")
+		}
+		last.amount = round2(last.amount - cut)
+	}
+	return &refundCalc{lines: lines, isFull: isFull, freight: freight, amount: amount}, nil
+}
+
 // buildRefundLines 根据申请参数构造退款行并完成逐行汇算
 // 整单退时取每行剩余可退数量；部分退时校验行归属与数量上限
 // 参数：
 //   - o: 订单
 //   - orderItems: 订单商品行
 //   - itemMap: 订单商品行索引（order_item_id -> 行）
-//   - req: 申请请求
+//   - reqItems: 退款商品明细（为空表示整单退）
 //   - refundedQty: 各商品行已退数量
 //
 // 返回值：
 //   - []*refundLine: 退款行（金额为按比例分摊优惠后的应退金额）
 //   - bool: 是否整单退
 //   - error: 校验失败时返回错误
-func buildRefundLines(o *model.Order, orderItems []*model.OrderItem, itemMap map[int64]*model.OrderItem, req *order.ApplyRefundReq, refundedQty map[int64]int32) ([]*refundLine, bool, error) {
-	isFull := len(req.Items) == 0
+func buildRefundLines(o *model.Order, orderItems []*model.OrderItem, itemMap map[int64]*model.OrderItem, reqItems []*order.ApplyRefundItem, refundedQty map[int64]int32) ([]*refundLine, bool, error) {
+	isFull := len(reqItems) == 0
 	var lines []*refundLine
 
 	if isFull {
@@ -229,8 +380,8 @@ func buildRefundLines(o *model.Order, orderItems []*model.OrderItem, itemMap map
 		return lines, true, nil
 	}
 
-	seen := make(map[int64]bool, len(req.Items))
-	for _, ri := range req.Items {
+	seen := make(map[int64]bool, len(reqItems))
+	for _, ri := range reqItems {
 		item, ok := itemMap[ri.OrderItemId]
 		if !ok {
 			return nil, false, fmt.Errorf("退款商品不属于该订单")

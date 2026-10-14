@@ -6,11 +6,12 @@
         <n-button type="primary" @click="onSearch">查询</n-button>
       </n-space>
       <n-data-table
-        :columns="columns"
+        :columns="tableColumns"
         :data="list"
         :loading="loading"
         remote
         :row-key="(row: Refund) => row.id"
+        :scroll-x="isNarrow ? 720 : 1300"
         :pagination="pagination"
         @update:page="onPageChange"
       />
@@ -46,7 +47,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'RefundList' })
-import { ref, onMounted, h } from 'vue'
+import { ref, onMounted, onUnmounted, computed, h } from 'vue'
 import { NButton, NSpace, NTag, NDataTable, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getRefundList, approveRefund, rejectRefund, retryRefund } from '@/api/order'
@@ -180,10 +181,27 @@ const columns: DataTableColumns<Refund> = [
 ]
 
 const actionTextMap: Record<string, string> = {
+  create: '后台代客退款',
   approve: '同意退款',
   reject: '拒绝退款',
   retry: '重试退款',
 }
+
+// --- 窄屏适配（<=768px，与全局布局断点一致）---
+const isNarrow = ref(window.innerWidth <= 768)
+
+function updateNarrow() {
+  isNarrow.value = window.innerWidth <= 768
+}
+
+/**
+ * 表格列：窄屏隐藏次要列（退款单号/拒绝原因/申请时间），保留关键列与操作列
+ */
+const tableColumns = computed<DataTableColumns<Refund>>(() => {
+  if (!isNarrow.value) return columns
+  const hiddenKeys = new Set(['refund_no', 'reject_reason', 'created_at'])
+  return columns.filter((col) => !hiddenKeys.has((col as { key?: string }).key ?? ''))
+})
 
 /**
  * 渲染展开行的售后商品明细表与审批日志
@@ -350,5 +368,12 @@ async function loadData() {
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  window.addEventListener('resize', updateNarrow)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', updateNarrow)
+})
 </script>

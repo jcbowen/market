@@ -95,6 +95,28 @@ export function completeOrder(id: number) {
 }
 
 /**
+ * 后台代客退款（发起即执行，免审核）
+ * @param id 订单 ID
+ * @param data 退款参数（items 为空表示整单退；金额由服务端汇算，amount 仅允许调低）
+ * @returns 创建的售后单
+ */
+export function adminCreateRefund(
+  id: number,
+  data: {
+    reason: string
+    items?: Array<{ order_item_id: number; quantity: number }>
+    amount?: number
+    refund_freight?: boolean
+  },
+) {
+  return request<ApiResult<Refund>>({
+    url: `/api/v1/admin/orders/${id}/refund`,
+    method: 'POST',
+    data,
+  })
+}
+
+/**
  * 获取退款（售后）列表
  * @param params 查询参数
  * @returns 分页售后单列表
