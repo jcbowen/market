@@ -25,13 +25,13 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- ============ 社区 ============
--- 社区1：北京市朝阳区（直辖市口径：无 4 位市级码，city_code 为空）
+-- 社区1：重庆市九龙坡区（直辖市口径：无 4 位市级码，city_code 为空）
 INSERT INTO `communities` (`id`, `name`, `address`, `longitude`, `latitude`, `contact_phone`, `manager_name`, `manager_phone`, `pickup_address`, `delivery_fee`, `min_order_amount`, `delivery_range_km`, `business_hours`, `province`, `city`, `district`, `province_code`, `city_code`, `district_code`, `allow_outside_delivery`, `sort`, `status`, `created_at`, `updated_at`)
-VALUES (1, '幸福小区', '北京市朝阳区幸福路 1 号', 116.3974, 39.9093, '010-12345678', '张物业', '13800138002', '小区东门自提点', 3.00, 15.00, 5.00, '[{"start":"08:00","end":"12:00"},{"start":"14:00","end":"22:00"}]', '北京市', '北京市', '朝阳区', '11', '', '110105', 0, 1, 1, NOW(), NOW());
+VALUES (1, '盘龙金茂悦', '重庆市九龙坡区彩云大道8号', 106.492104, 29.506279, '17898616950', '万先生', '17898616950', '金茂悦7栋1楼保安处', 3.00, 15.00, 2.00, '[{"start":"08:00","end":"12:00"},{"start":"14:00","end":"22:00"}]', '重庆市', '重庆市', '九龙坡区', '50', '', '500107', 0, 0, 1, NOW(), NOW());
 
 -- 社区2：广东省深圳市南山区（完整三级区划链 + 允许社区外配送，用于测试两种锁区分支）
 INSERT INTO `communities` (`id`, `name`, `address`, `longitude`, `latitude`, `contact_phone`, `manager_name`, `manager_phone`, `pickup_address`, `delivery_fee`, `min_order_amount`, `delivery_range_km`, `business_hours`, `province`, `city`, `district`, `province_code`, `city_code`, `district_code`, `allow_outside_delivery`, `sort`, `status`, `created_at`, `updated_at`)
-VALUES (2, '阳光花园', '广东省深圳市南山区阳光路 8 号', 113.9304, 22.5333, '0755-88886666', '李管家', '13900139002', '花园南门快递柜旁自提点', 2.00, 0.00, 3.00, '09:00-21:00', '广东省', '深圳市', '南山区', '44', '4403', '440305', 1, 2, 1, NOW(), NOW());
+VALUES (2, '阳光花园', '广东省深圳市南山区阳光路 8 号', 113.9304, 22.5333, '0755-88886666', '李管家', '13900139002', '花园南门快递柜旁自提点', 2.00, 0.00, 3.00, '09:00-21:00', '广东省', '深圳市', '南山区', '44', '4403', '440305', 1, 0, 1, NOW(), NOW());
 
 -- ============ 角色与管理员（多社区任职模型） ============
 -- admin_roles.community_id：0=全局角色；>0=社区私有角色
