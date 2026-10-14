@@ -1,97 +1,187 @@
 <template>
   <n-card title="订单列表">
     <n-space vertical :size="16">
-      <!-- 筛选区：窄屏允许换行，搜索框自适应宽度，避免手机上横向溢出 -->
+      <!-- 状态概览卡片：点击卡片即筛选对应状态 -->
+      <n-grid v-if="stats" :cols="6" :x-gap="12">
+        <n-gi v-for="card in statCards" :key="card.label">
+          <n-card size="small" :class="['stat-card', { active: statusFilter === card.value }]" @click="setStatusFilter(card.value)">
+            <n-space vertical :size="2">
+              <span class="stat-value">{{ card.count }}</span>
+              <span class="stat-label">{{ card.label }}</span>
+            </n-space>
+          </n-card>
+        </n-gi>
+      </n-grid>
+
+      <!-- 筛选区：窄屏允许换行，避免横向溢出 -->
       <n-space align="center" :size="12" class="filter-bar">
         <n-radio-group v-model:value="statusFilter" @update:value="onStatusChange">
           <n-radio-button :value="0">全部订单</n-radio-button>
           <n-radio-button v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</n-radio-button>
         </n-radio-group>
         <n-input
-          v-model:value="orderNo"
+          v-model:value="filters.order_no"
           placeholder="订单号搜索"
           clearable
           class="search-input"
           @keyup.enter="onSearch"
           @clear="onSearch"
         />
+        <n-input
+          v-model:value="filters.receiver_name"
+          placeholder="收货人姓名"
+          clearable
+          class="search-input"
+          @keyup.enter="onSearch"
+          @clear="onSearch"
+        />
+        <n-input
+          v-model:value="filters.receiver_phone"
+          placeholder="收货人电话"
+          clearable
+          class="search-input"
+          @keyup.enter="onSearch"
+          @clear="onSearch"
+        />
+        <n-date-picker v-model:value="dateRange" type="daterange" clearable style="width: 260px" />
         <n-button type="primary" @click="onSearch">查询</n-button>
+        <n-button :loading="exporting" @click="exportCsv">导出 CSV</n-button>
       </n-space>
+
+      <!-- 批量操作条 -->
+      <n-space v-if="selectedRows.length > 0" align="center">
+        <span>已选 {{ selectedRows.length }} 单</span>
+        <n-button size="small" type="primary" @click="openBatchShip">批量发货</n-button>
+        <n-button size="small" type="success" @click="batchComplete">批量核销</n-button>
+      </n-space>
+
       <n-data-table
         :columns="columns"
         :data="list"
         :loading="loading"
         remote
-        :scroll-x="1040"
+        :row-key="(row: Order) => row.id"
+        :scroll-x="1200"
         :pagination="pagination"
+        v-model:checked-row-keys="checkedRowKeys"
         @update:page="onPageChange"
-      />
+        @update:page-size="onPageSizeChange"
+      >
+        <template #empty>
+          <n-empty :description="loadError ? '订单加载失败' : '暂无订单'">
+            <template v-if="loadError" #extra>
+              <n-button size="small" @click="loadData">重试</n-button>
+            </template>
+          </n-empty>
+        </template>
+      </n-data-table>
     </n-space>
   </n-card>
 
   <!-- 订单详情弹窗 -->
-  <order-detail-modal v-model:show="detailVisible" :order-id="detailId" />
+  <order-detail-modal v-model:show="detailVisible" :order-id="detailId" @refresh="loadData" />
 
-  <!-- 发货表单弹窗 -->
-  <n-modal v-model:show="shipVisible" preset="card" title="订单发货" style="width: min(460px, 94vw)">
-    <n-form label-placement="left" label-width="80">
-      <n-form-item label="物流公司">
-        <n-input v-model:value="shipForm.express_company" placeholder="请输入物流公司" />
-      </n-form-item>
-      <n-form-item label="物流单号">
-        <n-input v-model:value="shipForm.express_no" placeholder="请输入物流单号" />
-      </n-form-item>
-    </n-form>
-    <template #footer>
-      <n-space justify="end">
-        <n-button @click="shipVisible = false">取消</n-button>
-        <n-button type="primary" :loading="shipSubmitting" @click="submitShip">确认发货</n-button>
-      </n-space>
-    </template>
-  </n-modal>
+  <!-- 发货弹窗（单笔/批量共用） -->
+  <ship-modal v-model:show="shipVisible" :order-ids="shipOrderIds" @success="onActionSuccess" />
+
+  <!-- 取消订单弹窗（取消原因必填） -->
+  <cancel-order-modal v-model:show="cancelVisible" :order-id="cancelOrderId" @success="onActionSuccess" />
 </template>
 
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'OrderList' })
-import { ref, reactive, onMounted, h } from 'vue'
-import { NButton, NSpace, NTag, useDialog } from 'naive-ui'
+import { computed, h, onMounted, reactive, ref } from 'vue'
+import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getOrderList, shipOrder, completeOrder, updateOrderStatus } from '@/api/order'
+import { completeOrder, getOrderList } from '@/api/order'
+import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
 import OrderDetailModal from './detail.vue'
+import ShipModal from './components/ShipModal.vue'
+import CancelOrderModal from './components/CancelOrderModal.vue'
 import type { Order } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
+import { DELIVERY_TYPE, ORDER_STATUS, QUERY_STATUS, orderStatusTagType } from '@/constants/order'
 
 /**
  * 订单列表页面
- * 状态按钮组筛选、彩色状态标签、操作列（详情/发货/完成/取消）
+ * 状态概览卡片、状态/订单号/收货人/时间筛选、批量发货与核销、CSV 导出
  */
+
 const dialog = useDialog()
-const orderNo = ref('')
+const message = useMessage()
+
 const statusFilter = ref(0)
 const list = ref<Order[]>([])
 const loading = ref(false)
-const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
+const loadError = ref(false)
+const exporting = ref(false)
+const pagination = ref({ page: 1, pageSize: 20, itemCount: 0, pageSizes: [10, 20, 50, 100], showSizePicker: true })
+
+const filters = reactive({ order_no: '', receiver_name: '', receiver_phone: '' })
+const dateRange = ref<[number, number] | null>(null)
 
 const detailVisible = ref(false)
 const detailId = ref<number | null>(null)
 
 const shipVisible = ref(false)
-const shipSubmitting = ref(false)
-const shipOrderId = ref(0)
-const shipForm = reactive({ express_company: '', express_no: '' })
+const shipOrderIds = ref<number[]>([])
+const cancelVisible = ref(false)
+const cancelOrderId = ref<number | null>(null)
 
+const checkedRowKeys = ref<number[]>([])
+const selectedRows = computed(() => list.value.filter((row) => checkedRowKeys.value.includes(row.id)))
+
+/** 状态筛选项：与后端聚合虚拟状态口径一致（90=待发货 9=售后） */
 const statusOptions = [
-  { label: '待支付', value: 1 },
-  { label: '待发货', value: 2 },
-  { label: '已发货', value: 4 },
-  { label: '已完成', value: 5 },
-  { label: '已取消', value: 6 },
+  { label: '待支付', value: ORDER_STATUS.PENDING_PAY },
+  { label: '待发货', value: QUERY_STATUS.SHIPPING_AGGREGATE },
+  { label: '配送中', value: ORDER_STATUS.SHIPPING },
+  { label: '已完成', value: ORDER_STATUS.COMPLETED },
+  { label: '已取消', value: ORDER_STATUS.CANCELLED },
+  { label: '售后', value: QUERY_STATUS.REFUND_AGGREGATE },
 ]
 
+// --- 状态概览卡片 ---
+const stats = ref<OrderStatistics | null>(null)
+
+const statCards = computed(() => [
+  { label: '全部订单', value: 0, count: stats.value?.total_orders ?? 0 },
+  { label: '待支付', value: ORDER_STATUS.PENDING_PAY, count: stats.value?.pending_pay ?? 0 },
+  { label: '待发货', value: QUERY_STATUS.SHIPPING_AGGREGATE, count: stats.value?.pending_ship ?? 0 },
+  { label: '待收货', value: ORDER_STATUS.SHIPPING, count: stats.value?.pending_receive ?? 0 },
+  { label: '已完成', value: ORDER_STATUS.COMPLETED, count: stats.value?.completed ?? 0 },
+  { label: '售后中', value: QUERY_STATUS.REFUND_AGGREGATE, count: stats.value?.refunding ?? 0 },
+])
+
+async function loadStats() {
+  try {
+    const res = await getOrderStatistics({})
+    if (res.data.code === 0) {
+      stats.value = res.data.data
+    }
+  } catch {
+    // 统计加载失败不阻塞列表，卡片隐藏
+    stats.value = null
+  }
+}
+
+function setStatusFilter(value: number) {
+  statusFilter.value = value
+  pagination.value.page = 1
+  loadData()
+}
+
 const columns: DataTableColumns<Order> = [
+  { type: 'selection' },
   { title: '订单号', key: 'order_no', width: 200 },
-  { title: '用户', key: 'user_name', width: 120 },
+  { title: '用户', key: 'user_name', width: 110 },
+  {
+    title: '配送方式',
+    key: 'delivery_type',
+    width: 90,
+    render: (row) => (row.delivery_type === DELIVERY_TYPE.DELIVERY ? '配送' : '自提'),
+  },
   {
     title: '订单金额',
     key: 'total_amount',
@@ -108,7 +198,7 @@ const columns: DataTableColumns<Order> = [
     title: '状态',
     key: 'status',
     width: 100,
-    render: (row) => h(NTag, { type: statusTagType(row.status), size: 'small', bordered: false }, { default: () => row.status_text }),
+    render: (row) => h(NTag, { type: orderStatusTagType(row.status), size: 'small', bordered: false }, { default: () => row.status_text }),
   },
   { title: '创建时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
   {
@@ -123,16 +213,27 @@ const columns: DataTableColumns<Order> = [
           { default: () => '详情' },
         ),
       ]
-      if (row.status === 2) {
-        buttons.push(
-          h(
-            NButton,
-            { size: 'small', type: 'primary', onClick: () => openShip(row) },
-            { default: () => '发货' },
-          ),
-        )
+      if (row.status === ORDER_STATUS.PAID) {
+        if (row.delivery_type === DELIVERY_TYPE.DELIVERY) {
+          buttons.push(
+            h(
+              NButton,
+              { size: 'small', type: 'primary', onClick: () => openShip([row.id]) },
+              { default: () => '发货' },
+            ),
+          )
+        } else {
+          // 自提单：已支付即可核销完成，无需发货
+          buttons.push(
+            h(
+              NButton,
+              { size: 'small', type: 'success', onClick: () => confirmComplete(row) },
+              { default: () => '核销完成' },
+            ),
+          )
+        }
       }
-      if (row.status === 4) {
+      if (row.status === ORDER_STATUS.SHIPPING) {
         buttons.push(
           h(
             NButton,
@@ -141,11 +242,11 @@ const columns: DataTableColumns<Order> = [
           ),
         )
       }
-      if (row.status === 1) {
+      if (row.status === ORDER_STATUS.PENDING_PAY) {
         buttons.push(
           h(
             NButton,
-            { size: 'small', type: 'error', onClick: () => confirmCancel(row) },
+            { size: 'small', type: 'error', onClick: () => openCancel(row.id) },
             { default: () => '取消订单' },
           ),
         )
@@ -154,30 +255,6 @@ const columns: DataTableColumns<Order> = [
     },
   },
 ]
-
-/**
- * 订单状态彩色标签类型
- * @param status 订单状态码
- * @returns n-tag 类型
- */
-function statusTagType(status: number): 'default' | 'warning' | 'info' | 'primary' | 'success' | 'error' {
-  switch (status) {
-    case 1:
-      return 'warning'
-    case 2:
-    case 3:
-      return 'info'
-    case 4:
-      return 'primary'
-    case 5:
-      return 'success'
-    case 7:
-    case 8:
-      return 'error'
-    default:
-      return 'default'
-  }
-}
 
 /**
  * 切换状态按钮组后回到第 1 页并刷新
@@ -207,6 +284,39 @@ function onPageChange(page: number) {
 }
 
 /**
+ * 每页条数切换
+ * @param pageSize 目标条数
+ */
+function onPageSizeChange(pageSize: number) {
+  pagination.value.pageSize = pageSize
+  pagination.value.page = 1
+  loadData()
+}
+
+/**
+ * 组装当前筛选条件（列表查询与导出共用）
+ */
+function buildQuery() {
+  const [start, end] = dateRange.value ?? []
+  const fmt = (ts: number) => {
+    const d = new Date(ts)
+    const m = `${d.getMonth() + 1}`.padStart(2, '0')
+    const day = `${d.getDate()}`.padStart(2, '0')
+    return `${d.getFullYear()}-${m}-${day}`
+  }
+  return {
+    page: pagination.value.page,
+    page_size: pagination.value.pageSize,
+    order_no: filters.order_no || undefined,
+    receiver_name: filters.receiver_name || undefined,
+    receiver_phone: filters.receiver_phone || undefined,
+    start_time: start ? fmt(start) : undefined,
+    end_time: end ? fmt(end) : undefined,
+    status: statusFilter.value > 0 ? statusFilter.value : undefined,
+  }
+}
+
+/**
  * 打开订单详情弹窗
  * @param id 订单 ID
  */
@@ -216,45 +326,51 @@ function openDetail(id: number) {
 }
 
 /**
- * 打开发货表单弹窗
- * @param row 订单行
+ * 打开发货弹窗（单笔或批量）
+ * @param ids 订单 ID 列表
  */
-function openShip(row: Order) {
-  shipOrderId.value = row.id
-  shipForm.express_company = ''
-  shipForm.express_no = ''
+function openShip(ids: number[]) {
+  shipOrderIds.value = ids
   shipVisible.value = true
 }
 
 /**
- * 提交发货（物流信息表单）
+ * 打开批量发货弹窗：过滤出可发货的配送单
  */
-async function submitShip() {
-  shipSubmitting.value = true
-  try {
-    await shipOrder(shipOrderId.value, {
-      express_company: shipForm.express_company,
-      express_no: shipForm.express_no,
-      remark: '后台发货',
+function openBatchShip() {
+  const shippable = selectedRows.value.filter(
+    (row) => row.status === ORDER_STATUS.PAID && row.delivery_type === DELIVERY_TYPE.DELIVERY,
+  )
+  if (shippable.length === 0) {
+    dialog.warning({
+      title: '无法批量发货',
+      content: '选中订单中没有「待发货的配送单」，自提单请使用批量核销。',
+      positiveText: '知道了',
     })
-    shipVisible.value = false
-    loadData()
-  } catch {
-    // 错误提示由请求拦截器统一弹出
-  } finally {
-    shipSubmitting.value = false
+    return
   }
+  openShip(shippable.map((row) => row.id))
 }
 
 /**
- * 确认收货/完成订单（二次确认）
+ * 打开取消订单弹窗
+ * @param id 订单 ID
+ */
+function openCancel(id: number) {
+  cancelOrderId.value = id
+  cancelVisible.value = true
+}
+
+/**
+ * 确认完成/核销单笔订单（二次确认）
  * @param row 订单行
  */
 function confirmComplete(row: Order) {
+  const isPickup = row.delivery_type === DELIVERY_TYPE.SELF_PICKUP
   dialog.warning({
-    title: '完成订单',
+    title: isPickup ? '核销订单' : '完成订单',
     content: `确认将订单 ${row.order_no} 标记为已完成？`,
-    positiveText: '确认完成',
+    positiveText: isPickup ? '确认核销' : '确认完成',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
@@ -268,61 +384,151 @@ function confirmComplete(row: Order) {
 }
 
 /**
- * 取消订单（二次确认）
- * @param row 订单行
+ * 批量核销：对选中订单中可完成的（自提已支付 / 已发货）逐单完结
  */
-function confirmCancel(row: Order) {
+function batchComplete() {
+  const completable = selectedRows.value.filter(
+    (row) =>
+      row.status === ORDER_STATUS.SHIPPING ||
+      (row.status === ORDER_STATUS.PAID && row.delivery_type === DELIVERY_TYPE.SELF_PICKUP),
+  )
+  if (completable.length === 0) {
+    dialog.warning({
+      title: '无法批量核销',
+      content: '选中订单中没有「已发货」或「待自提」的订单。',
+      positiveText: '知道了',
+    })
+    return
+  }
   dialog.warning({
-    title: '取消订单',
-    content: `确认取消订单 ${row.order_no}？取消后将释放占用库存，该操作不可恢复。`,
-    positiveText: '确认取消',
-    negativeText: '返回',
+    title: '批量核销',
+    content: `确认将选中的 ${completable.length} 个订单标记为已完成？`,
+    positiveText: '确认核销',
+    negativeText: '取消',
     onPositiveClick: async () => {
-      try {
-        await updateOrderStatus(row.id, 6, '后台取消订单')
-        loadData()
-      } catch {
-        // 错误提示由请求拦截器统一弹出
+      let successCount = 0
+      for (const row of completable) {
+        try {
+          await completeOrder(row.id)
+          successCount++
+        } catch {
+          // 错误提示由请求拦截器统一弹出，继续处理下一单
+        }
       }
+      message.success(`批量核销完成：成功 ${successCount} 单`)
+      loadData()
     },
   })
 }
 
 /**
- * 加载订单分页数据
+ * 操作成功后的统一刷新
+ */
+function onActionSuccess() {
+  checkedRowKeys.value = []
+  loadData()
+}
+
+/**
+ * 导出当前筛选条件下的订单 CSV（逐页拉取，上限 2000 条）
+ */
+async function exportCsv() {
+  exporting.value = true
+  try {
+    const baseQuery = { ...buildQuery(), page: 1, page_size: 100 }
+    const all: Order[] = []
+    for (let page = 1; page <= 20; page++) {
+      const res = await getOrderList({ ...baseQuery, page })
+      if (res.data.code !== 0) break
+      all.push(...res.data.data.list)
+      if (all.length >= res.data.data.total) break
+    }
+    if (all.length === 0) {
+      message.info('当前筛选条件下没有可导出的订单')
+      return
+    }
+    const header = ['订单号', '用户', '配送方式', '订单金额', '实付金额', '状态', '创建时间']
+    const rows = all.map((row) => [
+      row.order_no,
+      row.user_name,
+      row.delivery_type === DELIVERY_TYPE.DELIVERY ? '配送' : '自提',
+      (row.total_amount ?? 0).toFixed(2),
+      (row.pay_amount ?? 0).toFixed(2),
+      row.status_text,
+      formatDateTime(row.created_at),
+    ])
+    // BOM 保证 Excel 正确识别 UTF-8
+    const csv =
+      '\ufeff' +
+      [header, ...rows]
+        .map((cells) => cells.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+        .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  } finally {
+    exporting.value = false
+  }
+}
+
+/**
+ * 加载订单分页数据；失败时清空列表并展示错误态
  */
 async function loadData() {
   loading.value = true
+  loadError.value = false
   try {
-    const res = await getOrderList({
-      page: pagination.value.page,
-      page_size: pagination.value.pageSize,
-      order_no: orderNo.value,
-      status: statusFilter.value > 0 ? statusFilter.value : undefined,
-    })
+    const res = await getOrderList(buildQuery())
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
   } catch {
-    // 错误提示由请求拦截器统一弹出
+    loadError.value = true
+    list.value = []
   } finally {
     loading.value = false
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  loadStats()
+})
 </script>
 
 <style scoped>
-/* 筛选区允许换行后,窄屏下搜索框撑满剩余宽度,避免固定 200px 挤压 */
+/* 筛选区允许换行后,窄屏下搜索框自适应宽度,避免固定宽度挤压 */
 .search-input {
-  width: 200px;
+  width: 160px;
 }
 
 @media (max-width: 768px) {
   .search-input {
     width: 100%;
   }
+}
+
+.stat-card {
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.stat-card.active {
+  border-color: #18a058;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #999;
 }
 </style>

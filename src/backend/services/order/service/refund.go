@@ -529,9 +529,20 @@ func (s *RefundService) fillRefundExtras(ctx context.Context, list []*model.Refu
 		itemMap[item.RefundID] = append(itemMap[item.RefundID], item)
 	}
 
+	// 批量加载审批日志（同意/拒绝/重试轨迹）
+	var logs []*model.RefundLog
+	if err := s.db.GetDb().WithContext(ctx).Where("refund_id IN ?", refundIDs).Order("id asc").Find(&logs).Error; err != nil {
+		return err
+	}
+	logMap := make(map[int64][]*model.RefundLog)
+	for _, l := range logs {
+		logMap[l.RefundID] = append(logMap[l.RefundID], l)
+	}
+
 	for _, r := range list {
 		r.OrderNo = orderNoMap[r.OrderID]
 		r.Items = itemMap[r.ID]
+		r.Logs = logMap[r.ID]
 	}
 	return nil
 }
@@ -561,44 +572,130 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
+	// 条件更新防并发：仅当退款单仍处于待审核(1)时生效，避免双审导致重复渠道退款
+	res := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+		Where("id = ? AND status = ?", req.Id, int32(1)).
+		Updates(map[string]interface{}{
+			"status":      int32(4),
+			"operator_id": req.OperatorId,
+			"updated_at":  now,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("退款状态不允许审核")
+	}
 	refund.Status = 4
-	refund.OperatorID = req.OperatorId
-	refund.UpdatedAt = now
-	if err := s.db.GetDb().WithContext(ctx).Save(&refund).Error; err != nil {
+
+	// 审批日志：同意（进入退款中）
+	if err := s.createRefundLog(ctx, refund.ID, "approve", "admin", req.OperatorId, ""); err != nil {
 		return err
 	}
 
-	paymentNo := req.PaymentNo
-	if paymentNo == "" {
-		paymentNo = refund.PaymentNo
+	// 安全收紧：支付单号一律以退款单服务端记录为准，忽略请求传入值，防止把退款打到非本单支付流水
+	if err := s.processChannelRefund(ctx, &refund); err != nil {
+		return err
 	}
 
-	if s.paymentClient != nil {
-		_, err := s.paymentClient.ProcessRefund(ctx, &payment.ProcessRefundReq{
-			OrderId:   refund.OrderID,
-			RefundNo:  refund.RefundNo,
-			Amount:    refund.Amount,
-			PaymentNo: paymentNo,
-		})
-		if err != nil {
-			return fmt.Errorf("调用支付退款失败: %w", err)
-		}
+	return s.completeRefundSuccess(ctx, &refund, refundItems, "admin", req.OperatorId)
+}
+
+// RetryRefund 重试退款
+// 针对卡在"退款中"(status=4) 的退款单：以退款单自身的 payment_no 重新发起渠道退款，
+// 成功后走统一收尾（置已退款、回补库存、更新订单状态）。供后台手动重试与调度器自动重试复用。
+// 参数：
+//   - ctx: 上下文
+//   - req: 重试请求（operator_id 为 0 时视为系统自动重试）
+//
+// 返回值：
+//   - error: 错误信息
+func (s *RefundService) RetryRefund(ctx context.Context, req *order.RetryRefundReq) error {
+	var refund model.Refund
+	if err := s.db.GetDb().WithContext(ctx).First(&refund, req.Id).Error; err != nil {
+		return err
+	}
+	if refund.Status != 4 {
+		return fmt.Errorf("仅退款中状态的退款单可重试")
 	}
 
+	var refundItems []*model.RefundItem
+	if err := s.db.GetDb().WithContext(ctx).Where("refund_id = ?", refund.ID).Find(&refundItems).Error; err != nil {
+		return err
+	}
+
+	operatorType := "admin"
+	if req.OperatorId == 0 {
+		operatorType = "system"
+	}
+
+	if err := s.processChannelRefund(ctx, &refund); err != nil {
+		// 记录失败日志，保留审计线索
+		_ = s.createRefundLog(ctx, refund.ID, "retry", operatorType, req.OperatorId, "重试失败: "+err.Error())
+		return err
+	}
+
+	if err := s.completeRefundSuccess(ctx, &refund, refundItems, operatorType, req.OperatorId); err != nil {
+		return err
+	}
+	return s.createRefundLog(ctx, refund.ID, "retry", operatorType, req.OperatorId, "重试退款成功")
+}
+
+// processChannelRefund 调用 payment-service 以退款单记录的支付单号发起渠道退款
+// 参数：
+//   - ctx: 上下文
+//   - refund: 退款单
+//
+// 返回值：
+//   - error: 错误信息
+func (s *RefundService) processChannelRefund(ctx context.Context, refund *model.Refund) error {
+	if s.paymentClient == nil {
+		return nil
+	}
+	if _, err := s.paymentClient.ProcessRefund(ctx, &payment.ProcessRefundReq{
+		OrderId:   refund.OrderID,
+		RefundNo:  refund.RefundNo,
+		Amount:    refund.Amount,
+		PaymentNo: refund.PaymentNo,
+	}); err != nil {
+		return fmt.Errorf("调用支付退款失败: %w", err)
+	}
+	return nil
+}
+
+// completeRefundSuccess 退款成功的统一收尾：置已退款、按明细回补库存、更新订单去向并写状态日志。
+// 整单退/全部退完 → 订单 8 已退款；部分退款完成 → 回退款前状态。
+// 参数：
+//   - ctx: 上下文
+//   - refund: 退款单（须处于退款中状态）
+//   - items: 退款商品明细
+//   - operatorType: 操作者类型（admin/system）
+//   - operatorID: 操作者 ID
+//
+// 返回值：
+//   - error: 错误信息
+func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model.Refund, items []*model.RefundItem, operatorType string, operatorID int64) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var refundCompleted model.Refund
-		if err := tx.First(&refundCompleted, req.Id).Error; err != nil {
+		if err := tx.First(&refundCompleted, refund.ID).Error; err != nil {
 			return err
 		}
 		if refundCompleted.Status != 4 {
 			return fmt.Errorf("退款单状态异常")
 		}
 
-		refundCompleted.Status = 5
-		refundCompleted.RefundTime = &now
-		refundCompleted.UpdatedAt = now
-		if err := tx.Save(&refundCompleted).Error; err != nil {
-			return err
+		now := time.Now().Format("2006-01-02 15:04:05")
+		// 条件更新防并发：仅当退款单仍处于退款中(4)时生效
+		res := tx.Model(&model.Refund{}).Where("id = ? AND status = ?", refund.ID, int32(4)).Updates(map[string]interface{}{
+			"status":      int32(5),
+			"refund_time": &now,
+			"updated_at":  now,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("退款单状态已变更")
 		}
 
 		var o model.Order
@@ -607,7 +704,7 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 		}
 
 		// 按退款明细逐行释放库存
-		for _, item := range refundItems {
+		for _, item := range items {
 			if _, err := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
 				SkuId:    item.SkuID,
 				Quantity: item.Quantity,
@@ -636,8 +733,30 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 		if err := tx.Save(&o).Error; err != nil {
 			return err
 		}
-		return createStatusLogTx(tx, o.ID, 7, nextStatus, "admin", req.OperatorId, remark)
+		return createStatusLogTx(tx, o.ID, 7, nextStatus, operatorType, operatorID, remark)
 	})
+}
+
+// createRefundLog 写入退款审批日志
+// 参数：
+//   - ctx: 上下文
+//   - refundID: 退款单 ID
+//   - action: 动作（approve/reject/retry）
+//   - operatorType: 操作者类型
+//   - operatorID: 操作者 ID
+//   - remark: 备注
+//
+// 返回值：
+//   - error: 错误信息
+func (s *RefundService) createRefundLog(ctx context.Context, refundID int64, action, operatorType string, operatorID int64, remark string) error {
+	return s.db.GetDb().WithContext(ctx).Create(&model.RefundLog{
+		RefundID:     refundID,
+		Action:       action,
+		OperatorType: operatorType,
+		OperatorID:   operatorID,
+		Remark:       remark,
+		CreatedAt:    time.Now().Format("2006-01-02 15:04:05"),
+	}).Error
 }
 
 // RejectRefund 拒绝退款
@@ -675,6 +794,17 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *order.RejectRefun
 		o.Status = nextStatus
 		o.UpdatedAt = now
 		if err := tx.Save(&o).Error; err != nil {
+			return err
+		}
+		// 审批日志：拒绝
+		if err := tx.Create(&model.RefundLog{
+			RefundID:     refund.ID,
+			Action:       "reject",
+			OperatorType: "admin",
+			OperatorID:   req.OperatorId,
+			Remark:       req.RejectReason,
+			CreatedAt:    now,
+		}).Error; err != nil {
 			return err
 		}
 		return createStatusLogTx(tx, o.ID, 7, nextStatus, "admin", req.OperatorId, "拒绝退款: "+req.RejectReason)

@@ -11,6 +11,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/order/model"
@@ -29,11 +30,12 @@ const (
 const stuckRecoverAfter = 10 * time.Minute
 
 // Scheduler 订单定时任务调度器
-// 负责超时未支付订单自动取消、发货后超时自动完成
+// 负责超时未支付订单自动取消、发货后超时自动完成、卡单退款自动重试
 // 采用 Redis 分布式锁 + 数据库原子抢占 + 失败回滚重试机制
 type Scheduler struct {
-	db          *mysql.Instance
-	redisClient *redis.Client
+	db            *mysql.Instance
+	redisClient   *redis.Client
+	refundService *RefundService
 }
 
 // NewScheduler 创建订单定时任务调度器
@@ -41,13 +43,15 @@ type Scheduler struct {
 // 参数：
 //   - db: MySQL 实例
 //   - redisClient: Redis 客户端，用于分布式锁
+//   - refundService: 退款服务，用于卡单退款自动重试
 //
 // 返回值：
 //   - *Scheduler: 调度器实例
-func NewScheduler(db *mysql.Instance, redisClient *redis.Client) *Scheduler {
+func NewScheduler(db *mysql.Instance, redisClient *redis.Client, refundService *RefundService) *Scheduler {
 	return &Scheduler{
-		db:          db,
-		redisClient: redisClient,
+		db:            db,
+		redisClient:   redisClient,
+		refundService: refundService,
 	}
 }
 
@@ -89,6 +93,41 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 	s.recoverStuckOrders(ctx)
 	s.cancelTimeoutOrders(ctx, orderTimeout)
 	s.autoCompleteOrders(ctx, autoCompleteDays)
+	s.retryStuckRefunds(ctx)
+}
+
+// retryStuckRefunds 自动重试卡在"退款中"(status=4) 超过阈值的退款单
+// 场景：同意退款后 ProcessRefund 失败/进程中断，退款单永久停留在 4 且库存未回补。
+// 重试以退款单自身的 payment_no 重新发起渠道退款，成功后走统一收尾逻辑。
+// 参数：
+//   - ctx: 上下文
+func (s *Scheduler) retryStuckRefunds(ctx context.Context) {
+	if s.refundService == nil {
+		return
+	}
+	lockKey := "scheduler:refund:retry:lock"
+	if !s.acquireLock(ctx, lockKey, 5*time.Minute) {
+		return
+	}
+	defer s.releaseLock(ctx, lockKey)
+
+	// 仅重试停留超过 stuckRecoverAfter 的退款单，避免与刚发起的退款竞态
+	deadline := time.Now().Add(-stuckRecoverAfter).Format("2006-01-02 15:04:05")
+	var refunds []*model.Refund
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("status = ? AND updated_at < ?", 4, deadline).
+		Order("id asc").Limit(20).Find(&refunds).Error; err != nil {
+		log.Printf("[order-scheduler] 查询卡单退款失败: %v", err)
+		return
+	}
+	for _, r := range refunds {
+		err := s.refundService.RetryRefund(ctx, &order.RetryRefundReq{Id: r.ID})
+		if err != nil {
+			log.Printf("[order-scheduler] 自动重试退款单 %d 失败: %v", r.ID, err)
+			continue
+		}
+		log.Printf("[order-scheduler] 退款单 %d 卡单重试成功，已置为已退款", r.ID)
+	}
 }
 
 // recoverStuckOrders 兜底扫描：将停留在处理中状态超过阈值的订单批量恢复为原状态

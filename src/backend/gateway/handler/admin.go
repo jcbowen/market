@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -963,8 +964,13 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
 	resp, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
-		CommunityId: h.getAdminCommunityID(c),
-		Status:      int32(status),
+		CommunityId:   h.getAdminCommunityID(c),
+		Status:        int32(status),
+		OrderNo:       c.Query("order_no"),
+		StartTime:     c.Query("start_time"),
+		EndTime:       c.Query("end_time"),
+		ReceiverName:  c.Query("receiver_name"),
+		ReceiverPhone: c.Query("receiver_phone"),
 		Pagination: &common.Pagination{
 			Page:     int32(page),
 			PageSize: int32(pageSize),
@@ -998,7 +1004,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"pay_amount":      o.PayAmount,
 			"delivery_type":   o.DeliveryType,
 			"status":          o.Status,
-			"status_text":     orderStatusText(o.Status),
+			"status_text":     orderStatusText(o.Status, o.DeliveryType),
 			"created_at":      o.CreatedAt,
 		})
 	}
@@ -1079,12 +1085,14 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"delivery_time":   o.DeliveryTime,
 		"remark":          o.Remark,
 		"status":          o.Status,
-		"status_text":     orderStatusText(o.Status),
+		"status_text":     orderStatusText(o.Status, o.DeliveryType),
 		"pay_time":        o.PayTime,
 		"deliver_time":    o.DeliverTime,
 		"complete_time":   o.CompleteTime,
 		"cancel_time":     o.CancelTime,
 		"cancel_reason":   o.CancelReason,
+		"express_company": o.ExpressCompany,
+		"express_no":      o.ExpressNo,
 		"created_at":      o.CreatedAt,
 		"items":           items,
 		"address":         address,
@@ -1100,6 +1108,8 @@ type UpdateOrderStatusReq struct {
 }
 
 // UpdateOrderStatus 更新订单状态
+// 注意：目标状态 6（取消）被明确拒绝——取消必须走 POST /orders/:id/cancel，
+// 以保证库存回补、取消原因/时间写入等取消语义完整执行
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
@@ -1112,6 +1122,10 @@ func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
 	var req UpdateOrderStatusReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	if req.Status == 6 {
+		response.Error(c, errcode.ParamError, "取消订单请使用专用取消接口")
 		return
 	}
 
@@ -1130,6 +1144,46 @@ func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
 	response.Success(c, gin.H{"id": id, "status": req.Status})
 }
 
+// AdminCancelOrderReq 后台取消订单请求
+type AdminCancelOrderReq struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
+// AdminCancelOrder 后台取消订单
+// 走 order-service 的取消语义：条件更新状态、写取消原因/时间并逐行回补库存
+//
+// 接口: POST /api/v1/admin/orders/:id/cancel
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) AdminCancelOrder(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req AdminCancelOrderReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError, "请填写取消原因")
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	_, err = h.orderClient.UpdateOrderStatus(c.Request.Context(), &order.UpdateOrderStatusReq{
+		Id:           id,
+		Status:       6,
+		OperatorType: "admin",
+		OperatorId:   uc.UserID,
+		Remark:       req.Reason,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id, "status": 6})
+}
+
 // ShipOrderReq 订单发货请求
 type ShipOrderReq struct {
 	ExpressCompany string `json:"express_company"`
@@ -1138,7 +1192,8 @@ type ShipOrderReq struct {
 }
 
 // ShipOrder 订单发货
-// 校验订单状态为待发货（status=2）后，将订单状态更新为已发货（status=4），并记录物流信息到备注
+// 校验订单为配送单且状态为待发货（status=2）后，将订单状态更新为已发货（status=4），
+// 物流公司/单号写入独立字段（express_company/express_no），不再拼接进备注
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ShipOrder(c *gin.Context) {
@@ -1159,26 +1214,31 @@ func (h *AdminHandler) ShipOrder(c *gin.Context) {
 		response.Error(c, errcode.NotFound, "订单不存在")
 		return
 	}
+	if orderResp.Order.DeliveryType == 1 {
+		response.Error(c, errcode.ParamError, "自提订单无需发货，请直接核销完成")
+		return
+	}
 	if orderResp.Order.Status != 2 {
 		response.Error(c, errcode.ParamError, "订单状态不允许发货")
 		return
 	}
 
-	remark := req.Remark
-	if req.ExpressCompany != "" || req.ExpressNo != "" {
-		if remark != "" {
-			remark += "; "
-		}
-		remark += "物流公司: " + req.ExpressCompany + ", 物流单号: " + req.ExpressNo
+	expressCompany := strings.TrimSpace(req.ExpressCompany)
+	expressNo := strings.TrimSpace(req.ExpressNo)
+	if expressCompany == "" || expressNo == "" {
+		response.Error(c, errcode.ParamError, "物流公司和物流单号不能为空")
+		return
 	}
 
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.UpdateOrderStatus(c.Request.Context(), &order.UpdateOrderStatusReq{
-		Id:           id,
-		Status:       4,
-		OperatorType: "admin",
-		OperatorId:   uc.UserID,
-		Remark:       remark,
+		Id:             id,
+		Status:         4,
+		OperatorType:   "admin",
+		OperatorId:     uc.UserID,
+		Remark:         req.Remark,
+		ExpressCompany: expressCompany,
+		ExpressNo:      expressNo,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -1188,7 +1248,8 @@ func (h *AdminHandler) ShipOrder(c *gin.Context) {
 }
 
 // CompleteOrder 完成订单
-// 校验订单状态为已发货（status=4）后，将订单状态更新为已完成（status=5）
+// 配送单须为已发货（status=4）；自提单允许在已支付（status=2 且 delivery_type=1）时直接核销完成，
+// 与 C 端确认收货（handler/order.go ConfirmReceive）口径一致
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) CompleteOrder(c *gin.Context) {
@@ -1203,7 +1264,8 @@ func (h *AdminHandler) CompleteOrder(c *gin.Context) {
 		response.Error(c, errcode.NotFound, "订单不存在")
 		return
 	}
-	if orderResp.Order.Status != 4 {
+	o := orderResp.Order
+	if o.Status != 4 && !(o.Status == 2 && o.DeliveryType == 1) {
 		response.Error(c, errcode.ParamError, "订单状态不允许完成")
 		return
 	}
@@ -2387,13 +2449,8 @@ func (h *AdminHandler) ListRefunds(c *gin.Context) {
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
 }
 
-// ApproveRefundReq 同意退款请求
-type ApproveRefundReq struct {
-	PaymentNo string `json:"payment_no"`
-}
-
 // ApproveRefund 同意退款
-// 接收前端透传的 payment_no，并原样转发给 order-service/payment-service
+// 支付单号由 order-service 以退款单服务端记录为准，请求不再透传 payment_no（防越权指定支付流水）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ApproveRefund(c *gin.Context) {
@@ -2403,14 +2460,36 @@ func (h *AdminHandler) ApproveRefund(c *gin.Context) {
 		return
 	}
 
-	var req ApproveRefundReq
-	_ = c.ShouldBindJSON(&req)
-
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.ApproveRefund(c.Request.Context(), &order.ApproveRefundReq{
 		Id:         id,
 		OperatorId: uc.UserID,
-		PaymentNo:  req.PaymentNo,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id})
+}
+
+// RetryRefund 重试退款
+// 对卡在"退款中"(status=4) 的退款单重新发起渠道退款并完成收尾
+//
+// 接口: POST /api/v1/admin/refunds/:id/retry
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) RetryRefund(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	_, err = h.orderClient.RetryRefund(c.Request.Context(), &order.RetryRefundReq{
+		Id:         id,
+		OperatorId: uc.UserID,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2479,21 +2558,30 @@ func (h *AdminHandler) toAdminVO(admin *user.AdminInfo) gin.H {
 	}
 }
 
-// orderStatusText 将订单状态码转换为中文文案
+// orderStatusText 将订单状态码转换为后台展示文案
+// 与 C 端 clientOrderStatusText 对齐：自提单的"已支付/已发货"展示为「待自提」，
+// 避免后台对自提单误显示「待发货」并引导管理员填写物流
 // 参数：
-//   - status: 状态码
+//   - status: 订单状态码
+//   - deliveryType: 配送方式（1 自提 2 配送）
 //
 // 返回值：
 //   - string: 状态中文描述
-func orderStatusText(status int32) string {
+func orderStatusText(status, deliveryType int32) string {
 	switch status {
 	case 1:
 		return "待支付"
 	case 2:
+		if deliveryType == 1 {
+			return "待自提"
+		}
 		return "待发货"
 	case 3:
 		return "备货中"
 	case 4:
+		if deliveryType == 1 {
+			return "待自提"
+		}
 		return "已发货"
 	case 5:
 		return "已完成"

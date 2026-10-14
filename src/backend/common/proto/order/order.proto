@@ -18,6 +18,8 @@ service OrderService {
   rpc ListRefunds(ListRefundsReq) returns (ListRefundsResp);
   rpc ApproveRefund(ApproveRefundReq) returns (common.CommonResponse);
   rpc RejectRefund(RejectRefundReq) returns (common.CommonResponse);
+  // 重试卡在"退款中"(status=4) 的退款单：以退款单自身的 payment_no 重新发起渠道退款
+  rpc RetryRefund(RetryRefundReq) returns (common.CommonResponse);
   rpc GetRefundConfig(GetRefundConfigReq) returns (RefundConfig);
   rpc SaveRefundConfig(SaveRefundConfigReq) returns (common.CommonResponse);
 
@@ -54,6 +56,16 @@ message ListOrdersReq {
   int64 community_id = 2;
   int32 status = 3;
   common.Pagination pagination = 4;
+  // --- 后台管理端搜索条件（C 端列表不使用） ---
+  // 订单号模糊匹配
+  string order_no = 5;
+  // 下单时间范围（YYYY-MM-DD，闭区间）
+  string start_time = 6;
+  string end_time = 7;
+  // 收货人姓名模糊匹配
+  string receiver_name = 8;
+  // 收货人电话模糊匹配
+  string receiver_phone = 9;
 }
 
 message CancelOrderReq {
@@ -68,6 +80,9 @@ message UpdateOrderStatusReq {
   string operator_type = 3;
   int64 operator_id = 4;
   string remark = 5;
+  // 发货（status=4）时写入的物流信息；其余状态流转忽略
+  string express_company = 6;
+  string express_no = 7;
 }
 
 message OrderInfo {
@@ -92,6 +107,9 @@ message OrderInfo {
   string cancel_time = 18;
   string cancel_reason = 19;
   string created_at = 20;
+  // 物流信息（发货时写入，独立字段，不再拼接进 remark）
+  string express_company = 22;
+  string express_no = 23;
 }
 
 message OrderItemInfo {
@@ -174,6 +192,19 @@ message RefundInfo {
   repeated RefundItemInfo items = 14;
   // 本单退还的运费金额
   double freight_amount = 15;
+  // 审批/重试操作日志（后台列表展示用）
+  repeated RefundLogInfo logs = 16;
+}
+
+// RefundLogInfo 退款审批日志
+message RefundLogInfo {
+  int64 id = 1;
+  // 动作：approve 同意 / reject 拒绝 / retry 重试
+  string action = 2;
+  string operator_type = 3;
+  int64 operator_id = 4;
+  string remark = 5;
+  string created_at = 6;
 }
 
 message ListRefundsReq {
@@ -204,6 +235,7 @@ message ListRefundsResp {
 message ApproveRefundReq {
   int64 id = 1;
   int64 operator_id = 2;
+  // 已废弃：支付单号一律以退款单服务端记录为准，请求传入值将被忽略（防越权）
   string payment_no = 3;
 }
 
@@ -211,6 +243,12 @@ message RejectRefundReq {
   int64 id = 1;
   int64 operator_id = 2;
   string reject_reason = 3;
+}
+
+// RetryRefundReq 重试退款请求（针对卡在退款中 status=4 的退款单）
+message RetryRefundReq {
+  int64 id = 1;
+  int64 operator_id = 2;
 }
 
 message GetOrderStatisticsReq {

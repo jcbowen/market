@@ -8,9 +8,9 @@
           <n-descriptions-item label="订单号">{{ detail.order_no }}</n-descriptions-item>
           <n-descriptions-item label="用户">{{ detail.user_name }}</n-descriptions-item>
           <n-descriptions-item label="状态">
-            <n-tag :type="statusTagType(detail.status)" size="small">{{ detail.status_text }}</n-tag>
+            <n-tag :type="orderStatusTagType(detail.status)" size="small">{{ detail.status_text }}</n-tag>
           </n-descriptions-item>
-          <n-descriptions-item label="配送方式">{{ detail.delivery_type === 2 ? '配送' : '自提' }}</n-descriptions-item>
+          <n-descriptions-item label="配送方式">{{ deliveryTypeText(detail.delivery_type) }}</n-descriptions-item>
           <n-descriptions-item label="订单金额">￥{{ formatAmount(detail.total_amount) }}</n-descriptions-item>
           <n-descriptions-item label="优惠金额">-￥{{ formatAmount(detail.discount_amount) }}</n-descriptions-item>
           <n-descriptions-item label="运费">￥{{ formatAmount(detail.delivery_fee) }}</n-descriptions-item>
@@ -19,6 +19,9 @@
           </n-descriptions-item>
           <n-descriptions-item label="期望送达">{{ formatDateTime(detail.delivery_time) }}</n-descriptions-item>
           <n-descriptions-item label="下单时间">{{ formatDateTime(detail.created_at) }}</n-descriptions-item>
+          <n-descriptions-item v-if="detail.express_company || detail.express_no" label="物流信息" :span="2">
+            {{ detail.express_company }}　{{ detail.express_no }}
+          </n-descriptions-item>
           <n-descriptions-item label="收货信息" :span="2">
             <template v-if="detail.address && detail.address.name">
               {{ detail.address.name }} {{ detail.address.phone }} {{ detail.address.address }}
@@ -38,19 +41,41 @@
           <div class="section-title">状态流转</div>
           <n-data-table :columns="logColumns" :data="detail.status_logs" size="small" :scroll-x="620" />
         </div>
+
+        <!-- 操作区：按当前状态渲染与列表一致的操作按钮 -->
+        <n-space v-if="actions.length" justify="end">
+          <n-button
+            v-for="action in actions"
+            :key="action.key"
+            size="small"
+            :type="action.type"
+            @click="action.run()"
+          >
+            {{ action.label }}
+          </n-button>
+        </n-space>
       </n-space>
     </n-spin>
   </n-modal>
+
+  <!-- 发货 / 取消订单弹窗（与列表页共用） -->
+  <ship-modal v-model:show="shipVisible" :order-ids="shipOrderIds" @success="onActionSuccess" />
+  <cancel-order-modal v-model:show="cancelVisible" :order-id="cancelOrderId" @success="onActionSuccess" />
 </template>
 
 <script setup lang="ts">
 // 页面级组件：订单详情弹窗，供订单列表 / 售后管理复用
+// 底部按当前状态渲染操作按钮（发货/核销/完成/取消），操作后刷新详情并通知父级刷新列表
+defineOptions({ name: 'OrderDetailModal' })
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { NTag } from 'naive-ui'
+import { NButton, NTag, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getOrderDetail } from '@/api/order'
+import { completeOrder, getOrderDetail } from '@/api/order'
 import type { OrderDetail, OrderItem, OrderStatusLog } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
+import { DELIVERY_TYPE, ORDER_STATUS, deliveryTypeText, orderStatusTagType, orderStatusText } from '@/constants/order'
+import ShipModal from './components/ShipModal.vue'
+import CancelOrderModal from './components/CancelOrderModal.vue'
 
 /**
  * 订单详情弹窗组件
@@ -65,10 +90,17 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
+  (e: 'refresh'): void
 }>()
 
+const dialog = useDialog()
 const loading = ref(false)
 const detail = ref<OrderDetail | null>(null)
+
+const shipVisible = ref(false)
+const shipOrderIds = ref<number[]>([])
+const cancelVisible = ref(false)
+const cancelOrderId = ref<number | null>(null)
 
 // --- 描述列表响应式列数 ---
 // 窄屏（<=768px，与全局布局断点一致）降为单列，宽屏保持两列
@@ -95,12 +127,72 @@ const logColumns: DataTableColumns<OrderStatusLog> = [
     title: '流转',
     key: 'transition',
     width: 160,
-    render: (row) => `${statusTextOf(row.from_status)} → ${statusTextOf(row.to_status)}`,
+    render: (row) => `${orderStatusText(row.from_status)} → ${orderStatusText(row.to_status)}`,
   },
   { title: '操作方', key: 'operator_type', width: 90 },
   { title: '备注', key: 'remark' },
   { title: '时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
 ]
+
+/**
+ * 按当前订单状态生成可用操作按钮
+ */
+const actions = computed(() => {
+  const d = detail.value
+  if (!d) return []
+  const list: Array<{ key: string; label: string; type: 'default' | 'primary' | 'success' | 'error'; run: () => void }> = []
+  if (d.status === ORDER_STATUS.PENDING_PAY) {
+    list.push({ key: 'cancel', label: '取消订单', type: 'error', run: () => openCancel(d.id) })
+  }
+  if (d.status === ORDER_STATUS.PAID && d.delivery_type === DELIVERY_TYPE.DELIVERY) {
+    list.push({ key: 'ship', label: '发货', type: 'primary', run: () => openShip(d.id) })
+  }
+  if (d.status === ORDER_STATUS.PAID && d.delivery_type === DELIVERY_TYPE.SELF_PICKUP) {
+    list.push({ key: 'verify', label: '核销完成', type: 'success', run: () => confirmComplete(d, true) })
+  }
+  if (d.status === ORDER_STATUS.SHIPPING) {
+    list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d, false) })
+  }
+  return list
+})
+
+function openShip(id: number) {
+  shipOrderIds.value = [id]
+  shipVisible.value = true
+}
+
+function openCancel(id: number) {
+  cancelOrderId.value = id
+  cancelVisible.value = true
+}
+
+function confirmComplete(d: OrderDetail, isPickup: boolean) {
+  dialog.warning({
+    title: isPickup ? '核销订单' : '完成订单',
+    content: `确认将订单 ${d.order_no} 标记为已完成？`,
+    positiveText: isPickup ? '确认核销' : '确认完成',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await completeOrder(d.id)
+        loadDetail(d.id)
+        emit('refresh')
+      } catch {
+        // 错误提示由请求拦截器统一弹出
+      }
+    },
+  })
+}
+
+/**
+ * 操作成功后的统一刷新
+ */
+function onActionSuccess() {
+  if (detail.value) {
+    loadDetail(detail.value.id)
+  }
+  emit('refresh')
+}
 
 /**
  * 关闭弹窗时同步 v-model:show
@@ -126,51 +218,6 @@ async function loadDetail(id: number) {
   } finally {
     loading.value = false
   }
-}
-
-/**
- * 订单状态彩色标签类型
- * @param status 订单状态码
- * @returns n-tag 类型
- */
-function statusTagType(status: number): 'default' | 'warning' | 'info' | 'primary' | 'success' | 'error' {
-  switch (status) {
-    case 1:
-      return 'warning'
-    case 2:
-      return 'info'
-    case 3:
-      return 'info'
-    case 4:
-      return 'primary'
-    case 5:
-      return 'success'
-    case 7:
-    case 8:
-      return 'error'
-    default:
-      return 'default'
-  }
-}
-
-/**
- * 状态码转文案（状态流转日志展示用）
- * @param status 状态码
- * @returns 状态中文描述
- */
-function statusTextOf(status: number): string {
-  const map: Record<number, string> = {
-    0: '创建',
-    1: '待支付',
-    2: '待发货',
-    3: '备货中',
-    4: '配送中',
-    5: '已完成',
-    6: '已取消',
-    7: '退款中',
-    8: '已退款',
-  }
-  return map[status] || String(status)
 }
 
 /**

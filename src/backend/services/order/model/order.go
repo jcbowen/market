@@ -27,6 +27,8 @@ type Order struct {
 	ContactName   string  `gorm:"column:contact_name;type:varchar(50);comment:联系人" json:"contact_name"`
 	ContactPhone  string  `gorm:"column:contact_phone;type:varchar(20);comment:联系电话" json:"contact_phone"`
 	ContactAddress string `gorm:"column:contact_address;type:varchar(255);comment:收货联系人地址" json:"contact_address"`
+	ExpressCompany string `gorm:"column:express_company;type:varchar(50);comment:物流公司（发货时写入）" json:"express_company"`
+	ExpressNo      string `gorm:"column:express_no;type:varchar(50);comment:物流单号（发货时写入）" json:"express_no"`
 	Remark        string  `gorm:"column:remark;type:varchar(255);comment:用户备注" json:"remark"`
 	CouponID      int64    `gorm:"column:coupon_id;type:bigint;default:0;comment:使用的优惠券 ID" json:"coupon_id"`
 	PayTime       *string  `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`
@@ -123,6 +125,8 @@ type Refund struct {
 	OrderNo string `gorm:"-" json:"order_no"`
 	// Items 退款商品明细（非表字段，查询时批量填充）
 	Items []*RefundItem `gorm:"-" json:"items"`
+	// Logs 审批/重试操作日志（非表字段，查询时批量填充）
+	Logs []*RefundLog `gorm:"-" json:"logs"`
 }
 
 // TableName 返回退款申请表名

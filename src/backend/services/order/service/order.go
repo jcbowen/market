@@ -266,6 +266,27 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
 	}
+	// 后台管理端搜索条件（订单号模糊、下单时间范围、收货人姓名/电话模糊）
+	if req.OrderNo != "" {
+		db = db.Where("order_no LIKE ?", "%"+req.OrderNo+"%")
+	}
+	if req.StartTime != "" {
+		db = db.Where("created_at >= ?", req.StartTime)
+	}
+	if req.EndTime != "" {
+		// 前端传 YYYY-MM-DD 日期时补齐到当日末尾，保证闭区间语义
+		end := req.EndTime
+		if len(end) == 10 {
+			end += " 23:59:59"
+		}
+		db = db.Where("created_at <= ?", end)
+	}
+	if req.ReceiverName != "" {
+		db = db.Where("contact_name LIKE ?", "%"+req.ReceiverName+"%")
+	}
+	if req.ReceiverPhone != "" {
+		db = db.Where("contact_phone LIKE ?", "%"+req.ReceiverPhone+"%")
+	}
 	switch {
 	case req.Status == queryStatusRefundAggregate:
 		db = db.Where("status IN ?", []int32{7, 8})
@@ -307,12 +328,18 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		}
 
 		now := time.Now().Format("2006-01-02 15:04:05")
-		o.Status = 6
-		o.CancelReason = req.Reason
-		o.CancelTime = &now
-		o.UpdatedAt = now
-		if err := tx.Save(&o).Error; err != nil {
-			return err
+		// 条件更新防并发：仅当订单仍处于待支付(1)时生效
+		res := tx.Model(&model.Order{}).Where("id = ? AND status = ?", o.ID, int32(1)).Updates(map[string]interface{}{
+			"status":        int32(6),
+			"updated_at":    now,
+			"cancel_time":   &now,
+			"cancel_reason": req.Reason,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("订单状态不允许取消")
 		}
 
 		var items []*model.OrderItem
@@ -336,12 +363,12 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 // orderTransitions 订单状态合法流转表
 // key 为目标状态，value 为允许的来源状态集合
 // 1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款
+// 注意：目标状态 6（取消）不走本表，由 UpdateOrderStatus 的取消分支单独处理（需回补库存）
 var orderTransitions = map[int32][]int32{
 	2: {1},       // 待支付 -> 已支付（支付成功）
 	3: {2},       // 已支付 -> 备货中
 	4: {2, 3},    // 已支付/备货中 -> 配送中（发货）
 	5: {2, 4},    // 已支付(自提)/配送中 -> 已完成（确认收货）
-	6: {1},       // 待支付 -> 已取消
 	7: {2, 3, 4}, // 已支付/备货中/配送中 -> 退款中
 	8: {7},       // 退款中 -> 已退款
 }
@@ -367,7 +394,9 @@ func isTransitionAllowed(from, to int32) bool {
 }
 
 // UpdateOrderStatus 更新订单状态
-// 带状态机校验：仅允许合法流转，退款中/已退款/已取消等状态不可再发货、完成或重新支付
+// 带状态机校验：仅允许合法流转，退款中/已退款/已取消等状态不可再发货、完成或重新支付。
+// 目标状态为 6（取消）时走独立取消语义：写取消原因/时间并逐行回补库存（后台取消复用）。
+// 全部更新均按 WHERE status=fromStatus 条件执行，并发冲突时返回失败，避免后写覆盖前写。
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新请求
@@ -380,28 +409,88 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 		if err := tx.First(&o, req.Id).Error; err != nil {
 			return err
 		}
+
+		// 取消订单：不走通用状态机，需回补库存并记录取消原因/时间
+		if req.Status == 6 {
+			return s.cancelOrderInTx(ctx, tx, &o, req.OperatorType, req.OperatorId, req.Remark)
+		}
+
 		if !isTransitionAllowed(o.Status, req.Status) {
 			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许流转: %d -> %d", o.Status, req.Status))
 		}
 		fromStatus := o.Status
 		now := time.Now().Format("2006-01-02 15:04:05")
-		o.Status = req.Status
-		o.UpdatedAt = now
-
+		updates := map[string]interface{}{
+			"status":     req.Status,
+			"updated_at": now,
+		}
 		switch req.Status {
 		case 2:
-			o.PayTime = &now
+			updates["pay_time"] = &now
 		case 4:
-			o.DeliverTime = &now
+			updates["deliver_time"] = &now
+			// 发货时写入独立物流字段（替代原先拼接 remark 的做法）
+			updates["express_company"] = req.ExpressCompany
+			updates["express_no"] = req.ExpressNo
 		case 5:
-			o.CompleteTime = &now
+			updates["complete_time"] = &now
 		}
 
-		if err := tx.Save(&o).Error; err != nil {
-			return err
+		res := tx.Model(&model.Order{}).Where("id = ? AND status = ?", req.Id, fromStatus).Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
 		}
 		return s.createStatusLogTx(tx, o.ID, fromStatus, req.Status, req.OperatorType, req.OperatorId, req.Remark)
 	})
+}
+
+// cancelOrderInTx 在事务中执行取消语义：条件更新状态、写取消原因/时间并逐行回补库存。
+// 供后台取消（UpdateOrderStatus 特判 status=6）复用；C 端 CancelOrder 有额外的归属校验，不走此方法。
+// 参数：
+//   - ctx: 上下文（用于调用 product-service 释放库存）
+//   - tx: 数据库事务
+//   - o: 已加载的订单
+//   - operatorType: 操作者类型（admin/user/system）
+//   - operatorID: 操作者 ID
+//   - reason: 取消原因（写入 cancel_reason 与状态日志备注）
+//
+// 返回值：
+//   - error: 错误信息
+func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *model.Order, operatorType string, operatorID int64, reason string) error {
+	if o.Status != 1 {
+		return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许取消: %d", o.Status))
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	res := tx.Model(&model.Order{}).Where("id = ? AND status = ?", o.ID, int32(1)).Updates(map[string]interface{}{
+		"status":        int32(6),
+		"updated_at":    now,
+		"cancel_time":   &now,
+		"cancel_reason": reason,
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
+	}
+
+	var items []*model.OrderItem
+	if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
+		return err
+	}
+	for _, item := range items {
+		if _, err := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
+			SkuId:    item.SkuID,
+			Quantity: item.Quantity,
+			OrderId:  o.ID,
+		}); err != nil {
+			return fmt.Errorf("释放库存失败: %w", err)
+		}
+	}
+	return s.createStatusLogTx(tx, o.ID, o.Status, 6, operatorType, operatorID, reason)
 }
 
 // createStatusLogTx 在事务中创建订单状态日志

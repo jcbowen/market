@@ -57,10 +57,10 @@ func main() {
 		log.Fatalf("初始化退款配置失败: %v", err)
 	}
 
-	// 启动订单定时任务调度器（超时取消 + 自动收货）
+	// 启动订单定时任务调度器（超时取消 + 自动收货 + 卡单退款重试）
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
-	go service.NewScheduler(db, rds.GetClient()).Start(
+	go service.NewScheduler(db, rds.GetClient(), svc.refundService).Start(
 		schedulerCtx,
 		cfg.Business.OrderTimeout,
 		cfg.Business.AutoCompleteDays,
@@ -117,6 +117,7 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.Refund{},
 		&model.RefundItem{},
 		&model.RefundConfig{},
+		&model.RefundLog{},
 		&model.SchedulerFailure{},
 	)
 }

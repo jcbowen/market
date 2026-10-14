@@ -197,6 +197,14 @@ func (s *server) RejectRefund(ctx stdctx.Context, req *order.RejectRefundReq) (*
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// RetryRefund 重试退款（卡在退款中 status=4 的退款单重新发起渠道退款）
+func (s *server) RetryRefund(ctx stdctx.Context, req *order.RetryRefundReq) (*common.CommonResponse, error) {
+	if err := s.refundService.RetryRefund(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // ToOrderInfo 将订单模型转换为 proto 信息
 // 参数：
 //   - o: 订单模型
@@ -229,6 +237,8 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		CancelTime:     ptrString(o.CancelTime),
 		CancelReason:   o.CancelReason,
 		CreatedAt:      o.CreatedAt,
+		ExpressCompany: o.ExpressCompany,
+		ExpressNo:      o.ExpressNo,
 	}
 }
 
@@ -300,9 +310,20 @@ func ToRefundInfo(r *model.Refund) *order.RefundInfo {
 		CreatedAt:     r.CreatedAt,
 		OrderNo:       r.OrderNo,
 		Items:         make([]*order.RefundItemInfo, 0, len(r.Items)),
+		Logs:          make([]*order.RefundLogInfo, 0, len(r.Logs)),
 	}
 	for _, item := range r.Items {
 		info.Items = append(info.Items, ToRefundItemInfo(item))
+	}
+	for _, l := range r.Logs {
+		info.Logs = append(info.Logs, &order.RefundLogInfo{
+			Id:           l.ID,
+			Action:       l.Action,
+			OperatorType: l.OperatorType,
+			OperatorId:   l.OperatorID,
+			Remark:       l.Remark,
+			CreatedAt:    l.CreatedAt,
+		})
 	}
 	return info
 }

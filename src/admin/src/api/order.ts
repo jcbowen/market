@@ -7,10 +7,19 @@ import type { ApiResult, Order, OrderDetail, PageParams, PageResult, Refund } fr
 
 /**
  * 获取订单列表
- * @param params 查询参数
+ * @param params 查询参数（order_no/receiver_name/receiver_phone 模糊；start_time/end_time 下单日期 YYYY-MM-DD）
  * @returns 分页订单列表
  */
-export function getOrderList(params: PageParams & { order_no?: string; status?: number; start_time?: string; end_time?: string }) {
+export function getOrderList(
+  params: PageParams & {
+    order_no?: string
+    status?: number
+    start_time?: string
+    end_time?: string
+    receiver_name?: string
+    receiver_phone?: string
+  },
+) {
   return request<ApiResult<PageResult<Order>>>({
     url: '/api/v1/admin/orders',
     method: 'GET',
@@ -46,12 +55,26 @@ export function updateOrderStatus(id: number, status: number, remark?: string) {
 }
 
 /**
+ * 后台取消订单（走专用取消接口，回补库存并写入取消原因）
+ * @param id 订单 ID
+ * @param reason 取消原因（必填）
+ * @returns 操作结果
+ */
+export function cancelOrder(id: number, reason: string) {
+  return request<ApiResult<Order>>({
+    url: `/api/v1/admin/orders/${id}/cancel`,
+    method: 'POST',
+    data: { reason },
+  })
+}
+
+/**
  * 订单发货
  * @param id 订单 ID
- * @param data 物流信息
+ * @param data 物流信息（物流公司/单号必填）
  * @returns 发货结果
  */
-export function shipOrder(id: number, data: { express_company?: string; express_no?: string; remark?: string }) {
+export function shipOrder(id: number, data: { express_company: string; express_no: string; remark?: string }) {
   return request<ApiResult<Order>>({
     url: `/api/v1/admin/orders/${id}/ship`,
     method: 'POST',
@@ -85,16 +108,26 @@ export function getRefundList(params: PageParams & { status?: number }) {
 }
 
 /**
- * 同意退款
+ * 同意退款（支付单号由服务端以退款单记录为准，前端不再传 payment_no）
  * @param id 退款单 ID
- * @param paymentNo 支付单号，可选
  * @returns 操作结果
  */
-export function approveRefund(id: number, paymentNo?: string) {
+export function approveRefund(id: number) {
   return request<ApiResult<null>>({
     url: `/api/v1/admin/refunds/${id}/approve`,
     method: 'POST',
-    data: { payment_no: paymentNo },
+  })
+}
+
+/**
+ * 重试退款（卡在退款中的退款单重新发起渠道退款）
+ * @param id 退款单 ID
+ * @returns 操作结果
+ */
+export function retryRefund(id: number) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/refunds/${id}/retry`,
+    method: 'POST',
   })
 }
 

@@ -251,6 +251,8 @@ export interface OrderDetail extends Order {
   complete_time: string
   cancel_time: string
   cancel_reason: string
+  express_company?: string
+  express_no?: string
   items: OrderItem[]
   address: OrderAddress
   status_logs: OrderStatusLog[]
@@ -301,6 +303,20 @@ export interface Refund {
   refund_time: string
   created_at: string
   items: RefundItem[]
+  logs?: RefundLog[]
+}
+
+/**
+ * 退款审批日志
+ */
+export interface RefundLog {
+  id: number
+  /** 动作：approve 同意 / reject 拒绝 / retry 重试 */
+  action: string
+  operator_type: string
+  operator_id: number
+  remark: string
+  created_at: string
 }
 
 /**

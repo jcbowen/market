@@ -49,14 +49,16 @@ defineOptions({ name: 'RefundList' })
 import { ref, onMounted, h } from 'vue'
 import { NButton, NSpace, NTag, NDataTable, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getRefundList, approveRefund, rejectRefund } from '@/api/order'
+import { getRefundList, approveRefund, rejectRefund, retryRefund } from '@/api/order'
 import OrderDetailModal from './detail.vue'
 import type { Refund, RefundItem } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
+import { REFUND_STATUS, refundStatusMap } from '@/constants/order'
 
 /**
  * 售后管理页面（原退款管理）
- * 展示退款申请列表（订单号/类型/明细/金额），支持同意/拒绝操作
+ * 展示退款申请列表（订单号/类型/明细/金额），支持同意/拒绝操作；
+ * 退款中(status=4) 的卡单提供「重试退款」出口；展开行展示审批日志
  */
 const dialog = useDialog()
 const status = ref<number | null>(null)
@@ -79,14 +81,6 @@ const statusOptions = [
   { label: '退款中', value: 4 },
   { label: '已退款', value: 5 },
 ]
-
-const refundStatusMap: Record<number, { text: string; type: 'default' | 'warning' | 'info' | 'success' | 'error' }> = {
-  1: { text: '待审核', type: 'warning' },
-  2: { text: '已同意', type: 'info' },
-  3: { text: '已拒绝', type: 'default' },
-  4: { text: '退款中', type: 'error' },
-  5: { text: '已退款', type: 'success' },
-}
 
 const itemColumns: DataTableColumns<RefundItem> = [
   { title: '商品名称', key: 'product_name' },
@@ -165,39 +159,75 @@ const columns: DataTableColumns<Refund> = [
   {
     title: '操作',
     key: 'actions',
-    width: 140,
+    width: 180,
     fixed: 'right',
     render(row) {
-      if (row.status !== 1) return null
-      return h(NSpace, { size: 6, wrap: false }, {
-        default: () => [
-          h(NButton, { size: 'small', type: 'primary', onClick: () => confirmApprove(row) }, { default: () => '同意' }),
-          h(NButton, { size: 'small', type: 'error', onClick: () => openReject(row) }, { default: () => '拒绝' }),
-        ],
-      })
+      if (row.status === REFUND_STATUS.PENDING) {
+        return h(NSpace, { size: 6, wrap: false }, {
+          default: () => [
+            h(NButton, { size: 'small', type: 'primary', onClick: () => confirmApprove(row) }, { default: () => '同意' }),
+            h(NButton, { size: 'small', type: 'error', onClick: () => openReject(row) }, { default: () => '拒绝' }),
+          ],
+        })
+      }
+      // 退款中卡单：提供重试出口，避免只能改数据库
+      if (row.status === REFUND_STATUS.PROCESSING) {
+        return h(NButton, { size: 'small', type: 'warning', onClick: () => confirmRetry(row) }, { default: () => '重试退款' })
+      }
+      return null
     },
   },
 ]
 
+const actionTextMap: Record<string, string> = {
+  approve: '同意退款',
+  reject: '拒绝退款',
+  retry: '重试退款',
+}
+
 /**
- * 渲染展开行的售后商品明细表
+ * 渲染展开行的售后商品明细表与审批日志
  * @param row 售后单行
  * @returns 展开内容
  */
 function renderExpandItems(row: Refund) {
-  if (!row.items || row.items.length === 0) {
+  const hasItems = row.items && row.items.length > 0
+  const hasLogs = row.logs && row.logs.length > 0
+  if (!hasItems && !hasLogs) {
     return h('div', { style: 'padding:8px;color:#999' }, '整单退款，含订单全部商品')
   }
-  return h('div', { style: 'padding:4px 8px' }, [
-    h('div', { style: 'font-weight:600;margin-bottom:6px;font-size:13px' }, '退款商品明细'),
-    h(NDataTable, {
-      columns: itemColumns,
-      data: row.items,
-      size: 'small',
-      bordered: true,
-      singleLine: false,
-    }),
-  ])
+  const blocks: ReturnType<typeof h>[] = []
+  if (hasItems) {
+    blocks.push(
+      h('div', { style: 'font-weight:600;margin:6px 0;font-size:13px' }, '退款商品明细'),
+      h(NDataTable, {
+        columns: itemColumns,
+        data: row.items,
+        size: 'small',
+        bordered: true,
+        singleLine: false,
+      }),
+    )
+  } else {
+    blocks.push(h('div', { style: 'padding:4px 0 8px;color:#999;font-size:13px' }, '整单退款，含订单全部商品'))
+  }
+  if (hasLogs) {
+    blocks.push(
+      h('div', { style: 'font-weight:600;margin:10px 0 6px;font-size:13px' }, '审批日志'),
+      h(
+        'div',
+        { style: 'display:flex;flex-direction:column;gap:4px;font-size:13px' },
+        (row.logs ?? []).map((log) =>
+          h('div', { style: 'color:#666' }, [
+            `${formatDateTime(log.created_at)}　${actionTextMap[log.action] ?? log.action}`,
+            `（${log.operator_type}${log.operator_id ? ' #' + log.operator_id : ''}）`,
+            log.remark ? `　${log.remark}` : '',
+          ]),
+        ),
+      ),
+    )
+  }
+  return h('div', { style: 'padding:4px 8px' }, blocks)
 }
 
 /**
@@ -233,12 +263,33 @@ function onPageChange(page: number) {
 function confirmApprove(row: Refund) {
   dialog.warning({
     title: '同意退款',
-    content: `确认同意售后单 ${row.refund_no} 的退款申请？同意后将向用户实际退款 ￥${(row.amount ?? 0).toFixed(2)}。`,
+    content: `确认同意售后单 ${row.refund_no} 的退款申请？同意后将按订单原支付流水退回 ￥${(row.amount ?? 0).toFixed(2)}。`,
     positiveText: '确认同意',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await approveRefund(row.id, row.payment_no)
+        await approveRefund(row.id)
+        loadData()
+      } catch {
+        // 错误提示由请求拦截器统一弹出
+      }
+    },
+  })
+}
+
+/**
+ * 重试退款（退款中卡单）：以退款单记录的支付单号重新发起渠道退款
+ * @param row 售后单行
+ */
+function confirmRetry(row: Refund) {
+  dialog.warning({
+    title: '重试退款',
+    content: `确认对退款单 ${row.refund_no} 重新发起渠道退款？金额 ￥${(row.amount ?? 0).toFixed(2)}。`,
+    positiveText: '确认重试',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await retryRefund(row.id)
         loadData()
       } catch {
         // 错误提示由请求拦截器统一弹出
