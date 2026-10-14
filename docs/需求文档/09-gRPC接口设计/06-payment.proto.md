@@ -15,6 +15,9 @@ service PaymentService {
   rpc HandleWechatCallback(WechatCallbackReq) returns (common.CommonResponse);
   rpc HandleAlipayCallback(AlipayCallbackReq) returns (common.CommonResponse);
   rpc ProcessRefund(ProcessRefundReq) returns (common.CommonResponse);
+  rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
+  rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
+  rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
 }
 
 message CreatePaymentReq {
@@ -50,7 +53,8 @@ message PaymentInfo {
 }
 
 message WechatCallbackReq {
-  bytes body = 1;           // 微信回调原始 XML
+  bytes body = 1;
+  map<string, string> headers = 2;
 }
 
 message AlipayCallbackReq {
@@ -61,21 +65,7 @@ message ProcessRefundReq {
   int64 order_id = 1;
   string refund_no = 2;
   double amount = 3;
-}
-```
-
-
-### 配置管理（2026-10 新增）
-
-支付配置存储于数据库 pay_config 表，由 payment 服务统一管理，gateway 通过以下 RPC 读写：
-
-```protobuf
-service PaymentService {
-  // ...原有支付接口...
-
-  rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
-  rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
-  rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
+  string payment_no = 4;
 }
 
 message GetPayConfigReq {}
@@ -119,5 +109,9 @@ message UploadPayCertResp {
   string message = 2;
 }
 ```
+
+### 配置管理说明
+
+支付配置存储于数据库 pay_config 表（单行），由 payment 服务统一管理，gateway 通过 `GetPayConfig/SavePayConfig/UploadPayCert` 三个 RPC 读写，不直接访问数据库。
 
 热更新机制：payment 服务进程内缓存配置副本，每次支付链路调用时对比数据库 `updated_at` 版本号——版本一致时直接复用已构建的微信支付客户端（零重建开销），版本变更时才刷新缓存并重建客户端。后台保存配置后即时生效，无需重启。

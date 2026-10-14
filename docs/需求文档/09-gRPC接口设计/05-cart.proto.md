@@ -16,8 +16,8 @@ service CartService {
   rpc RemoveItem(RemoveItemReq) returns (CartResp);
   rpc SelectAll(SelectAllReq) returns (CartResp);
   rpc ClearCart(ClearCartReq) returns (common.CommonResponse);
-  rpc ClearInvalidItems(ClearInvalidItemsReq) returns (CartResp);
   rpc GetSelectedItems(GetSelectedItemsReq) returns (CartResp);
+  rpc ClearInvalidItems(ClearInvalidItemsReq) returns (CartResp);
 }
 
 message GetCartReq {
@@ -37,6 +37,7 @@ message UpdateItemReq {
   int64 id = 1;
   int64 user_id = 2;
   int32 quantity = 3;
+  bool selected = 4;
 }
 
 message RemoveItemReq {
@@ -53,12 +54,11 @@ message ClearCartReq {
   int64 user_id = 1;
 }
 
-// 清空购物车中的失效商品（商品下架/删除、SKU 删除、库存为 0），返回清空后的剩余项
-message ClearInvalidItemsReq {
+message GetSelectedItemsReq {
   int64 user_id = 1;
 }
 
-message GetSelectedItemsReq {
+message ClearInvalidItemsReq {
   int64 user_id = 1;
 }
 

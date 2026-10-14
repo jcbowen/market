@@ -1,4 +1,3 @@
-
 ### product.proto
 
 ```protobuf
@@ -37,13 +36,16 @@ service ProductService {
   rpc DeductStock(DeductStockReq) returns (DeductStockResp);
   rpc ReleaseStock(ReleaseStockReq) returns (common.CommonResponse);
   rpc StockEntry(StockEntryReq) returns (common.CommonResponse);
+  rpc StockOut(StockOutReq) returns (common.CommonResponse);
   rpc ListStockRecords(ListStockRecordsReq) returns (ListStockRecordsResp);
   rpc GetStockWarnings(GetStockWarningsReq) returns (ListStockWarningsResp);
+  rpc GeneratePurchaseOrder(GeneratePurchaseOrderReq) returns (GeneratePurchaseOrderResp);
 
   // 盘点
   rpc CreateStockCheck(CreateStockCheckReq) returns (StockCheckInfo);
   rpc SubmitStockCheck(SubmitStockCheckReq) returns (common.CommonResponse);
   rpc ListStockChecks(ListStockChecksReq) returns (ListStockChecksResp);
+  rpc GetStockCheck(GetStockCheckReq) returns (StockCheckDetail);
 
   // 定价
   rpc SetCommunityPricing(SetPricingReq) returns (common.CommonResponse);
@@ -55,6 +57,7 @@ service ProductService {
   rpc GetCoupon(GetCouponReq) returns (CouponInfo);
   rpc CreateCoupon(CreateCouponReq) returns (CouponInfo);
   rpc UpdateCoupon(UpdateCouponReq) returns (CouponInfo);
+  rpc DeleteCoupon(DeleteCouponReq) returns (common.CommonResponse);
   rpc ReceiveCoupon(ReceiveCouponReq) returns (common.CommonResponse);
   rpc ListUserCoupons(ListUserCouponsReq) returns (ListUserCouponsResp);
   rpc UseCoupon(UseCouponReq) returns (common.CommonResponse);
@@ -62,9 +65,33 @@ service ProductService {
   rpc ListFlashSales(ListFlashSalesReq) returns (ListFlashSalesResp);
   rpc GetFlashSale(GetFlashSaleReq) returns (FlashSaleDetail);
   rpc CreateFlashSale(CreateFlashSaleReq) returns (FlashSaleInfo);
+  rpc UpdateFlashSale(UpdateFlashSaleReq) returns (FlashSaleInfo);
 
   rpc ListFullReductions(ListFullReductionsReq) returns (ListFullReductionsResp);
   rpc CreateFullReduction(CreateFullReductionReq) returns (FullReductionInfo);
+  rpc UpdateFullReduction(UpdateFullReductionReq) returns (FullReductionInfo);
+
+  // Banner
+  rpc ListBanners(ListBannersReq) returns (ListBannersResp);
+  rpc CreateBanner(CreateBannerReq) returns (BannerInfo);
+  rpc UpdateBanner(UpdateBannerReq) returns (BannerInfo);
+  rpc DeleteBanner(DeleteBannerReq) returns (common.CommonResponse);
+
+  // 附件
+  rpc GetAttachmentConfig(common.Empty) returns (AttachmentConfig);
+  rpc SaveAttachmentConfig(AttachmentConfig) returns (common.CommonResponse);
+  rpc UploadImageLocal(UploadImageLocalReq) returns (AttachmentInfo);
+  rpc AttachmentPresign(AttachmentPresignReq) returns (AttachmentPresignResp);
+  rpc AttachmentConfirm(AttachmentConfirmReq) returns (AttachmentInfo);
+  rpc ListAttachments(ListAttachmentsReq) returns (ListAttachmentsResp);
+
+  // 附件迁移（本地 → OSS）
+  rpc ScanAttachmentMigrate(common.Empty) returns (AttachmentMigrateOverview);
+  rpc ListAttachmentMigrate(AttachmentMigrateListReq) returns (AttachmentMigrateListResp);
+  rpc MigrateAttachmentItem(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
+  rpc VerifyAttachmentItem(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
+  rpc DeleteAttachmentLocal(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
+  rpc DeleteAttachmentLocalVerified(common.Empty) returns (AttachmentMigrateDeleteBatchResp);
 }
 
 // --- 分类 ---
@@ -116,8 +143,9 @@ message ListProductsReq {
   int64 community_id = 1;
   int64 category_id = 2;
   string keyword = 3;
-  string sort = 4;           // sales | price_asc | price_desc
+  string sort = 4;
   common.Pagination pagination = 5;
+  int32 status = 6; // 商品状态过滤：0 不过滤（默认排除已删除），大于 0 时精确匹配（1 上架）
 }
 
 message GetProductReq {
@@ -145,6 +173,8 @@ message CreateProductReq {
   repeated SpecReq specs = 12;         // 规格树（多规格时必填）
   repeated SkuItemReq sku_items = 13; // SKU 组合列表（单规格时仅一条，不带规格值）
   int32 min_buy = 11;
+  bool show_sales = 14;   // C端是否显示销量
+  int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
 }
 
 message UpdateProductReq {
@@ -161,6 +191,8 @@ message UpdateProductReq {
   bool is_multi_spec = 11;
   repeated SpecReq specs = 12;         // 规格树（多规格时必填，全量提交）
   repeated SkuItemReq sku_items = 13; // SKU 组合列表（全量提交）
+  bool show_sales = 14;     // C端是否显示销量
+  int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
 }
 
 message DeleteProductReq {
@@ -191,6 +223,9 @@ message ProductInfo {
   int32 min_buy = 16;
   double min_price = 17; // 价格区间下限（汇总字段）
   double max_price = 18; // 价格区间上限（汇总字段）
+  double original_price = 19; // 划线价（汇总字段：最低价 SKU 的划线价，0 表示不展示）
+  bool show_sales = 20;       // C端是否显示销量
+  int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
 }
 
 message ProductDetail {
@@ -232,6 +267,7 @@ message SkuItemReq {
   int32 stock = 6;
   int32 safety_stock = 7;
   string image = 8;
+  double original_price = 9; // 划线价（原价，0 表示不展示）
 }
 
 // SpecValueInfo 规格值信息（详情返回）
@@ -296,6 +332,7 @@ message SkuInfo {
   string image = 11;
   int32 status = 12;
   string spec_value_ids = 13; // 逗号分隔的规格值 ID（多规格组合键，单规格为空）
+  double original_price = 14; // 划线价（原价，0 表示不展示）
 }
 
 message ListSkusResp {
@@ -330,8 +367,22 @@ message StockEntryItem {
 
 message StockEntryReq {
   int64 community_id = 1;
-  int32 type = 2;               // 1采购入库 2退货入库
+  int32 type = 2;
   repeated StockEntryItem items = 3;
+  int64 operator_id = 4;
+  string remark = 5;
+}
+
+message StockOutItem {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  string remark = 3;
+}
+
+message StockOutReq {
+  int64 community_id = 1;
+  int32 type = 2;
+  repeated StockOutItem items = 3;
   int64 operator_id = 4;
   string remark = 5;
 }
@@ -377,12 +428,30 @@ message StockWarningInfo {
   string product_name = 4;
   int32 stock = 5;
   int32 safety_stock = 6;
-  int32 warning_type = 7;       // 1低库存 2临期
+  int32 warning_type = 7;
   string expire_date = 8;
 }
 
 message ListStockWarningsResp {
   repeated StockWarningInfo list = 1;
+}
+
+message PurchaseOrderItem {
+  int64 sku_id = 1;
+  string sku_code = 2;
+  string spec_name = 3;
+  string product_name = 4;
+  int32 current_stock = 5;
+  int32 safety_stock = 6;
+  int32 suggest_quantity = 7;
+}
+
+message GeneratePurchaseOrderReq {
+  int64 community_id = 1;
+}
+
+message GeneratePurchaseOrderResp {
+  repeated PurchaseOrderItem items = 1;
 }
 
 // --- 盘点 ---
@@ -420,6 +489,27 @@ message ListStockChecksReq {
 message ListStockChecksResp {
   repeated StockCheckInfo list = 1;
   common.PaginationResponse pagination = 2;
+}
+
+message GetStockCheckReq {
+  int64 id = 1;
+}
+
+message StockCheckDetailItem {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  int32 system_stock = 6;
+  int32 actual_stock = 7;
+  int32 diff_quantity = 8;
+  string created_at = 9;
+}
+
+message StockCheckDetail {
+  StockCheckInfo info = 1;
+  repeated StockCheckDetailItem items = 2;
 }
 
 // --- 定价 ---
@@ -480,6 +570,10 @@ message UpdateCouponReq {
   int32 status = 3;
 }
 
+message DeleteCouponReq {
+  int64 id = 1;
+}
+
 message CouponInfo {
   int64 id = 1;
   int64 community_id = 2;
@@ -489,11 +583,12 @@ message CouponInfo {
   double discount_value = 6;
   int32 total_count = 7;
   int32 received_count = 8;
-  int32 per_user_limit = 9;
-  string start_time = 10;
-  string end_time = 11;
-  int32 valid_days = 12;
-  int32 status = 13;
+  int32 used_count = 9;
+  int32 per_user_limit = 10;
+  string start_time = 11;
+  string end_time = 12;
+  int32 valid_days = 13;
+  int32 status = 14;
 }
 
 message ListCouponsResp {
@@ -546,6 +641,14 @@ message CreateFlashSaleReq {
   repeated FlashSaleItemReq items = 5;
 }
 
+message UpdateFlashSaleReq {
+  int64 id = 1;
+  string name = 2;
+  string start_time = 3;
+  string end_time = 4;
+  int32 status = 5;
+}
+
 message FlashSaleItemReq {
   int64 sku_id = 1;
   double flash_price = 2;
@@ -596,6 +699,16 @@ message CreateFullReductionReq {
   string end_time = 6;
 }
 
+message UpdateFullReductionReq {
+  int64 id = 1;
+  string name = 2;
+  double threshold = 3;
+  double reduce_amount = 4;
+  string start_time = 5;
+  string end_time = 6;
+  int32 status = 7;
+}
+
 message FullReductionInfo {
   int64 id = 1;
   int64 community_id = 2;
@@ -611,82 +724,135 @@ message ListFullReductionsResp {
   repeated FullReductionInfo list = 1;
 }
 
+// --- Banner ---
+message ListBannersReq {
+  int64 community_id = 1;
+  int32 position = 2;
+  bool is_admin = 3;
+}
+
+message BannerInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string title = 3;
+  string image_url = 4;
+  string link_url = 5;
+  int32 position = 6;
+  int32 sort = 7;
+  int32 status = 8;
+  string start_time = 9;
+  string end_time = 10;
+}
+
+message ListBannersResp {
+  repeated BannerInfo list = 1;
+}
+
+message CreateBannerReq {
+  int64 community_id = 1;
+  string title = 2;
+  string image_url = 3;
+  string link_url = 4;
+  int32 position = 5;
+  int32 sort = 6;
+  string start_time = 7;
+  string end_time = 8;
+}
+
+message UpdateBannerReq {
+  int64 id = 1;
+  string title = 2;
+  string image_url = 3;
+  string link_url = 4;
+  int32 position = 5;
+  int32 sort = 6;
+  int32 status = 7;
+  string start_time = 8;
+  string end_time = 9;
+}
+
+message DeleteBannerReq {
+  int64 id = 1;
+}
+
 // --- 附件 ---
-// 附件服务（config 读写、本地上传、OSS 预签名直传与 MD5 秒传）
-service 追加：
-  rpc GetAttachmentConfig(common.Empty) returns (AttachmentConfig);
-  rpc SaveAttachmentConfig(AttachmentConfig) returns (common.CommonResponse);
-  rpc UploadImageLocal(UploadImageLocalReq) returns (AttachmentInfo);
-  rpc AttachmentPresign(AttachmentPresignReq) returns (AttachmentPresignResp);
-  rpc AttachmentConfirm(AttachmentConfirmReq) returns (AttachmentInfo);
-  rpc ListAttachments(ListAttachmentsReq) returns (ListAttachmentsResp);
-
 // AttachmentConfig 附件存储配置（数据库单行存储，id 固定为 1）
-// oss_access_key_secret 写入时空或掩码值表示保留原值，读取时服务端脱敏
+// 读写均通过 product 服务，gateway 不直接访问数据库
+// 注意：oss_access_key_secret 写入时为空或掩码值表示保留原值，读取时服务端已脱敏
 message AttachmentConfig {
-  string storage_type = 1;             // local / oss（预留 cos）
-  string visit_domain = 2;
-  string oss_access_key_id = 3;
-  string oss_access_key_secret = 4;
-  string oss_endpoint = 5;
-  string oss_bucket_name = 6;
-  string oss_custom_visit_domain = 7;
-  int64 max_size = 8;                  // 图片上限（字节），0 默认 5MB
-  string updated_at = 9;               // 兼作版本号
+  string storage_type = 1;             // 存储类型：local / oss（预留 cos）
+  string visit_domain = 2;             // 自定义访问域名，空则本地模式按请求域名动态拼接、OSS 用 bucket 域名
+  string oss_access_key_id = 3;        // 阿里云 AccessKey ID
+  string oss_access_key_secret = 4;    // 阿里云 AccessKey Secret（读取时脱敏）
+  string oss_endpoint = 5;             // OSS Endpoint，如 oss-cn-shanghai.aliyuncs.com
+  string oss_bucket_name = 6;          // OSS Bucket 名称
+  string oss_custom_visit_domain = 7;  // OSS 自定义访问域名（CDN），可空
+  int64 max_size = 8;                  // 图片大小上限（字节），0 表示使用默认 5MB
+  string updated_at = 9;               // 更新时间，兼作版本号
 }
 
+// UploadImageLocalReq 本地模式图片上传请求
+// gateway 接收 multipart 后将文件内容转发至 product 服务落盘并写附件记录
 message UploadImageLocalReq {
-  int64 admin_id = 1;
-  string filename = 2;
-  string content_type = 3;
-  bytes content = 4;
-  bool is_display = 5; // 是否进附件选择器：后台上传传 true；客户端用户上传不传（默认 false 不显示）
+  int64 admin_id = 1;      // 上传管理员 ID，写附件记录归属
+  string filename = 2;     // 原始文件名，需含扩展名
+  string content_type = 3; // 文件 MIME 类型
+  bytes content = 4;       // 文件内容
+  bool is_display = 5;     // 是否在附件选择器中显示：后台上传传 true；客户端用户上传不传（默认 false 不显示）
 }
 
+// AttachmentPresignReq 预签名请求（OSS 直传模式）
 message AttachmentPresignReq {
-  int64 admin_id = 1;
-  string filename = 2;
-  string md5 = 3;          // 32 位十六进制，用于秒传
-  string content_type = 4;
-  int64 size = 5;
-  int32 width = 6;
-  int32 height = 7;
-  bool is_display = 8; // 同 UploadImageLocalReq：后台 true，客户端默认 false
+  int64 admin_id = 1;      // 上传管理员 ID，写附件记录归属
+  string filename = 2;     // 原始文件名，需含扩展名
+  string md5 = 3;          // 文件内容 MD5，32 位十六进制（大小写不敏感），用于秒传
+  string content_type = 4; // 文件 MIME 类型，为空时由扩展名推导
+  int64 size = 5;          // 文件大小（字节）
+  int32 width = 6;         // 图片宽度（像素）
+  int32 height = 7;        // 图片高度（像素）
+  bool is_display = 8;     // 是否在附件选择器中显示：后台上传传 true；客户端用户上传不传（默认 false 不显示）
 }
 
+// AttachmentPresignResp 预签名响应
+// hit=true 表示秒传命中，直接使用 final_url；否则用 url + headers 以 PUT 直传 OSS
 message AttachmentPresignResp {
-  string attach_id = 1;
-  bool hit = 2;                    // true 表示秒传命中，直接用 final_url
-  string url = 3;                  // 预签名上传 URL
-  string method = 4;               // PUT
-  map<string, string> headers = 5;
-  string final_url = 6;
-  string remote_path = 7;
+  string attach_id = 1;             // 附件记录 ID（数字字符串），confirm 时回传
+  bool hit = 2;                     // 是否命中秒传
+  string url = 3;                   // 预签名上传 URL（秒传命中时为空）
+  string method = 4;                // 上传方法，固定 PUT（秒传命中时为空）
+  map<string, string> headers = 5;  // 上传时必须携带的请求头（秒传命中时为空）
+  string final_url = 6;             // 最终可访问 URL
+  string remote_path = 7;           // OSS 对象相对路径
 }
 
+// AttachmentConfirmReq 确认上传请求
+// md5 必传且校验格式；confirm 成功后才补写记录 md5，保证「md5 非空 ⇒ 对象已上传」不变量
+// attach_id 为数字可枚举，admin_id 必须与记录归属一致才允许补写
 message AttachmentConfirmReq {
-  int64 admin_id = 1;              // 须与记录归属一致
-  string attach_id = 2;
-  string md5 = 3;                  // confirm 补写，激活秒传
-  int64 size = 4;
-  int32 width = 5;
-  int32 height = 6;
+  int64 admin_id = 1;   // 上传管理员 ID，须与附件记录归属一致
+  string attach_id = 2; // presign 返回的附件记录 ID
+  string md5 = 3;       // 文件内容 MD5，32 位十六进制
+  int64 size = 4;       // 文件大小（字节）
+  int32 width = 5;      // 图片宽度（像素）
+  int32 height = 6;     // 图片高度（像素）
 }
 
+// AttachmentInfo 附件信息
+// local 模式 url 为空，由 gateway 按请求域名动态拼接后返回前端
 message AttachmentInfo {
-  string attach_id = 1;
-  string url = 2;                  // local 模式为空，gateway 按请求域名拼接
-  string remote_path = 3;
-  int64 size = 4;
-  int32 width = 5;
-  int32 height = 6;
-  string name = 7;                 // 原始文件名（附件选择器展示用）
-  string type = 8;                 // 文件 MIME 类型
-  string created_at = 9;           // 上传时间（YYYY-MM-DD HH:mm:ss）
+  string attach_id = 1;   // 附件记录 ID（数字字符串）
+  string url = 2;         // 完整访问 URL（local 模式为空，gateway 动态拼接）
+  string remote_path = 3; // 对象相对路径（OSS 为 OSS Key，本地为附件目录下相对路径）
+  int64 size = 4;         // 文件大小（字节）
+  int32 width = 5;        // 图片宽度（像素）
+  int32 height = 6;       // 图片高度（像素）
+  string name = 7;        // 原始文件名（附件选择器展示用）
+  string type = 8;        // 文件 MIME 类型
+  string created_at = 9;  // 上传时间（YYYY-MM-DD HH:mm:ss）
 }
 
 // ListAttachmentsReq 附件选择器分页查询请求
-// 可见性按上传管理员隔离：仅返回 admin_id 匹配且 is_display=1 的图片附件
+// 可见性按上传管理员隔离：gateway 注入 admin_id，服务端仅返回本人上传且 is_display=1 的图片附件
 message ListAttachmentsReq {
   int64 admin_id = 1;     // 上传管理员 ID（gateway 从登录态注入）
   string keyword = 2;     // 关键字，模糊匹配原始文件名 name 或路径 path
@@ -704,18 +870,10 @@ message ListAttachmentsResp {
   int32 page_size = 4;
 }
 
-// --- 附件迁移 ---
-// 本地附件一键迁移 OSS（扫描生成任务清单 → 迁移（成功自动验证）→ 手动删除本地文件）
-// 批量由前端循环调用单条接口驱动，状态落库 attachment_migrate_item，无后端常驻任务
-service 追加：
-  rpc ScanAttachmentMigrate(common.Empty) returns (AttachmentMigrateOverview);
-  rpc ListAttachmentMigrate(AttachmentMigrateListReq) returns (AttachmentMigrateListResp);
-  rpc MigrateAttachmentItem(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
-  rpc VerifyAttachmentItem(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
-  rpc DeleteAttachmentLocal(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
-  rpc DeleteAttachmentLocalVerified(common.Empty) returns (AttachmentMigrateDeleteBatchResp);
+// --- 附件迁移（本地 → OSS） ---
+// 迁移工具三段式：扫描匹配生成清单 → 逐条迁移（成功后自动验证）→ 手动删除本地文件
 
-// AttachmentMigrateItemInfo 迁移条目
+// AttachmentMigrateItemInfo 迁移条目信息
 message AttachmentMigrateItemInfo {
   int64 id = 1;                // 条目 ID
   string path = 2;             // 对象相对路径（与 attachment.path 同口径）

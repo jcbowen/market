@@ -10,13 +10,13 @@ option go_package = "github.com/jcbowen/market/src/backend/common/proto/user";
 import "common/common.proto";
 
 service UserService {
-  // 用户信息
   rpc GetUserById(GetUserByIdReq) returns (UserInfo);
   rpc GetUserByPhone(GetUserByPhoneReq) returns (UserInfo);
   rpc CreateOrUpdateUser(CreateUserReq) returns (UserInfo);
   rpc UpdateUserCommunity(UpdateCommunityReq) returns (common.CommonResponse);
+  rpc ListUsers(ListUsersReq) returns (ListUsersResp);
 
-  // 地址管理
+  // 地址
   rpc ListAddresses(ListAddressesReq) returns (ListAddressesResp);
   rpc GetAddress(GetAddressReq) returns (AddressInfo);
   rpc CreateAddress(CreateAddressReq) returns (AddressInfo);
@@ -25,8 +25,23 @@ service UserService {
   rpc SetDefaultAddress(SetDefaultAddressReq) returns (common.CommonResponse);
 
   // 社区
-  rpc ListCommunities(common.Pagination) returns (ListCommunitiesResp);
+  rpc ListCommunities(ListCommunitiesReq) returns (ListCommunitiesResp);
   rpc GetCommunity(GetCommunityReq) returns (CommunityInfo);
+  rpc ListNearbyCommunities(ListNearbyCommunitiesReq) returns (ListCommunitiesResp);
+  rpc CreateCommunity(CreateCommunityReq) returns (CommunityInfo);
+  rpc UpdateCommunity(UpdateCommunityInfoReq) returns (CommunityInfo);
+  rpc DeleteCommunity(DeleteCommunityReq) returns (common.CommonResponse);
+
+  // 用户资料
+  rpc UpdateUserProfile(UpdateUserProfileReq) returns (UserInfo);
+
+  // 行政区划
+  rpc ListRegionChildren(ListRegionChildrenReq) returns (ListRegionChildrenResp);
+  rpc ListRegions(ListRegionsReq) returns (ListRegionsResp);
+  rpc MatchRegionByName(MatchRegionByNameReq) returns (RegionMatchInfo);
+  rpc CreateRegionUpdateTask(CreateRegionUpdateTaskReq) returns (RegionUpdateTaskInfo);
+  rpc GetRegionUpdateTask(GetRegionUpdateTaskReq) returns (RegionUpdateTaskInfo);
+  rpc ApplyRegionUpdateTask(ApplyRegionUpdateTaskReq) returns (common.CommonResponse);
 
   // 管理员
   rpc GetAdminByUsername(GetAdminByUsernameReq) returns (AdminInfo);
@@ -34,7 +49,13 @@ service UserService {
   rpc CreateAdmin(CreateAdminReq) returns (AdminInfo);
   rpc UpdateAdmin(UpdateAdminReq) returns (AdminInfo);
   rpc DeleteAdmin(DeleteAdminReq) returns (common.CommonResponse);
+  rpc ChangeAdminPassword(ChangeAdminPasswordReq) returns (common.CommonResponse);
+
+  // 角色
   rpc ListRoles(common.Empty) returns (ListRolesResp);
+  rpc CreateRole(CreateRoleReq) returns (RoleInfo);
+  rpc UpdateRole(UpdateRoleReq) returns (RoleInfo);
+  rpc DeleteRole(DeleteRoleReq) returns (common.CommonResponse);
 }
 
 message GetUserByIdReq {
@@ -76,12 +97,32 @@ message UserInfo {
   string created_at = 12;
 }
 
+message UpdateUserProfileReq {
+  int64 id = 1;
+  string nickname = 2;
+  string avatar = 3;
+  int32 gender = 4;
+}
+
+message ListUsersReq {
+  int64 community_id = 1;
+  string keyword = 2;
+  int32 status = 3;
+  common.Pagination pagination = 4;
+}
+
+message ListUsersResp {
+  repeated UserInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
 message ListAddressesReq {
   int64 user_id = 1;
 }
 
 message GetAddressReq {
   int64 id = 1;
+  int64 user_id = 2;
 }
 
 message CreateAddressReq {
@@ -94,6 +135,12 @@ message CreateAddressReq {
   string detail = 7;
   string tag = 8;
   bool is_default = 9;
+  // 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
+  int64 community_id = 10;
+  // 省/市/区行政区划代码（来自区划选择器，可选；历史数据允许为空）
+  string province_code = 11;
+  string city_code = 12;
+  string district_code = 13;
 }
 
 message UpdateAddressReq {
@@ -107,6 +154,12 @@ message UpdateAddressReq {
   string detail = 8;
   string tag = 9;
   bool is_default = 10;
+  // 地址所属社区（服务端按用户当前社区回填，前端传值会被服务端覆盖）
+  int64 community_id = 11;
+  // 省/市/区行政区划代码（来自区划选择器，可选；历史数据允许为空）
+  string province_code = 12;
+  string city_code = 13;
+  string district_code = 14;
 }
 
 message DeleteAddressReq {
@@ -131,6 +184,13 @@ message AddressInfo {
   string tag = 9;
   bool is_default = 10;
   string created_at = 11;
+  // 地址所属社区 ID 与名称（按保存时用户当前社区回填，供 C 端按社区分组展示）
+  int64 community_id = 12;
+  string community_name = 13;
+  // 省/市/区行政区划代码（历史数据允许为空）
+  string province_code = 14;
+  string city_code = 15;
+  string district_code = 16;
 }
 
 message ListAddressesResp {
@@ -155,6 +215,90 @@ message CommunityInfo {
   int32 status = 11;
   string business_hours = 12;
   int32 sort = 13;
+  string manager_name = 14;
+  string manager_phone = 15;
+  // 社区所在省/市/区（C 端锁定地址前缀用）
+  string province = 16;
+  string city = 17;
+  string district = 18;
+  // 是否允许社区外配送（false 时 C 端地址前缀锁定为本社区）
+  bool allow_outside_delivery = 19;
+  // 省/市/区行政区划代码（历史数据允许为空）
+  string province_code = 20;
+  string city_code = 21;
+  string district_code = 22;
+}
+
+// ListCommunitiesReq 社区列表查询请求
+message ListCommunitiesReq {
+  common.Pagination pagination = 1;
+  // 管理端置 true 时查询包含停业社区；默认 false 仅返回营业中（客户端语义）
+  bool include_disabled = 2;
+  // 状态筛选（仅 include_disabled=true 时生效）：-1 全部，0 停业，1 营业
+  int32 status = 3;
+}
+
+message CreateCommunityReq {
+  string name = 1;
+  string address = 2;
+  double longitude = 3;
+  double latitude = 4;
+  string contact_phone = 5;
+  string pickup_address = 6;
+  double delivery_fee = 7;
+  double min_order_amount = 8;
+  double delivery_range_km = 9;
+  int32 status = 10;
+  string business_hours = 11;
+  int32 sort = 12;
+  string manager_name = 13;
+  string manager_phone = 14;
+  string province = 15;
+  string city = 16;
+  string district = 17;
+  // 是否允许社区外配送，默认 false
+  bool allow_outside_delivery = 18;
+  // 省/市/区行政区划代码（来自区划选择器，可选）
+  string province_code = 19;
+  string city_code = 20;
+  string district_code = 21;
+}
+
+message UpdateCommunityInfoReq {
+  int64 id = 1;
+  string name = 2;
+  string address = 3;
+  double longitude = 4;
+  double latitude = 5;
+  string contact_phone = 6;
+  string pickup_address = 7;
+  double delivery_fee = 8;
+  double min_order_amount = 9;
+  double delivery_range_km = 10;
+  int32 status = 11;
+  string business_hours = 12;
+  int32 sort = 13;
+  string manager_name = 14;
+  string manager_phone = 15;
+  string province = 16;
+  string city = 17;
+  string district = 18;
+  // 是否允许社区外配送（整表提交全量覆盖）
+  bool allow_outside_delivery = 19;
+  // 省/市/区行政区划代码（来自区划选择器，可选）
+  string province_code = 20;
+  string city_code = 21;
+  string district_code = 22;
+}
+
+message DeleteCommunityReq {
+  int64 id = 1;
+}
+
+message ListNearbyCommunitiesReq {
+  double longitude = 1;
+  double latitude = 2;
+  common.Pagination pagination = 3;
 }
 
 message ListCommunitiesResp {
@@ -174,8 +318,12 @@ message AdminInfo {
   string phone = 5;
   int64 role_id = 6;
   string role_code = 7;
-  int64 community_id = 8;
-  int32 status = 9;
+  string role_name = 8;
+  int64 community_id = 9;
+  repeated int64 community_ids = 10;
+  int32 status = 11;
+  string last_login_at = 12;
+  string last_login_ip = 13;
 }
 
 message ListAdminsReq {
@@ -195,6 +343,8 @@ message CreateAdminReq {
   string phone = 4;
   int64 role_id = 5;
   int64 community_id = 6;
+  // 绑定的全部社区 ID 列表（写入 admin_communities 关联表）
+  repeated int64 community_ids = 7;
 }
 
 message UpdateAdminReq {
@@ -204,10 +354,18 @@ message UpdateAdminReq {
   int64 role_id = 4;
   int64 community_id = 5;
   int32 status = 6;
+  // 重新绑定的全部社区 ID 列表（全量覆盖 admin_communities 关联表）
+  repeated int64 community_ids = 7;
 }
 
 message DeleteAdminReq {
   int64 id = 1;
+}
+
+message ChangeAdminPasswordReq {
+  int64 id = 1;
+  string old_password = 2;
+  string new_password = 3;
 }
 
 message RoleInfo {
@@ -220,5 +378,125 @@ message RoleInfo {
 
 message ListRolesResp {
   repeated RoleInfo list = 1;
+}
+
+message CreateRoleReq {
+  string name = 1;
+  string code = 2;
+  repeated string permissions = 3;
+  string description = 4;
+}
+
+message UpdateRoleReq {
+  int64 id = 1;
+  string name = 2;
+  string code = 3;
+  repeated string permissions = 4;
+  string description = 5;
+}
+
+message DeleteRoleReq {
+  int64 id = 1;
+}
+
+// --- 行政区划 ---
+
+// RegionInfo 行政区划条目
+message RegionInfo {
+  // 行政区划代码（GB/T 2260），省级 2 位、市级 4 位、区县级 6 位
+  string code = 1;
+  string name = 2;
+  // 父级区划代码，省级为 "0"
+  string parent_code = 3;
+  // 层级：1 省 2 市 3 区县
+  int32 level = 4;
+  // 状态：1 正常 2 停用（上游撤销）
+  int32 status = 5;
+}
+
+message ListRegionChildrenReq {
+  // 父级区划代码，"0" 表示查询省级列表；仅返回正常状态
+  string parent_code = 1;
+}
+
+message ListRegionChildrenResp {
+  repeated RegionInfo list = 1;
+}
+
+message ListRegionsReq {
+  // 关键词：区划代码前缀或名称模糊匹配
+  string keyword = 1;
+  // 父级区划代码筛选，空为全部
+  string parent_code = 2;
+  // 层级筛选：0 全部，1 省，2 市，3 区县
+  int32 level = 3;
+  // 状态筛选：0 全部，1 正常，2 停用
+  int32 status = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListRegionsResp {
+  repeated RegionInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message MatchRegionByNameReq {
+  // 地理库返回的名称（城市或省份，如 "广州"、"广东"），不带行政区划后缀亦可
+  string name = 1;
+}
+
+// RegionMatchInfo 名称匹配结果：city 命中时同时返回其上级 province；
+// 仅 province 命中时 city 为空
+message RegionMatchInfo {
+  RegionInfo province = 1;
+  RegionInfo city = 2;
+}
+
+// RegionDiffItem 更新任务差异条目
+message RegionDiffItem {
+  string code = 1;
+  // 库内当前名称（新增场景为上游名称）
+  string name = 2;
+  // 更名后的新名称（仅 updated 场景有值）
+  string new_name = 3;
+  string parent_code = 4;
+  int32 level = 5;
+}
+
+// RegionUpdateTaskInfo 更新任务信息
+message RegionUpdateTaskInfo {
+  int64 id = 1;
+  // 状态：1 待执行 2 拉取中 3 比对中 4 完成 5 失败
+  int32 status = 2;
+  // 数据源 URL
+  string source = 3;
+  int32 total_remote = 4;
+  int32 total_local = 5;
+  int32 added_count = 6;
+  int32 updated_count = 7;
+  int32 removed_count = 8;
+  repeated RegionDiffItem added = 9;
+  repeated RegionDiffItem updated = 10;
+  repeated RegionDiffItem removed = 11;
+  // 失败原因（status=5 时有值）
+  string error = 12;
+  // 差异是否已覆盖入库
+  bool applied = 13;
+  string created_at = 14;
+  string finished_at = 15;
+}
+
+message GetRegionUpdateTaskReq {
+  int64 id = 1;
+}
+
+// CreateRegionUpdateTaskReq 创建区划更新任务请求
+message CreateRegionUpdateTaskReq {
+  // 数据源类型：default 常规多源镜像（默认）/ official 民政部官方源（兜底修正）
+  string source_type = 1;
+}
+
+message ApplyRegionUpdateTaskReq {
+  int64 id = 1;
 }
 ```

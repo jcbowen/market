@@ -1,4 +1,3 @@
-
 ### order.proto
 
 ```protobuf
@@ -24,6 +23,14 @@ service OrderService {
   rpc RejectRefund(RejectRefundReq) returns (common.CommonResponse);
   // 重试卡在"退款中"(status=4) 的退款单：以退款单自身的 payment_no 重新发起渠道退款
   rpc RetryRefund(RetryRefundReq) returns (common.CommonResponse);
+  rpc GetRefundConfig(GetRefundConfigReq) returns (RefundConfig);
+  rpc SaveRefundConfig(SaveRefundConfigReq) returns (common.CommonResponse);
+
+  // 统计
+  rpc GetOrderStatistics(GetOrderStatisticsReq) returns (OrderStatisticsResp);
+  rpc GetSalesStatistics(GetSalesStatisticsReq) returns (SalesStatisticsResp);
+  rpc GetProductRankings(GetProductRankingsReq) returns (ProductRankingsResp);
+  rpc GetRevenueReport(GetRevenueReportReq) returns (RevenueReportResp);
 }
 
 message OrderItem {
@@ -44,6 +51,7 @@ message CreateOrderReq {
 
 message GetOrderReq {
   int64 id = 1;
+  int64 user_id = 2;
 }
 
 message ListOrdersReq {
@@ -52,11 +60,15 @@ message ListOrdersReq {
   int32 status = 3;
   common.Pagination pagination = 4;
   // --- 后台管理端搜索条件（C 端列表不使用） ---
-  string order_no = 5;        // 订单号模糊匹配
-  string start_time = 6;      // 下单时间起（YYYY-MM-DD）
-  string end_time = 7;        // 下单时间止（YYYY-MM-DD）
-  string receiver_name = 8;   // 收货人姓名模糊匹配
-  string receiver_phone = 9;  // 收货人电话模糊匹配
+  // 订单号模糊匹配
+  string order_no = 5;
+  // 下单时间范围（YYYY-MM-DD，闭区间）
+  string start_time = 6;
+  string end_time = 7;
+  // 收货人姓名模糊匹配
+  string receiver_name = 8;
+  // 收货人电话模糊匹配
+  string receiver_phone = 9;
 }
 
 message CancelOrderReq {
@@ -90,6 +102,7 @@ message OrderInfo {
   string delivery_time = 11;
   string contact_name = 12;
   string contact_phone = 13;
+  string contact_address = 21;
   string remark = 14;
   string pay_time = 15;
   string deliver_time = 16;
@@ -97,8 +110,9 @@ message OrderInfo {
   string cancel_time = 18;
   string cancel_reason = 19;
   string created_at = 20;
-  string express_company = 22;  // 物流公司（发货时写入，独立字段）
-  string express_no = 23;       // 物流单号
+  // 物流信息（发货时写入，独立字段，不再拼接进 remark）
+  string express_company = 22;
+  string express_no = 23;
 }
 
 message OrderItemInfo {
@@ -132,11 +146,33 @@ message ListOrdersResp {
   common.PaginationResponse pagination = 2;
 }
 
+// ApplyRefundItem 申请退款商品明细项
+message ApplyRefundItem {
+  int64 order_item_id = 1;
+  int32 quantity = 2;
+}
+
 message ApplyRefundReq {
   int64 order_id = 1;
   int64 user_id = 2;
   double amount = 3;
   string reason = 4;
+  // 退款商品明细；为空表示整单退
+  repeated ApplyRefundItem items = 5;
+  // 运费退还策略为 user_decide 时用户是否选择退运费
+  bool refund_freight = 6;
+}
+
+// RefundItemInfo 退款商品明细信息
+message RefundItemInfo {
+  int64 id = 1;
+  int64 refund_id = 2;
+  int64 order_item_id = 3;
+  int64 sku_id = 4;
+  string product_name = 5;
+  string spec_name = 6;
+  int32 quantity = 7;
+  double refund_amount = 8;
 }
 
 message RefundInfo {
@@ -150,12 +186,48 @@ message RefundInfo {
   string reject_reason = 8;
   string refund_time = 9;
   string created_at = 10;
+  string payment_no = 11;
+  // 关联订单号
+  string order_no = 12;
+  // 退款类型：1整单退 2部分退
+  int32 type = 13;
+  // 退款商品明细
+  repeated RefundItemInfo items = 14;
+  // 本单退还的运费金额
+  double freight_amount = 15;
+  // 审批/重试操作日志（后台列表展示用）
+  repeated RefundLogInfo logs = 16;
+}
+
+// RefundLogInfo 退款审批日志
+message RefundLogInfo {
+  int64 id = 1;
+  // 动作：approve 同意 / reject 拒绝 / retry 重试
+  string action = 2;
+  string operator_type = 3;
+  int64 operator_id = 4;
+  string remark = 5;
+  string created_at = 6;
 }
 
 message ListRefundsReq {
   int64 community_id = 1;
   int32 status = 2;
   common.Pagination pagination = 3;
+}
+
+// GetRefundConfigReq 查询退款配置请求
+message GetRefundConfigReq {}
+
+// RefundConfig 退款配置
+message RefundConfig {
+  // 运费退还策略：always始终退运费 never不退运费 user_decide用户自行选择
+  string refund_freight_policy = 1;
+}
+
+// SaveRefundConfigReq 保存退款配置请求
+message SaveRefundConfigReq {
+  string refund_freight_policy = 1;
 }
 
 message ListRefundsResp {
@@ -179,7 +251,71 @@ message RejectRefundReq {
 // RetryRefundReq 重试退款请求（针对卡在退款中 status=4 的退款单）
 message RetryRefundReq {
   int64 id = 1;
-  int64 operator_id = 2;  // 0 表示系统（调度器）自动重试
+  int64 operator_id = 2;
+}
+
+message GetOrderStatisticsReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+}
+
+message OrderStatisticsResp {
+  int32 pending_pay = 1;
+  int32 pending_ship = 2;
+  int32 pending_receive = 3;
+  int32 completed = 4;
+  int32 cancelled = 5;
+  int32 refunding = 6;
+  int32 total_orders = 7;
+}
+
+message GetSalesStatisticsReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+}
+
+message SalesStatisticsResp {
+  double total_amount = 1;
+  double pay_amount = 2;
+  int32 total_orders = 3;
+  double avg_order_amount = 4;
+}
+
+message GetProductRankingsReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+  int32 limit = 4;
+}
+
+message ProductRankingItem {
+  int64 product_id = 1;
+  string product_name = 2;
+  int32 sales_count = 3;
+  double sales_amount = 4;
+}
+
+message ProductRankingsResp {
+  repeated ProductRankingItem list = 1;
+}
+
+message GetRevenueReportReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+  string group_by = 4;
+}
+
+message RevenueReportItem {
+  string date = 1;
+  double revenue = 2;
+  int32 order_count = 3;
+}
+
+message RevenueReportResp {
+  repeated RevenueReportItem list = 1;
 }
 ```
 
