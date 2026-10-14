@@ -197,6 +197,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	}
 
 	adminHandler := handler.NewAdminHandler(jwtManager, clients.UserClient, clients.ProductClient, clients.OrderClient, clients.PaymentClient, cfg)
+	// 多社区模型：权限随当前社区变化，注入实时权限上下文解析器（user 服务）
+	gwMiddleware.SetPermissionResolver(clients.UserClient)
 	admin := r.Group("/api/v1/admin")
 	{
 		admin.POST("/auth/login", adminHandler.Login)
@@ -204,6 +206,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 		authAdmin := admin.Group("")
 		authAdmin.Use(gwMiddleware.AuthMiddleware(jwtManager, jwt.TokenTypeAdmin))
+		// 校验请求头声明的当前社区（X-Community-Id）是否越权，越权直接 403
+		authAdmin.Use(gwMiddleware.RequireCommunityAccess())
 		{
 			// 当前管理员信息：仅要求登录，不要求具体权限（前端刷新页面后恢复状态使用）
 			authAdmin.GET("/auth/info", adminHandler.Info)

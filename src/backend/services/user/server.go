@@ -10,6 +10,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
+	"github.com/jcbowen/market/src/backend/services/user/model"
 	"github.com/jcbowen/market/src/backend/services/user/service"
 )
 
@@ -266,30 +267,54 @@ func (s *server) GetAdminByUsername(ctx stdctx.Context, req *user.GetAdminByUser
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
-	isSuperAdmin := role != nil && role.Code == "super_admin"
-	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID, isSuperAdmin)
-	return service.ToAdminInfo(admin, role, communityIDs), nil
+	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID)
+	return service.ToAdminInfo(admin, communityIDs, nil), nil
 }
 
-// ListAdmins 获取管理员列表
+// GetAdminContext 实时解析管理员在指定社区的权限上下文
+func (s *server) GetAdminContext(ctx stdctx.Context, req *user.GetAdminContextReq) (*user.AdminContextInfo, error) {
+	isSuper, roleIDs, permissions, bound, err := s.adminService.GetAdminContext(ctx, req.AdminId, req.CommunityId)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	if permissions == nil {
+		permissions = []string{}
+	}
+	if roleIDs == nil {
+		roleIDs = []int64{}
+	}
+	return &user.AdminContextInfo{
+		IsSuper:     isSuper,
+		RoleIds:     roleIDs,
+		Permissions: permissions,
+		Bound:       bound,
+	}, nil
+}
+
+// ListAdmins 获取员工列表（按任职社区语境）
 func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.ListAdminsResp, error) {
 	page, pageSize := 1, 10
 	if req.Pagination != nil {
 		page = int(req.Pagination.Page)
 		pageSize = int(req.Pagination.PageSize)
 	}
-	list, total, err := s.adminService.ListAdmins(ctx, req.CommunityId, page, pageSize)
+	list, assignments, total, err := s.adminService.ListAdmins(ctx, req.CommunityId, req.Keyword, page, pageSize)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 
-	// 批量查询各管理员的社区绑定关系
-	adminIDs := make([]int64, 0, len(list))
-	for _, a := range list {
-		adminIDs = append(adminIDs, a.ID)
+	// 批量加载任职行涉及的角色
+	roleIDSet := make(map[int64]struct{})
+	for _, rows := range assignments {
+		for _, row := range rows {
+			roleIDSet[row.RoleID] = struct{}{}
+		}
 	}
-	communityIDsByAdmin, err := s.adminService.ListCommunitiesForAdmins(ctx, adminIDs)
+	roleIDs := make([]int64, 0, len(roleIDSet))
+	for id := range roleIDSet {
+		roleIDs = append(roleIDs, id)
+	}
+	rolesByID, err := s.roleService.GetRolesByIDs(ctx, roleIDs)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -303,37 +328,41 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 		},
 	}
 	for _, a := range list {
-		role, _ := s.roleService.GetRoleByID(ctx, a.RoleID)
-		resp.List = append(resp.List, service.ToAdminInfo(a, role, communityIDsByAdmin[a.ID]))
+		var roles []*model.Role
+		for _, row := range assignments[a.ID] {
+			if r := rolesByID[row.RoleID]; r != nil {
+				roles = append(roles, r)
+			}
+		}
+		communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, a.ID)
+		resp.List = append(resp.List, service.ToAdminInfo(a, communityIDs, roles))
 	}
 	return resp, nil
 }
 
-// CreateAdmin 创建管理员
+// CreateAdmin 创建员工（社区任职）
 func (s *server) CreateAdmin(ctx stdctx.Context, req *user.CreateAdminReq) (*user.AdminInfo, error) {
 	admin, err := s.adminService.CreateAdmin(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
-	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID, false)
-	return service.ToAdminInfo(admin, role, communityIDs), nil
+	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID)
+	return service.ToAdminInfo(admin, communityIDs, nil), nil
 }
 
-// UpdateAdmin 更新管理员
+// UpdateAdmin 更新员工
 func (s *server) UpdateAdmin(ctx stdctx.Context, req *user.UpdateAdminReq) (*user.AdminInfo, error) {
 	admin, err := s.adminService.UpdateAdmin(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	role, _ := s.roleService.GetRoleByID(ctx, admin.RoleID)
-	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID, false)
-	return service.ToAdminInfo(admin, role, communityIDs), nil
+	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID)
+	return service.ToAdminInfo(admin, communityIDs, nil), nil
 }
 
-// DeleteAdmin 删除管理员
+// DeleteAdmin 移除员工在指定社区的任职
 func (s *server) DeleteAdmin(ctx stdctx.Context, req *user.DeleteAdminReq) (*common.CommonResponse, error) {
-	if err := s.adminService.DeleteAdmin(ctx, req.Id); err != nil {
+	if err := s.adminService.DeleteAdmin(ctx, req.Id, req.CommunityId); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
@@ -350,9 +379,9 @@ func (s *server) ChangeAdminPassword(ctx stdctx.Context, req *user.ChangeAdminPa
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
-// ListRoles 获取角色列表
-func (s *server) ListRoles(ctx stdctx.Context, req *common.Empty) (*user.ListRolesResp, error) {
-	list, err := s.roleService.ListRoles(ctx)
+// ListRoles 获取角色列表（按社区语境）
+func (s *server) ListRoles(ctx stdctx.Context, req *user.ListRolesReq) (*user.ListRolesResp, error) {
+	list, err := s.roleService.ListRoles(ctx, req.CommunityId, req.IncludeGlobal)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -361,6 +390,15 @@ func (s *server) ListRoles(ctx stdctx.Context, req *common.Empty) (*user.ListRol
 		resp.List = append(resp.List, service.ToRoleInfo(r))
 	}
 	return resp, nil
+}
+
+// GetRole 获取单个角色
+func (s *server) GetRole(ctx stdctx.Context, req *user.GetRoleReq) (*user.RoleInfo, error) {
+	r, err := s.roleService.GetRoleByID(ctx, req.Id)
+	if err != nil {
+		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	return service.ToRoleInfo(r), nil
 }
 
 // CreateRole 创建角色

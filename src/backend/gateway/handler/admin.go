@@ -102,10 +102,15 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		return
 	}
 
-	permissions := h.getAdminPermissions(c.Request.Context(), admin.RoleId)
+	// 权限按默认社区实时解析（多社区模型：不同社区权限不同，JWT 不再承载权限快照）
 	communityID := h.getAdminDefaultCommunityID(admin)
+	permissions := h.getAdminPermissionsForCommunity(c.Request.Context(), admin.Id, communityID)
+	roleCode := "admin"
+	if admin.IsSuper {
+		roleCode = "super_admin"
+	}
 	accessToken, accessExpire, err := h.jwtManager.GenerateAdminAccessToken(
-		admin.Id, admin.Phone, admin.RoleCode, communityID, admin.CommunityIds, permissions, admin.Username, admin.RealName,
+		admin.Id, admin.Phone, roleCode, communityID, admin.CommunityIds, nil, admin.Username, admin.RealName,
 	)
 	if err != nil {
 		response.GRPCError(c, err)
@@ -130,9 +135,8 @@ func (h *AdminHandler) Login(c *gin.Context) {
 			"username":      admin.Username,
 			"real_name":     admin.RealName,
 			"phone":         admin.Phone,
-			"role_id":       admin.RoleId,
-			"role_code":     admin.RoleCode,
-			"role_name":     admin.RoleName,
+			"is_super":      admin.IsSuper,
+			"role_code":     roleCode,
 			"community_id":  communityID,
 			"community_ids": admin.CommunityIds,
 			"permissions":   permissions,
@@ -142,25 +146,35 @@ func (h *AdminHandler) Login(c *gin.Context) {
 
 // Info 获取当前登录管理员信息
 // 供前端在刷新页面（store 状态重置）后恢复管理员资料与权限列表；
-// 管理员基础资料通过 token 中的 username 反查 user 服务获取，
-// 权限列表直接取自鉴权中间件写入的 token 内权限快照，与接口鉴权口径保持一致
+// 管理员基础资料通过 token 中的 username 反查 user 服务获取（含最新任职社区列表），
+// 权限列表按当前社区语境（X-Community-Id）实时解析，与接口鉴权口径保持一致
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) Info(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
-	permissions, _ := c.Get("admin_permissions")
-	permList, _ := permissions.([]string)
-	if permList == nil {
-		permList = []string{}
+
+	// 当前社区语境：优先请求头声明，缺省回退 JWT 默认社区
+	communityID := uc.CommunityID
+	if id, err := strconv.ParseInt(c.GetHeader("X-Community-Id"), 10, 64); err == nil && id > 0 {
+		communityID = id
+	}
+	permissions := h.getAdminPermissionsForCommunity(c.Request.Context(), uc.UserID, communityID)
+
+	roleCode := "admin"
+	if uc.Role == "super_admin" {
+		roleCode = "super_admin"
 	}
 
 	var admin *user.AdminInfo
 	if uc.Phone != "" || uc.UserID > 0 {
-		// token 携带 username 时按用户名反查完整资料（含 community_ids）
+		// token 携带 username 时按用户名反查完整资料（含最新 community_ids）
 		if username, ok := c.Get("admin_username"); ok {
 			if name, _ := username.(string); name != "" {
 				if a, err := h.userClient.GetAdminByUsername(c.Request.Context(), &user.GetAdminByUsernameReq{Username: name}); err == nil {
 					admin = a
+					if a.IsSuper {
+						roleCode = "super_admin"
+					}
 				}
 			}
 		}
@@ -169,19 +183,23 @@ func (h *AdminHandler) Info(c *gin.Context) {
 	resp := gin.H{
 		"id":          uc.UserID,
 		"phone":       uc.Phone,
-		"role_code":   uc.Role,
-		"permissions": permList,
+		"is_super":    roleCode == "super_admin",
+		"role_code":   roleCode,
+		"permissions": permissions,
 	}
 	if admin != nil {
 		resp["id"] = admin.Id
 		resp["username"] = admin.Username
 		resp["real_name"] = admin.RealName
 		resp["phone"] = admin.Phone
-		resp["role_id"] = admin.RoleId
-		resp["role_code"] = admin.RoleCode
-		resp["role_name"] = admin.RoleName
+		resp["is_super"] = admin.IsSuper
+		resp["role_code"] = roleCode
 		resp["community_id"] = h.getAdminDefaultCommunityID(admin)
-		resp["community_ids"] = admin.CommunityIds
+		communityIDs := admin.CommunityIds
+		if communityIDs == nil {
+			communityIDs = []int64{}
+		}
+		resp["community_ids"] = communityIDs
 		resp["status"] = admin.Status
 	}
 
@@ -203,24 +221,27 @@ func (h *AdminHandler) getAdminDefaultCommunityID(admin *user.AdminInfo) int64 {
 	return admin.CommunityId
 }
 
-// getAdminPermissions 根据角色 ID 获取权限列表
+// getAdminPermissionsForCommunity 按社区语境实时解析管理员权限（任职角色权限并集）
 // 参数：
 //   - ctx: 上下文
-//   - roleID: 角色 ID
+//   - adminID: 管理员 ID
+//   - communityID: 社区 ID
 //
 // 返回值：
 //   - []string: 权限编码列表
-func (h *AdminHandler) getAdminPermissions(ctx context.Context, roleID int64) []string {
-	roles, err := h.userClient.ListRoles(ctx, &common.Empty{})
-	if err != nil {
-		return nil
+func (h *AdminHandler) getAdminPermissionsForCommunity(ctx context.Context, adminID, communityID int64) []string {
+	resp, err := h.userClient.GetAdminContext(ctx, &user.GetAdminContextReq{
+		AdminId:     adminID,
+		CommunityId: communityID,
+	})
+	if err != nil || resp == nil {
+		return []string{}
 	}
-	for _, r := range roles.List {
-		if r.Id == roleID {
-			return r.Permissions
-		}
+	// proto 空 repeated 反序列化后为 nil，统一输出空数组避免 JSON null
+	if resp.Permissions == nil {
+		return []string{}
 	}
-	return nil
+	return resp.Permissions
 }
 
 // getAdminCommunityID 获取管理员当前社区 ID
@@ -262,16 +283,17 @@ func containsInt64(list []int64, item int64) bool {
 	return false
 }
 
-// ListAdmins 获取管理员列表
+// ListAdmins 获取员工列表（当前社区语境下的任职员工）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdmins(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
-	communityID, _ := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64)
+	keyword := c.Query("keyword")
 
 	resp, err := h.userClient.ListAdmins(c.Request.Context(), &user.ListAdminsReq{
-		CommunityId: communityID,
+		CommunityId: h.getAdminCommunityID(c),
+		Keyword:     keyword,
 		Pagination: &common.Pagination{
 			Page:     int32(page),
 			PageSize: int32(pageSize),
@@ -284,20 +306,17 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
 }
 
-// CreateAdminReq 创建管理员请求
-// 包含管理员基础信息字段
+// CreateAdminReq 创建员工请求
+// username 已存在时复用该账号（不修改其密码），仅追加当前社区任职
 type CreateAdminReq struct {
-	Username    string `json:"username" binding:"required"`
-	Password    string `json:"password" binding:"required,min=6"`
-	RealName    string `json:"real_name"`
-	Phone       string `json:"phone"`
-	RoleID      int64  `json:"role_id" binding:"required"`
-	CommunityID int64  `json:"community_id"`
-	// 绑定的全部社区 ID 列表（写入 admin_communities 关联表）
-	CommunityIDs []int64 `json:"community_ids"`
+	Username string  `json:"username" binding:"required"`
+	Password string  `json:"password"`
+	RealName string  `json:"real_name"`
+	Phone    string  `json:"phone"`
+	RoleIDs  []int64 `json:"role_ids" binding:"required,min=1"`
 }
 
-// CreateAdmin 创建管理员
+// CreateAdmin 创建员工（在当前社区任职）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) CreateAdmin(c *gin.Context) {
@@ -307,14 +326,15 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		return
 	}
 
+	uc := appcontext.GetUserContext(c)
 	admin, err := h.userClient.CreateAdmin(c.Request.Context(), &user.CreateAdminReq{
-		Username:     req.Username,
-		Password:     req.Password,
-		RealName:     req.RealName,
-		Phone:        req.Phone,
-		RoleId:       req.RoleID,
-		CommunityId:  req.CommunityID,
-		CommunityIds: req.CommunityIDs,
+		Username:        req.Username,
+		Password:        req.Password,
+		RealName:        req.RealName,
+		Phone:           req.Phone,
+		CommunityId:     h.getAdminCommunityID(c),
+		RoleIds:         req.RoleIDs,
+		OperatorIsSuper: uc.Role == "super_admin",
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -323,20 +343,16 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	response.Success(c, h.toAdminVO(admin))
 }
 
-// UpdateAdminReq 更新管理员请求
-// 包含管理员可更新字段
+// UpdateAdminReq 更新员工请求
 type UpdateAdminReq struct {
-	RealName    string `json:"real_name"`
-	Phone       string `json:"phone"`
-	RoleID      int64  `json:"role_id"`
-	CommunityID int64  `json:"community_id"`
-	Status      int32  `json:"status"`
-	// 重新绑定的全部社区 ID 列表；空表示不修改绑定关系
-	CommunityIDs []int64 `json:"community_ids"`
+	RealName string  `json:"real_name"`
+	Phone    string  `json:"phone"`
+	Status   int32   `json:"status"`
+	RoleIDs  []int64 `json:"role_ids"`
 }
 
-// UpdateAdmin 更新管理员
-// 普通管理员只允许修改自己的基础信息；超级管理员可修改任意管理员
+// UpdateAdmin 更新员工
+// 仅超管可修改任意员工（含角色任职）；普通管理员仅可修改自己的基础资料
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
@@ -347,7 +363,8 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	}
 
 	ctx := appcontext.GetUserContext(c)
-	if ctx.Role != "super_admin" && ctx.UserID != id {
+	isSuper := ctx.Role == "super_admin"
+	if !isSuper && ctx.UserID != id {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -358,14 +375,20 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 		return
 	}
 
+	// 普通管理员改自己资料时不允许动角色任职
+	var roleIDs []int64
+	if isSuper {
+		roleIDs = req.RoleIDs
+	}
+
 	admin, err := h.userClient.UpdateAdmin(c.Request.Context(), &user.UpdateAdminReq{
-		Id:           id,
-		RealName:     req.RealName,
-		Phone:        req.Phone,
-		RoleId:       req.RoleID,
-		CommunityId:  req.CommunityID,
-		Status:       req.Status,
-		CommunityIds: req.CommunityIDs,
+		Id:              id,
+		RealName:        req.RealName,
+		Phone:           req.Phone,
+		Status:          req.Status,
+		CommunityId:     h.getAdminCommunityID(c),
+		RoleIds:         roleIDs,
+		OperatorIsSuper: isSuper,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -374,7 +397,7 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	response.Success(c, h.toAdminVO(admin))
 }
 
-// DeleteAdmin 删除管理员
+// DeleteAdmin 移除员工（仅移除当前社区任职，账号与其他社区任职保留）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
@@ -384,7 +407,10 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 		return
 	}
 
-	_, err = h.userClient.DeleteAdmin(c.Request.Context(), &user.DeleteAdminReq{Id: id})
+	_, err = h.userClient.DeleteAdmin(c.Request.Context(), &user.DeleteAdminReq{
+		Id:          id,
+		CommunityId: h.getAdminCommunityID(c),
+	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -431,10 +457,22 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 }
 
 // ListRoles 获取角色列表
+// 默认返回当前社区的角色；超管可传 scope=global 仅查看全局角色
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListRoles(c *gin.Context) {
-	resp, err := h.userClient.ListRoles(c.Request.Context(), &common.Empty{})
+	uc := appcontext.GetUserContext(c)
+	isSuper := uc.Role == "super_admin"
+
+	req := &user.ListRolesReq{CommunityId: h.getAdminCommunityID(c)}
+	if c.Query("scope") == "global" {
+		if !isSuper {
+			response.Error(c, errcode.NoPermission)
+			return
+		}
+		req.CommunityId = 0
+	}
+	resp, err := h.userClient.ListRoles(c.Request.Context(), req)
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -448,9 +486,12 @@ type CreateRoleReq struct {
 	Code        string   `json:"code" binding:"required"`
 	Permissions []string `json:"permissions"`
 	Description string   `json:"description"`
+	// 角色归属社区：0=全局角色（仅超管可建）；缺省为当前社区
+	CommunityID int64 `json:"community_id"`
 }
 
 // CreateRole 创建角色
+// 非超管仅能在当前社区创建，且权限点不得超出自身权限范围
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) CreateRole(c *gin.Context) {
@@ -460,11 +501,27 @@ func (h *AdminHandler) CreateRole(c *gin.Context) {
 		return
 	}
 
+	uc := appcontext.GetUserContext(c)
+	isSuper := uc.Role == "super_admin"
+	communityID := req.CommunityID
+	if communityID < 0 || (!isSuper && communityID != 0) {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	if !isSuper {
+		communityID = h.getAdminCommunityID(c)
+		if err := h.validatePermissionsSubset(c, communityID, req.Permissions); err != nil {
+			response.Error(c, errcode.ParamError, err.Error())
+			return
+		}
+	}
+
 	resp, err := h.userClient.CreateRole(c.Request.Context(), &user.CreateRoleReq{
 		Name:        req.Name,
 		Code:        req.Code,
 		Permissions: req.Permissions,
 		Description: req.Description,
+		CommunityId: communityID,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -482,6 +539,8 @@ type UpdateRoleReq struct {
 }
 
 // UpdateRole 更新角色
+// 全局角色仅超管可改；内置社区管理员角色仅超管可改；
+// 非超管的权限点不得超出自身权限范围
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateRole(c *gin.Context) {
@@ -495,6 +554,30 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
 		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	isSuper := uc.Role == "super_admin"
+
+	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	role := roleResp
+	if !isSuper {
+		if role.CommunityId == 0 || role.CommunityId != h.getAdminCommunityID(c) {
+			response.Error(c, errcode.NoPermission)
+			return
+		}
+		if role.Code == "community_admin" {
+			response.Error(c, errcode.NoPermission, "内置社区管理员角色仅超级管理员可修改")
+			return
+		}
+		if err := h.validatePermissionsSubset(c, role.CommunityId, req.Permissions); err != nil {
+			response.Error(c, errcode.ParamError, err.Error())
+			return
+		}
 	}
 
 	resp, err := h.userClient.UpdateRole(c.Request.Context(), &user.UpdateRoleReq{
@@ -512,6 +595,7 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 }
 
 // DeleteRole 删除角色
+// 全局角色仅超管可删；内置社区管理员角色不可删除（服务层校验）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) DeleteRole(c *gin.Context) {
@@ -521,6 +605,21 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 		return
 	}
 
+	uc := appcontext.GetUserContext(c)
+	isSuper := uc.Role == "super_admin"
+
+	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	if !isSuper {
+		if roleResp.CommunityId == 0 || roleResp.CommunityId != h.getAdminCommunityID(c) {
+			response.Error(c, errcode.NoPermission)
+			return
+		}
+	}
+
 	_, err = h.userClient.DeleteRole(c.Request.Context(), &user.DeleteRoleReq{Id: id})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -528,6 +627,52 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"id": id})
 }
+
+// validatePermissionsSubset 校验权限点列表不超出操作者在指定社区的权限范围
+// 操作者权限含 "*" 通配（或为超管场景不调用此函数）时放行
+// 参数：
+//   - c: gin 上下文
+//   - communityID: 社区语境
+//   - permissions: 待校验的权限点列表
+//
+// 返回值：
+//   - error: 超出范围时返回错误
+func (h *AdminHandler) validatePermissionsSubset(c *gin.Context, communityID int64, permissions []string) error {
+	if len(permissions) == 0 {
+		return nil
+	}
+	uc := appcontext.GetUserContext(c)
+	ctxInfo, err := h.userClient.GetAdminContext(c.Request.Context(), &user.GetAdminContextReq{
+		AdminId:     uc.UserID,
+		CommunityId: communityID,
+	})
+	if err != nil || ctxInfo == nil {
+		return err
+	}
+	for _, p := range ctxInfo.Permissions {
+		if p == "*" {
+			return nil
+		}
+	}
+	owned := make(map[string]struct{}, len(ctxInfo.Permissions))
+	for _, p := range ctxInfo.Permissions {
+		owned[p] = struct{}{}
+	}
+	for _, p := range permissions {
+		if _, ok := owned[p]; !ok {
+			return errPermissionsExceeded
+		}
+	}
+	return nil
+}
+
+// errPermissionsExceeded 权限超出自身范围的错误
+var errPermissionsExceeded = errorString("分配的权限超出自身权限范围")
+
+// errorString 简单字符串错误类型
+type errorString string
+
+func (e errorString) Error() string { return string(e) }
 
 // RefreshToken 刷新管理员 access_token
 // 参数：
@@ -2547,7 +2692,7 @@ func (h *AdminHandler) toAdminVO(admin *user.AdminInfo) gin.H {
 		"username":      admin.Username,
 		"real_name":     admin.RealName,
 		"phone":         admin.Phone,
-		"role_id":       admin.RoleId,
+		"is_super":      admin.IsSuper,
 		"role_code":     admin.RoleCode,
 		"role_name":     admin.RoleName,
 		"community_id":  admin.CommunityId,

@@ -45,8 +45,10 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!accessToken.value)
   /** 登录态是否完整就绪（信息与权限已加载） */
   const isReady = computed(() => status.value === 'ready')
-  /** 是否为超管 */
-  const isSuperAdmin = computed(() => admin.value?.role_code === 'super_admin' || admin.value?.role_name === '超级管理员')
+  /** 是否为超管（新模型看 is_super 标记，role_code 兼容旧 token 场景） */
+  const isSuperAdmin = computed(
+    () => !!admin.value?.is_super || admin.value?.role_code === 'super_admin' || admin.value?.role_name === '超级管理员',
+  )
   /** 当前管理员绑定的社区 ID 列表 */
   const communityIds = computed(() => admin.value?.community_ids ?? [])
 
@@ -215,12 +217,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * 判断当前管理员是否拥有指定权限
+   * 权限列表按当前社区语境解析，含 "*" 通配时视为全量
    * @param code 权限码
    * @returns 是否拥有权限
    */
   function hasPermission(code: string) {
     if (isSuperAdmin.value) return true
-    return permissions.value.includes(code)
+    return permissions.value.includes('*') || permissions.value.includes(code)
   }
 
   return {

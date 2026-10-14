@@ -33,23 +33,24 @@ VALUES (1, '幸福小区', '北京市朝阳区幸福路 1 号', 116.3974, 39.909
 INSERT INTO `communities` (`id`, `name`, `address`, `longitude`, `latitude`, `contact_phone`, `manager_name`, `manager_phone`, `pickup_address`, `delivery_fee`, `min_order_amount`, `delivery_range_km`, `business_hours`, `province`, `city`, `district`, `province_code`, `city_code`, `district_code`, `allow_outside_delivery`, `sort`, `status`, `created_at`, `updated_at`)
 VALUES (2, '阳光花园', '广东省深圳市南山区阳光路 8 号', 113.9304, 22.5333, '0755-88886666', '李管家', '13900139002', '花园南门快递柜旁自提点', 2.00, 0.00, 3.00, '09:00-21:00', '广东省', '深圳市', '南山区', '44', '4403', '440305', 1, 2, 1, NOW(), NOW());
 
--- ============ 角色与管理员 ============
-INSERT INTO `admin_roles` (`id`, `name`, `code`, `permissions`, `description`, `created_at`, `updated_at`)
+-- ============ 角色与管理员（多社区任职模型） ============
+-- admin_roles.community_id：0=全局角色；>0=社区私有角色
+-- 内置「社区管理员」角色每社区一条（code=community_admin）；超管判定看 admin_users.is_super
+INSERT INTO `admin_roles` (`id`, `name`, `code`, `community_id`, `permissions`, `description`, `created_at`, `updated_at`)
 VALUES
-  (1, '超级管理员', 'super_admin', '["*"]', '拥有全部权限', NOW(), NOW()),
-  (2, '社区管理员', 'community_admin', '["*"]', '负责单个社区的日常运营', NOW(), NOW());
+  (1, '超级管理员', 'super_admin', 0, '["*"]', '全局角色（仅兼容保留，超管判定看 is_super）', NOW(), NOW()),
+  (2, '社区管理员', 'community_admin', 2, '["*"]', '内置角色：负责本社区的日常运营与员工管理', NOW(), NOW());
 
--- 密码均为 admin123（bcrypt）
-INSERT INTO `admin_users` (`id`, `username`, `password`, `real_name`, `phone`, `role_id`, `community_id`, `status`, `last_login_at`, `last_login_ip`, `created_at`, `updated_at`)
+-- 密码均为 admin123（bcrypt）；admin_users.role_id/community_id 为旧模型遗留列，不再使用
+INSERT INTO `admin_users` (`id`, `username`, `password`, `real_name`, `phone`, `is_super`, `status`, `last_login_at`, `last_login_ip`, `created_at`, `updated_at`)
 VALUES
-  (1, 'admin', '$2a$10$Ewx/FgR4tNyr1fUK5uo0aecXSVFh4JBvY3Xm7MaHSa77S38p9QtqC', '系统管理员', '13800138001', 1, 1, 1, NULL, '', NOW(), NOW()),
-  (2, 'shequ', '$2a$10$Ewx/FgR4tNyr1fUK5uo0aecXSVFh4JBvY3Xm7MaHSa77S38p9QtqC', '幸福社区管理员', '13800138003', 2, 2, 1, NULL, '', NOW(), NOW());
+  (1, 'admin', '$2a$10$Ewx/FgR4tNyr1fUK5uo0aecXSVFh4JBvY3Xm7MaHSa77S38p9QtqC', '系统管理员', '13800138001', 1, 1, NULL, '', NOW(), NOW()),
+  (2, 'shequ', '$2a$10$Ewx/FgR4tNyr1fUK5uo0aecXSVFh4JBvY3Xm7MaHSa77S38p9QtqC', '阳光花园管理员', '13800138003', 0, 1, NULL, '', NOW(), NOW());
 
--- 管理员-社区多对多绑定（社区切换能力）
-INSERT INTO `admin_communities` (`id`, `admin_id`, `community_id`)
+-- 管理员社区任职（人在某社区担任某角色；超管无需任职，不受社区约束）
+INSERT INTO `admin_communities` (`id`, `admin_id`, `community_id`, `role_id`)
 VALUES
-  (1, 1, 1),
-  (2, 2, 2);
+  (2, 2, 2, 2);
 
 -- ============ 行政区划（演示子集，全量请走后台「检查更新」同步） ============
 INSERT INTO `regions` (`code`, `name`, `parent_code`, `level`, `status`, `created_at`, `updated_at`)

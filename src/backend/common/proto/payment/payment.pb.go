@@ -26,9 +26,9 @@ type CreatePaymentReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	OrderId       int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
 	UserId        int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	PayType       int32                  `protobuf:"varint,3,opt,name=pay_type,json=payType,proto3" json:"pay_type,omitempty"`
+	PayType       int32                  `protobuf:"varint,3,opt,name=pay_type,json=payType,proto3" json:"pay_type,omitempty"` // 1微信 2支付宝 3现金
 	Amount        float64                `protobuf:"fixed64,4,opt,name=amount,proto3" json:"amount,omitempty"`
-	Openid        string                 `protobuf:"bytes,5,opt,name=openid,proto3" json:"openid,omitempty"`
+	Openid        string                 `protobuf:"bytes,5,opt,name=openid,proto3" json:"openid,omitempty"` // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -103,8 +103,8 @@ type CreatePaymentResp struct {
 	PaymentNo       string                 `protobuf:"bytes,1,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
 	PayType         int32                  `protobuf:"varint,2,opt,name=pay_type,json=payType,proto3" json:"pay_type,omitempty"`
 	Amount          float64                `protobuf:"fixed64,3,opt,name=amount,proto3" json:"amount,omitempty"`
-	WechatPayParams string                 `protobuf:"bytes,4,opt,name=wechat_pay_params,json=wechatPayParams,proto3" json:"wechat_pay_params,omitempty"`
-	AlipayPayParams string                 `protobuf:"bytes,5,opt,name=alipay_pay_params,json=alipayPayParams,proto3" json:"alipay_pay_params,omitempty"`
+	WechatPayParams string                 `protobuf:"bytes,4,opt,name=wechat_pay_params,json=wechatPayParams,proto3" json:"wechat_pay_params,omitempty"` // JSON string，仅 pay_type=1 时填充
+	AlipayPayParams string                 `protobuf:"bytes,5,opt,name=alipay_pay_params,json=alipayPayParams,proto3" json:"alipay_pay_params,omitempty"` // JSON string，仅 pay_type=2 时填充；现金支付两者均为空
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -380,7 +380,7 @@ func (x *WechatCallbackReq) GetHeaders() map[string]string {
 
 type AlipayCallbackReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Params        map[string]string      `protobuf:"bytes,1,rep,name=params,proto3" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Params        map[string]string      `protobuf:"bytes,1,rep,name=params,proto3" json:"params,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 支付宝回调参数
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

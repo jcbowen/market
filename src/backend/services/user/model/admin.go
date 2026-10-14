@@ -4,22 +4,23 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/base"
 )
 
-// Admin 管理员模型
-// 对应管理员表，支持超管、社区管理员、员工等角色
+// Admin 管理员模型（账号层）
+// 多社区模型下仅承载账号身份属性；社区内的角色与权限通过 admin_communities 任职表表达。
+// 旧单角色模型的 role_id / community_id 列已废弃（DB 列保留，代码不再读写）。
 type Admin struct {
 	base.MysqlBaseModel
-	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	Username    string `gorm:"column:username;type:varchar(50);not null;unique;comment:用户名" json:"username"`
-	Password    string `gorm:"column:password;type:varchar(255);not null;comment:bcrypt 加密" json:"password"`
-	RealName    string `gorm:"column:real_name;type:varchar(50);comment:真实姓名" json:"real_name"`
-	Phone       string `gorm:"column:phone;type:varchar(20);comment:手机号" json:"phone"`
-	RoleID      int64  `gorm:"column:role_id;type:bigint;not null;index;comment:角色 ID" json:"role_id"`
-	CommunityID int64  `gorm:"column:community_id;type:bigint;default:0;index;comment:所属社区（超级管理员为 NULL）" json:"community_id"`
-	Status      int32  `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
+	ID       int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	Username string `gorm:"column:username;type:varchar(50);not null;unique;comment:用户名" json:"username"`
+	Password string `gorm:"column:password;type:varchar(255);not null;comment:bcrypt 加密" json:"password"`
+	RealName string `gorm:"column:real_name;type:varchar(50);comment:真实姓名" json:"real_name"`
+	Phone    string `gorm:"column:phone;type:varchar(20);comment:手机号" json:"phone"`
+	// IsSuper 是否超级管理员：不受社区与角色约束，拥有全部权限
+	IsSuper bool `gorm:"column:is_super;type:tinyint;not null;default:0;comment:是否超级管理员" json:"is_super"`
+	Status  int32  `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
 	LastLoginAt *string `gorm:"column:last_login_at;type:datetime;comment:最后登录时间" json:"last_login_at"`
-	LastLoginIP string `gorm:"column:last_login_ip;type:varchar(50);comment:最后登录 IP" json:"last_login_ip"`
-	CreatedAt   string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt   string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	LastLoginIP string  `gorm:"column:last_login_ip;type:varchar(50);comment:最后登录 IP" json:"last_login_ip"`
+	CreatedAt   string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt   string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回管理员表名

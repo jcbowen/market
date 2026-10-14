@@ -26,15 +26,32 @@ func NewRoleService(db *mysql.Instance) *RoleService {
 	return &RoleService{db: db}
 }
 
-// ListRoles 查询所有角色
+// ListRoles 查询角色列表
+// 多社区口径：communityID > 0 返回该社区的角色（includeGlobal 时附带全局角色）；
+// communityID = 0 仅返回全局角色
+//
 // 参数：
 //   - ctx: 上下文
+//   - communityID: 社区 ID
+//   - includeGlobal: 是否附带全局角色（community_id = 0）
+//
 // 返回：
 //   - []*model.Role: 角色列表
 //   - error: 错误信息
-func (s *RoleService) ListRoles(ctx context.Context) ([]*model.Role, error) {
+func (s *RoleService) ListRoles(ctx context.Context, communityID int64, includeGlobal bool) ([]*model.Role, error) {
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Role{})
+	if communityID > 0 {
+		if includeGlobal {
+			db = db.Where("community_id = ? OR community_id = 0", communityID)
+		} else {
+			db = db.Where("community_id = ?", communityID)
+		}
+	} else {
+		db = db.Where("community_id = 0")
+	}
+
 	var list []*model.Role
-	err := s.db.GetDb().WithContext(ctx).Order("id desc").Find(&list).Error
+	err := db.Order("id desc").Find(&list).Error
 	return list, err
 }
 
@@ -54,7 +71,31 @@ func (s *RoleService) GetRoleByID(ctx context.Context, id int64) (*model.Role, e
 	return &r, err
 }
 
+// GetRolesByIDs 批量查询角色
+// 参数：
+//   - ctx: 上下文
+//   - ids: 角色 ID 列表
+// 返回：
+//   - map[int64]*model.Role: 角色 ID → 角色
+//   - error: 错误信息
+func (s *RoleService) GetRolesByIDs(ctx context.Context, ids []int64) (map[int64]*model.Role, error) {
+	result := make(map[int64]*model.Role, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var list []*model.Role
+	if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", ids).Find(&list).Error; err != nil {
+		return nil, err
+	}
+	for i := range list {
+		result[list[i].ID] = list[i]
+	}
+	return result, nil
+}
+
 // CreateRole 创建角色
+// 角色归属社区由 req.CommunityId 决定（0=全局角色，仅超管可创建，由网关层校验）
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建请求
@@ -70,11 +111,12 @@ func (s *RoleService) CreateRole(ctx context.Context, req *user.CreateRoleReq) (
 	r := &model.Role{
 		Name:        req.Name,
 		Code:        req.Code,
+		CommunityID: req.CommunityId,
 		Permissions: permsJSON,
 		Description: req.Description,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(r).Error; err != nil {
-		return nil, err
+		return nil, fmt.Errorf("角色编码在当前范围内已存在")
 	}
 	return r, nil
 }
@@ -114,13 +156,71 @@ func (s *RoleService) UpdateRole(ctx context.Context, req *user.UpdateRoleReq) (
 }
 
 // DeleteRole 删除角色
+// 内置社区管理员角色不可删除；仍有员工任职的角色不可删除
+//
 // 参数：
 //   - ctx: 上下文
 //   - id: 角色 ID
 // 返回：
 //   - error: 错误信息
 func (s *RoleService) DeleteRole(ctx context.Context, id int64) error {
+	r, err := s.GetRoleByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if r.IsBuiltinCommunityAdmin() {
+		return fmt.Errorf("内置社区管理员角色不可删除")
+	}
+
+	var count int64
+	if err := s.db.GetDb().WithContext(ctx).
+		Model(&model.AdminCommunity{}).
+		Where("role_id = ?", id).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("该角色仍有员工任职，请先在员工管理中调整")
+	}
+
 	return s.db.GetDb().WithContext(ctx).Delete(&model.Role{}, id).Error
+}
+
+// EnsureCommunityAdminRole 获取（或创建）指定社区的内置社区管理员角色
+// 每个社区仅一条（code = community_admin），权限默认全量，可由超管调整
+//
+// 参数：
+//   - ctx: 上下文
+//   - communityID: 社区 ID
+// 返回：
+//   - *model.Role: 内置角色
+//   - error: 错误信息
+func (s *RoleService) EnsureCommunityAdminRole(ctx context.Context, communityID int64) (*model.Role, error) {
+	if communityID <= 0 {
+		return nil, fmt.Errorf("社区 ID 非法")
+	}
+	var r model.Role
+	err := s.db.GetDb().WithContext(ctx).
+		Where("community_id = ? AND code = ?", communityID, model.RoleCodeCommunityAdmin).
+		First(&r).Error
+	if err == nil {
+		return &r, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	r = model.Role{
+		Name:        "社区管理员",
+		Code:        model.RoleCodeCommunityAdmin,
+		CommunityID: communityID,
+		Permissions: `["*"]`,
+		Description: "内置角色：负责本社区的日常运营与员工管理",
+	}
+	if err := s.db.GetDb().WithContext(ctx).Create(&r).Error; err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // ToRoleInfo 将角色模型转换为 proto 角色信息
@@ -136,6 +236,7 @@ func ToRoleInfo(r *model.Role) *user.RoleInfo {
 		Id:          r.ID,
 		Name:        r.Name,
 		Code:        r.Code,
+		CommunityId: r.CommunityID,
 		Description: r.Description,
 	}
 	var permissions []string

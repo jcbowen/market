@@ -26,23 +26,28 @@ export interface ApiResult<T> {
 }
 
 /**
- * 管理员信息
+ * 管理员信息（多社区任职模型：账号层 + 任职层）
  */
 export interface AdminInfo {
   id: number
   username: string
-  nickname: string
+  nickname?: string
   real_name?: string
   phone?: string
   avatar?: string
-  role_id: number
-  role_name: string
+  /** 是否超级管理员（不受社区与角色约束） */
+  is_super?: boolean
+  /** 旧单角色字段，仅兼容保留 */
+  role_id?: number
+  role_name?: string
   role_code?: string
-  permissions: string[]
+  /** 当前社区语境下的角色列表（员工管理列表用） */
+  roles?: Role[]
+  permissions?: string[]
   status: number
-  /** 默认社区 ID（登录时取绑定列表第一个） */
+  /** 默认社区 ID（登录时取任职列表第一个） */
   community_id?: number
-  /** 绑定的全部社区 ID 列表（超管为空数组，表示不限制社区） */
+  /** 任职的全部社区 ID 列表（超管为空数组，表示不限制社区） */
   community_ids?: number[]
 }
 
@@ -73,7 +78,9 @@ export interface Role {
   code: string
   permissions: string[]
   description?: string
-  status: number
+  status?: number
+  /** 所属社区：0=全局角色（仅超管可见可管），>0=社区私有角色 */
+  community_id?: number
 }
 
 /**

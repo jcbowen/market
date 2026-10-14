@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,9 +14,10 @@ import (
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
 
-// AdminService 管理员业务服务
+// AdminService 管理员（账号与社区任职）业务服务
 type AdminService struct {
-	db *mysql.Instance
+	db          *mysql.Instance
+	roleService *RoleService
 }
 
 // NewAdminService 创建管理员业务服务
@@ -24,7 +26,7 @@ type AdminService struct {
 // 返回：
 //   - *AdminService: 管理员业务服务实例
 func NewAdminService(db *mysql.Instance) *AdminService {
-	return &AdminService{db: db}
+	return &AdminService{db: db, roleService: NewRoleService(db)}
 }
 
 // GetAdminByUsername 根据用户名查询管理员
@@ -43,17 +45,23 @@ func (s *AdminService) GetAdminByUsername(ctx context.Context, username string) 
 	return &a, err
 }
 
-// ListAdmins 分页查询管理员列表
+// ListAdmins 分页查询员工列表（账号 + 指定社区任职）
+// communityID > 0：仅列出在该社区任职的员工；communityID = 0：列出全部账号
+// 返回值 assignments 按管理员 ID 分组返回其（语境社区内的）任职行
+//
 // 参数：
 //   - ctx: 上下文
-//   - communityID: 社区 ID，0 表示全部
+//   - communityID: 任职社区 ID
+//   - keyword: 关键词（用户名/姓名/手机号模糊匹配）
 //   - page: 页码
 //   - pageSize: 每页条数
+//
 // 返回：
-//   - []*model.Admin: 管理员列表
+//   - []*model.Admin: 员工列表
+//   - map[int64][]*model.AdminCommunity: 管理员 ID → 任职行列表
 //   - int: 总条数
 //   - error: 错误信息
-func (s *AdminService) ListAdmins(ctx context.Context, communityID int64, page, pageSize int) ([]*model.Admin, int, error) {
+func (s *AdminService) ListAdmins(ctx context.Context, communityID int64, keyword string, page, pageSize int) ([]*model.Admin, map[int64][]*model.AdminCommunity, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -62,49 +70,101 @@ func (s *AdminService) ListAdmins(ctx context.Context, communityID int64, page, 
 	}
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Admin{})
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		db = db.Where("username LIKE ? OR real_name LIKE ? OR phone LIKE ?", like, like, like)
+	}
 	if communityID > 0 {
-		db = db.Where("community_id = ?", communityID)
+		db = db.Where("id IN (SELECT admin_id FROM admin_communities WHERE community_id = ?)", communityID)
 	}
 
 	var total int64
 	if err := db.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
 	var list []*model.Admin
 	offset := (page - 1) * pageSize
-	err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error
-	return list, int(total), err
+	if err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error; err != nil {
+		return nil, nil, 0, err
+	}
+
+	// 批量取语境社区内的任职行
+	adminIDs := make([]int64, 0, len(list))
+	for _, a := range list {
+		adminIDs = append(adminIDs, a.ID)
+	}
+	assignments := make(map[int64][]*model.AdminCommunity, len(list))
+	if len(adminIDs) > 0 {
+		adbm := s.db.GetDb().WithContext(ctx).Model(&model.AdminCommunity{}).Where("admin_id IN ?", adminIDs)
+		if communityID > 0 {
+			adbm = adbm.Where("community_id = ?", communityID)
+		}
+		var rows []*model.AdminCommunity
+		if err := adbm.Order("id asc").Find(&rows).Error; err != nil {
+			return nil, nil, 0, err
+		}
+		for _, row := range rows {
+			assignments[row.AdminID] = append(assignments[row.AdminID], row)
+		}
+	}
+
+	return list, assignments, int(total), nil
 }
 
-// CreateAdmin 创建管理员
-// 社区绑定（req.CommunityIds）与管理员创建在同一事务内写入
+// CreateAdmin 创建员工（含社区任职）
+// username 已存在时复用该账号（不修改其密码与状态），仅追加任职——
+// 支持同一人在多个社区任职；不存在时以给定信息新建账号
+//
 // 参数：
 //   - ctx: 上下文
-//   - req: 创建请求
+//   - req: 创建请求（community_id = 任职社区，role_ids = 该社区角色）
+//
 // 返回：
-//   - *model.Admin: 管理员模型
+//   - *model.Admin: 员工账号
 //   - error: 错误信息
 func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq) (*model.Admin, error) {
-	hashed, err := hashPassword(req.Password)
-	if err != nil {
+	if req.CommunityId <= 0 {
+		return nil, fmt.Errorf("缺少任职社区")
+	}
+	if len(req.RoleIds) == 0 {
+		return nil, fmt.Errorf("请至少分配一个角色")
+	}
+	if err := s.validateRolesForCommunity(ctx, req.CommunityId, req.RoleIds, req.OperatorIsSuper); err != nil {
 		return nil, err
 	}
 
-	a := &model.Admin{
-		Username:    req.Username,
-		Password:    hashed,
-		RealName:    req.RealName,
-		Phone:       req.Phone,
-		RoleID:      req.RoleId,
-		CommunityID: req.CommunityId,
-		Status:      1,
-	}
-	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(a).Error; err != nil {
+	var a *model.Admin
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing model.Admin
+		err := tx.Where("username = ?", req.Username).First(&existing).Error
+		switch {
+		case err == nil:
+			// 复用已有账号
+			a = &existing
+		case err == gorm.ErrRecordNotFound:
+			if len(req.Password) < 6 {
+				return fmt.Errorf("新账号密码长度至少 6 位")
+			}
+			hashed, err := hashPassword(req.Password)
+			if err != nil {
+				return err
+			}
+			a = &model.Admin{
+				Username: req.Username,
+				Password: hashed,
+				RealName: req.RealName,
+				Phone:    req.Phone,
+				Status:   1,
+			}
+			if err := tx.Create(a).Error; err != nil {
+				return err
+			}
+		default:
 			return err
 		}
-		return bindCommunitiesTx(tx, a.ID, req.CommunityIds)
+
+		return replaceAssignmentsTx(tx, a.ID, req.CommunityId, req.RoleIds, req.OperatorIsSuper)
 	})
 	if err != nil {
 		return nil, err
@@ -112,14 +172,15 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 	return a, nil
 }
 
-// UpdateAdmin 更新管理员
-// req.CommunityIds 非空时全量覆盖社区绑定关系（约定：空表示不修改绑定，
-// 因为 proto3 无法区分"未传"与"空数组"，而误清绑定会导致管理员失去数据访问权）
+// UpdateAdmin 更新员工（账号资料 + 指定社区的角色任职）
+// req.CommunityId > 0 时按 req.RoleIds 全量覆盖该社区任职
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新请求
+//
 // 返回：
-//   - *model.Admin: 管理员模型
+//   - *model.Admin: 员工账号
 //   - error: 错误信息
 func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq) (*model.Admin, error) {
 	a, err := s.getAdminByID(ctx, req.Id)
@@ -127,20 +188,26 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 		return nil, err
 	}
 
-	a.RealName = req.RealName
-	a.Phone = req.Phone
-	a.RoleID = req.RoleId
-	a.CommunityID = req.CommunityId
-	if req.Status != 0 {
-		a.Status = req.Status
+	if req.CommunityId > 0 && req.RoleIds != nil {
+		if len(req.RoleIds) == 0 {
+			return nil, fmt.Errorf("请至少保留一个角色；如需移除员工请使用移除操作")
+		}
+		if err := s.validateRolesForCommunity(ctx, req.CommunityId, req.RoleIds, req.OperatorIsSuper); err != nil {
+			return nil, err
+		}
 	}
 
 	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		a.RealName = req.RealName
+		a.Phone = req.Phone
+		if req.Status != 0 {
+			a.Status = req.Status
+		}
 		if err := tx.Save(a).Error; err != nil {
 			return err
 		}
-		if len(req.CommunityIds) > 0 {
-			return bindCommunitiesTx(tx, a.ID, req.CommunityIds)
+		if req.CommunityId > 0 && req.RoleIds != nil {
+			return replaceAssignmentsTx(tx, a.ID, req.CommunityId, req.RoleIds, req.OperatorIsSuper)
 		}
 		return nil
 	})
@@ -150,14 +217,37 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 	return a, nil
 }
 
-// DeleteAdmin 删除管理员
+// DeleteAdmin 移除员工在指定社区的任职（账号保留，不影响其在其他社区的任职）
+// communityID = 0 时移除全部任职
+//
 // 参数：
 //   - ctx: 上下文
 //   - id: 管理员 ID
+//   - communityID: 任职社区 ID
+//
 // 返回：
 //   - error: 错误信息
-func (s *AdminService) DeleteAdmin(ctx context.Context, id int64) error {
-	return s.db.GetDb().WithContext(ctx).Delete(&model.Admin{}, id).Error
+func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID int64) error {
+	a, err := s.getAdminByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if a.IsSuper {
+		return fmt.Errorf("超级管理员账号不可移除")
+	}
+
+	db := s.db.GetDb().WithContext(ctx).Where("admin_id = ?", id)
+	if communityID > 0 {
+		db = db.Where("community_id = ?", communityID)
+	}
+	res := db.Delete(&model.AdminCommunity{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("该员工在此社区无任职")
+	}
+	return nil
 }
 
 // ChangeAdminPassword 修改管理员密码
@@ -223,103 +313,187 @@ func (s *AdminService) getAdminByID(ctx context.Context, id int64) (*model.Admin
 	return &a, err
 }
 
-// ListAdminCommunityIDs 查询管理员关联的社区 ID 列表
-// 超管角色返回空列表，由调用方自行判断为全部社区
+// ListAdminCommunityIDs 查询管理员任职的全部社区 ID 列表（去重）
+// 超管返回空列表，由调用方自行判断为不限制社区
 //
 // 参数：
 //   - ctx: 上下文
 //   - adminID: 管理员 ID
-//   - isSuperAdmin: 是否为超管
 //
 // 返回：
 //   - []int64: 社区 ID 列表
 //   - error: 错误信息
-func (s *AdminService) ListAdminCommunityIDs(ctx context.Context, adminID int64, isSuperAdmin bool) ([]int64, error) {
-	if isSuperAdmin {
-		return nil, nil
-	}
-	var list []*model.AdminCommunity
-	err := s.db.GetDb().WithContext(ctx).
-		Where("admin_id = ?", adminID).
-		Find(&list).Error
+func (s *AdminService) ListAdminCommunityIDs(ctx context.Context, adminID int64) ([]int64, error) {
+	a, err := s.getAdminByID(ctx, adminID)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]int64, 0, len(list))
-	for _, item := range list {
-		ids = append(ids, item.CommunityID)
+	if a.IsSuper {
+		return nil, nil
+	}
+	var rows []*model.AdminCommunity
+	err = s.db.GetDb().WithContext(ctx).
+		Where("admin_id = ?", adminID).
+		Order("community_id asc").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(rows))
+	seen := make(map[int64]struct{}, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.CommunityID]; ok {
+			continue
+		}
+		seen[row.CommunityID] = struct{}{}
+		ids = append(ids, row.CommunityID)
 	}
 	return ids, nil
 }
 
-// BindAdminCommunities 绑定管理员与社区关联
-// 会清空原有绑定关系后重新写入
+// GetAdminContext 实时解析管理员在指定社区的权限上下文
+// 超管不受社区约束；普通管理员权限 = 该社区全部任职角色的权限并集
 //
 // 参数：
 //   - ctx: 上下文
 //   - adminID: 管理员 ID
-//   - communityIDs: 社区 ID 列表
+//   - communityID: 社区 ID
 //
 // 返回：
-//   - error: 错误信息
-func (s *AdminService) BindAdminCommunities(ctx context.Context, adminID int64, communityIDs []int64) error {
-	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return bindCommunitiesTx(tx, adminID, communityIDs)
-	})
-}
-
-// bindCommunitiesTx 在给定事务内全量覆盖管理员的社区绑定关系
-// 先删除原有绑定，再写入新绑定（跳过非正值）
-//
-// 参数：
-//   - tx: gorm 事务
-//   - adminID: 管理员 ID
-//   - communityIDs: 社区 ID 列表
-//
-// 返回：
-//   - error: 错误信息
-func bindCommunitiesTx(tx *gorm.DB, adminID int64, communityIDs []int64) error {
-	if err := tx.Where("admin_id = ?", adminID).Delete(&model.AdminCommunity{}).Error; err != nil {
-		return err
+//   - isSuper: 是否超管
+//   - roleIDs: 任职角色 ID 列表
+//   - permissions: 权限并集（可能含 "*" 通配）
+//   - bound: 是否在该社区有任职
+//   - err: 错误信息
+func (s *AdminService) GetAdminContext(ctx context.Context, adminID, communityID int64) (isSuper bool, roleIDs []int64, permissions []string, bound bool, err error) {
+	a, err := s.getAdminByID(ctx, adminID)
+	if err != nil {
+		return false, nil, nil, false, err
 	}
-	for _, cid := range communityIDs {
-		if cid <= 0 {
+	if a.IsSuper {
+		return true, nil, nil, true, nil
+	}
+
+	var rows []*model.AdminCommunity
+	q := s.db.GetDb().WithContext(ctx).Where("admin_id = ?", adminID)
+	if communityID > 0 {
+		q = q.Where("community_id = ?", communityID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return false, nil, nil, false, err
+	}
+	if len(rows) == 0 {
+		return false, nil, []string{}, false, nil
+	}
+
+	roleIDs = make([]int64, 0, len(rows))
+	for _, row := range rows {
+		roleIDs = append(roleIDs, row.RoleID)
+	}
+	roles, err := s.roleService.GetRolesByIDs(ctx, roleIDs)
+	if err != nil {
+		return false, nil, nil, false, err
+	}
+
+	permSet := make(map[string]struct{})
+	for _, id := range roleIDs {
+		r := roles[id]
+		if r == nil {
 			continue
 		}
-		if err := tx.Create(&model.AdminCommunity{AdminID: adminID, CommunityID: cid}).Error; err != nil {
-			return err
+		var perms []string
+		_ = json.Unmarshal([]byte(r.Permissions), &perms)
+		for _, p := range perms {
+			permSet[p] = struct{}{}
+		}
+	}
+	permissions = make([]string, 0, len(permSet))
+	for p := range permSet {
+		permissions = append(permissions, p)
+	}
+	return false, roleIDs, permissions, true, nil
+}
+
+// validateRolesForCommunity 校验角色列表可被分配到指定社区：
+// 角色必须存在且属于该社区；内置社区管理员角色仅超管可分配
+//
+// 参数：
+//   - ctx: 上下文
+//   - communityID: 社区 ID
+//   - roleIDs: 角色 ID 列表
+//   - operatorIsSuper: 操作者是否超管
+//
+// 返回：
+//   - error: 错误信息
+func (s *AdminService) validateRolesForCommunity(ctx context.Context, communityID int64, roleIDs []int64, operatorIsSuper bool) error {
+	roles, err := s.roleService.GetRolesByIDs(ctx, roleIDs)
+	if err != nil {
+		return err
+	}
+	for _, id := range roleIDs {
+		r := roles[id]
+		if r == nil {
+			return fmt.Errorf("角色不存在（ID %d）", id)
+		}
+		if r.CommunityID != communityID {
+			return fmt.Errorf("角色「%s」不属于当前社区", r.Name)
+		}
+		if r.IsBuiltinCommunityAdmin() && !operatorIsSuper {
+			return fmt.Errorf("仅超级管理员可设置社区管理员")
 		}
 	}
 	return nil
 }
 
-// ListCommunitiesForAdmins 批量查询多个管理员的社区绑定关系
-// 单次 IN 查询后按管理员 ID 分组，供列表接口组装，避免逐行查询
+// replaceAssignmentsTx 在给定事务内全量覆盖管理员在指定社区的角色任职
+// 若角色列表包含该社区内置社区管理员角色，则自动替换原任职者（每社区仅一人）
 //
 // 参数：
-//   - ctx: 上下文
-//   - adminIDs: 管理员 ID 列表
+//   - tx: gorm 事务
+//   - adminID: 管理员 ID
+//   - communityID: 社区 ID
+//   - roleIDs: 角色 ID 列表
+//   - operatorIsSuper: 操作者是否超管（防越权兜底）
 //
 // 返回：
-//   - map[int64][]int64: 管理员 ID → 绑定社区 ID 列表
 //   - error: 错误信息
-func (s *AdminService) ListCommunitiesForAdmins(ctx context.Context, adminIDs []int64) (map[int64][]int64, error) {
-	result := make(map[int64][]int64, len(adminIDs))
-	if len(adminIDs) == 0 {
-		return result, nil
+func replaceAssignmentsTx(tx *gorm.DB, adminID int64, communityID int64, roleIDs []int64, operatorIsSuper bool) error {
+	// 内置社区管理员角色替换语义：该社区此角色仅保留当前操作目标一人
+	for _, id := range roleIDs {
+		var r model.Role
+		if err := tx.First(&r, id).Error; err != nil {
+			return fmt.Errorf("角色不存在（ID %d）", id)
+		}
+		if r.IsBuiltinCommunityAdmin() && r.CommunityID == communityID {
+			if !operatorIsSuper {
+				return fmt.Errorf("仅超级管理员可设置社区管理员")
+			}
+			if err := tx.
+				Where("community_id = ? AND role_id = ? AND admin_id <> ?", communityID, id, adminID).
+				Delete(&model.AdminCommunity{}).Error; err != nil {
+				return err
+			}
+		}
 	}
-	var list []*model.AdminCommunity
-	err := s.db.GetDb().WithContext(ctx).
-		Where("admin_id IN ?", adminIDs).
-		Order("id asc").
-		Find(&list).Error
-	if err != nil {
-		return nil, err
+
+	if err := tx.
+		Where("admin_id = ? AND community_id = ?", adminID, communityID).
+		Delete(&model.AdminCommunity{}).Error; err != nil {
+		return err
 	}
-	for _, item := range list {
-		result[item.AdminID] = append(result[item.AdminID], item.CommunityID)
+	for _, rid := range roleIDs {
+		if rid <= 0 {
+			continue
+		}
+		if err := tx.Create(&model.AdminCommunity{
+			AdminID:     adminID,
+			CommunityID: communityID,
+			RoleID:      rid,
+		}).Error; err != nil {
+			return err
+		}
 	}
-	return result, nil
+	return nil
 }
 
 // hashPassword 对密码进行 bcrypt 哈希
@@ -346,11 +520,11 @@ func CheckPassword(password, hashed string) error {
 // ToAdminInfo 将管理员模型转换为 proto 管理员信息
 // 参数：
 //   - a: 管理员模型
-//   - role: 角色模型（可选）
-//   - communityIDs: 关联社区 ID 列表（可选）
+//   - communityIDs: 任职社区 ID 列表（可选，超管传空）
+//   - roles: 语境社区内的角色列表（可选）
 // 返回：
 //   - *user.AdminInfo: proto 管理员信息
-func ToAdminInfo(a *model.Admin, role *model.Role, communityIDs []int64) *user.AdminInfo {
+func ToAdminInfo(a *model.Admin, communityIDs []int64, roles []*model.Role) *user.AdminInfo {
 	if a == nil {
 		return nil
 	}
@@ -360,16 +534,26 @@ func ToAdminInfo(a *model.Admin, role *model.Role, communityIDs []int64) *user.A
 		Password:     a.Password,
 		RealName:     a.RealName,
 		Phone:        a.Phone,
-		RoleId:       a.RoleID,
-		CommunityId:  a.CommunityID,
 		CommunityIds: communityIDs,
 		Status:       a.Status,
 		LastLoginAt:  ptrString(a.LastLoginAt),
 		LastLoginIp:  a.LastLoginIP,
+		IsSuper:      a.IsSuper,
 	}
-	if role != nil {
-		info.RoleCode = role.Code
-		info.RoleName = role.Name
+	// 旧单角色字段兼容填充：前端仅用 role_code 判定超管
+	if a.IsSuper {
+		info.RoleCode = model.RoleCodeSuperAdmin
+		info.RoleName = "超级管理员"
+	}
+	for _, r := range roles {
+		info.Roles = append(info.Roles, ToRoleInfo(r))
+		if !a.IsSuper && info.RoleCode == "" {
+			info.RoleCode = "admin"
+			info.RoleName = r.Name
+		}
+	}
+	if info.RoleCode == "" {
+		info.RoleCode = "admin"
 	}
 	return info
 }

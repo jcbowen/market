@@ -407,7 +407,7 @@ const menuOptions = computed<MenuOption[]>(() => {
         { label: '行政区划', key: '/system/regions', permission: 'region:view' },
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
         { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
-        { label: '管理员', key: '/system/admins', permission: 'admin:view' },
+        { label: '员工管理', key: '/system/admins', permission: 'admin:view' },
         { label: '角色管理', key: '/system/roles', permission: 'role:view' },
       ],
     },

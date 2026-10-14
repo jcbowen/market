@@ -50,7 +50,9 @@ const (
 	UserService_UpdateAdmin_FullMethodName            = "/user.UserService/UpdateAdmin"
 	UserService_DeleteAdmin_FullMethodName            = "/user.UserService/DeleteAdmin"
 	UserService_ChangeAdminPassword_FullMethodName    = "/user.UserService/ChangeAdminPassword"
+	UserService_GetAdminContext_FullMethodName        = "/user.UserService/GetAdminContext"
 	UserService_ListRoles_FullMethodName              = "/user.UserService/ListRoles"
+	UserService_GetRole_FullMethodName                = "/user.UserService/GetRole"
 	UserService_CreateRole_FullMethodName             = "/user.UserService/CreateRole"
 	UserService_UpdateRole_FullMethodName             = "/user.UserService/UpdateRole"
 	UserService_DeleteRole_FullMethodName             = "/user.UserService/DeleteRole"
@@ -95,8 +97,11 @@ type UserServiceClient interface {
 	UpdateAdmin(ctx context.Context, in *UpdateAdminReq, opts ...grpc.CallOption) (*AdminInfo, error)
 	DeleteAdmin(ctx context.Context, in *DeleteAdminReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ChangeAdminPassword(ctx context.Context, in *ChangeAdminPasswordReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// GetAdminContext 实时解析管理员在指定社区的权限上下文（任职角色权限并集）
+	GetAdminContext(ctx context.Context, in *GetAdminContextReq, opts ...grpc.CallOption) (*AdminContextInfo, error)
 	// 角色
-	ListRoles(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*ListRolesResp, error)
+	ListRoles(ctx context.Context, in *ListRolesReq, opts ...grpc.CallOption) (*ListRolesResp, error)
+	GetRole(ctx context.Context, in *GetRoleReq, opts ...grpc.CallOption) (*RoleInfo, error)
 	CreateRole(ctx context.Context, in *CreateRoleReq, opts ...grpc.CallOption) (*RoleInfo, error)
 	UpdateRole(ctx context.Context, in *UpdateRoleReq, opts ...grpc.CallOption) (*RoleInfo, error)
 	DeleteRole(ctx context.Context, in *DeleteRoleReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
@@ -410,10 +415,30 @@ func (c *userServiceClient) ChangeAdminPassword(ctx context.Context, in *ChangeA
 	return out, nil
 }
 
-func (c *userServiceClient) ListRoles(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*ListRolesResp, error) {
+func (c *userServiceClient) GetAdminContext(ctx context.Context, in *GetAdminContextReq, opts ...grpc.CallOption) (*AdminContextInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminContextInfo)
+	err := c.cc.Invoke(ctx, UserService_GetAdminContext_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) ListRoles(ctx context.Context, in *ListRolesReq, opts ...grpc.CallOption) (*ListRolesResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListRolesResp)
 	err := c.cc.Invoke(ctx, UserService_ListRoles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) GetRole(ctx context.Context, in *GetRoleReq, opts ...grpc.CallOption) (*RoleInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RoleInfo)
+	err := c.cc.Invoke(ctx, UserService_GetRole_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -489,8 +514,11 @@ type UserServiceServer interface {
 	UpdateAdmin(context.Context, *UpdateAdminReq) (*AdminInfo, error)
 	DeleteAdmin(context.Context, *DeleteAdminReq) (*common.CommonResponse, error)
 	ChangeAdminPassword(context.Context, *ChangeAdminPasswordReq) (*common.CommonResponse, error)
+	// GetAdminContext 实时解析管理员在指定社区的权限上下文（任职角色权限并集）
+	GetAdminContext(context.Context, *GetAdminContextReq) (*AdminContextInfo, error)
 	// 角色
-	ListRoles(context.Context, *common.Empty) (*ListRolesResp, error)
+	ListRoles(context.Context, *ListRolesReq) (*ListRolesResp, error)
+	GetRole(context.Context, *GetRoleReq) (*RoleInfo, error)
 	CreateRole(context.Context, *CreateRoleReq) (*RoleInfo, error)
 	UpdateRole(context.Context, *UpdateRoleReq) (*RoleInfo, error)
 	DeleteRole(context.Context, *DeleteRoleReq) (*common.CommonResponse, error)
@@ -594,8 +622,14 @@ func (UnimplementedUserServiceServer) DeleteAdmin(context.Context, *DeleteAdminR
 func (UnimplementedUserServiceServer) ChangeAdminPassword(context.Context, *ChangeAdminPasswordReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ChangeAdminPassword not implemented")
 }
-func (UnimplementedUserServiceServer) ListRoles(context.Context, *common.Empty) (*ListRolesResp, error) {
+func (UnimplementedUserServiceServer) GetAdminContext(context.Context, *GetAdminContextReq) (*AdminContextInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAdminContext not implemented")
+}
+func (UnimplementedUserServiceServer) ListRoles(context.Context, *ListRolesReq) (*ListRolesResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRoles not implemented")
+}
+func (UnimplementedUserServiceServer) GetRole(context.Context, *GetRoleReq) (*RoleInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRole not implemented")
 }
 func (UnimplementedUserServiceServer) CreateRole(context.Context, *CreateRoleReq) (*RoleInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateRole not implemented")
@@ -1167,8 +1201,26 @@ func _UserService_ChangeAdminPassword_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_GetAdminContext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAdminContextReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetAdminContext(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetAdminContext_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetAdminContext(ctx, req.(*GetAdminContextReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UserService_ListRoles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(common.Empty)
+	in := new(ListRolesReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1180,7 +1232,25 @@ func _UserService_ListRoles_Handler(srv interface{}, ctx context.Context, dec fu
 		FullMethod: UserService_ListRoles_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UserServiceServer).ListRoles(ctx, req.(*common.Empty))
+		return srv.(UserServiceServer).ListRoles(ctx, req.(*ListRolesReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_GetRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRoleReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetRole(ctx, req.(*GetRoleReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1367,8 +1437,16 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _UserService_ChangeAdminPassword_Handler,
 		},
 		{
+			MethodName: "GetAdminContext",
+			Handler:    _UserService_GetAdminContext_Handler,
+		},
+		{
 			MethodName: "ListRoles",
 			Handler:    _UserService_ListRoles_Handler,
+		},
+		{
+			MethodName: "GetRole",
+			Handler:    _UserService_GetRole_Handler,
 		},
 		{
 			MethodName: "CreateRole",

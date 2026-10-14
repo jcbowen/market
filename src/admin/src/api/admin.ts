@@ -6,11 +6,11 @@ import type { ApiResult, AdminInfo, PageParams, PageResult, Role } from './types
  */
 
 /**
- * 获取管理员列表
+ * 获取员工列表（当前社区语境下的任职员工）
  * @param params 查询参数
- * @returns 分页管理员列表
+ * @returns 分页员工列表
  */
-export function getAdminList(params: PageParams & { keyword?: string; role_id?: number }) {
+export function getAdminList(params: PageParams & { keyword?: string }) {
   return request<ApiResult<PageResult<AdminInfo>>>({
     url: '/api/v1/admin/admins',
     method: 'GET',
@@ -31,11 +31,18 @@ export function getAdminDetail(id: number) {
 }
 
 /**
- * 创建管理员
- * @param data 管理员数据
+ * 创建员工（当前社区任职）
+ * username 已存在时复用该账号（不修改其密码），仅追加任职
+ * @param data 员工数据
  * @returns 创建结果
  */
-export function createAdmin(data: Partial<AdminInfo> & { password: string }) {
+export function createAdmin(data: {
+  username: string
+  password?: string
+  real_name?: string
+  phone?: string
+  role_ids: number[]
+}) {
   return request<ApiResult<AdminInfo>>({
     url: '/api/v1/admin/admins',
     method: 'POST',
@@ -44,12 +51,20 @@ export function createAdmin(data: Partial<AdminInfo> & { password: string }) {
 }
 
 /**
- * 更新管理员
- * @param id 管理员 ID
- * @param data 管理员数据
+ * 更新员工（资料 + 当前社区角色任职）
+ * @param id 员工 ID
+ * @param data 员工数据
  * @returns 更新结果
  */
-export function updateAdmin(id: number, data: Partial<AdminInfo>) {
+export function updateAdmin(
+  id: number,
+  data: {
+    real_name?: string
+    phone?: string
+    status?: number
+    role_ids?: number[]
+  },
+) {
   return request<ApiResult<AdminInfo>>({
     url: `/api/v1/admin/admins/${id}`,
     method: 'PUT',
@@ -85,12 +100,15 @@ export function changeAdminPassword(id: number, data: { old_password: string; ne
 
 /**
  * 获取角色列表
+ * 默认返回当前社区的角色；超管可传 scope=global 查看全局角色
+ * @param params 查询参数
  * @returns 角色列表
  */
-export function getRoleList() {
+export function getRoleList(params?: { scope?: 'global' }) {
   return request<ApiResult<Role[]>>({
     url: '/api/v1/admin/roles',
     method: 'GET',
+    params,
   })
 }
 
