@@ -187,6 +187,7 @@ let requestSeq = 0
 
 /**
  * 加载订单列表
+ * 不传 community_id：后端按用户全量返回，避免 token 中社区快照过期导致切换社区后订单查不到
  */
 async function loadOrders() {
   if (loadStatus.value === 'loading' || loadStatus.value === 'nomore') return
@@ -198,7 +199,6 @@ async function loadOrders() {
       status: status || undefined,
       page: page.value,
       page_size: pageSize,
-      community_id: userStore.communityInfo?.id,
     })
     if (seq !== requestSeq) return
     const list = res.data?.list || []

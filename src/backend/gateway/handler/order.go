@@ -69,9 +69,21 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	}
 
 	uc := appcontext.GetUserContext(c)
+	// 订单归属社区实时查用户当前归属：token 中的 community_id 是登录快照，
+	// 切换社区不重签 token，用快照会把新社区的订单挂到旧社区
+	userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
+	if err != nil {
+		log.Printf("查询用户归属社区失败: %v", err)
+		response.GRPCError(c, err)
+		return
+	}
+	if userResp == nil {
+		response.Error(c, errcode.NotFound, "用户不存在")
+		return
+	}
 	resp, err := h.orderClient.CreateOrder(c.Request.Context(), &order.CreateOrderReq{
 		UserId:       uc.UserID,
-		CommunityId:  uc.CommunityID,
+		CommunityId:  userResp.CommunityId,
 		DeliveryType: req.DeliveryType,
 		AddressId:    req.AddressID,
 		DeliveryTime: req.DeliveryTime,
@@ -88,7 +100,8 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 }
 
 // ListOrders 获取当前用户订单列表
-// 支持 status、community_id 与分页
+// 支持显式传入 status、community_id 与分页；不按 token 中的社区快照兜底过滤——
+// 切换社区不重签 token，快照是登录时的旧值，会导致新社区/未选社区时期的订单查不到（显示不全）
 // 参数：
 //   - c: gin 上下文
 func (h *OrderHandler) ListOrders(c *gin.Context) {
@@ -96,12 +109,13 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
-	uc := appcontext.GetUserContext(c)
-	communityID := uc.CommunityID
+	// 仅显式传 community_id > 0 时按社区过滤，默认展示该用户全部订单
+	communityID := int64(0)
 	if id, err := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64); err == nil && id > 0 {
 		communityID = id
 	}
 
+	uc := appcontext.GetUserContext(c)
 	resp, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
 		UserId:      uc.UserID,
 		CommunityId: communityID,
@@ -189,10 +203,13 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"is_default":    false,
 	}
 	if o != nil && o.DeliveryType == 1 {
-		// 自提单：地址卡展示自提点信息（社区名称 + 社区地址）
+		// 自提单：地址卡展示自提点信息（社区名称 + 自提点地址，未配置时回退社区地址）
 		if community, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: o.CommunityId}); err == nil && community != nil {
 			address["contact_name"] = community.Name
-			address["detail"] = community.Address
+			address["detail"] = community.PickupAddress
+			if address["detail"] == "" {
+				address["detail"] = community.Address
+			}
 		}
 	} else if o != nil && o.ContactName != "" {
 		address["contact_name"] = o.ContactName

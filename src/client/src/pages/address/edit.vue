@@ -66,8 +66,9 @@
       @close="regionPickerShow = false"
     ></u-picker>
 
-    <view class="save-btn" @click="onSave">
-      <u-button type="success" text="保存" :loading="saving" />
+    <!-- 事件必须直接绑在 u-button 上：其 stop 属性默认 true 会拦截冒泡，外层 view 收不到点击 -->
+    <view class="save-btn">
+      <u-button type="success" text="保存" :loading="saving" @click="onSave" />
     </view>
   </view>
 </template>

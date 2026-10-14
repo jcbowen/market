@@ -6,22 +6,15 @@
         :class="['delivery-option', deliveryType === DELIVERY_TYPE_PICKUP ? 'active' : '']"
         @click="deliveryType = DELIVERY_TYPE_PICKUP"
       >
-        <u-icon
-          :name="deliveryType === DELIVERY_TYPE_PICKUP ? 'checkmark-circle-fill' : 'circle'"
-          size="18"
-          :color="deliveryType === DELIVERY_TYPE_PICKUP ? '#07c160' : '#cccccc'"
-        />
+        <!-- 未选中用 CSS 空心圆：uview-plus 图标库无 "circle" 图标名，缺失时会渲染成文字 -->
+        <view class="delivery-radio" :class="{ checked: deliveryType === DELIVERY_TYPE_PICKUP }" />
         <text class="delivery-option-text">社区自提</text>
       </view>
       <view
         :class="['delivery-option', deliveryType === DELIVERY_TYPE_DELIVERY ? 'active' : '']"
         @click="deliveryType = DELIVERY_TYPE_DELIVERY"
       >
-        <u-icon
-          :name="deliveryType === DELIVERY_TYPE_DELIVERY ? 'checkmark-circle-fill' : 'circle'"
-          size="18"
-          :color="deliveryType === DELIVERY_TYPE_DELIVERY ? '#07c160' : '#cccccc'"
-        />
+        <view class="delivery-radio" :class="{ checked: deliveryType === DELIVERY_TYPE_DELIVERY }" />
         <text class="delivery-option-text">送货上门</text>
       </view>
     </view>
@@ -32,7 +25,8 @@
         <view class="address-top">
           <text class="name">{{ userStore.communityInfo?.name || '当前社区' }}</text>
         </view>
-        <text class="address-text">{{ userStore.communityInfo?.address || '社区地址暂未配置' }}</text>
+        <!-- 自提卡优先展示自提点地址，未配置时回退社区地址 -->
+        <text class="address-text">{{ userStore.communityInfo?.pickup_address || userStore.communityInfo?.address || '社区地址暂未配置' }}</text>
         <text class="address-tip">商品备好后凭取货信息到点自提</text>
       </view>
     </view>
@@ -602,6 +596,21 @@ async function onSubmit() {
 
 .delivery-option-text {
   font-size: 28rpx;
+}
+
+/* 单选圆点：未选中为灰色空心圆，选中为绿色实心（内嵌白色对勾感） */
+.delivery-radio {
+  width: 36rpx;
+  height: 36rpx;
+  box-sizing: border-box;
+  border: 2rpx solid #cccccc;
+  border-radius: 50%;
+  background-color: transparent;
+  transition: all 0.2s;
+}
+
+.delivery-radio.checked {
+  border: 10rpx solid #07c160;
 }
 
 .address-card {

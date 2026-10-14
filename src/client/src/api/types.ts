@@ -34,6 +34,8 @@ export interface Community {
   delivery_fee?: number
   /** 起送金额（proto omitempty，值为 0 时字段缺省，取值须用 ?? 0；0 表示无起送门槛） */
   min_order_amount?: number
+  /** 自提点地址（proto omitempty，未配置时为空，展示回退 address） */
+  pickup_address?: string
 }
 
 /** 收货地址 */

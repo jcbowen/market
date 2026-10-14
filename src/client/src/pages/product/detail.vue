@@ -43,11 +43,12 @@
         <u-icon name="shopping-cart" size="24" color="#666666" />
         <text>购物车</text>
       </view>
-      <view class="action-btn" @click="onAddCart">
-        <u-button type="warning" text="加入购物车" />
+      <!-- 事件必须直接绑在 u-button 上：其 stop 属性默认 true 会拦截冒泡，外层 view 收不到点击 -->
+      <view class="action-btn">
+        <u-button type="warning" text="加入购物车" @click="onAddCart" />
       </view>
-      <view class="action-btn" @click="onBuy">
-        <u-button type="success" text="立即购买" />
+      <view class="action-btn">
+        <u-button type="success" text="立即购买" @click="onBuy" />
       </view>
     </view>
 
@@ -81,8 +82,8 @@
           <text>数量</text>
           <u-number-box v-model="quantity" :min="1" :max="activeStock || 1" integer />
         </view>
-        <view class="sku-confirm-btn" @click="confirmSku">
-          <u-button type="success" :text="isMultiSpec && !matchedSku ? '请选择完整规格' : '确定'" />
+        <view class="sku-confirm-btn">
+          <u-button type="success" :text="isMultiSpec && !matchedSku ? '请选择完整规格' : '确定'" @click="confirmSku" />
         </view>
       </view>
     </u-popup>

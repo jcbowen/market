@@ -11,8 +11,9 @@
     <view v-else-if="!items.length" class="empty-wrap">
       <u-icon name="shopping-cart" size="80" color="#cccccc" />
       <text class="empty-text">购物车还是空的</text>
-      <view class="empty-btn" @click="goHome">
-        <u-button type="success" size="small" text="去逛逛" />
+      <!-- 事件必须直接绑在 u-button 上：其 stop 属性默认 true 会拦截冒泡，外层 view 收不到点击 -->
+      <view class="empty-btn">
+        <u-button type="success" size="small" text="去逛逛" @click="goHome" />
       </view>
     </view>
 
@@ -63,6 +64,7 @@
                     :max="item.stock"
                     integer
                     @change="onQuantityChange(item)"
+                    @overlimit="onQuantityOverlimit(item, $event)"
                   />
                 </view>
               </view>
@@ -84,12 +86,12 @@
         <view
           class="settlement-btn"
           :class="{ disabled: !selectedIds.length }"
-          @click="onSettlement"
         >
           <u-button
             type="success"
             text="去结算"
             :disabled="!selectedIds.length"
+            @click="onSettlement"
           />
         </view>
       </view>
@@ -275,6 +277,47 @@ async function onQuantityChange(item: CartItem) {
   } catch {
     // ignore
   }
+}
+
+/** 删除确认弹窗进行中标志：长按连减会连续触发 overlimit，防止重复弹窗 */
+let deleteConfirmPending = false
+
+/**
+ * 数量已到下限仍点击减号（u-number-box 触发 overlimit）：
+ * 数量为 1 时弹窗确认删除该商品；min_buy > 1 时提示最低购买份数
+ * @param item 购物车项
+ * @param type 触发方向：minus / plus
+ */
+function onQuantityOverlimit(item: CartItem, type: 'minus' | 'plus') {
+  if (type !== 'minus' || deleteConfirmPending) return
+  const minBuy = item.min_buy || 1
+  if (item.quantity > minBuy) return
+  if (minBuy > 1) {
+    uni.showToast({ title: `最低购买 ${minBuy} 份`, icon: 'none' })
+    return
+  }
+  deleteConfirmPending = true
+  uni.showModal({
+    title: '提示',
+    content: '数量不能再少了，确定将该商品移出购物车吗？',
+    confirmText: '删除',
+    success: async (res) => {
+      if (res.confirm) {
+        try {
+          await removeCartItem(item.id)
+          uni.showToast({ title: '已删除', icon: 'success' })
+        } catch {
+          // 请求拦截器已统一提示
+        } finally {
+          loadCart()
+        }
+      }
+      deleteConfirmPending = false
+    },
+    fail: () => {
+      deleteConfirmPending = false
+    },
+  })
 }
 
 /**

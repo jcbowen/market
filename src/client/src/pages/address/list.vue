@@ -29,8 +29,9 @@
       </view>
     </view>
 
-    <view class="add-btn" @click="onAdd">
-      <u-button type="success" text="新增地址" />
+    <!-- 事件必须直接绑在 u-button 上：其 stop 属性默认 true 会拦截冒泡，外层 view 收不到点击 -->
+    <view class="add-btn">
+      <u-button type="success" text="新增地址" @click="onAdd" />
     </view>
   </view>
 </template>
