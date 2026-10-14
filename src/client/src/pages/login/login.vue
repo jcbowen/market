@@ -90,7 +90,7 @@ function onBack() {
   if (pages.length > 1) {
     uni.navigateBack({})
   } else {
-    uni.reLaunch({ url: '/pages/index/index' })
+    uni.reLaunch({ url: '/pages/category/category' })
   }
 }
 
@@ -131,7 +131,7 @@ async function handleLoginSuccess(data?: {
   if (decodedRedirect.startsWith('/pages')) {
     uni.redirectTo({ url: decodedRedirect })
   } else {
-    uni.reLaunch({ url: '/pages/index/index' })
+    uni.reLaunch({ url: '/pages/category/category' })
   }
 }
 

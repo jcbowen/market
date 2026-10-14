@@ -6,7 +6,6 @@
 
 /** tabBar 页面路径列表（不含前导斜杠，需与 pages.json 保持一致） */
 export const TAB_BAR_PATHS = [
-  'pages/index/index',
   'pages/category/category',
   'pages/cart/cart',
   'pages/user/user',

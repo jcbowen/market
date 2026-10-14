@@ -48,10 +48,32 @@
     <view class="menu-card">
       <u-cell-group>
         <u-cell icon="map" title="收货地址" @click="goAddressList" />
-        <u-cell icon="coupon" title="优惠券" @click="goCoupon" />
+        <u-cell icon="coupon" title="领券中心" @click="goCoupon" />
+        <u-cell icon="clock" title="限时秒杀" @click="goFlash" />
+        <u-cell icon="tags" title="满减活动" @click="goFullReduction" />
         <u-cell icon="home" title="切换社区" @click="goCommunitySelect" />
-        <u-cell icon="clock" title="秒杀活动" @click="goFlash" />
       </u-cell-group>
+    </view>
+
+    <!-- 热门商品 -->
+    <view class="product-section">
+      <text class="section-title">热门商品</text>
+      <view class="product-grid">
+        <view
+          v-for="item in products"
+          :key="item.id"
+          class="product-card"
+          @click="goProductDetail(item.id)"
+        >
+          <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" />
+          <view class="product-info">
+            <text class="product-name">{{ item.name }}</text>
+            <text class="product-price">{{ formatPrice(item.price) }}</text>
+            <text class="product-original">{{ formatPrice(item.original_price) }}</text>
+          </view>
+        </view>
+      </view>
+      <u-loadmore :status="loadStatus" />
     </view>
 
     <view v-if="userStore.isLogin" class="logout-btn">
@@ -62,9 +84,11 @@
 </template>
 
 <script setup lang="ts">
-import { onShow } from '@dcloudio/uni-app'
+import { ref } from 'vue'
+import { onShow, onReachBottom } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { maskPhone } from '@/utils/format'
+import { getProducts } from '@/api/product'
+import { formatPrice, maskPhone } from '@/utils/format'
 import {
   goLogin,
   goOrderList,
@@ -72,14 +96,60 @@ import {
   goCoupon,
   goCommunitySelect,
   goFlash,
+  goFullReduction,
+  goProductDetail,
   goHome,
 } from '@/utils/navigate'
+import type { Product } from '@/api/types'
 
 const userStore = useUserStore()
 
+const products = ref<Product[]>([])
+const page = ref(1)
+const pageSize = 10
+const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
+
 onShow(() => {
   userStore.fetchUserInfo()
+  page.value = 1
+  products.value = []
+  // 重置加载状态，避免上次 nomore/loading 门禁导致 onShow 重新加载时直接 return
+  loadStatus.value = 'loadmore'
+  loadProducts()
 })
+
+onReachBottom(() => {
+  loadProducts()
+})
+
+/**
+ * 加载热门商品列表
+ */
+async function loadProducts() {
+  if (loadStatus.value === 'loading' || loadStatus.value === 'nomore') return
+  loadStatus.value = 'loading'
+  try {
+    const res = await getProducts({
+      page: page.value,
+      page_size: pageSize,
+      community_id: userStore.communityInfo?.id,
+    })
+    const list = res.data?.list || []
+    if (page.value === 1) {
+      products.value = list
+    } else {
+      products.value.push(...list)
+    }
+    if (list.length < pageSize) {
+      loadStatus.value = 'nomore'
+    } else {
+      loadStatus.value = 'loadmore'
+      page.value += 1
+    }
+  } catch {
+    loadStatus.value = 'loadmore'
+  }
+}
 
 /**
  * 退出登录
@@ -183,5 +253,64 @@ function onLogout() {
 
 .logout-btn .u-button {
   width: 100%;
+}
+
+.product-section {
+  margin: 0 30rpx;
+}
+
+.section-title {
+  display: block;
+  margin: 20rpx 0;
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
+.product-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20rpx;
+}
+
+.product-card {
+  width: calc(50% - 10rpx);
+  border-radius: 16rpx;
+  background-color: #ffffff;
+  overflow: hidden;
+}
+
+.product-image {
+  width: 100%;
+  height: 320rpx;
+}
+
+.product-info {
+  padding: 16rpx;
+}
+
+.product-name {
+  display: block;
+  font-size: 28rpx;
+  color: #333333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-price {
+  display: inline-block;
+  margin-top: 12rpx;
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #ff4d4f;
+}
+
+.product-original {
+  display: inline-block;
+  margin-left: 12rpx;
+  font-size: 24rpx;
+  color: #999999;
+  text-decoration: line-through;
 }
 </style>

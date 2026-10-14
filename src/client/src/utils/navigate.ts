@@ -84,18 +84,9 @@ export function goBack() {
 }
 
 /**
- * 跳转首页 tab
+ * 跳转首页 tab（首页即分类页）
  */
 export function goHome() {
-  goPage('/pages/index/index')
-}
-
-/**
- * 跳转分类页
- * 注意：分类页为 tabBar 页面，switchTab 不支持 query 参数，categoryId 不会生效
- * @param _categoryId 默认选中的分类 ID（保留参数兼容旧调用，实际不生效）
- */
-export function goCategory(_categoryId?: number) {
   goPage('/pages/category/category')
 }
 

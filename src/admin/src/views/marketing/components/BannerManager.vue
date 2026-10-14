@@ -61,8 +61,8 @@ import { formatDateTime } from '@/utils/datetime'
 
 const message = useMessage()
 
+// C 端旧首页已下线（分类页升级为首页），position=1 不再有任何展示位，仅保留选项供历史数据显示
 const positionOptions = [
-  { label: '首页', value: 1 },
   { label: '分类页', value: 2 },
 ]
 
@@ -123,7 +123,7 @@ const form = reactive<Partial<Banner>>({
   title: '',
   image_url: '',
   link_url: '',
-  position: 1,
+  position: 2,
   sort: 0,
   status: 1,
 })
@@ -161,7 +161,7 @@ function openModal(row?: Banner) {
   form.title = row?.title || ''
   form.image_url = row?.image_url || ''
   form.link_url = row?.link_url || ''
-  form.position = row?.position || 1
+  form.position = row?.position || 2
   form.sort = row?.sort ?? 0
   form.status = row?.status ?? 1
   if (row?.start_time && row?.end_time) {

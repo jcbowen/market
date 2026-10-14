@@ -8,15 +8,9 @@
   },
   "pages": [
     {
-      "path": "pages/index/index",
-      "style": {
-        "navigationBarTitleText": "社区商超"
-      }
-    },
-    {
       "path": "pages/category/category",
       "style": {
-        "navigationBarTitleText": "分类",
+        "navigationBarTitleText": "社区商超",
         "navigationStyle": "custom"
       }
     },
@@ -114,14 +108,8 @@
     "backgroundColor": "#ffffff",
     "list": [
       {
-        "pagePath": "pages/index/index",
-        "text": "首页",
-        "iconPath": "static/tabbar/home.png",
-        "selectedIconPath": "static/tabbar/home-active.png"
-      },
-      {
         "pagePath": "pages/category/category",
-        "text": "分类",
+        "text": "首页",
         "iconPath": "static/tabbar/grid.png",
         "selectedIconPath": "static/tabbar/grid-active.png"
       },

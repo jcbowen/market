@@ -2,7 +2,7 @@
   <view class="address-edit-page">
     <!-- 未选择社区：默认不允许社区外配送，阻断保存 -->
     <view v-if="communityChecked && !community" class="community-tip-card">
-      <text class="community-tip-text">您还未选择社区，请先在「首页-切换社区」中选择所在社区后再添加收货地址</text>
+      <text class="community-tip-text">您还未选择社区，请先在「我的-切换社区」中选择所在社区后再添加收货地址</text>
     </view>
 
     <view class="form-card">
