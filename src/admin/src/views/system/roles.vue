@@ -2,7 +2,7 @@
   <n-card :title="isGlobalPage ? '全局角色' : '角色管理'">
     <n-space vertical>
       <n-alert v-if="isGlobalPage" type="info" :show-icon="false">
-        全局角色为系统级角色（community_id = 0），仅超级管理员可管理；社区级角色请在「员工与角色 → 角色管理」中维护
+        全局角色为系统级角色（community_id = 0），仅超级管理员可管理；社区级角色请在「门店管理 → 角色管理」中维护
       </n-alert>
       <n-alert v-else type="info" :show-icon="false">
         以下为当前社区的私有角色；可分配的权限点不超出你自身的权限范围（并受社区权限上限约束）。

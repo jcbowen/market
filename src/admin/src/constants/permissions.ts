@@ -63,6 +63,10 @@ export const permissionGroups: PermissionGroup[] = [
     options: [{ label: '统计查看', value: 'statistics:view' }],
   },
   {
+    label: '门店（社区级）',
+    options: [{ label: '门店设置', value: 'community:config' }],
+  },
+  {
     label: '社区（系统级）',
     options: [
       { label: '社区查看', value: 'community:view' },

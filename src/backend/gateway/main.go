@@ -309,6 +309,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/communities", gwMiddleware.RequirePermission("community:create"), adminHandler.CreateCommunity)
 			authAdmin.PUT("/communities/:id", gwMiddleware.RequirePermission("community:update"), adminHandler.UpdateCommunity)
 			authAdmin.DELETE("/communities/:id", gwMiddleware.RequirePermission("community:delete"), adminHandler.DeleteCommunity)
+			// 门店设置：社区管理员维护本社区资料与配送配置（白名单字段，
+			// 不含名称/地址/经纬度/负责人电话等仅超管可改的信息），目标社区取当前社区语境
+			authAdmin.GET("/community/profile", gwMiddleware.RequirePermission("community:config"), adminHandler.GetCommunityProfile)
+			authAdmin.PUT("/community/profile", gwMiddleware.RequirePermission("community:config"), adminHandler.UpdateCommunityProfile)
 			// 社区权限分配：读写该社区权限上限（内置社区管理员角色权限集），处理器内强制超管
 			authAdmin.GET("/communities/:id/permissions", gwMiddleware.RequirePermission("community:view"), adminHandler.GetCommunityPermissions)
 			authAdmin.PUT("/communities/:id/permissions", gwMiddleware.RequirePermission("community:view"), adminHandler.UpdateCommunityPermissions)

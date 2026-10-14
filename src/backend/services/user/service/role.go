@@ -27,6 +27,8 @@ var DefaultCommunityAdminPermissions = []string{
 	"statistics:view",
 	"admin:view", "admin:create", "admin:update", "admin:delete",
 	"role:view", "role:create", "role:update", "role:delete",
+	// 门店设置：社区管理员自助维护本社区资料与配送配置（不含名称/地址/经纬度/负责人电话）
+	"community:config",
 }
 
 // RoleService 角色业务服务

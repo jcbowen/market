@@ -690,6 +690,15 @@ type UpdateCommunityPermissionsReq struct {
 	Permissions []string `json:"permissions"`
 }
 
+// systemLevelPermissions 系统级权限点：仅超管可用，不进入社区权限上限。
+// 对应页面均在系统管理空间（社区管理/行政区划/支付·售后·附件配置），业务菜单不展示；
+// 保存社区权限时自动剔除（前端同样过滤，此处兜底），存量 ["*"] 上限社区保存一次即收敛
+var systemLevelPermissions = map[string]struct{}{
+	"community:view":   {}, "community:create": {}, "community:update": {}, "community:delete": {},
+	"region:view": {}, "region:update": {},
+	"settings:view": {}, "settings:update": {},
+}
+
 // UpdateCommunityPermissions 设置社区权限上限（超管专用）
 // 即更新该社区内置社区管理员角色的权限集；内置角色不存在时自动创建
 // 权限解析运行时与上限取交集，保存后立即对社区全员生效
@@ -714,6 +723,16 @@ func (h *AdminHandler) UpdateCommunityPermissions(c *gin.Context) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
+
+	// 剔除系统级权限点：社区权限上限只承载业务权限
+	filtered := make([]string, 0, len(req.Permissions))
+	for _, p := range req.Permissions {
+		if _, ok := systemLevelPermissions[p]; !ok {
+			filtered = append(filtered, p)
+		}
+	}
+	req.Permissions = filtered
+
 	if len(req.Permissions) == 0 {
 		response.Error(c, errcode.ParamError, "至少保留一个权限点，否则社区管理员将无法登录后台")
 		return
@@ -2654,6 +2673,105 @@ func (h *AdminHandler) DeleteCommunity(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"id": id})
+}
+
+// --- 门店设置（社区级资料/配置，社区管理员可自助维护） ---
+
+// CommunityProfileReq 门店设置更新请求
+// 仅包含社区管理员允许自行修改的字段（白名单）；
+// 社区名称、地址、经纬度、负责人电话、营业状态等由超管在「社区管理」统一维护，不在本接口范围
+type CommunityProfileReq struct {
+	ContactPhone         string  `json:"contact_phone"`
+	ManagerName          string  `json:"manager_name"`
+	PickupAddress        string  `json:"pickup_address"`
+	DeliveryFee          float64 `json:"delivery_fee"`
+	MinOrderAmount       float64 `json:"min_order_amount"`
+	DeliveryRangeKm      float64 `json:"delivery_range_km"`
+	BusinessHours        string  `json:"business_hours"`
+	AllowOutsideDelivery bool    `json:"allow_outside_delivery"`
+}
+
+// GetCommunityProfile 获取当前社区门店设置
+// 目标社区取当前社区语境（X-Community-Id），无社区语境时报参数错误
+//
+// 接口: GET /api/v1/admin/community/profile
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AdminHandler) GetCommunityProfile(c *gin.Context) {
+	id := h.getAdminCommunityID(c)
+	if id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	resp, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// UpdateCommunityProfile 更新当前社区门店设置（白名单字段）
+// 复用 UpdateCommunity RPC 的整表覆盖语义：先读当前社区，再仅覆盖白名单字段，
+// 社区名称/地址/经纬度/负责人电话/省市区/状态等一律回填当前值，保证社区管理员无法借本接口篡改
+//
+// 接口: PUT /api/v1/admin/community/profile
+//
+// 参数:
+//   - c: gin 上下文
+func (h *AdminHandler) UpdateCommunityProfile(c *gin.Context) {
+	id := h.getAdminCommunityID(c)
+	if id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req CommunityProfileReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	cur, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	resp, err := h.userClient.UpdateCommunity(c.Request.Context(), &user.UpdateCommunityInfoReq{
+		Id: id,
+		// 以下字段保持当前值不可覆盖（超管在社区管理维护）
+		Name:         cur.Name,
+		Address:      cur.Address,
+		Longitude:    cur.Longitude,
+		Latitude:     cur.Latitude,
+		ManagerPhone: cur.ManagerPhone,
+		Status:       cur.Status,
+		Sort:         cur.Sort,
+		Province:     cur.Province,
+		City:         cur.City,
+		District:     cur.District,
+
+		ProvinceCode: cur.ProvinceCode,
+		CityCode:     cur.CityCode,
+		DistrictCode: cur.DistrictCode,
+		// 白名单字段：社区管理员可自行维护
+		ContactPhone:         req.ContactPhone,
+		ManagerName:          req.ManagerName,
+		PickupAddress:        req.PickupAddress,
+		DeliveryFee:          req.DeliveryFee,
+		MinOrderAmount:       req.MinOrderAmount,
+		DeliveryRangeKm:      req.DeliveryRangeKm,
+		BusinessHours:        req.BusinessHours,
+		AllowOutsideDelivery: req.AllowOutsideDelivery,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
 }
 
 // --- 退款管理 ---

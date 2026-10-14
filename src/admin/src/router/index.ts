@@ -163,79 +163,86 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/statistics/index.vue'),
         meta: { title: '数据统计', permission: 'statistics:view', group: '数据统计' },
       },
-      // 系统管理
+      // 系统管理（独立系统空间：入口在右上角用户下拉，meta.space 标识后左侧菜单整体替换为系统管理菜单）
       {
         path: 'system/communities',
         name: 'CommunityList',
         component: () => import('@/views/system/communities.vue'),
-        meta: { title: '社区管理', permission: 'community:view', group: '系统管理' },
+        meta: { title: '社区管理', permission: 'community:view', group: '系统管理', space: 'system' },
       },
       {
         path: 'system/regions',
         name: 'RegionList',
         component: () => import('@/views/system/regions.vue'),
-        meta: { title: '行政区划', permission: 'region:view', group: '系统管理' },
+        meta: { title: '行政区划', permission: 'region:view', group: '系统管理', space: 'system' },
       },
       {
         path: 'system/communities/edit/:id',
         name: 'CommunityEdit',
         component: () => import('@/views/system/community-form.vue'),
-        meta: { title: '编辑社区', permission: 'community:update', group: '系统管理', hidden: true },
+        meta: { title: '编辑社区', permission: 'community:update', group: '系统管理', space: 'system', hidden: true },
       },
       {
         path: 'system/communities/create',
         name: 'CommunityCreate',
         component: () => import('@/views/system/community-form.vue'),
-        meta: { title: '新增社区', permission: 'community:create', group: '系统管理', hidden: true },
+        meta: { title: '新增社区', permission: 'community:create', group: '系统管理', space: 'system', hidden: true },
+      },
+      // 门店管理（社区级）
+      {
+        path: 'store/settings',
+        name: 'StoreSettings',
+        component: () => import('@/views/store/settings.vue'),
+        meta: { title: '门店设置', permission: 'community:config', group: '门店管理' },
       },
       {
         path: 'system/admins',
         name: 'AdminList',
         component: () => import('@/views/system/admins.vue'),
-        meta: { title: '员工管理', permission: 'admin:view', group: '员工与角色' },
+        meta: { title: '员工管理', permission: 'admin:view', group: '门店管理' },
       },
       {
         path: 'system/roles',
         name: 'RoleList',
         component: () => import('@/views/system/roles.vue'),
-        meta: { title: '角色管理', permission: 'role:view', group: '员工与角色' },
+        meta: { title: '角色管理', permission: 'role:view', group: '门店管理' },
       },
       {
         path: 'system/roles-global',
         name: 'RoleListGlobal',
         component: () => import('@/views/system/roles.vue'),
-        meta: { title: '全局角色', permission: 'role:view', group: '系统管理' },
+        meta: { title: '全局角色', permission: 'role:view', group: '系统管理', space: 'system' },
       },
       {
         path: 'system/community-permissions',
         name: 'CommunityPermission',
         component: () => import('@/views/system/community-permissions.vue'),
-        meta: { title: '社区权限', permission: 'community:view', group: '系统管理' },
+        meta: { title: '社区权限', permission: 'community:view', group: '系统管理', space: 'system' },
       },
       {
         path: 'system/payment',
         name: 'PaymentSetting',
         component: () => import('@/views/settings/payment.vue'),
-        meta: { title: '支付配置', permission: 'settings:view', group: '系统管理' },
+        meta: { title: '支付配置', permission: 'settings:view', group: '系统管理', space: 'system' },
       },
       {
         path: 'system/refund',
         name: 'RefundSetting',
         component: () => import('@/views/settings/refund.vue'),
-        meta: { title: '售后配置', permission: 'settings:view', group: '系统管理' },
+        meta: { title: '售后配置', permission: 'settings:view', group: '系统管理', space: 'system' },
       },
       {
         path: 'system/attachment',
         name: 'AttachmentSetting',
         component: () => import('@/views/settings/attachment.vue'),
-        meta: { title: '附件配置', permission: 'settings:view', group: '系统管理' },
+        meta: { title: '附件配置', permission: 'settings:view', group: '系统管理', space: 'system' },
       },
       // 本地附件迁移工具：入口在附件配置页，不在左侧菜单展示
       {
         path: 'system/attachment-migrate',
         name: 'AttachmentMigrate',
         component: () => import('@/views/settings/attachment-migrate.vue'),
-        meta: { title: '附件迁移', permission: 'settings:view', group: '系统管理', hidden: true },
+        meta: { title: '附件迁移', permission: 'settings:view', group: '系统管理', space: 'system', hidden: true },
       },
       // 个人设置：入口在右上角头像下拉，不在左侧菜单展示
       {
@@ -310,6 +317,12 @@ router.beforeEach(async (to) => {
   // restoring：幂等恢复登录态，失败时 ensureReady 已登出
   if (!(await authStore.ensureReady())) {
     return { path: '/login', query: { redirect: to.fullPath } }
+  }
+
+  // ready：系统管理空间仅超管可入（与菜单入口、后端超管专用接口对应，防止直连 URL 越权进入）
+  if (to.meta.space === 'system' && !authStore.isSuperAdmin) {
+    const home = resolveHomePath(authStore)
+    return home ? { path: home } : { path: '/403', query: { from: to.fullPath } }
   }
 
   // ready：权限判定；无权限时保留登录态跳转无权限提示页

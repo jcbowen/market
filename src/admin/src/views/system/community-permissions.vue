@@ -4,6 +4,7 @@
       <n-alert type="info" :show-icon="false">
         为社区门店分配权限：勾选项即该社区的「权限上限」，社区管理员在本社区内可再分配的权限不会超出此范围。
         保存后立即生效（运行时按上限取交集），无需调整社区内已有角色。
+        系统级权限（社区管理、行政区划、系统配置）为超管专属，不在本页分配范围，保存时自动剔除。
       </n-alert>
 
       <n-space align="center">
@@ -24,15 +25,13 @@
           <n-space vertical>
             <n-space align="center">
               <span style="font-weight: 600">权限点</span>
-              <n-button size="tiny" @click="selectAll">全选</n-button>
               <n-button size="tiny" @click="selectOperationDefault">勾选运营默认集</n-button>
-              <n-button size="tiny" @click="removeSystemPerms">清除系统级权限</n-button>
             </n-space>
             <n-alert v-if="affectedRoles.length > 0" type="warning" :show-icon="false">
               收紧后以下私有角色将被上限截断（运行时按上限取交集）：
               {{ affectedRoles.map((r) => `${r.name}（${r.exceeded.join('、')}）`).join('；') }}
             </n-alert>
-            <div v-for="group in permissionGroups" :key="group.label" class="perm-group">
+            <div v-for="group in communityPermissionGroups" :key="group.label" class="perm-group">
               <div class="perm-group-title">
                 {{ group.label }}
                 <n-button text size="tiny" type="primary" @click="toggleGroup(group)">全选/清空本组</n-button>
@@ -88,9 +87,29 @@ const saving = ref(false)
 const savedPermissions = ref<string[]>([])
 const form = ref<{ permissions: string[] }>({ permissions: [] })
 
-/** 运营默认集（与后端 DefaultCommunityAdminPermissions 对应）：全部权限点减去系统级三组 */
-const systemLevelValues = ['community:view', 'community:create', 'community:update', 'community:delete', 'region:view', 'region:update']
-const operationDefault = allPermissionOptions.map((o) => o.value).filter((v) => !systemLevelValues.includes(v))
+/**
+ * 系统级权限点：仅超管可用，不进入社区权限上限
+ * （对应页面均在系统管理空间：社区管理/行政区划/支付·售后·附件配置；业务菜单不展示）
+ * 载入与保存时自动剔除，存量 ["*"] 上限社区保存一次即收敛为纯业务权限
+ */
+const systemLevelValues = [
+  'community:view',
+  'community:create',
+  'community:update',
+  'community:delete',
+  'region:view',
+  'region:update',
+  'settings:view',
+  'settings:update',
+]
+
+/** 本页可分配权限组 = 全量分组剔除系统级权限点（空组隐藏：社区、行政区划两组整体为系统级） */
+const communityPermissionGroups = permissionGroups
+  .map((g) => ({ ...g, options: g.options.filter((o) => !systemLevelValues.includes(o.value)) }))
+  .filter((g) => g.options.length > 0)
+
+/** 运营默认集 = 本页可分配权限点全量（即后端 DefaultCommunityAdminPermissions 对应范围） */
+const operationDefault = communityPermissionGroups.flatMap((g) => g.options.map((o) => o.value))
 
 /** 权限点 → 中文名映射（受影响角色提示用） */
 const permissionLabelMap = new Map(allPermissionOptions.map((o) => [o.value, o.label]))
@@ -164,7 +183,8 @@ async function loadDetail() {
       roles.value = res.data.data.roles ?? []
       const perms = res.data.data.permissions ?? []
       savedPermissions.value = perms
-      form.value.permissions = [...perms]
+      // 载入即剔除系统级权限点：存量 ["*"] 上限保存一次自动收敛
+      form.value.permissions = perms.filter((p) => !systemLevelValues.includes(p))
     }
   } finally {
     loading.value = false
@@ -181,18 +201,9 @@ function toggleGroup(group: { options: { value: string }[] }) {
   }
 }
 
-function selectAll() {
-  form.value.permissions = allPermissionOptions.map((o) => o.value)
-}
-
-/** 勾选运营默认集：全量权限点减去系统级三组（社区/行政区划） */
+/** 勾选运营默认集：本页可分配权限点全量（系统级权限不在范围内） */
 function selectOperationDefault() {
   form.value.permissions = [...operationDefault]
-}
-
-/** 从当前勾选中移除系统级权限（社区 community:*、行政区划 region:*），保持系统管理为超管专属 */
-function removeSystemPerms() {
-  form.value.permissions = form.value.permissions.filter((v) => !systemLevelValues.includes(v))
 }
 
 async function save() {

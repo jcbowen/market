@@ -10,15 +10,24 @@
       :native-scrollbar="false"
     >
       <div class="logo">
-        <span v-if="!collapsed">社区商超</span>
-        <span v-else>商超</span>
+        <span v-if="!collapsed">{{ isSystemSpace ? '系统管理' : '社区商超' }}</span>
+        <span v-else>{{ isSystemSpace ? '系统' : '商超' }}</span>
+      </div>
+      <!-- 系统空间：提供返回业务后台的出口，保证两套菜单完全隔离互不混排 -->
+      <div v-if="isSystemSpace" class="sider-back">
+        <n-button quaternary block size="small" @click="backToBusiness">
+          <template #icon>
+            <n-icon><arrow-back-outline /></n-icon>
+          </template>
+          <span v-if="!collapsed">返回业务后台</span>
+        </n-button>
       </div>
       <n-menu
         :value="activeKey"
         :collapsed="collapsed"
         :collapsed-width="64"
         :collapsed-icon-size="22"
-        :options="menuOptions"
+        :options="currentMenuOptions"
         @update:value="onMenuChange"
       />
     </n-layout-sider>
@@ -115,7 +124,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, CheckmarkCircle } from '@vicons/ionicons5'
+import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, CheckmarkCircle, ArrowBackOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
@@ -400,26 +409,12 @@ const menuOptions = computed<MenuOption[]>(() => {
       children: [{ label: '数据统计', key: '/statistics', permission: 'statistics:view' }],
     },
     {
-      label: '系统管理',
-      key: '/system',
-      icon: renderIcon(StorefrontOutline),
-      // 分组不设权限门槛：按子项权限过滤，无任何可见子项时整组隐藏。
-      // 系统级入口（社区权限/全局角色）superOnly，社区管理员不可见
-      children: [
-        { label: '社区管理', key: '/system/communities', permission: 'community:view' },
-        { label: '社区权限', key: '/system/community-permissions', permission: 'community:view', superOnly: true },
-        { label: '行政区划', key: '/system/regions', permission: 'region:view' },
-        { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
-        { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
-        { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
-      ],
-    },
-    {
-      label: '员工与角色',
+      label: '门店管理',
       key: '/staff',
-      icon: renderIcon(PeopleOutline),
-      // 社区门店级：员工管理与本社区私有角色管理
+      icon: renderIcon(StorefrontOutline),
+      // 社区门店级：门店设置、员工管理与本社区私有角色管理
       children: [
+        { label: '门店设置', key: '/store/settings', permission: 'community:config' },
         { label: '员工管理', key: '/system/admins', permission: 'admin:view' },
         { label: '角色管理', key: '/system/roles', permission: 'role:view' },
       ],
@@ -444,6 +439,71 @@ const menuOptions = computed<MenuOption[]>(() => {
 })
 
 /**
+ * 系统空间菜单（仅系统管理页面展示，替代业务菜单）
+ * 系统级入口与业务菜单完全隔离：社区权限/全局角色仅超管可见
+ */
+const systemMenuOptions = computed<MenuOption[]>(() => {
+  const groups: MenuGroupConfig[] = [
+    {
+      label: '系统管理',
+      key: '/system',
+      icon: renderIcon(StorefrontOutline),
+      children: [
+        { label: '社区管理', key: '/system/communities', permission: 'community:view' },
+        { label: '社区权限', key: '/system/community-permissions', permission: 'community:view', superOnly: true },
+        { label: '行政区划', key: '/system/regions', permission: 'region:view' },
+        { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
+        { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
+        { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
+      ],
+    },
+  ]
+
+  return groups
+    .map((group) => {
+      const children = group.children.filter(
+        (child) => checkPermission(child.permission) && (!child.superOnly || authStore.isSuperAdmin),
+      )
+      if (children.length === 0) return null
+      return {
+        label: group.label,
+        key: group.key,
+        icon: renderIcon(group.icon),
+        children: children.map((child) => ({ label: child.label, key: child.key })),
+      }
+    })
+    .filter(Boolean) as MenuOption[]
+})
+
+/** 是否处于系统管理空间（路由 meta.space = 'system'），此时左侧菜单整体替换为系统管理菜单 */
+const isSystemSpace = computed(() => route.meta.space === 'system')
+
+/** 当前侧边栏菜单：系统空间用系统菜单，业务空间用业务菜单 */
+const currentMenuOptions = computed(() => (isSystemSpace.value ? systemMenuOptions.value : menuOptions.value))
+
+/** 是否可进入系统管理空间：仅超管（系统级权限点不对社区分配，社区管理员只见业务菜单） */
+const canEnterSystem = computed(() => authStore.isSuperAdmin)
+
+/** 系统空间落地页：按权限取第一个可见的系统页面（超管落社区管理） */
+function systemHomePath(): string {
+  const candidates: Array<{ path: string; permission: string }> = [
+    { path: '/system/communities', permission: 'community:view' },
+    { path: '/system/regions', permission: 'region:view' },
+    { path: '/system/payment', permission: 'settings:view' },
+    { path: '/system/attachment', permission: 'settings:view' },
+  ]
+  const hit = candidates.find((c) => authStore.hasPermission(c.permission))
+  return hit?.path ?? '/system/communities'
+}
+
+/**
+ * 返回业务后台
+ */
+function backToBusiness() {
+  router.push(resolveHomePath(authStore) ?? '/dashboard')
+}
+
+/**
  * 菜单切换
  * @param key 菜单路由
  */
@@ -451,11 +511,15 @@ function onMenuChange(key: string) {
   router.push(key)
 }
 
-/** 用户操作下拉选项 */
-const userOptions = [
-  { label: '个人设置', key: 'profile' },
-  { label: '退出登录', key: 'logout' },
-]
+/** 用户操作下拉选项：系统管理入口在"退出登录"之前，仅有系统级权限时展示 */
+const userOptions = computed(() => {
+  const options: Array<{ label: string; key: string }> = [{ label: '个人设置', key: 'profile' }]
+  if (canEnterSystem.value) {
+    options.push({ label: '系统管理', key: 'system' })
+  }
+  options.push({ label: '退出登录', key: 'logout' })
+  return options
+})
 
 /**
  * 用户操作处理
@@ -464,6 +528,10 @@ const userOptions = [
 function onUserAction(key: string) {
   if (key === 'profile') {
     router.push('/settings/profile')
+    return
+  }
+  if (key === 'system') {
+    router.push(systemHomePath())
     return
   }
   if (key === 'logout') {
@@ -487,6 +555,9 @@ function onUserAction(key: string) {
   font-weight: bold;
   color: #07c160;
   border-bottom: 1px solid #eee;
+}
+.sider-back {
+  padding: 8px 12px 0;
 }
 .header {
   height: 56px;
