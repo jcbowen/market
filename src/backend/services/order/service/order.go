@@ -156,6 +156,17 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 			contactPhone = addrResp.ContactPhone
 			contactAddress = addrResp.Province + addrResp.City + addrResp.District + addrResp.Detail
 		}
+	} else if req.ContactName != "" || req.ContactPhone != "" || req.ContactAddress != "" {
+		// 收银台代客下单：无地址簿，联系信息由收银员直填
+		contactName = req.ContactName
+		contactPhone = req.ContactPhone
+		contactAddress = req.ContactAddress
+	}
+
+	// 订单来源：0/1=C端 2=收银台代客（决策点⑨）
+	source := req.Source
+	if source != 2 {
+		source = 1
 	}
 
 	orderModel := &model.Order{
@@ -175,6 +186,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		ContactAddress: contactAddress,
 		Remark:         req.Remark,
 		CouponID:       req.CouponId,
+		Source:         source,
+		OperatorID:     req.OperatorId,
+		OperatorName:   req.OperatorName,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -228,18 +242,26 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 				return fmt.Errorf("使用优惠券失败: %w", err)
 			}
 		}
-		return s.createStatusLogTx(tx, orderModel.ID, 0, 1, "system", 0, "创建订单")
+		// 创建日志操作者：收银台代客单记经手人（admin），C 端沿用 system
+		logType, logOperator := "system", int64(0)
+		if source == 2 {
+			logType, logOperator = "admin", req.OperatorId
+		}
+		return s.createStatusLogTx(tx, orderModel.ID, 0, 1, logType, logOperator, "创建订单")
 	}); err != nil {
 		return nil, err
 	}
 
-	// 记录会员-社区关联：在该社区下过单即视为该社区会员（幂等，尽力而为不阻塞下单结果）
-	if _, mErr := grpcclient.UserClient.MarkUserCommunity(ctx, &user.MarkUserCommunityReq{
-		UserId:      req.UserId,
-		CommunityId: req.CommunityId,
-		Source:      "order",
-	}); mErr != nil {
-		fmt.Printf("记录会员-社区关联失败（订单 %d）: %v\n", orderModel.ID, mErr)
+	// 记录会员-社区关联：在该社区下过单即视为该社区会员（幂等，尽力而为不阻塞下单结果）；
+	// 收银台散客单（user_id=0）无会员可标记，跳过
+	if req.UserId > 0 {
+		if _, mErr := grpcclient.UserClient.MarkUserCommunity(ctx, &user.MarkUserCommunityReq{
+			UserId:      req.UserId,
+			CommunityId: req.CommunityId,
+			Source:      "order",
+		}); mErr != nil {
+			fmt.Printf("记录会员-社区关联失败（订单 %d）: %v\n", orderModel.ID, mErr)
+		}
 	}
 
 	return orderModel, nil
@@ -308,6 +330,10 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	}
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
+	}
+	// 订单来源筛选：1=C端 2=收银台（0=全部）
+	if req.Source > 0 {
+		db = db.Where("source = ?", req.Source)
 	}
 	// 后台管理端搜索条件（订单号模糊、下单时间范围、收货人姓名/电话模糊）
 	if req.OrderNo != "" {

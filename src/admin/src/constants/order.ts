@@ -27,6 +27,37 @@ export const DELIVERY_TYPE = {
   DELIVERY: 2,
 } as const
 
+/** 订单来源：1=C端用户自下单 2=后台收银台代客（决策点⑨） */
+export const ORDER_SOURCE = {
+  USER: 1,
+  POS: 2,
+} as const
+
+/** 来源筛选下拉项（0=全部） */
+export const orderSourceFilterOptions = [
+  { label: '全部来源', value: 0 },
+  { label: 'C端下单', value: ORDER_SOURCE.USER },
+  { label: '收银台', value: ORDER_SOURCE.POS },
+]
+
+/**
+ * 订单来源转文案
+ * @param source 来源码
+ * @returns 中文描述
+ */
+export function orderSourceText(source: number): string {
+  return source === ORDER_SOURCE.POS ? '收银台' : 'C端'
+}
+
+/**
+ * 订单来源标签类型
+ * @param source 来源码
+ * @returns n-tag 类型
+ */
+export function orderSourceTagType(source: number): TagType {
+  return source === ORDER_SOURCE.POS ? 'warning' : 'default'
+}
+
 /** 退款单状态：1待审核 2已同意 3已拒绝 4退款中 5已退款 */
 export const REFUND_STATUS = {
   PENDING: 1,

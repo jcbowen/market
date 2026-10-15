@@ -20,6 +20,7 @@ type server struct {
 	order.UnimplementedOrderServiceServer
 	orderService   *service.OrderService
 	refundService  *service.RefundService
+	posHeldService *service.PosHeldService
 	paymentClient  payment.PaymentServiceClient
 }
 
@@ -32,9 +33,10 @@ type server struct {
 //   - *server: gRPC 服务实现
 func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient) *server {
 	return &server{
-		orderService:  service.NewOrderService(db),
-		refundService: service.NewRefundService(db, paymentClient),
-		paymentClient: paymentClient,
+		orderService:   service.NewOrderService(db),
+		refundService:  service.NewRefundService(db, paymentClient),
+		posHeldService: service.NewPosHeldService(db),
+		paymentClient:  paymentClient,
 	}
 }
 
@@ -169,6 +171,32 @@ func (s *server) VerifyPickup(ctx stdctx.Context, req *order.VerifyPickupReq) (*
 	return resp, nil
 }
 
+// CreatePosHeldOrder 创建收银台挂单
+func (s *server) CreatePosHeldOrder(ctx stdctx.Context, req *order.CreatePosHeldOrderReq) (*order.PosHeldOrderInfo, error) {
+	info, err := s.posHeldService.Create(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return info, nil
+}
+
+// ListPosHeldOrders 收银台挂单列表
+func (s *server) ListPosHeldOrders(ctx stdctx.Context, req *order.ListPosHeldOrdersReq) (*order.ListPosHeldOrdersResp, error) {
+	list, err := s.posHeldService.List(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &order.ListPosHeldOrdersResp{List: list}, nil
+}
+
+// DeletePosHeldOrder 删除收银台挂单
+func (s *server) DeletePosHeldOrder(ctx stdctx.Context, req *order.DeletePosHeldOrderReq) (*common.CommonResponse, error) {
+	if err := s.posHeldService.Delete(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // ApplyRefund 申请退款
 func (s *server) ApplyRefund(ctx stdctx.Context, req *order.ApplyRefundReq) (*order.RefundInfo, error) {
 	refund, err := s.refundService.ApplyRefund(ctx, req)
@@ -272,6 +300,9 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		PickupCode:     ptrString(o.PickupCode),
 		ExpressCompany: o.ExpressCompany,
 		ExpressNo:      o.ExpressNo,
+		Source:         o.Source,
+		OperatorId:     o.OperatorID,
+		OperatorName:   o.OperatorName,
 	}
 }
 

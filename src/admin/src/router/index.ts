@@ -95,6 +95,12 @@ const routes: RouteRecordRaw[] = [
       },
       // 订单管理
       {
+        path: 'pos/cashier',
+        name: 'PosCashier',
+        component: () => import('@/views/order/cashier.vue'),
+        meta: { title: '收银台', permission: 'order:view', group: '订单管理' },
+      },
+      {
         path: 'orders',
         name: 'OrderList',
         component: () => import('@/views/order/list.vue'),

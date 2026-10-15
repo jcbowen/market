@@ -247,7 +247,41 @@ export interface Order {
   delivery_type: number
   status: number
   status_text: string
+  /** 订单来源：1=C端 2=收银台（决策点⑨） */
+  source?: number
+  /** 经手人（收银员/管理员）姓名快照 */
+  operator_name?: string
   created_at: string
+}
+
+/**
+ * 收银台挂单（未成单草稿，后端暂存）
+ */
+export interface PosHeldOrder {
+  id: number
+  community_id: number
+  operator_id: number
+  operator_name: string
+  /** 会员 ID（0=散客） */
+  user_id: number
+  user_name: string
+  items: PosHeldOrderItem[]
+  item_count: number
+  total_amount: number
+  remark: string
+  created_at: string
+}
+
+/**
+ * 收银台挂单明细项（快照）
+ */
+export interface PosHeldOrderItem {
+  sku_id: number
+  quantity: number
+  product_name: string
+  spec_name?: string
+  product_image?: string
+  price: number
 }
 
 /**

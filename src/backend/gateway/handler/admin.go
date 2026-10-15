@@ -1685,10 +1685,13 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 	}
 	// 会员过滤（会员列表弹窗查订单）
 	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
+	// 来源过滤：1=C端 2=收银台（0=全部）
+	source, _ := strconv.Atoi(c.DefaultQuery("source", "0"))
 
 	resp, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
 		CommunityId:   communityID,
 		UserId:        userID,
+		Source:        int32(source),
 		Status:        int32(status),
 		OrderNo:       c.Query("order_no"),
 		StartTime:     c.Query("start_time"),
@@ -1743,6 +1746,8 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"delivery_type":   o.DeliveryType,
 			"status":          o.Status,
 			"status_text":     orderStatusText(o.Status, o.DeliveryType),
+			"source":          o.Source,
+			"operator_name":   o.OperatorName,
 			"created_at":      o.CreatedAt,
 		})
 	}
@@ -1831,6 +1836,8 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"cancel_reason":   o.CancelReason,
 		"express_company": o.ExpressCompany,
 		"express_no":      o.ExpressNo,
+		"source":          o.Source,
+		"operator_name":   o.OperatorName,
 		"created_at":      o.CreatedAt,
 		"items":           items,
 		"address":         address,

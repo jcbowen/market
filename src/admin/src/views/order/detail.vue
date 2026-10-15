@@ -11,6 +11,12 @@
             <n-tag :type="orderStatusTagType(detail.status)" size="small">{{ detail.status_text }}</n-tag>
           </n-descriptions-item>
           <n-descriptions-item label="配送方式">{{ deliveryTypeText(detail.delivery_type) }}</n-descriptions-item>
+          <n-descriptions-item label="来源">
+            <n-tag :type="orderSourceTagType(detail.source ?? ORDER_SOURCE.USER)" size="small" :bordered="false">
+              {{ orderSourceText(detail.source ?? ORDER_SOURCE.USER) }}
+            </n-tag>
+          </n-descriptions-item>
+          <n-descriptions-item v-if="detail.operator_name" label="经手人">{{ detail.operator_name }}</n-descriptions-item>
           <n-descriptions-item label="订单金额">￥{{ formatAmount(detail.total_amount) }}</n-descriptions-item>
           <n-descriptions-item label="优惠金额">-￥{{ formatAmount(detail.discount_amount) }}</n-descriptions-item>
           <n-descriptions-item label="运费">￥{{ formatAmount(detail.delivery_fee) }}</n-descriptions-item>
@@ -98,7 +104,16 @@ import type { DataTableColumns } from 'naive-ui'
 import { completeOrder, getOrderDetail, verifyPickup } from '@/api/order'
 import type { OrderDetail, OrderItem, OrderStatusLog } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
-import { DELIVERY_TYPE, ORDER_STATUS, deliveryTypeText, orderStatusTagType, orderStatusText } from '@/constants/order'
+import {
+  DELIVERY_TYPE,
+  ORDER_SOURCE,
+  ORDER_STATUS,
+  deliveryTypeText,
+  orderSourceTagType,
+  orderSourceText,
+  orderStatusTagType,
+  orderStatusText,
+} from '@/constants/order'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
 import RefundModal from './components/RefundModal.vue'

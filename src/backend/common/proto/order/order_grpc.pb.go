@@ -40,6 +40,9 @@ const (
 	OrderService_GetRevenueReport_FullMethodName        = "/order.OrderService/GetRevenueReport"
 	OrderService_GetUserFrequentProducts_FullMethodName = "/order.OrderService/GetUserFrequentProducts"
 	OrderService_PreviewFreeShipping_FullMethodName     = "/order.OrderService/PreviewFreeShipping"
+	OrderService_CreatePosHeldOrder_FullMethodName      = "/order.OrderService/CreatePosHeldOrder"
+	OrderService_ListPosHeldOrders_FullMethodName       = "/order.OrderService/ListPosHeldOrders"
+	OrderService_DeletePosHeldOrder_FullMethodName      = "/order.OrderService/DeletePosHeldOrder"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -73,6 +76,10 @@ type OrderServiceClient interface {
 	GetUserFrequentProducts(ctx context.Context, in *GetUserFrequentProductsReq, opts ...grpc.CallOption) (*GetUserFrequentProductsResp, error)
 	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
 	PreviewFreeShipping(ctx context.Context, in *PreviewFreeShippingReq, opts ...grpc.CallOption) (*PreviewFreeShippingResp, error)
+	// 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
+	CreatePosHeldOrder(ctx context.Context, in *CreatePosHeldOrderReq, opts ...grpc.CallOption) (*PosHeldOrderInfo, error)
+	ListPosHeldOrders(ctx context.Context, in *ListPosHeldOrdersReq, opts ...grpc.CallOption) (*ListPosHeldOrdersResp, error)
+	DeletePosHeldOrder(ctx context.Context, in *DeletePosHeldOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 }
 
 type orderServiceClient struct {
@@ -283,6 +290,36 @@ func (c *orderServiceClient) PreviewFreeShipping(ctx context.Context, in *Previe
 	return out, nil
 }
 
+func (c *orderServiceClient) CreatePosHeldOrder(ctx context.Context, in *CreatePosHeldOrderReq, opts ...grpc.CallOption) (*PosHeldOrderInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PosHeldOrderInfo)
+	err := c.cc.Invoke(ctx, OrderService_CreatePosHeldOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) ListPosHeldOrders(ctx context.Context, in *ListPosHeldOrdersReq, opts ...grpc.CallOption) (*ListPosHeldOrdersResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPosHeldOrdersResp)
+	err := c.cc.Invoke(ctx, OrderService_ListPosHeldOrders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) DeletePosHeldOrder(ctx context.Context, in *DeletePosHeldOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_DeletePosHeldOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrderServiceServer is the server API for OrderService service.
 // All implementations must embed UnimplementedOrderServiceServer
 // for forward compatibility.
@@ -314,6 +351,10 @@ type OrderServiceServer interface {
 	GetUserFrequentProducts(context.Context, *GetUserFrequentProductsReq) (*GetUserFrequentProductsResp, error)
 	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
 	PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error)
+	// 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
+	CreatePosHeldOrder(context.Context, *CreatePosHeldOrderReq) (*PosHeldOrderInfo, error)
+	ListPosHeldOrders(context.Context, *ListPosHeldOrdersReq) (*ListPosHeldOrdersResp, error)
+	DeletePosHeldOrder(context.Context, *DeletePosHeldOrderReq) (*common.CommonResponse, error)
 	mustEmbedUnimplementedOrderServiceServer()
 }
 
@@ -383,6 +424,15 @@ func (UnimplementedOrderServiceServer) GetUserFrequentProducts(context.Context, 
 }
 func (UnimplementedOrderServiceServer) PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewFreeShipping not implemented")
+}
+func (UnimplementedOrderServiceServer) CreatePosHeldOrder(context.Context, *CreatePosHeldOrderReq) (*PosHeldOrderInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePosHeldOrder not implemented")
+}
+func (UnimplementedOrderServiceServer) ListPosHeldOrders(context.Context, *ListPosHeldOrdersReq) (*ListPosHeldOrdersResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPosHeldOrders not implemented")
+}
+func (UnimplementedOrderServiceServer) DeletePosHeldOrder(context.Context, *DeletePosHeldOrderReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeletePosHeldOrder not implemented")
 }
 func (UnimplementedOrderServiceServer) mustEmbedUnimplementedOrderServiceServer() {}
 func (UnimplementedOrderServiceServer) testEmbeddedByValue()                      {}
@@ -765,6 +815,60 @@ func _OrderService_PreviewFreeShipping_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_CreatePosHeldOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePosHeldOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).CreatePosHeldOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_CreatePosHeldOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).CreatePosHeldOrder(ctx, req.(*CreatePosHeldOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_ListPosHeldOrders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPosHeldOrdersReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).ListPosHeldOrders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_ListPosHeldOrders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).ListPosHeldOrders(ctx, req.(*ListPosHeldOrdersReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_DeletePosHeldOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePosHeldOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).DeletePosHeldOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_DeletePosHeldOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).DeletePosHeldOrder(ctx, req.(*DeletePosHeldOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrderService_ServiceDesc is the grpc.ServiceDesc for OrderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -851,6 +955,18 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PreviewFreeShipping",
 			Handler:    _OrderService_PreviewFreeShipping_Handler,
+		},
+		{
+			MethodName: "CreatePosHeldOrder",
+			Handler:    _OrderService_CreatePosHeldOrder_Handler,
+		},
+		{
+			MethodName: "ListPosHeldOrders",
+			Handler:    _OrderService_ListPosHeldOrders_Handler,
+		},
+		{
+			MethodName: "DeletePosHeldOrder",
+			Handler:    _OrderService_DeletePosHeldOrder_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

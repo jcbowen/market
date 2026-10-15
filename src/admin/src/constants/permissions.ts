@@ -41,6 +41,7 @@ export const permissionGroups: PermissionGroup[] = [
     options: [
       { label: '订单查看', value: 'order:view' },
       { label: '订单更新', value: 'order:update' },
+      { label: '收银台下单', value: 'order:create' },
       { label: '退款查看', value: 'refund:view' },
       { label: '退款更新', value: 'refund:update' },
     ],

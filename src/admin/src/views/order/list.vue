@@ -52,6 +52,12 @@
           @clear="onSearch"
         />
         <n-date-picker v-model:value="dateRange" type="daterange" clearable class="date-picker" />
+        <n-select
+          v-model:value="sourceFilter"
+          :options="orderSourceFilterOptions"
+          class="source-select"
+          @update:value="onSearch"
+        />
         <n-button type="primary" @click="onSearch">查询</n-button>
         <n-button :loading="exporting" @click="exportCsv">导出 CSV</n-button>
       </n-space>
@@ -69,7 +75,7 @@
         :loading="loading"
         remote
         :row-key="(row: Order) => row.id"
-        :scroll-x="isNarrow ? 670 : 1200"
+        :scroll-x="isNarrow ? 670 : 1360"
         :pagination="pagination"
         v-model:checked-row-keys="checkedRowKeys"
         @update:page="onPageChange"
@@ -136,7 +142,16 @@ import CancelOrderModal from './components/CancelOrderModal.vue'
 import RefundModal from './components/RefundModal.vue'
 import type { Order } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
-import { DELIVERY_TYPE, ORDER_STATUS, QUERY_STATUS, orderStatusTagType } from '@/constants/order'
+import {
+  DELIVERY_TYPE,
+  ORDER_SOURCE,
+  ORDER_STATUS,
+  QUERY_STATUS,
+  orderSourceFilterOptions,
+  orderSourceTagType,
+  orderSourceText,
+  orderStatusTagType,
+} from '@/constants/order'
 
 /**
  * 订单列表页面
@@ -155,6 +170,8 @@ const pagination = ref({ page: 1, pageSize: 20, itemCount: 0, pageSizes: [10, 20
 
 const filters = reactive({ order_no: '', receiver_name: '', receiver_phone: '' })
 const dateRange = ref<[number, number] | null>(null)
+// 来源筛选：0=全部 1=C端 2=收银台
+const sourceFilter = ref(0)
 
 const detailVisible = ref(false)
 const detailId = ref<number | null>(null)
@@ -229,6 +246,18 @@ const columns: DataTableColumns<Order> = [
     width: 90,
     render: (row) => (row.delivery_type === DELIVERY_TYPE.DELIVERY ? '配送' : '自提'),
   },
+  {
+    title: '来源',
+    key: 'source',
+    width: 90,
+    render: (row) =>
+      h(
+        NTag,
+        { type: orderSourceTagType(row.source ?? ORDER_SOURCE.USER), size: 'small', bordered: false },
+        { default: () => orderSourceText(row.source ?? ORDER_SOURCE.USER) },
+      ),
+  },
+  { title: '经手人', key: 'operator_name', width: 90, render: (row) => row.operator_name || '-' },
   {
     title: '订单金额',
     key: 'total_amount',
@@ -318,7 +347,7 @@ const columns: DataTableColumns<Order> = [
  */
 const tableColumns = computed<DataTableColumns<Order>>(() => {
   if (!isNarrow.value) return columns
-  const hiddenKeys = new Set(['user_name', 'delivery_type', 'total_amount', 'created_at'])
+  const hiddenKeys = new Set(['user_name', 'delivery_type', 'source', 'operator_name', 'total_amount', 'created_at'])
   return columns.filter((col) => !hiddenKeys.has((col as { key?: string }).key ?? ''))
 })
 
@@ -379,6 +408,7 @@ function buildQuery() {
     start_time: start ? fmt(start) : undefined,
     end_time: end ? fmt(end) : undefined,
     status: statusFilter.value > 0 ? statusFilter.value : undefined,
+    source: sourceFilter.value > 0 ? sourceFilter.value : undefined,
   }
 }
 
@@ -557,11 +587,13 @@ async function exportCsv() {
       message.info('当前筛选条件下没有可导出的订单')
       return
     }
-    const header = ['订单号', '用户', '配送方式', '订单金额', '实付金额', '状态', '创建时间']
+    const header = ['订单号', '用户', '配送方式', '来源', '经手人', '订单金额', '实付金额', '状态', '创建时间']
     const rows = all.map((row) => [
       row.order_no,
       row.user_name,
       row.delivery_type === DELIVERY_TYPE.DELIVERY ? '配送' : '自提',
+      orderSourceText(row.source ?? ORDER_SOURCE.USER),
+      row.operator_name || '',
       (row.total_amount ?? 0).toFixed(2),
       (row.pay_amount ?? 0).toFixed(2),
       row.status_text,
@@ -628,6 +660,10 @@ onUnmounted(() => {
 
 .status-select {
   width: 100%;
+}
+
+.source-select {
+  width: 120px;
 }
 
 @media (max-width: 768px) {

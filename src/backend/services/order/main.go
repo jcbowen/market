@@ -119,5 +119,6 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.RefundConfig{},
 		&model.RefundLog{},
 		&model.SchedulerFailure{},
+		&model.PosHeldOrder{},
 	)
 }

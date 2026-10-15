@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, Order, OrderDetail, PageParams, PageResult, Refund } from './types'
+import type { ApiResult, Order, OrderDetail, PageParams, PageResult, PosHeldOrder, Refund } from './types'
 
 /**
  * 订单管理相关 API
@@ -20,6 +20,8 @@ export function getOrderList(
     receiver_phone?: string
     /** 按会员过滤（会员列表弹窗查订单） */
     user_id?: number
+    /** 来源过滤：1=C端 2=收银台（0=全部） */
+    source?: number
     /** 目标社区：仅超管可传，0=跨社区查全部；不传=当前社区语境 */
     community_id?: number
   },
@@ -28,6 +30,86 @@ export function getOrderList(
     url: '/api/v1/admin/orders',
     method: 'GET',
     params,
+  })
+}
+
+// --- 收银台（G） ---
+
+/**
+ * 收银台代客下单（现金当场结清）
+ * @param data 下单参数（user_id=0 为散客；配送单必须带联系人/电话/地址）
+ * @returns 订单信息（含取货码，自提单）
+ */
+export function createPosOrder(data: {
+  user_id: number
+  delivery_type: number
+  contact_name?: string
+  contact_phone?: string
+  contact_address?: string
+  remark?: string
+  coupon_id?: number
+  items: Array<{ sku_id: number; quantity: number }>
+}) {
+  return request<
+    ApiResult<{
+      id: number
+      order_no: string
+      pay_amount: number
+      delivery_fee: number
+      pickup_code?: string
+      paid: boolean
+    }>
+  >({
+    url: '/api/v1/admin/pos/orders',
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 挂单：暂存当前收银台工作区（不生成订单、不占库存）
+ * @param data 工作区快照（会员 + 商品明细）
+ */
+export function createPosHeldOrder(data: {
+  user_id: number
+  user_name: string
+  remark?: string
+  items: Array<{
+    sku_id: number
+    quantity: number
+    product_name: string
+    spec_name?: string
+    product_image?: string
+    price: number
+  }>
+}) {
+  return request<ApiResult<PosHeldOrder>>({
+    url: '/api/v1/admin/pos/held-orders',
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 挂单列表（当前社区语境）
+ * @param params operator_id 传 1 仅看自己的挂单（当前管理员）
+ */
+export function getPosHeldOrders(params?: { operator_id?: number }) {
+  return request<ApiResult<{ list: PosHeldOrder[] }>>({
+    url: '/api/v1/admin/pos/held-orders',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 删除挂单（恢复结账或顾客放弃后调用）
+ * @param id 挂单 ID
+ */
+export function deletePosHeldOrder(id: number) {
+  return request<ApiResult<{ id: number }>>({
+    url: `/api/v1/admin/pos/held-orders/${id}`,
+    method: 'DELETE',
   })
 }
 

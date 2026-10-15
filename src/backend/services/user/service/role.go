@@ -21,6 +21,8 @@ var DefaultCommunityAdminPermissions = []string{
 	"product:view", "product:create", "product:update", "product:delete",
 	"inventory:view", "inventory:create", "inventory:update",
 	"order:view", "order:update",
+	// 收银台代客下单与挂单（G）：社区运营动作，默认纳入社区权限上限
+	"order:create",
 	"refund:view", "refund:update",
 	"user:view", "user:create", "user:update",
 	"marketing:view", "marketing:create", "marketing:update", "marketing:delete",

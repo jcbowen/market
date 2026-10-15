@@ -251,6 +251,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/orders/:id/verify-pickup", gwMiddleware.RequirePermission("order:update"), adminHandler.AdminVerifyPickup)
 			authAdmin.POST("/orders/:id/refund", gwMiddleware.RequirePermission("refund:update"), adminHandler.AdminCreateRefund)
 
+			// 收银台代客下单（G）：下单/挂单写操作用 order:create，挂单查看用 order:view
+			authAdmin.POST("/pos/orders", gwMiddleware.RequirePermission("order:create"), adminHandler.CreatePosOrder)
+			authAdmin.POST("/pos/held-orders", gwMiddleware.RequirePermission("order:create"), adminHandler.CreatePosHeldOrder)
+			authAdmin.GET("/pos/held-orders", gwMiddleware.RequirePermission("order:view"), adminHandler.ListPosHeldOrders)
+			authAdmin.DELETE("/pos/held-orders/:id", gwMiddleware.RequirePermission("order:create"), adminHandler.DeletePosHeldOrder)
+
 			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetOrderStatistics)
 			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetSalesStatistics)
 			authAdmin.GET("/statistics/rankings", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetProductRankings)

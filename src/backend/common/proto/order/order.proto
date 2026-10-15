@@ -36,6 +36,10 @@ service OrderService {
   rpc GetUserFrequentProducts(GetUserFrequentProductsReq) returns (GetUserFrequentProductsResp);
   // 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
   rpc PreviewFreeShipping(PreviewFreeShippingReq) returns (PreviewFreeShippingResp);
+  // 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
+  rpc CreatePosHeldOrder(CreatePosHeldOrderReq) returns (PosHeldOrderInfo);
+  rpc ListPosHeldOrders(ListPosHeldOrdersReq) returns (ListPosHeldOrdersResp);
+  rpc DeletePosHeldOrder(DeletePosHeldOrderReq) returns (common.CommonResponse);
 }
 
 message OrderItem {
@@ -52,6 +56,15 @@ message CreateOrderReq {
   string remark = 6;
   int64 coupon_id = 7;
   repeated OrderItem items = 8;
+  // 订单来源：0/1=C端用户 2=后台收银台代客（决策点⑨）
+  int32 source = 9;
+  // 经手人（收银员/管理员），source=2 时由网关填写
+  int64 operator_id = 10;
+  string operator_name = 11;
+  // 直填联系人信息：收银台代客下单无 address_id 时使用（address_id>0 仍以地址簿为准）
+  string contact_name = 12;
+  string contact_phone = 13;
+  string contact_address = 14;
 }
 
 // --- 免配送费试算 ---
@@ -100,6 +113,8 @@ message ListOrdersReq {
   string receiver_name = 8;
   // 收货人电话模糊匹配
   string receiver_phone = 9;
+  // 订单来源筛选：1=C端 2=收银台（0=全部）
+  int32 source = 10;
 }
 
 message CancelOrderReq {
@@ -146,6 +161,11 @@ message OrderInfo {
   string express_no = 23;
   // 自提核销码（仅自提单生成，配送单为空）
   string pickup_code = 24;
+  // 订单来源：1=C端用户自下单 2=后台收银台代客下单（决策点⑨）
+  int32 source = 25;
+  // 经手人（收银员/管理员）ID 与姓名快照；C 端订单为 0/空
+  int64 operator_id = 26;
+  string operator_name = 27;
 }
 
 message OrderItemInfo {
@@ -403,4 +423,56 @@ message FrequentProductItem {
 
 message GetUserFrequentProductsResp {
   repeated FrequentProductItem list = 1;
+}
+
+// --- 收银台挂单（未成单草稿，后端暂存；结账成功或放弃后删除） ---
+message PosHeldOrderItem {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  // 商品/规格快照（恢复挂单时回填收银台展示；结账时以服务端实时价格为准）
+  string product_name = 3;
+  string spec_name = 4;
+  string product_image = 5;
+  double price = 6;
+}
+
+message CreatePosHeldOrderReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+  string operator_name = 3;
+  // 挂单时选定的会员（0=散客）
+  int64 user_id = 4;
+  string user_name = 5;
+  repeated PosHeldOrderItem items = 6;
+  string remark = 7;
+}
+
+message PosHeldOrderInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 operator_id = 3;
+  string operator_name = 4;
+  int64 user_id = 5;
+  string user_name = 6;
+  repeated PosHeldOrderItem items = 7;
+  int32 item_count = 8;
+  double total_amount = 9;
+  string remark = 10;
+  string created_at = 11;
+}
+
+message ListPosHeldOrdersReq {
+  int64 community_id = 1;
+  // 0=本社区全部挂单；>0=仅该收银员的挂单
+  int64 operator_id = 2;
+}
+
+message ListPosHeldOrdersResp {
+  repeated PosHeldOrderInfo list = 1;
+}
+
+message DeletePosHeldOrderReq {
+  int64 id = 1;
+  // 社区语境（>0 时校验挂单归属，防跨社区删除）
+  int64 community_id = 2;
 }

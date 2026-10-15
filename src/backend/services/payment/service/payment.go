@@ -79,11 +79,15 @@ func (s *PaymentService) reloadPayConfig() {
 //   - string: 微信/支付宝调起参数 JSON，现金支付返回空字符串
 //   - error: 错误信息
 func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreatePaymentReq) (*model.Payment, string, error) {
-	if req.OrderId <= 0 || req.UserId <= 0 || req.Amount <= 0 {
+	if req.OrderId <= 0 || req.Amount <= 0 {
 		return nil, "", fmt.Errorf("参数错误")
 	}
 	if req.PayType != 1 && req.PayType != 2 && req.PayType != 3 {
 		return nil, "", fmt.Errorf("不支持的支付方式")
+	}
+	// user_id 允许为 0 的场景：收银台散客单现金收款（无会员账户，第三方渠道仍要求实名用户）
+	if req.UserId <= 0 && req.PayType != 3 {
+		return nil, "", fmt.Errorf("参数错误")
 	}
 
 	// 幂等校验：订单已存在支付成功的记录时拒绝再次创建支付单；
