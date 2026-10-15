@@ -180,6 +180,7 @@ import {
   orderSourceTagType,
   orderSourceText,
   orderStatusTagType,
+  payTypeText,
 } from '@/constants/order'
 
 /**
@@ -287,6 +288,12 @@ const columns: DataTableColumns<Order> = [
       ),
   },
   { title: '经手人', key: 'operator_name', width: 90, render: (row) => row.operator_name || '-' },
+  {
+    title: '支付方式',
+    key: 'pay_type',
+    width: 90,
+    render: (row) => row.pay_type_text || (row.pay_type ? payTypeText(row.pay_type) : '-'),
+  },
   {
     title: '配送员',
     key: 'delivery_user_name',

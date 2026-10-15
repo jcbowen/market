@@ -17,6 +17,7 @@
             </n-tag>
           </n-descriptions-item>
           <n-descriptions-item v-if="detail.operator_name" label="经手人">{{ detail.operator_name }}</n-descriptions-item>
+          <n-descriptions-item label="支付方式">{{ detail.pay_type_text || (detail.pay_type ? payTypeText(detail.pay_type) : '-') }}</n-descriptions-item>
           <n-descriptions-item label="订单金额">￥{{ formatAmount(detail.total_amount) }}</n-descriptions-item>
           <n-descriptions-item label="优惠金额">-￥{{ formatAmount(detail.discount_amount) }}</n-descriptions-item>
           <n-descriptions-item label="运费">￥{{ formatAmount(detail.delivery_fee) }}</n-descriptions-item>
@@ -113,6 +114,7 @@ import {
   orderSourceText,
   orderStatusTagType,
   orderStatusText,
+  payTypeText,
 } from '@/constants/order'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'

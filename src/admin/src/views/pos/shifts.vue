@@ -57,17 +57,16 @@
             <div class="receipt-line">交班：{{ activeShift.end_time || '进行中' }}</div>
             <div class="receipt-divider">- - - - - - - - - - - - - - - -</div>
             <div class="receipt-section">收款</div>
-            <div v-for="item in activeShift.statistics?.income ?? []" :key="'in' + item.pay_type" class="receipt-row">
+            <!-- 固定展示 现金/微信/支付宝/余额，渠道未接入的支付方式数额为 0 -->
+            <div v-for="item in incomeRows" :key="'in' + item.pay_type" class="receipt-row" :class="{ muted: item.amount === 0 }">
               <span>{{ payTypeText(item.pay_type) }}</span>
               <span>￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
             </div>
-            <div v-if="!activeShift.statistics?.income?.length" class="receipt-row muted"><span>暂无收款</span></div>
             <div class="receipt-section">退款</div>
-            <div v-for="item in activeShift.statistics?.refund ?? []" :key="'rf' + item.pay_type" class="receipt-row">
+            <div v-for="item in refundRows" :key="'rf' + item.pay_type" class="receipt-row" :class="{ muted: item.amount === 0 }">
               <span>{{ payTypeText(item.pay_type) }}</span>
               <span>-￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
             </div>
-            <div v-if="!activeShift.statistics?.refund?.length" class="receipt-row muted"><span>暂无退款</span></div>
             <div class="receipt-divider">- - - - - - - - - - - - - - - -</div>
             <div class="receipt-row total">
               <span>收款合计</span><span>￥{{ (activeShift.statistics?.total_income ?? 0).toFixed(2) }}</span>
@@ -99,7 +98,7 @@ import { useRouter } from 'vue-router'
 import { ArrowBackOutline } from '@vicons/ionicons5'
 import { getMyPosShifts } from '@/api/order'
 import type { PosShift } from '@/api/types'
-import { payTypeText } from '@/constants/order'
+import { payStatRows, payTypeText } from '@/constants/order'
 
 /** 班次状态：1=进行中 */
 const SHIFT_ACTIVE = 1
@@ -121,6 +120,11 @@ const activeId = ref(0)
 
 /** 当前选中的班次详情 */
 const activeShift = computed(() => shifts.value.find((shift) => shift.id === activeId.value) ?? null)
+
+/** 详情小票收款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+const incomeRows = computed(() => payStatRows(activeShift.value?.statistics?.income))
+/** 详情小票退款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+const refundRows = computed(() => payStatRows(activeShift.value?.statistics?.refund))
 
 /** 打印时间文本（打开详情时定格，避免小票内容随渲染变化） */
 const printTimeText = ref('')

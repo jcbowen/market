@@ -1789,6 +1789,23 @@ func (h *AdminHandler) AssignDelivery(c *gin.Context) {
 	response.Success(c, gin.H{"success": true, "delivery_user_name": deliveryUserName})
 }
 
+// adminOrderPayInfo 查询订单支付方式（类型数值 + 文案，管理端订单列表/详情共用）
+// 未支付或查询不到支付记录时返回 0 与空串
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - int32: 支付类型（1微信 2支付宝 3货到付款 4现金；0=未支付/未知）
+//   - string: 支付方式文案
+func (h *AdminHandler) adminOrderPayInfo(c *gin.Context, orderID int64) (int32, string) {
+	resp, err := h.paymentClient.GetPayment(c.Request.Context(), &payment.GetPaymentReq{OrderId: orderID})
+	if err != nil || resp == nil {
+		return 0, ""
+	}
+	return resp.PayType, payTypeTextOf(resp.PayType)
+}
+
 // ListAdminOrders 获取管理端订单列表
 // 支持按会员过滤（user_id，会员列表弹窗查订单）；
 // 超管可显式传 community_id=0 跨社区查询全部订单（普通管理员始终限定当前社区语境）
@@ -1857,6 +1874,8 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 				}
 			}
 		}
+		// 支付方式（列表与详情共用口径；0=未支付/未知）
+		payType, payTypeText := h.adminOrderPayInfo(c, o.Id)
 		list = append(list, gin.H{
 			"id":              o.Id,
 			"order_no":        o.OrderNo,
@@ -1875,6 +1894,8 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"source":          o.Source,
 			"operator_name":   o.OperatorName,
 			"shift_id":        o.ShiftId,
+			"pay_type":        payType,
+			"pay_type_text":   payTypeText,
 			"created_at":      o.CreatedAt,
 		})
 	}
@@ -1907,6 +1928,11 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 				userName = userResp.Phone
 			}
 		}
+	}
+	// 支付方式（与列表共用口径；0=未支付/未知）
+	payType, payTypeText := int32(0), ""
+	if o != nil {
+		payType, payTypeText = h.adminOrderPayInfo(c, o.Id)
 	}
 
 	address := gin.H{"name": "", "phone": "", "address": ""}
@@ -1969,6 +1995,8 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"source":          o.Source,
 		"operator_name":   o.OperatorName,
 		"shift_id":        o.ShiftId,
+		"pay_type":        payType,
+		"pay_type_text":   payTypeText,
 		"pickup_code":     o.PickupCode,
 		"created_at":      o.CreatedAt,
 		"items":           items,

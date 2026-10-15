@@ -272,8 +272,8 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 		return err
 	}
 
-	// 货到付款（pay_type=3）不经过第三方退款，直接完成
-	if p.PayType == 3 {
+	// 现金类支付（货到付款=3 / 收银台现金=4）不经过第三方退款，直接记录退款流水
+	if p.PayType == 3 || p.PayType == 4 {
 		return s.recordCashRefund(ctx, req, p)
 	}
 

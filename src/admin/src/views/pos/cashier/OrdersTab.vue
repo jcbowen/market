@@ -64,6 +64,7 @@
             <div class="detail-item"><span class="label">来源</span><span>{{ orderSourceText(detail.source ?? 1) }}</span></div>
             <div class="detail-item"><span class="label">会员</span><span>{{ detail.user_name || '散客' }}</span></div>
             <div class="detail-item"><span class="label">配送方式</span><span>{{ deliveryTypeText(detail.delivery_type) }}</span></div>
+            <div class="detail-item"><span class="label">支付方式</span><span>{{ detail.pay_type_text || (detail.pay_type ? payTypeText(detail.pay_type) : '-') }}</span></div>
             <div class="detail-item"><span class="label">下单时间</span><span>{{ detail.created_at }}</span></div>
             <div class="detail-item"><span class="label">收银员</span><span>{{ detail.operator_name || '-' }}</span></div>
             <div class="detail-item"><span class="label">班次</span><span>{{ detail.shift_id ? `#${detail.shift_id}` : '-' }}</span></div>
@@ -171,7 +172,7 @@ import { NButton, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { adminCreateRefund, cancelOrder, getOrderDetail, getOrderList, verifyPickup } from '@/api/order'
 import type { Order, OrderDetail } from '@/api/types'
-import { ORDER_STATUS, QUERY_STATUS, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType } from '@/constants/order'
+import { ORDER_STATUS, QUERY_STATUS, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -266,8 +267,8 @@ const hasUpdatePermission = computed(() => authStore.isSuperAdmin || authStore.h
 /** 是否持有退款权限（代客退款接口要求 refund:update） */
 const hasRefundPermission = computed(() => authStore.isSuperAdmin || authStore.hasPermission('refund:update'))
 
-/** 可取消状态集：未发货（待支付/待发货/备货中） */
-const CANCELABLE_STATUSES: number[] = [ORDER_STATUS.PENDING_PAY, ORDER_STATUS.PAID, ORDER_STATUS.STOCKING]
+/** 可取消状态集：仅待支付（已支付订单走代客退款，避免取消/退款按钮并存歧义） */
+const CANCELABLE_STATUSES: number[] = [ORDER_STATUS.PENDING_PAY]
 /** 可退款状态集：已支付未完成/已完成 */
 const REFUNDABLE_STATUSES: number[] = [ORDER_STATUS.PAID, ORDER_STATUS.STOCKING, ORDER_STATUS.SHIPPING, ORDER_STATUS.COMPLETED]
 
@@ -377,6 +378,12 @@ const columns = computed<DataTableColumns<Order>>(() => [
   { title: '订单号', key: 'order_no', width: 190, ellipsis: { tooltip: true } },
   { title: '会员', key: 'user_name', width: 110, ellipsis: { tooltip: true }, render: (row) => row.user_name || '散客' },
   { title: '实付', key: 'pay_amount', width: 90, render: (row) => `￥${row.pay_amount.toFixed(2)}` },
+  {
+    title: '支付方式',
+    key: 'pay_type',
+    width: 90,
+    render: (row) => row.pay_type_text || (row.pay_type ? payTypeText(row.pay_type) : '-'),
+  },
   {
     title: '状态',
     key: 'status',

@@ -394,6 +394,27 @@ func (h *OrderHandler) orderPayType(c *gin.Context, orderID int64) int32 {
 	return resp.PayType
 }
 
+// payTypeTextOf 支付类型码转文案（管理端各订单列表共用）
+// 参数：
+//   - payType: 支付类型（1微信 2支付宝 3货到付款 4现金；0=未支付/未知）
+//
+// 返回值：
+//   - string: 支付方式文案，未知类型返回空串
+func payTypeTextOf(payType int32) string {
+	switch payType {
+	case 1:
+		return "微信支付"
+	case 2:
+		return "支付宝支付"
+	case 3:
+		return "货到付款"
+	case 4:
+		return "现金"
+	default:
+		return ""
+	}
+}
+
 // orderPayTypeText 查询订单支付方式文案
 // 未支付或查询不到支付记录时返回空字符串
 // 参数：
@@ -407,18 +428,7 @@ func (h *OrderHandler) orderPayTypeText(c *gin.Context, orderID int64) string {
 	if err != nil || resp == nil {
 		return ""
 	}
-	switch resp.PayType {
-	case 1:
-		return "微信支付"
-	case 2:
-		return "支付宝支付"
-	case 3:
-		return "货到付款"
-	case 4:
-		return "现金"
-	default:
-		return ""
-	}
+	return payTypeTextOf(resp.PayType)
 }
 
 // CancelOrderReq 取消订单请求

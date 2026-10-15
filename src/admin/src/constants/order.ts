@@ -45,8 +45,28 @@ export function payTypeText(payType: number): string {
     2: '支付宝',
     3: '货到付款',
     4: '现金',
+    5: '余额',
   }
   return map[payType] || `支付方式${payType}`
+}
+
+/** 交班统计固定展示的支付方式顺序（现金优先；余额 pay_type=5 预留，渠道未接入前恒为 0） */
+export const SHIFT_PAY_TYPES: number[] = [4, 1, 2, 5]
+
+/**
+ * 交班统计固定行：按 现金/微信/支付宝/余额 顺序补全分组数据
+ * （后端仅返回有数据的支付方式，此处补齐固定四项，缺省数额为 0）
+ * @param items 后端按支付方式分组的统计项（收款或退款）
+ * @returns 固定四项的统计行
+ */
+export function payStatRows(
+  items: Array<{ pay_type: number; amount: number; order_count: number }> | undefined,
+): Array<{ pay_type: number; amount: number; order_count: number }> {
+  const map = new Map((items ?? []).map((item) => [item.pay_type, item]))
+  return SHIFT_PAY_TYPES.map((payType) => {
+    const hit = map.get(payType)
+    return { pay_type: payType, amount: hit?.amount ?? 0, order_count: hit?.order_count ?? 0 }
+  })
 }
 
 /** 来源筛选下拉项（0=全部） */

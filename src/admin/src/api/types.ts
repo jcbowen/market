@@ -253,6 +253,10 @@ export interface Order {
   manual_discount?: number
   /** 所属班次 ID（收银单归属，用于交班统计） */
   shift_id?: number
+  /** 支付方式码（1微信 2支付宝 3货到付款 4现金；0=未支付/未知） */
+  pay_type?: number
+  /** 支付方式文案（后端直出，未支付为空串） */
+  pay_type_text?: string
   /** 取货码（自提单，收银台核销/订单查询用） */
   pickup_code?: string
   /** 经手人（收银员/管理员）姓名快照 */

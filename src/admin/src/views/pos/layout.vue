@@ -47,20 +47,19 @@
           </div>
           <div class="shift-stats">
             <div class="stats-block">
-              <div class="info-title">收款（{{ stats.income?.length ?? 0 }} 种方式）</div>
-              <div v-for="item in stats.income ?? []" :key="item.pay_type" class="stat-row">
+              <div class="info-title">收款</div>
+              <!-- 固定展示 现金/微信/支付宝/余额，渠道未接入的支付方式数额为 0 -->
+              <div v-for="item in incomeRows" :key="'in' + item.pay_type" class="stat-row" :class="{ muted: item.amount === 0 }">
                 <span>{{ payTypeText(item.pay_type) }}</span>
                 <span class="amount">￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
               </div>
-              <div v-if="!stats.income?.length" class="stat-empty">暂无收款</div>
             </div>
             <div class="stats-block">
               <div class="info-title">退款</div>
-              <div v-for="item in stats.refund ?? []" :key="item.pay_type" class="stat-row">
+              <div v-for="item in refundRows" :key="'rf' + item.pay_type" class="stat-row" :class="{ muted: item.amount === 0 }">
                 <span>{{ payTypeText(item.pay_type) }}</span>
                 <span class="amount refund">-￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
               </div>
-              <div v-if="!stats.refund?.length" class="stat-empty">暂无退款</div>
             </div>
           </div>
         </div>
@@ -71,9 +70,13 @@
         <n-input v-model:value="endNote" type="textarea" placeholder="交班备注（选填）" :rows="2" />
       </n-spin>
       <template #footer>
-        <n-space justify="end">
-          <n-button :disabled="endingShift" @click="showEndShiftModal = false">取消</n-button>
-          <n-button type="primary" :loading="endingShift" @click="confirmEndShift">确认交班</n-button>
+        <n-space justify="space-between" align="center">
+          <!-- 交班记录入口：收银员查历史班次从此进入，不再单设菜单 -->
+          <n-button quaternary size="small" @click="goShiftRecords">历史交班记录</n-button>
+          <n-space>
+            <n-button :disabled="endingShift" @click="showEndShiftModal = false">取消</n-button>
+            <n-button type="primary" :loading="endingShift" @click="confirmEndShift">确认交班</n-button>
+          </n-space>
         </n-space>
       </template>
     </n-modal>
@@ -89,7 +92,7 @@ import { useAuthStore } from '@/stores/auth'
 import { usePosStore } from '@/stores/pos'
 import { resolveHomePath } from '@/router'
 import { endPosShift } from '@/api/order'
-import { payTypeText } from '@/constants/order'
+import { payStatRows, payTypeText } from '@/constants/order'
 import { getCommunityList } from '@/api/user'
 import type { PosShiftStatistics } from '@/api/types'
 
@@ -112,6 +115,11 @@ const operatorName = computed(() => authStore.admin?.nickname || authStore.admin
 const shiftForConfirm = computed(() => posStore.currentShift)
 const stats = computed<Partial<PosShiftStatistics>>(() => posStore.currentShift?.statistics ?? {})
 
+/** 收款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+const incomeRows = computed(() => payStatRows(stats.value.income))
+/** 退款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+const refundRows = computed(() => payStatRows(stats.value.refund))
+
 /**
  * 现金合计文本（收款-退款，后端已按支付方式折算）
  */
@@ -133,9 +141,9 @@ const workDurationText = computed(() => {
   return `${hours} 小时 ${minutes % 60} 分钟`
 })
 
-/** 操作员下拉选项：进入管理系统仅在有可用页面时展示 */
+/** 操作员下拉选项：交班记录入口在交班弹窗内（不放独立菜单），仅在有可用页面时展示其它项 */
 const userOptions = computed(() => {
-  const options: Array<{ label: string; key: string }> = [{ label: '我的交班记录', key: 'shifts' }]
+  const options: Array<{ label: string; key: string }> = []
   if (posStore.currentShift) {
     options.push({ label: '交班', key: 'endShift' })
   }
@@ -201,10 +209,6 @@ function formatTime(time?: string): string {
  * @param key 动作标识
  */
 function onUserAction(key: string) {
-  if (key === 'shifts') {
-    router.push('/pos/shifts')
-    return
-  }
   if (key === 'endShift') {
     openEndShiftModal()
     return
@@ -219,6 +223,14 @@ function onUserAction(key: string) {
     posStore.clearShift()
     router.push('/pos/login')
   }
+}
+
+/**
+ * 跳转历史交班记录页（交班弹窗内入口）
+ */
+function goShiftRecords() {
+  showEndShiftModal.value = false
+  router.push('/pos/shifts')
 }
 
 /**
@@ -238,7 +250,8 @@ async function openEndShiftModal() {
 }
 
 /**
- * 确认交班：结束后清空班次状态并落独立登录页
+ * 确认交班：结束后清空班次状态并强制登出，落到收银台独立登录页
+ * （交班即换人收银，必须重新登录下一个操作员账号）
  */
 async function confirmEndShift() {
   endingShift.value = true
@@ -247,6 +260,8 @@ async function confirmEndShift() {
     message.success('交班成功，辛苦了')
     showEndShiftModal.value = false
     posStore.clearShift()
+    // 交班即退出登录：清除 token，下一位收银员从登录页进入
+    authStore.logout()
     router.push('/pos/login')
   } catch (error: unknown) {
     message.error(error instanceof Error ? error.message : '交班失败，请重试')
@@ -345,17 +360,16 @@ onMounted(() => {
   justify-content: space-between;
   font-size: 13px;
   padding: 4px 0;
+  // 数额为 0 的支付方式（渠道未接入）弱化展示
+  &.muted {
+    color: #bbb;
+  }
   .amount {
     font-weight: 600;
     &.refund {
       color: #d03050;
     }
   }
-}
-.stat-empty {
-  font-size: 12px;
-  color: #ccc;
-  padding: 4px 0;
 }
 .cash-total {
   display: flex;
