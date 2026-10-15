@@ -17,7 +17,10 @@
         <text v-if="product.original_price > 0" class="original">{{ formatPrice(product.original_price) }}</text>
       </view>
       <text class="name">{{ product.name }}</text>
-      <text v-if="product.show_sales" class="sales">已售 {{ product.sales || 0 }}</text>
+      <view class="badge-row">
+        <text v-if="product.show_sales" class="sales">已售 {{ product.sales || 0 }}</text>
+        <text v-if="fsBadge" :class="['fs-badge', { excluded: fsBadgeExcluded }]">{{ fsBadge }}</text>
+      </view>
     </view>
 
     <!-- 规格选择 -->
@@ -94,7 +97,7 @@
 import { computed, ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getProductDetail } from '@/api/product'
+import { getProductDetail, getActiveFreeShipping, type FreeShippingActivity } from '@/api/product'
 import { addCartItem } from '@/api/cart'
 import { formatPrice } from '@/utils/format'
 import { goHome, goOrderConfirm, goLogin } from '@/utils/navigate'
@@ -141,7 +144,42 @@ onLoad((query) => {
   productId.value = Number(query?.id) || 0
   if (productId.value) {
     loadProduct()
+    loadFreeShippingBadge()
   }
+})
+
+// --- 满额免配送费角标 ---
+const fsActivity = ref<FreeShippingActivity | null>(null)
+
+/**
+ * 加载当前社区正在生效的免配送费活动（无活动时角标不展示）
+ */
+async function loadFreeShippingBadge() {
+  try {
+    const res = await getActiveFreeShipping({ community_id: userStore.communityInfo?.id })
+    fsActivity.value = res.data || null
+  } catch {
+    fsActivity.value = null
+  }
+}
+
+/** 本商品是否被活动排除（命中排除分类或排除商品） */
+const fsBadgeExcluded = computed(() => {
+  const act = fsActivity.value
+  if (!act) return false
+  return (act.scopes || []).some(
+    (s) =>
+      (s.scope_type === 4 && s.category_id === product.value.category_id) ||
+      (s.scope_type === 5 && s.product_id === product.value.id)
+  )
+})
+
+/** 角标文案：参与显示门槛，被排除显示不参与，无活动不展示 */
+const fsBadge = computed(() => {
+  const act = fsActivity.value
+  if (!act) return ''
+  if (fsBadgeExcluded.value) return '不参与免配送费'
+  return `满${formatPrice(act.threshold)}免配送费`
 })
 
 /** 是否多规格商品 */
@@ -345,6 +383,31 @@ function onBuy() {
   margin-top: 12rpx;
   font-size: 24rpx;
   color: #999999;
+}
+
+.badge-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 12rpx;
+}
+
+.badge-row .sales {
+  margin-top: 0;
+}
+
+/* 免配送费角标：绿色小标签；被排除时灰色 */
+.fs-badge {
+  padding: 2rpx 12rpx;
+  border-radius: 6rpx;
+  font-size: 20rpx;
+  color: #07c160;
+  background-color: rgba(7, 193, 96, 0.08);
+}
+
+.fs-badge.excluded {
+  color: #999999;
+  background-color: #f5f5f5;
 }
 
 .sku-card {

@@ -618,6 +618,46 @@ func (s *server) UpdateFullReduction(ctx stdctx.Context, req *product.UpdateFull
 	return service.ToFullReductionInfo(fr), nil
 }
 
+// ListFreeShippings 查询免配送费活动列表（含排除范围）
+func (s *server) ListFreeShippings(ctx stdctx.Context, req *product.ListFreeShippingsReq) (*product.ListFreeShippingsResp, error) {
+	list, err := s.marketingService.ListFreeShippings(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	resp := &product.ListFreeShippingsResp{List: make([]*product.FreeShippingInfo, 0, len(list))}
+	for _, a := range list {
+		resp.List = append(resp.List, service.ToFreeShippingInfo(a))
+	}
+	return resp, nil
+}
+
+// CreateFreeShipping 创建免配送费活动
+func (s *server) CreateFreeShipping(ctx stdctx.Context, req *product.CreateFreeShippingReq) (*product.FreeShippingInfo, error) {
+	activity, err := s.marketingService.CreateFreeShipping(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToFreeShippingInfo(activity), nil
+}
+
+// UpdateFreeShipping 更新免配送费活动
+func (s *server) UpdateFreeShipping(ctx stdctx.Context, req *product.UpdateFreeShippingReq) (*product.FreeShippingInfo, error) {
+	activity, err := s.marketingService.UpdateFreeShipping(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToFreeShippingInfo(activity), nil
+}
+
+// GetActiveFreeShipping 查询当前社区正在生效的免配送费活动（无生效活动时 activity 为空）
+func (s *server) GetActiveFreeShipping(ctx stdctx.Context, req *product.GetActiveFreeShippingReq) (*product.GetActiveFreeShippingResp, error) {
+	activity, err := s.marketingService.GetActiveFreeShipping(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &product.GetActiveFreeShippingResp{Activity: service.ToFreeShippingInfo(activity)}, nil
+}
+
 // ListBanners 查询 Banner 列表
 func (s *server) ListBanners(ctx stdctx.Context, req *product.ListBannersReq) (*product.ListBannersResp, error) {
 	list, err := s.bannerService.ListBanners(ctx, req)

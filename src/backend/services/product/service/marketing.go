@@ -458,6 +458,314 @@ func (s *MarketingService) UpdateFullReduction(ctx context.Context, req *product
 	return &fr, nil
 }
 
+// ==================== 满额免配送费 ====================
+
+// ListFreeShippings 查询免配送费活动列表（含排除范围）
+// 参数：
+//   - ctx: 上下文
+//   - req: 查询请求
+//
+// 返回值：
+//   - []*model.FreeShippingActivity: 活动列表
+//   - error: 错误信息
+func (s *MarketingService) ListFreeShippings(ctx context.Context, req *product.ListFreeShippingsReq) ([]*model.FreeShippingActivity, error) {
+	var list []*model.FreeShippingActivity
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("community_id = ?", req.CommunityId).
+		Order("id desc").
+		Find(&list).Error; err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return list, nil
+	}
+	// 批量加载排除范围
+	activityIDs := make([]int64, 0, len(list))
+	for _, a := range list {
+		activityIDs = append(activityIDs, a.ID)
+	}
+	var scopes []*model.FreeShippingScope
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("activity_id IN ?", activityIDs).
+		Find(&scopes).Error; err != nil {
+		return nil, err
+	}
+	scopeMap := make(map[int64][]*model.FreeShippingScope, len(list))
+	for _, sc := range scopes {
+		scopeMap[sc.ActivityID] = append(scopeMap[sc.ActivityID], sc)
+	}
+	s.fillScopeNames(ctx, scopes)
+	for _, a := range list {
+		a.Scopes = scopeMap[a.ID]
+	}
+	return list, nil
+}
+
+// CreateFreeShipping 创建免配送费活动（含排除范围，事务保存）
+// 参数：
+//   - ctx: 上下文
+//   - req: 创建请求
+//
+// 返回值：
+//   - *model.FreeShippingActivity: 活动模型
+//   - error: 错误信息
+func (s *MarketingService) CreateFreeShipping(ctx context.Context, req *product.CreateFreeShippingReq) (*model.FreeShippingActivity, error) {
+	now := time.Now().Format("2006-01-02 15:04:05")
+	activity := &model.FreeShippingActivity{
+		CommunityID: req.CommunityId,
+		Name:        req.Name,
+		Threshold:   req.Threshold,
+		StartTime:   strPtr(req.StartTime),
+		EndTime:     strPtr(req.EndTime),
+		Status:      1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(activity).Error; err != nil {
+			return err
+		}
+		return s.saveScopesTx(tx, activity.ID, req.Scopes, now)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 重新加载排除范围（含展示名），保证返回体完整
+	if err := s.loadScopes(ctx, activity); err != nil {
+		return nil, err
+	}
+	return activity, nil
+}
+
+// UpdateFreeShipping 更新免配送费活动（scopes 非nil 时全量替换排除范围）
+// 参数：
+//   - ctx: 上下文
+//   - req: 更新请求
+//
+// 返回值：
+//   - *model.FreeShippingActivity: 活动模型
+//   - error: 错误信息
+func (s *MarketingService) UpdateFreeShipping(ctx context.Context, req *product.UpdateFreeShippingReq) (*model.FreeShippingActivity, error) {
+	var activity model.FreeShippingActivity
+	if err := s.db.GetDb().WithContext(ctx).First(&activity, req.Id).Error; err != nil {
+		return nil, err
+	}
+	if req.Name != "" {
+		activity.Name = req.Name
+	}
+	if req.Threshold > 0 {
+		activity.Threshold = req.Threshold
+	}
+	if req.StartTime != "" {
+		activity.StartTime = strPtr(req.StartTime)
+	}
+	if req.EndTime != "" {
+		activity.EndTime = strPtr(req.EndTime)
+	}
+	if req.Status >= 0 {
+		activity.Status = req.Status
+	}
+	activity.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&activity).Error; err != nil {
+			return err
+		}
+		// scopes 为 nil 表示本次不涉及范围修改；空切片表示清空
+		if req.Scopes == nil {
+			return nil
+		}
+		if err := tx.Where("activity_id = ?", activity.ID).Delete(&model.FreeShippingScope{}).Error; err != nil {
+			return err
+		}
+		return s.saveScopesTx(tx, activity.ID, req.Scopes, activity.UpdatedAt)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 重新加载排除范围（含展示名），保证返回体完整
+	if err := s.loadScopes(ctx, &activity); err != nil {
+		return nil, err
+	}
+	return &activity, nil
+}
+
+// loadScopes 加载活动的排除范围并回填展示名
+// 参数：
+//   - ctx: 上下文
+//   - activity: 活动模型（Scopes 字段会被覆写）
+//
+// 返回值：
+//   - error: 错误信息
+func (s *MarketingService) loadScopes(ctx context.Context, activity *model.FreeShippingActivity) error {
+	var scopes []*model.FreeShippingScope
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("activity_id = ?", activity.ID).
+		Find(&scopes).Error; err != nil {
+		return err
+	}
+	s.fillScopeNames(ctx, scopes)
+	activity.Scopes = scopes
+	return nil
+}
+
+// GetActiveFreeShipping 查询当前社区正在生效的免配送费活动
+// 生效条件：启用 + 时效内；同社区多个活动命中时取门槛最低（对用户最优）的一项
+// 参数：
+//   - ctx: 上下文
+//   - req: 查询请求
+//
+// 返回值：
+//   - *model.FreeShippingActivity: 生效活动（无则 nil）
+//   - error: 错误信息
+func (s *MarketingService) GetActiveFreeShipping(ctx context.Context, req *product.GetActiveFreeShippingReq) (*model.FreeShippingActivity, error) {
+	var list []*model.FreeShippingActivity
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("community_id = ? AND status = 1", req.CommunityId).
+		Order("threshold asc, id desc").
+		Find(&list).Error; err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	for _, a := range list {
+		if a.StartTime != nil && *a.StartTime != "" {
+			if start, err := time.ParseInLocation("2006-01-02 15:04:05", *a.StartTime, time.Local); err == nil && now.Before(start) {
+				continue
+			}
+		}
+		if a.EndTime != nil && *a.EndTime != "" {
+			if end, err := time.ParseInLocation("2006-01-02 15:04:05", *a.EndTime, time.Local); err == nil && now.After(end) {
+				continue
+			}
+		}
+		// 命中第一个（门槛最优），加载排除范围后返回
+		var scopes []*model.FreeShippingScope
+		if err := s.db.GetDb().WithContext(ctx).
+			Where("activity_id = ?", a.ID).
+			Find(&scopes).Error; err != nil {
+			return nil, err
+		}
+		s.fillScopeNames(ctx, scopes)
+		a.Scopes = scopes
+		return a, nil
+	}
+	return nil, nil
+}
+
+// saveScopesTx 事务内保存排除范围
+// 参数：
+//   - tx: 事务对象
+//   - activityID: 活动 ID
+//   - scopes: 范围请求列表
+//   - now: 创建时间
+//
+// 返回值：
+//   - error: 错误信息
+func (s *MarketingService) saveScopesTx(tx *gorm.DB, activityID int64, scopes []*product.FreeShippingScopeReq, now string) error {
+	for _, sc := range scopes {
+		row := &model.FreeShippingScope{
+			ActivityID: activityID,
+			ScopeType:  sc.ScopeType,
+			CategoryID: sc.CategoryId,
+			ProductID:  sc.ProductId,
+			CreatedAt:  now,
+		}
+		if err := tx.Create(row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// fillScopeNames 批量回填范围项的分类名/商品名（展示用，失败静默跳过）
+// 参数：
+//   - ctx: 上下文
+//   - scopes: 范围模型列表
+func (s *MarketingService) fillScopeNames(ctx context.Context, scopes []*model.FreeShippingScope) {
+	categoryIDs := make([]int64, 0)
+	productIDs := make([]int64, 0)
+	for _, sc := range scopes {
+		switch sc.ScopeType {
+		case model.FreeShippingScopeTypeExcludeCategory:
+			if sc.CategoryID > 0 {
+				categoryIDs = append(categoryIDs, sc.CategoryID)
+			}
+		case model.FreeShippingScopeTypeExcludeProduct:
+			if sc.ProductID > 0 {
+				productIDs = append(productIDs, sc.ProductID)
+			}
+		}
+	}
+	categoryNames := make(map[int64]string)
+	if len(categoryIDs) > 0 {
+		var categories []*model.Category
+		if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", categoryIDs).Find(&categories).Error; err == nil {
+			for _, c := range categories {
+				categoryNames[c.ID] = c.Name
+			}
+		}
+	}
+	productNames := make(map[int64]string)
+	if len(productIDs) > 0 {
+		var products []*model.Product
+		if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", productIDs).Find(&products).Error; err == nil {
+			for _, p := range products {
+				productNames[p.ID] = p.Name
+			}
+		}
+	}
+	for _, sc := range scopes {
+		sc.CategoryName = categoryNames[sc.CategoryID]
+		sc.ProductName = productNames[sc.ProductID]
+	}
+}
+
+// ToFreeShippingScopeInfo 将免配送费范围模型转换为 proto 信息
+// 参数：
+//   - sc: 范围模型
+//
+// 返回值：
+//   - *product.FreeShippingScopeInfo: proto 范围信息
+func ToFreeShippingScopeInfo(sc *model.FreeShippingScope) *product.FreeShippingScopeInfo {
+	if sc == nil {
+		return nil
+	}
+	return &product.FreeShippingScopeInfo{
+		Id:           sc.ID,
+		ScopeType:    sc.ScopeType,
+		CategoryId:   sc.CategoryID,
+		CategoryName: sc.CategoryName,
+		ProductId:    sc.ProductID,
+		ProductName:  sc.ProductName,
+	}
+}
+
+// ToFreeShippingInfo 将免配送费活动模型转换为 proto 信息
+// 参数：
+//   - a: 活动模型
+//
+// 返回值：
+//   - *product.FreeShippingInfo: proto 活动信息
+func ToFreeShippingInfo(a *model.FreeShippingActivity) *product.FreeShippingInfo {
+	if a == nil {
+		return nil
+	}
+	info := &product.FreeShippingInfo{
+		Id:          a.ID,
+		CommunityId: a.CommunityID,
+		Name:        a.Name,
+		Threshold:   a.Threshold,
+		StartTime:   ptrString(a.StartTime),
+		EndTime:     ptrString(a.EndTime),
+		Status:      a.Status,
+		Scopes:      make([]*product.FreeShippingScopeInfo, 0, len(a.Scopes)),
+	}
+	for _, sc := range a.Scopes {
+		info.Scopes = append(info.Scopes, ToFreeShippingScopeInfo(sc))
+	}
+	return info
+}
+
 // ==================== 模型转换 ====================
 
 // ToCouponInfo 将优惠券模型转换为 proto 信息

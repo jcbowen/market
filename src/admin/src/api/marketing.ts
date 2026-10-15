@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, Banner, Coupon, FullReduction, PageParams, PageResult, Seckill } from './types'
+import type { ApiResult, Banner, Coupon, FreeShipping, FullReduction, PageParams, PageResult, Seckill } from './types'
 
 /**
  * 营销管理相关 API
@@ -164,6 +164,48 @@ export function deleteFullReduction(id: number) {
   return request<ApiResult<null>>({
     url: `/api/v1/admin/full-reductions/${id}`,
     method: 'DELETE',
+  })
+}
+
+// 免配送费
+
+/**
+ * 获取免配送费活动列表（含排除范围）
+ * @param params 查询参数
+ * @returns 分页免配送费活动列表
+ */
+export function getFreeShippingList(params: PageParams & { name?: string; status?: number }) {
+  return request<ApiResult<PageResult<FreeShipping>>>({
+    url: '/api/v1/admin/free-shippings',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 创建免配送费活动
+ * @param data 活动数据（含排除范围 scopes）
+ * @returns 创建结果
+ */
+export function createFreeShipping(data: Partial<FreeShipping>) {
+  return request<ApiResult<FreeShipping>>({
+    url: '/api/v1/admin/free-shippings',
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 更新免配送费活动（启停/编辑；scopes 传 null 不修改范围，空数组清空）
+ * @param id 活动 ID
+ * @param data 活动数据
+ * @returns 更新结果
+ */
+export function updateFreeShipping(id: number, data: Partial<FreeShipping>) {
+  return request<ApiResult<FreeShipping>>({
+    url: `/api/v1/admin/free-shippings/${id}`,
+    method: 'PUT',
+    data,
   })
 }
 

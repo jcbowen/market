@@ -65,6 +65,10 @@ const (
 	ProductService_ListFullReductions_FullMethodName            = "/product.ProductService/ListFullReductions"
 	ProductService_CreateFullReduction_FullMethodName           = "/product.ProductService/CreateFullReduction"
 	ProductService_UpdateFullReduction_FullMethodName           = "/product.ProductService/UpdateFullReduction"
+	ProductService_ListFreeShippings_FullMethodName             = "/product.ProductService/ListFreeShippings"
+	ProductService_CreateFreeShipping_FullMethodName            = "/product.ProductService/CreateFreeShipping"
+	ProductService_UpdateFreeShipping_FullMethodName            = "/product.ProductService/UpdateFreeShipping"
+	ProductService_GetActiveFreeShipping_FullMethodName         = "/product.ProductService/GetActiveFreeShipping"
 	ProductService_ListBanners_FullMethodName                   = "/product.ProductService/ListBanners"
 	ProductService_CreateBanner_FullMethodName                  = "/product.ProductService/CreateBanner"
 	ProductService_UpdateBanner_FullMethodName                  = "/product.ProductService/UpdateBanner"
@@ -139,6 +143,11 @@ type ProductServiceClient interface {
 	ListFullReductions(ctx context.Context, in *ListFullReductionsReq, opts ...grpc.CallOption) (*ListFullReductionsResp, error)
 	CreateFullReduction(ctx context.Context, in *CreateFullReductionReq, opts ...grpc.CallOption) (*FullReductionInfo, error)
 	UpdateFullReduction(ctx context.Context, in *UpdateFullReductionReq, opts ...grpc.CallOption) (*FullReductionInfo, error)
+	// 满额免配送费活动
+	ListFreeShippings(ctx context.Context, in *ListFreeShippingsReq, opts ...grpc.CallOption) (*ListFreeShippingsResp, error)
+	CreateFreeShipping(ctx context.Context, in *CreateFreeShippingReq, opts ...grpc.CallOption) (*FreeShippingInfo, error)
+	UpdateFreeShipping(ctx context.Context, in *UpdateFreeShippingReq, opts ...grpc.CallOption) (*FreeShippingInfo, error)
+	GetActiveFreeShipping(ctx context.Context, in *GetActiveFreeShippingReq, opts ...grpc.CallOption) (*GetActiveFreeShippingResp, error)
 	// Banner
 	ListBanners(ctx context.Context, in *ListBannersReq, opts ...grpc.CallOption) (*ListBannersResp, error)
 	CreateBanner(ctx context.Context, in *CreateBannerReq, opts ...grpc.CallOption) (*BannerInfo, error)
@@ -618,6 +627,46 @@ func (c *productServiceClient) UpdateFullReduction(ctx context.Context, in *Upda
 	return out, nil
 }
 
+func (c *productServiceClient) ListFreeShippings(ctx context.Context, in *ListFreeShippingsReq, opts ...grpc.CallOption) (*ListFreeShippingsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFreeShippingsResp)
+	err := c.cc.Invoke(ctx, ProductService_ListFreeShippings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) CreateFreeShipping(ctx context.Context, in *CreateFreeShippingReq, opts ...grpc.CallOption) (*FreeShippingInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FreeShippingInfo)
+	err := c.cc.Invoke(ctx, ProductService_CreateFreeShipping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) UpdateFreeShipping(ctx context.Context, in *UpdateFreeShippingReq, opts ...grpc.CallOption) (*FreeShippingInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FreeShippingInfo)
+	err := c.cc.Invoke(ctx, ProductService_UpdateFreeShipping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) GetActiveFreeShipping(ctx context.Context, in *GetActiveFreeShippingReq, opts ...grpc.CallOption) (*GetActiveFreeShippingResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetActiveFreeShippingResp)
+	err := c.cc.Invoke(ctx, ProductService_GetActiveFreeShipping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *productServiceClient) ListBanners(ctx context.Context, in *ListBannersReq, opts ...grpc.CallOption) (*ListBannersResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListBannersResp)
@@ -834,6 +883,11 @@ type ProductServiceServer interface {
 	ListFullReductions(context.Context, *ListFullReductionsReq) (*ListFullReductionsResp, error)
 	CreateFullReduction(context.Context, *CreateFullReductionReq) (*FullReductionInfo, error)
 	UpdateFullReduction(context.Context, *UpdateFullReductionReq) (*FullReductionInfo, error)
+	// 满额免配送费活动
+	ListFreeShippings(context.Context, *ListFreeShippingsReq) (*ListFreeShippingsResp, error)
+	CreateFreeShipping(context.Context, *CreateFreeShippingReq) (*FreeShippingInfo, error)
+	UpdateFreeShipping(context.Context, *UpdateFreeShippingReq) (*FreeShippingInfo, error)
+	GetActiveFreeShipping(context.Context, *GetActiveFreeShippingReq) (*GetActiveFreeShippingResp, error)
 	// Banner
 	ListBanners(context.Context, *ListBannersReq) (*ListBannersResp, error)
 	CreateBanner(context.Context, *CreateBannerReq) (*BannerInfo, error)
@@ -997,6 +1051,18 @@ func (UnimplementedProductServiceServer) CreateFullReduction(context.Context, *C
 }
 func (UnimplementedProductServiceServer) UpdateFullReduction(context.Context, *UpdateFullReductionReq) (*FullReductionInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateFullReduction not implemented")
+}
+func (UnimplementedProductServiceServer) ListFreeShippings(context.Context, *ListFreeShippingsReq) (*ListFreeShippingsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFreeShippings not implemented")
+}
+func (UnimplementedProductServiceServer) CreateFreeShipping(context.Context, *CreateFreeShippingReq) (*FreeShippingInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateFreeShipping not implemented")
+}
+func (UnimplementedProductServiceServer) UpdateFreeShipping(context.Context, *UpdateFreeShippingReq) (*FreeShippingInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateFreeShipping not implemented")
+}
+func (UnimplementedProductServiceServer) GetActiveFreeShipping(context.Context, *GetActiveFreeShippingReq) (*GetActiveFreeShippingResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetActiveFreeShipping not implemented")
 }
 func (UnimplementedProductServiceServer) ListBanners(context.Context, *ListBannersReq) (*ListBannersResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListBanners not implemented")
@@ -1877,6 +1943,78 @@ func _ProductService_UpdateFullReduction_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_ListFreeShippings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFreeShippingsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListFreeShippings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListFreeShippings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListFreeShippings(ctx, req.(*ListFreeShippingsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_CreateFreeShipping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateFreeShippingReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).CreateFreeShipping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_CreateFreeShipping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).CreateFreeShipping(ctx, req.(*CreateFreeShippingReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_UpdateFreeShipping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateFreeShippingReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).UpdateFreeShipping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_UpdateFreeShipping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).UpdateFreeShipping(ctx, req.(*UpdateFreeShippingReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_GetActiveFreeShipping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetActiveFreeShippingReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetActiveFreeShipping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetActiveFreeShipping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetActiveFreeShipping(ctx, req.(*GetActiveFreeShippingReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProductService_ListBanners_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListBannersReq)
 	if err := dec(in); err != nil {
@@ -2351,6 +2489,22 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateFullReduction",
 			Handler:    _ProductService_UpdateFullReduction_Handler,
+		},
+		{
+			MethodName: "ListFreeShippings",
+			Handler:    _ProductService_ListFreeShippings_Handler,
+		},
+		{
+			MethodName: "CreateFreeShipping",
+			Handler:    _ProductService_CreateFreeShipping_Handler,
+		},
+		{
+			MethodName: "UpdateFreeShipping",
+			Handler:    _ProductService_UpdateFreeShipping_Handler,
+		},
+		{
+			MethodName: "GetActiveFreeShipping",
+			Handler:    _ProductService_GetActiveFreeShipping_Handler,
 		},
 		{
 			MethodName: "ListBanners",

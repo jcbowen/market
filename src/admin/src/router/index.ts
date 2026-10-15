@@ -151,6 +151,24 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '创建满减', permission: 'marketing:create', group: '营销管理', hidden: true },
       },
       {
+        path: 'marketing/free-shipping',
+        name: 'FreeShippingList',
+        component: () => import('@/views/marketing/free-shipping.vue'),
+        meta: { title: '免配送费活动', permission: 'marketing:view', group: '营销管理' },
+      },
+      {
+        path: 'marketing/free-shipping/create',
+        name: 'FreeShippingCreate',
+        component: () => import('@/views/marketing/free-shipping-form.vue'),
+        meta: { title: '创建免配送费活动', permission: 'marketing:create', group: '营销管理', hidden: true },
+      },
+      {
+        path: 'marketing/free-shipping/:id/edit',
+        name: 'FreeShippingEdit',
+        component: () => import('@/views/marketing/free-shipping-form.vue'),
+        meta: { title: '编辑免配送费活动', permission: 'marketing:update', group: '营销管理', hidden: true },
+      },
+      {
         path: 'marketing/banners',
         name: 'BannerList',
         component: () => import('@/views/marketing/components/BannerManager.vue'),

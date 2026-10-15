@@ -118,3 +118,30 @@ export interface FrequentProduct {
 export function getFrequentProducts(limit = 10) {
   return get<{ list: FrequentProduct[] }>('/orders/frequent-products', { limit })
 }
+
+/** 免配送费试算结果 */
+export interface FreeShippingPreview {
+  /** 是否已满足免配送费 */
+  free_shipping: boolean
+  /** 命中的活动名 */
+  activity_name: string
+  /** 免配送费门槛 */
+  threshold: number
+  /** 参与免配送费的商品金额合计 */
+  eligible_amount: number
+  /** 距门槛差额（已满足时为 0） */
+  remain_amount: number
+  /** 被排除商品/分类的展示名清单 */
+  excluded_names: string[]
+  /** 基础配送费（社区配置值） */
+  delivery_fee: number
+}
+
+/**
+ * 免配送费试算（订单确认页展示）
+ * 按结算商品清单计算当前社区免配送费活动命中情况
+ * @param items 结算商品（sku_id + quantity）
+ */
+export function previewFreeShipping(items: { sku_id: number; quantity: number }[]) {
+  return post<FreeShippingPreview>('/orders/free-shipping/preview', { items })
+}

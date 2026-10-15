@@ -68,6 +68,12 @@ service ProductService {
   rpc CreateFullReduction(CreateFullReductionReq) returns (FullReductionInfo);
   rpc UpdateFullReduction(UpdateFullReductionReq) returns (FullReductionInfo);
 
+  // 满额免配送费活动
+  rpc ListFreeShippings(ListFreeShippingsReq) returns (ListFreeShippingsResp);
+  rpc CreateFreeShipping(CreateFreeShippingReq) returns (FreeShippingInfo);
+  rpc UpdateFreeShipping(UpdateFreeShippingReq) returns (FreeShippingInfo);
+  rpc GetActiveFreeShipping(GetActiveFreeShippingReq) returns (GetActiveFreeShippingResp);
+
   // Banner
   rpc ListBanners(ListBannersReq) returns (ListBannersResp);
   rpc CreateBanner(CreateBannerReq) returns (BannerInfo);
@@ -719,6 +725,73 @@ message FullReductionInfo {
 
 message ListFullReductionsResp {
   repeated FullReductionInfo list = 1;
+}
+
+// --- 满额免配送费（FreeShipping）---
+// 活动语义：配送订单中「参与免配送费的商品金额合计 >= threshold」则免配送费；
+// 排除范围（scope）按分类/商品指定，被排除商品的金额不计入门槛。
+// scope_type 复用优惠券范围枚举：4=排除分类 5=排除商品（当前仅排除语义，保留扩展）。
+message FreeShippingScopeReq {
+  int32 scope_type = 1; // 4=排除分类 5=排除商品
+  int64 category_id = 2; // scope_type=4 时有效
+  int64 product_id = 3;  // scope_type=5 时有效
+}
+
+message CreateFreeShippingReq {
+  int64 community_id = 1;
+  string name = 2;
+  double threshold = 3;   // 免配送费门槛（参与商品额）
+  string start_time = 4;
+  string end_time = 5;
+  repeated FreeShippingScopeReq scopes = 6; // 排除范围，全量提交
+}
+
+message UpdateFreeShippingReq {
+  int64 id = 1;
+  string name = 2;
+  double threshold = 3;
+  string start_time = 4;
+  string end_time = 5;
+  int32 status = 6;
+  repeated FreeShippingScopeReq scopes = 7; // 排除范围，全量替换
+}
+
+message FreeShippingScopeInfo {
+  int64 id = 1;
+  int32 scope_type = 2;
+  int64 category_id = 3;
+  string category_name = 4;
+  int64 product_id = 5;
+  string product_name = 6;
+}
+
+message FreeShippingInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string name = 3;
+  double threshold = 4;
+  string start_time = 5;
+  string end_time = 6;
+  int32 status = 7;
+  repeated FreeShippingScopeInfo scopes = 8;
+}
+
+message ListFreeShippingsReq {
+  int64 community_id = 1;
+}
+
+message ListFreeShippingsResp {
+  repeated FreeShippingInfo list = 1;
+}
+
+// 查询当前社区「正在生效」的免配送费活动（启用 + 时效内，门槛最优优先）；
+// 无生效活动时 activity 为空
+message GetActiveFreeShippingReq {
+  int64 community_id = 1;
+}
+
+message GetActiveFreeShippingResp {
+  FreeShippingInfo activity = 1;
 }
 
 // --- Banner ---

@@ -80,7 +80,11 @@
       </view>
       <view v-if="deliveryType === DELIVERY_TYPE_DELIVERY" class="extra-item">
         <text>配送费</text>
-        <text class="extra-value" :class="{ 'discount-value': false }">{{ formatPrice(deliveryFee) }}</text>
+        <view class="fs-detail">
+          <text class="extra-value" :class="{ 'discount-value': fsFree }">{{ deliveryFeeText }}</text>
+          <text v-if="fsHint" class="fs-hint">{{ fsHint }}</text>
+          <text v-if="excludedText" class="fs-excluded">不参与：{{ excludedText }}</text>
+        </view>
       </view>
       <view v-else class="extra-item">
         <text>配送费</text>
@@ -158,14 +162,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
 import { getAddressList } from '@/api/user'
 import { getCart, removeCartItem } from '@/api/cart'
 import { getFullReductions, getProductDetail, getSkuById } from '@/api/product'
-import { createOrder } from '@/api/order'
+import { createOrder, previewFreeShipping, type FreeShippingPreview } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
 import { formatPrice, formatDate } from '@/utils/format'
@@ -215,7 +219,57 @@ const totalAmount = computed(() => {
 // 社区配送费/起送金额：proto 为 omitempty，值为 0 时字段缺省，必须 ?? 0
 const deliveryFee = computed(() => {
   if (deliveryType.value !== DELIVERY_TYPE_DELIVERY) return 0
+  // 满额免配送费活动命中时实际配送费为 0（与后端 CreateOrder 口径一致）
+  if (fsPreview.value?.free_shipping) return 0
   return userStore.communityInfo?.delivery_fee ?? 0
+})
+
+// --- 免配送费试算（配送单展示） ---
+const fsPreview = ref<FreeShippingPreview | null>(null)
+
+const fsFree = computed(() => !!fsPreview.value?.free_shipping)
+
+const deliveryFeeText = computed(() => {
+  if (fsFree.value) return '免配送费'
+  return formatPrice(deliveryFee.value)
+})
+
+/** 免配送费进度提示：已满足显示活动名，未满足显示还差金额 */
+const fsHint = computed(() => {
+  const p = fsPreview.value
+  if (!p || !p.activity_name) return ''
+  if (p.free_shipping) return `${p.activity_name}·已免配送费`
+  if (p.threshold > 0) return `${p.activity_name}：还差 ${formatPrice(p.remain_amount)} 免配送费`
+  return ''
+})
+
+/** 不参与商品/分类提示（点击无需展开，直接一行小字） */
+const excludedText = computed(() => {
+  const names = fsPreview.value?.excluded_names || []
+  return names.join('、')
+})
+
+/**
+ * 加载免配送费试算：仅配送单且商品清单非空时调用
+ * 商品清单或配送方式变化后自动刷新
+ */
+async function loadFsPreview() {
+  if (deliveryType.value !== DELIVERY_TYPE_DELIVERY || !orderItems.value.length) {
+    fsPreview.value = null
+    return
+  }
+  try {
+    const res = await previewFreeShipping(
+      orderItems.value.map((it) => ({ sku_id: it.sku_id, quantity: it.quantity }))
+    )
+    fsPreview.value = res.data || null
+  } catch {
+    fsPreview.value = null
+  }
+}
+
+watch([deliveryType, orderItems], () => {
+  void loadFsPreview()
 })
 
 const minOrderAmount = computed(() => {
@@ -744,6 +798,28 @@ async function onSubmit() {
 
 .extra-value.discount-value {
   color: #ff4d4f;
+}
+
+/* 免配送费试算展示：右对齐两行（金额+活动进度提示） */
+.fs-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-right: 12rpx;
+}
+
+.fs-hint {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #07c160;
+}
+
+.fs-excluded {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: #999999;
+  text-align: right;
 }
 
 .footer-bar {

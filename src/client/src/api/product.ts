@@ -212,3 +212,34 @@ export function getBanners(params?: { community_id?: number; position?: number }
 export function getFullReductions(params?: { community_id?: number }) {
   return get<FullReduction[]>('/full-reductions', params as Record<string, unknown>)
 }
+
+/** 免配送费排除范围项 */
+export interface FreeShippingScopeInfo {
+  scope_type: number
+  category_id: number
+  category_name: string
+  product_id: number
+  product_name: string
+}
+
+/** 正在生效的免配送费活动 */
+export interface FreeShippingActivity {
+  id: number
+  community_id: number
+  name: string
+  /** 免配送费门槛（参与商品额） */
+  threshold: number
+  start_time: string
+  end_time: string
+  status: number
+  scopes: FreeShippingScopeInfo[]
+}
+
+/**
+ * 获取当前社区正在生效的免配送费活动（无生效活动返回 null）
+ * 商品详情页据此展示「参与满额免配送费 / 不参与」角标
+ * @param params 社区 ID
+ */
+export function getActiveFreeShipping(params?: { community_id?: number }) {
+  return get<FreeShippingActivity | null>('/free-shippings/active', params as Record<string, unknown>)
+}

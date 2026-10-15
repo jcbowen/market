@@ -144,6 +144,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.GET("/coupons", productHandler.ListCoupons)
 			public.GET("/flash-sales", productHandler.ListFlashSales)
 			public.GET("/full-reductions", productHandler.ListFullReductions)
+			public.GET("/free-shippings/active", productHandler.GetActiveFreeShipping)
 			public.GET("/banners", productHandler.ListBanners)
 
 			public.GET("/geoip/locate", geoipHandler.Locate)
@@ -185,6 +186,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.POST("/orders", orderHandler.CreateOrder)
 			authUser.GET("/orders", orderHandler.ListOrders)
 			authUser.GET("/orders/frequent-products", orderHandler.ListFrequentProducts)
+			authUser.POST("/orders/free-shipping/preview", orderHandler.PreviewFreeShipping)
 			authUser.GET("/orders/:id", orderHandler.GetOrder)
 			authUser.PUT("/orders/:id/cancel", orderHandler.CancelOrder)
 			authUser.POST("/orders/:id/receive", orderHandler.ConfirmReceive)
@@ -277,6 +279,9 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/full-reductions", gwMiddleware.RequirePermission("marketing:view"), adminHandler.ListFullReductions)
 			authAdmin.POST("/full-reductions", gwMiddleware.RequirePermission("marketing:create"), adminHandler.CreateFullReduction)
 			authAdmin.PUT("/full-reductions/:id", gwMiddleware.RequirePermission("marketing:update"), adminHandler.UpdateFullReduction)
+			authAdmin.GET("/free-shippings", gwMiddleware.RequirePermission("marketing:view"), adminHandler.ListFreeShippings)
+			authAdmin.POST("/free-shippings", gwMiddleware.RequirePermission("marketing:create"), adminHandler.CreateFreeShipping)
+			authAdmin.PUT("/free-shippings/:id", gwMiddleware.RequirePermission("marketing:update"), adminHandler.UpdateFreeShipping)
 
 			authAdmin.GET("/banners", gwMiddleware.RequirePermission("marketing:view"), adminHandler.ListAdminBanners)
 			authAdmin.POST("/banners", gwMiddleware.RequirePermission("marketing:create"), adminHandler.CreateBanner)

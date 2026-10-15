@@ -64,6 +64,8 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.FlashSale{},
 		&model.FlashSaleItem{},
 		&model.FullReduction{},
+		&model.FreeShippingActivity{},
+		&model.FreeShippingScope{},
 		&model.Banner{},
 		&model.AttachmentConfig{},
 		&model.Attachment{},

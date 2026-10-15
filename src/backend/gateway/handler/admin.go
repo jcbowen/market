@@ -2753,6 +2753,132 @@ func (h *AdminHandler) UpdateFullReduction(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// --- 满额免配送费管理 ---
+
+// FreeShippingScopeInput 免配送费排除范围入参
+type FreeShippingScopeInput struct {
+	ScopeType  int32 `json:"scope_type"` // 4=排除分类 5=排除商品
+	CategoryID int64 `json:"category_id"`
+	ProductID  int64 `json:"product_id"`
+}
+
+// ListFreeShippings 获取免配送费活动列表（含排除范围）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ListFreeShippings(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	resp, err := h.productClient.ListFreeShippings(c.Request.Context(), &product.ListFreeShippingsReq{
+		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.SuccessWithPage(c, resp.List, len(resp.List), page, pageSize)
+}
+
+// CreateFreeShippingReq 创建免配送费活动请求
+type CreateFreeShippingReq struct {
+	Name      string                    `json:"name" binding:"required"`
+	Threshold float64                   `json:"threshold" binding:"required"`
+	StartTime string                    `json:"start_time"`
+	EndTime   string                    `json:"end_time"`
+	Scopes    []FreeShippingScopeInput  `json:"scopes"`
+}
+
+// CreateFreeShipping 创建免配送费活动
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) CreateFreeShipping(c *gin.Context) {
+	var req CreateFreeShippingReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	resp, err := h.productClient.CreateFreeShipping(c.Request.Context(), &product.CreateFreeShippingReq{
+		CommunityId: h.getAdminCommunityID(c),
+		Name:        req.Name,
+		Threshold:   req.Threshold,
+		StartTime:   req.StartTime,
+		EndTime:     req.EndTime,
+		Scopes:      toFreeShippingScopes(req.Scopes),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// UpdateFreeShippingReq 更新免配送费活动请求
+type UpdateFreeShippingReq struct {
+	Name      string                   `json:"name"`
+	Threshold float64                  `json:"threshold"`
+	StartTime string                   `json:"start_time"`
+	EndTime   string                   `json:"end_time"`
+	Status    int32                    `json:"status"`
+	Scopes    *[]FreeShippingScopeInput `json:"scopes"` // nil=不修改范围；空数组=清空范围
+}
+
+// UpdateFreeShipping 更新免配送费活动（支持启停/编辑/排除范围全量替换）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) UpdateFreeShipping(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req UpdateFreeShippingReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	rpcReq := &product.UpdateFreeShippingReq{
+		Id:        id,
+		Name:      req.Name,
+		Threshold: req.Threshold,
+		StartTime: req.StartTime,
+		EndTime:   req.EndTime,
+		Status:    req.Status,
+	}
+	// 区分「不传 scopes」与「传空数组」：仅前者跳过范围替换
+	if req.Scopes != nil {
+		rpcReq.Scopes = toFreeShippingScopes(*req.Scopes)
+	}
+	resp, err := h.productClient.UpdateFreeShipping(c.Request.Context(), rpcReq)
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// toFreeShippingScopes 入参范围列表转 proto
+// 参数：
+//   - inputs: 入参列表
+//
+// 返回值：
+//   - []*product.FreeShippingScopeReq: proto 范围列表
+func toFreeShippingScopes(inputs []FreeShippingScopeInput) []*product.FreeShippingScopeReq {
+	if len(inputs) == 0 {
+		return nil
+	}
+	scopes := make([]*product.FreeShippingScopeReq, 0, len(inputs))
+	for _, in := range inputs {
+		scopes = append(scopes, &product.FreeShippingScopeReq{
+			ScopeType:  in.ScopeType,
+			CategoryId: in.CategoryID,
+			ProductId:  in.ProductID,
+		})
+	}
+	return scopes
+}
+
 // --- Banner 管理 ---
 
 // ListAdminBanners 获取 Banner 列表

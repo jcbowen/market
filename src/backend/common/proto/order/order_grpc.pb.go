@@ -39,6 +39,7 @@ const (
 	OrderService_GetProductRankings_FullMethodName      = "/order.OrderService/GetProductRankings"
 	OrderService_GetRevenueReport_FullMethodName        = "/order.OrderService/GetRevenueReport"
 	OrderService_GetUserFrequentProducts_FullMethodName = "/order.OrderService/GetUserFrequentProducts"
+	OrderService_PreviewFreeShipping_FullMethodName     = "/order.OrderService/PreviewFreeShipping"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -70,6 +71,8 @@ type OrderServiceClient interface {
 	GetRevenueReport(ctx context.Context, in *GetRevenueReportReq, opts ...grpc.CallOption) (*RevenueReportResp, error)
 	// 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
 	GetUserFrequentProducts(ctx context.Context, in *GetUserFrequentProductsReq, opts ...grpc.CallOption) (*GetUserFrequentProductsResp, error)
+	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
+	PreviewFreeShipping(ctx context.Context, in *PreviewFreeShippingReq, opts ...grpc.CallOption) (*PreviewFreeShippingResp, error)
 }
 
 type orderServiceClient struct {
@@ -270,6 +273,16 @@ func (c *orderServiceClient) GetUserFrequentProducts(ctx context.Context, in *Ge
 	return out, nil
 }
 
+func (c *orderServiceClient) PreviewFreeShipping(ctx context.Context, in *PreviewFreeShippingReq, opts ...grpc.CallOption) (*PreviewFreeShippingResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreviewFreeShippingResp)
+	err := c.cc.Invoke(ctx, OrderService_PreviewFreeShipping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrderServiceServer is the server API for OrderService service.
 // All implementations must embed UnimplementedOrderServiceServer
 // for forward compatibility.
@@ -299,6 +312,8 @@ type OrderServiceServer interface {
 	GetRevenueReport(context.Context, *GetRevenueReportReq) (*RevenueReportResp, error)
 	// 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
 	GetUserFrequentProducts(context.Context, *GetUserFrequentProductsReq) (*GetUserFrequentProductsResp, error)
+	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
+	PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error)
 	mustEmbedUnimplementedOrderServiceServer()
 }
 
@@ -365,6 +380,9 @@ func (UnimplementedOrderServiceServer) GetRevenueReport(context.Context, *GetRev
 }
 func (UnimplementedOrderServiceServer) GetUserFrequentProducts(context.Context, *GetUserFrequentProductsReq) (*GetUserFrequentProductsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetUserFrequentProducts not implemented")
+}
+func (UnimplementedOrderServiceServer) PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewFreeShipping not implemented")
 }
 func (UnimplementedOrderServiceServer) mustEmbedUnimplementedOrderServiceServer() {}
 func (UnimplementedOrderServiceServer) testEmbeddedByValue()                      {}
@@ -729,6 +747,24 @@ func _OrderService_GetUserFrequentProducts_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_PreviewFreeShipping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewFreeShippingReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).PreviewFreeShipping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_PreviewFreeShipping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).PreviewFreeShipping(ctx, req.(*PreviewFreeShippingReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrderService_ServiceDesc is the grpc.ServiceDesc for OrderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -811,6 +847,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUserFrequentProducts",
 			Handler:    _OrderService_GetUserFrequentProducts_Handler,
+		},
+		{
+			MethodName: "PreviewFreeShipping",
+			Handler:    _OrderService_PreviewFreeShipping_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

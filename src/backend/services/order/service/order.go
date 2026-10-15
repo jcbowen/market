@@ -66,6 +66,8 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	now := time.Now().Format("2006-01-02 15:04:05")
 	var totalAmount float64
 	var orderItems []*model.OrderItem
+	// 免配送费范围判定上下文（参与商品额计算用，见 calcFreeShipping）
+	var itemScopes []itemScope
 
 	for _, item := range req.Items {
 		skuInfo, err := grpcclient.ProductClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: item.SkuId})
@@ -89,6 +91,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 
 		totalPrice := price * float64(item.Quantity)
 		totalAmount += totalPrice
+		itemScopes = append(itemScopes, itemScope{
+			productID:  skuInfo.ProductId,
+			categoryID: productInfo.Product.CategoryId,
+			totalPrice: totalPrice,
+		})
 
 		orderItems = append(orderItems, &model.OrderItem{
 			ProductID:    skuInfo.ProductId,
@@ -111,6 +118,10 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 			return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单金额未满 %.2f 元起送金额", communityInfo.MinOrderAmount))
 		}
 		deliveryFee = communityInfo.DeliveryFee
+		// 满额免配送费：参与商品额达门槛则免收配送费（口径见 calcFreeShipping）
+		if s.calcFreeShipping(ctx, req.CommunityId, itemScopes).hit {
+			deliveryFee = 0
+		}
 	}
 
 	// 分别计算满减与优惠券优惠，两者均按商品总价校验门槛并可叠加

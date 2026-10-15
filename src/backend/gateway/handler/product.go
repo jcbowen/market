@@ -262,6 +262,21 @@ func (h *ProductHandler) ListFullReductions(c *gin.Context) {
 	response.SuccessWithList(c, resp.List)
 }
 
+// GetActiveFreeShipping 获取当前社区正在生效的免配送费活动（C 端，无生效活动返回 null）
+// 参数：
+//   - c: gin 上下文
+func (h *ProductHandler) GetActiveFreeShipping(c *gin.Context) {
+	communityID, _ := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64)
+	resp, err := h.productClient.GetActiveFreeShipping(c.Request.Context(), &product.GetActiveFreeShippingReq{
+		CommunityId: communityID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp.GetActivity())
+}
+
 // ListBanners 获取 Banner 列表
 // 参数：
 //   - c: gin 上下文

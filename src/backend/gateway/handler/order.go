@@ -202,6 +202,60 @@ func (h *OrderHandler) ListFrequentProducts(c *gin.Context) {
 	response.Success(c, gin.H{"list": list})
 }
 
+// PreviewFreeShippingReq 免配送费试算请求
+type PreviewFreeShippingReq struct {
+	Items []struct {
+		SkuID    int64 `json:"sku_id" binding:"required"`
+		Quantity int32 `json:"quantity" binding:"required,min=1"`
+	} `json:"items" binding:"required,min=1"`
+}
+
+// PreviewFreeShipping 免配送费试算（C 端确认页展示：
+// 已免配送费 / 还差 X 元 / 不参与商品清单）
+// 参数：
+//   - c: gin 上下文
+func (h *OrderHandler) PreviewFreeShipping(c *gin.Context) {
+	var req PreviewFreeShippingReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	uc := appcontext.GetUserContext(c)
+	communityID := uc.CommunityID
+	if communityID <= 0 {
+		communityID, _ = strconv.ParseInt(c.GetHeader("X-Community-Id"), 10, 64)
+	}
+	if communityID <= 0 {
+		response.Error(c, errcode.ParamError, "缺少社区信息")
+		return
+	}
+
+	items := make([]*order.PreviewFreeShippingItem, 0, len(req.Items))
+	for _, item := range req.Items {
+		items = append(items, &order.PreviewFreeShippingItem{
+			SkuId:    item.SkuID,
+			Quantity: item.Quantity,
+		})
+	}
+	resp, err := h.orderClient.PreviewFreeShipping(c.Request.Context(), &order.PreviewFreeShippingReq{
+		CommunityId: communityID,
+		Items:       items,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"free_shipping":   resp.FreeShipping,
+		"activity_name":   resp.ActivityName,
+		"threshold":       resp.Threshold,
+		"eligible_amount": resp.EligibleAmount,
+		"remain_amount":   resp.RemainAmount,
+		"excluded_names":  resp.ExcludedNames,
+		"delivery_fee":    resp.DeliveryFee,
+	})
+}
+
 // GetOrder 获取订单详情
 // 参数：
 //   - c: gin 上下文

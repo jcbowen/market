@@ -525,6 +525,37 @@ export interface FullReduction {
 }
 
 /**
+ * 免配送费排除范围项（4=排除分类 5=排除商品）
+ */
+export interface FreeShippingScope {
+  id?: number
+  scope_type: number
+  category_id: number
+  /** 展示名（服务端回填） */
+  category_name?: string
+  product_id: number
+  /** 展示名（服务端回填） */
+  product_name?: string
+}
+
+/**
+ * 满额免配送费活动
+ * 语义：配送订单中「参与商品额合计 >= threshold」则免收配送费；
+ * scopes 命中的商品金额不计入门槛
+ */
+export interface FreeShipping {
+  id: number
+  community_id: number
+  name: string
+  /** 免配送费门槛（参与商品额） */
+  threshold: number
+  start_time: string
+  end_time: string
+  status: number
+  scopes?: FreeShippingScope[]
+}
+
+/**
  * Banner 轮播图
  */
 export interface Banner {

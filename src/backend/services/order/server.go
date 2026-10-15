@@ -155,6 +155,11 @@ func (s *server) GetUserFrequentProducts(ctx stdctx.Context, req *order.GetUserF
 	return &order.GetUserFrequentProductsResp{List: list}, nil
 }
 
+// PreviewFreeShipping 免配送费试算（C 端确认页展示）
+func (s *server) PreviewFreeShipping(ctx stdctx.Context, req *order.PreviewFreeShippingReq) (*order.PreviewFreeShippingResp, error) {
+	return s.orderService.PreviewFreeShipping(ctx, req)
+}
+
 // VerifyPickup 自提订单核销
 func (s *server) VerifyPickup(ctx stdctx.Context, req *order.VerifyPickupReq) (*order.VerifyPickupResp, error) {
 	resp, err := s.orderService.VerifyPickup(ctx, req)
