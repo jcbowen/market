@@ -299,13 +299,6 @@ const menuOptions = computed<MenuOption[]>(() => {
       children: [{ label: '数据概览', key: '/dashboard', permission: 'dashboard:view' }],
     },
     {
-      // 应用中心：宫格化应用入口（收银台等独立应用从这里进入，登录即可见）
-      label: '应用',
-      key: '/apps',
-      icon: renderIcon(GridOutline),
-      children: [{ label: '应用中心', key: '/apps' }],
-    },
-    {
       label: '商品管理',
       key: '/products',
       icon: renderIcon(CubeOutline),
@@ -357,6 +350,14 @@ const menuOptions = computed<MenuOption[]>(() => {
         { label: '满减活动', key: '/marketing/full-reduction', permission: 'marketing:view' },
         { label: 'Banner管理', key: '/marketing/banners', permission: 'marketing:view' },
       ],
+    },
+    {
+      // 应用中心：宫格化应用入口（收银台等独立应用从这里进入，登录即可见）
+      // 纯启动器性质，紧跟营销管理之后
+      label: '应用管理',
+      key: '/apps',
+      icon: renderIcon(GridOutline),
+      children: [{ label: '应用中心', key: '/apps' }],
     },
     {
       label: '数据统计',

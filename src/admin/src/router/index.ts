@@ -93,13 +93,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/inventory/purchase.vue'),
         meta: { title: '补货建议', permission: 'inventory:view', group: '库存管理' },
       },
-      // 应用中心：宫格化应用入口（当前仅收银台），登录即可见
-      {
-        path: 'apps',
-        name: 'AppCenter',
-        component: () => import('@/views/apps/index.vue'),
-        meta: { title: '应用', group: '应用' },
-      },
       // 订单管理
       {
         path: 'orders',
@@ -192,6 +185,13 @@ const routes: RouteRecordRaw[] = [
         name: 'BannerList',
         component: () => import('@/views/marketing/components/BannerManager.vue'),
         meta: { title: 'Banner管理', permission: 'marketing:view', group: '营销管理' },
+      },
+      // 应用中心：宫格化应用入口（当前仅收银台），登录即可见；菜单紧跟营销管理之后
+      {
+        path: 'apps',
+        name: 'AppCenter',
+        component: () => import('@/views/apps/index.vue'),
+        meta: { title: '应用管理', group: '应用管理' },
       },
       // 数据统计
       {
