@@ -193,6 +193,29 @@ func (s *UserService) ListUsers(ctx context.Context, communityID int64, keyword 
 		return nil, 0, "", err
 	}
 
+	// 批量填充履约人员标记（B 履约工作台，会员列表展示/操作用）
+	if communityID > 0 && len(list) > 0 {
+		ids := make([]int64, 0, len(list))
+		for _, u := range list {
+			ids = append(ids, u.ID)
+		}
+		var fulfillerRows []*model.UserCommunity
+		if err := s.db.GetDb().WithContext(ctx).
+			Select("user_id").
+			Where("community_id = ? AND is_fulfiller = 1 AND user_id IN ?", communityID, ids).
+			Find(&fulfillerRows).Error; err == nil && len(fulfillerRows) > 0 {
+			flag := make(map[int64]struct{}, len(fulfillerRows))
+			for _, r := range fulfillerRows {
+				flag[r.UserID] = struct{}{}
+			}
+			for _, u := range list {
+				if _, ok := flag[u.ID]; ok {
+					u.IsFulfiller = true
+				}
+			}
+		}
+	}
+
 	communityName := ""
 	if communityID > 0 {
 		communityName = s.getCommunityName(ctx, communityID)
@@ -316,8 +339,122 @@ func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberRe
 	return u, nil
 }
 
-// phoneOpenidPrefix 生成手机号会员的 openid 占位标识（与手机号登录约定一致）
+// SetFulfiller 设置/取消某社区的履约人员标记（B 履约工作台）
+// 标记挂在 user_communities (user_id, community_id) 行上；行不存在且要设为履约人员时
+// 先补建关联（来源 admin）再更新——后台会员列表均来自本社区关联，此处兜底防御
 // 参数：
+//   - ctx: 上下文
+//   - req: 设置请求
+//
+// 返回：
+//   - error: 错误信息
+func (s *UserService) SetFulfiller(ctx context.Context, req *user.SetFulfillerReq) error {
+	if req.UserId <= 0 || req.CommunityId <= 0 {
+		return fmt.Errorf("参数错误")
+	}
+	// 校验用户存在
+	if _, err := s.GetUserById(ctx, req.UserId); err != nil {
+		return err
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	db := s.db.GetDb().WithContext(ctx)
+	row := &model.UserCommunity{
+		UserID:      req.UserId,
+		CommunityID: req.CommunityId,
+		Source:      "admin",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := db.Where("user_id = ? AND community_id = ?", req.UserId, req.CommunityId).
+		FirstOrCreate(row).Error; err != nil {
+		return err
+	}
+	res := db.Model(&model.UserCommunity{}).
+		Where("user_id = ? AND community_id = ?", req.UserId, req.CommunityId).
+		Updates(map[string]interface{}{
+			"is_fulfiller": req.IsFulfiller,
+			"updated_at":   now,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+// ListFulfillers 列出某社区全部履约人员（后台订单指派弹窗数据源）
+// 参数：
+//   - ctx: 上下文
+//   - communityID: 社区 ID
+//
+// 返回：
+//   - []*user.FulfillerInfo: 履约人员列表（含昵称/手机号）
+//   - error: 错误信息
+func (s *UserService) ListFulfillers(ctx context.Context, communityID int64) ([]*user.FulfillerInfo, error) {
+	if communityID <= 0 {
+		return nil, fmt.Errorf("参数错误")
+	}
+	var rows []*model.UserCommunity
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("community_id = ? AND is_fulfiller = 1", communityID).
+		Order("updated_at DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return []*user.FulfillerInfo{}, nil
+	}
+	ids := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.UserID)
+	}
+	var users []*model.User
+	if err := s.db.GetDb().WithContext(ctx).
+		Select("id, nickname, phone").
+		Where("id IN ?", ids).
+		Find(&users).Error; err != nil {
+		return nil, err
+	}
+	nameByID := make(map[int64]*model.User, len(users))
+	for _, u := range users {
+		nameByID[u.ID] = u
+	}
+	list := make([]*user.FulfillerInfo, 0, len(rows))
+	for _, r := range rows {
+		info := &user.FulfillerInfo{UserId: r.UserID}
+		if u, ok := nameByID[r.UserID]; ok {
+			info.Nickname = u.Nickname
+			info.Phone = u.Phone
+		}
+		list = append(list, info)
+	}
+	return list, nil
+}
+
+// CheckFulfiller 校验用户在某社区是否履约人员
+// 参数：
+//   - ctx: 上下文
+//   - userID: 用户 ID
+//   - communityID: 社区 ID
+//
+// 返回：
+//   - bool: 是否履约人员
+//   - error: 错误信息
+func (s *UserService) CheckFulfiller(ctx context.Context, userID, communityID int64) (bool, error) {
+	if userID <= 0 || communityID <= 0 {
+		return false, nil
+	}
+	var count int64
+	err := s.db.GetDb().WithContext(ctx).
+		Model(&model.UserCommunity{}).
+		Where("user_id = ? AND community_id = ? AND is_fulfiller = 1", userID, communityID).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// phoneOpenidPrefix 生成手机号会员的 openid 占位标识（与手机号登录约定一致）// 参数：
 //   - phone: 手机号
 // 返回：
 //   - string: phone_<手机号>
@@ -392,6 +529,7 @@ func ToUserInfo(u *model.User) *user.UserInfo {
 		Status:       u.Status,
 		LastLoginAt:  ptrString(u.LastLoginAt),
 		CreatedAt:    u.CreatedAt,
+		IsFulfiller:  u.IsFulfiller,
 	}
 }
 

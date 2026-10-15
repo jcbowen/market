@@ -1665,6 +1665,130 @@ func (h *AdminHandler) AdminVerifyPickup(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// --- 履约工作台（B）：履约人员配置 + 订单指派 ---
+
+// SetFulfillerReq 设置履约人员请求
+type SetFulfillerReq struct {
+	// true=设为履约人员（送货上门 + 自提核销） false=取消
+	IsFulfiller bool `json:"is_fulfiller"`
+}
+
+// SetFulfiller 设置/取消会员在本社区的履约人员标记
+//
+// 接口: PUT /api/v1/admin/users/:id/fulfiller（权限 user:update）
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) SetFulfiller(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req SetFulfillerReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	uc := appcontext.GetUserContext(c)
+	communityID := h.getAdminCommunityID(c)
+	if communityID <= 0 {
+		response.Error(c, errcode.ParamError, "缺少社区语境")
+		return
+	}
+	if _, err := h.userClient.SetFulfiller(c.Request.Context(), &user.SetFulfillerReq{
+		UserId:      id,
+		CommunityId: communityID,
+		IsFulfiller: req.IsFulfiller,
+	}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"success": true, "operator_id": uc.UserID})
+}
+
+// ListFulfillers 列出本社区履约人员（订单指派弹窗数据源）
+//
+// 接口: GET /api/v1/admin/fulfillers（权限 user:view）
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ListFulfillers(c *gin.Context) {
+	communityID := h.getAdminCommunityID(c)
+	if communityID <= 0 {
+		response.Error(c, errcode.ParamError, "缺少社区语境")
+		return
+	}
+	resp, err := h.userClient.ListFulfillers(c.Request.Context(), &user.ListFulfillersReq{
+		CommunityId: communityID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// AssignDeliveryReq 后台指派配送请求
+type AssignDeliveryReq struct {
+	// 履约人员 user_id；0=取消指派
+	DeliveryUserID int64 `json:"delivery_user_id"`
+}
+
+// AssignDelivery 指派/取消指派配送员（订单列表操作）
+// 指派时校验目标用户是本社区履约人员（服务端二次校验），并回填姓名快照
+//
+// 接口: PUT /api/v1/admin/orders/:id/assign-delivery（权限 order:update）
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) AssignDelivery(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req AssignDeliveryReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	communityID := h.getAdminCommunityID(c)
+	if communityID <= 0 {
+		response.Error(c, errcode.ParamError, "缺少社区语境")
+		return
+	}
+
+	// 指派时查会员昵称做姓名快照（列表/详情回显免再查）
+	var deliveryUserName string
+	if req.DeliveryUserID > 0 {
+		u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: req.DeliveryUserID})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		if u == nil {
+			response.Error(c, errcode.NotFound, "会员不存在")
+			return
+		}
+		deliveryUserName = u.Nickname
+	}
+
+	uc := appcontext.GetUserContext(c)
+	if _, err := h.orderClient.AssignDelivery(c.Request.Context(), &order.AssignDeliveryReq{
+		OrderId:          id,
+		DeliveryUserId:   req.DeliveryUserID,
+		DeliveryUserName: deliveryUserName,
+		CommunityId:      communityID,
+		OperatorType:     "admin",
+		OperatorId:       uc.UserID,
+	}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"success": true, "delivery_user_name": deliveryUserName})
+}
+
 // ListAdminOrders 获取管理端订单列表
 // 支持按会员过滤（user_id，会员列表弹窗查订单）；
 // 超管可显式传 community_id=0 跨社区查询全部订单（普通管理员始终限定当前社区语境）
@@ -3315,6 +3439,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"community_id":   u.CommunityId,
 			"community_name": u.CommunityName,
 			"status":         u.Status,
+			"is_fulfiller":   u.IsFulfiller,
 			"last_login_at":  u.LastLoginAt,
 			"created_at":     u.CreatedAt,
 		})

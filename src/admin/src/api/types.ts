@@ -251,6 +251,11 @@ export interface Order {
   source?: number
   /** 经手人（收银员/管理员）姓名快照 */
   operator_name?: string
+  /** 指派的履约人员（0=未指派）与姓名快照（B 履约工作台） */
+  delivery_user_id?: number
+  delivery_user_name?: string
+  /** 送达签收凭证照片 URL（决策点②） */
+  delivery_proof_images?: string[]
   created_at: string
 }
 
@@ -491,6 +496,8 @@ export interface User {
   community_id: number
   community_name: string
   status: number
+  /** 是否本社区履约人员（B 履约工作台） */
+  is_fulfiller?: boolean
   created_at: string
   last_login_at?: string
 }

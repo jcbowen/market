@@ -122,6 +122,32 @@ func (s *server) MarkUserCommunity(ctx stdctx.Context, req *user.MarkUserCommuni
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// SetFulfiller 设置/取消履约人员标记（B 履约工作台）
+func (s *server) SetFulfiller(ctx stdctx.Context, req *user.SetFulfillerReq) (*common.CommonResponse, error) {
+	if err := s.userService.SetFulfiller(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ListFulfillers 列出某社区全部履约人员
+func (s *server) ListFulfillers(ctx stdctx.Context, req *user.ListFulfillersReq) (*user.ListFulfillersResp, error) {
+	list, err := s.userService.ListFulfillers(ctx, req.CommunityId)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &user.ListFulfillersResp{List: list}, nil
+}
+
+// CheckFulfiller 校验用户在某社区是否履约人员
+func (s *server) CheckFulfiller(ctx stdctx.Context, req *user.CheckFulfillerReq) (*user.CheckFulfillerResp, error) {
+	ok, err := s.userService.CheckFulfiller(ctx, req.UserId, req.CommunityId)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &user.CheckFulfillerResp{IsFulfiller: ok}, nil
+}
+
 // SetUserStatus 设置会员状态（拉黑/恢复）
 func (s *server) SetUserStatus(ctx stdctx.Context, req *user.SetUserStatusReq) (*common.CommonResponse, error) {
 	if err := s.userService.SetUserStatus(ctx, req.Id, req.Status); err != nil {

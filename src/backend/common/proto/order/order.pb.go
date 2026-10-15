@@ -785,10 +785,16 @@ type OrderInfo struct {
 	// 订单来源：1=C端用户自下单 2=后台收银台代客下单（决策点⑨）
 	Source int32 `protobuf:"varint,25,opt,name=source,proto3" json:"source,omitempty"`
 	// 经手人（收银员/管理员）ID 与姓名快照；C 端订单为 0/空
-	OperatorId    int64  `protobuf:"varint,26,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
-	OperatorName  string `protobuf:"bytes,27,opt,name=operator_name,json=operatorName,proto3" json:"operator_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	OperatorId   int64  `protobuf:"varint,26,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	OperatorName string `protobuf:"bytes,27,opt,name=operator_name,json=operatorName,proto3" json:"operator_name,omitempty"`
+	// --- 履约工作台（B） ---
+	// 指派的履约人员（0=未指派）与姓名快照
+	DeliveryUserId   int64  `protobuf:"varint,28,opt,name=delivery_user_id,json=deliveryUserId,proto3" json:"delivery_user_id,omitempty"`
+	DeliveryUserName string `protobuf:"bytes,29,opt,name=delivery_user_name,json=deliveryUserName,proto3" json:"delivery_user_name,omitempty"`
+	// 送达签收凭证照片 URL（决策点②拍照留证）
+	DeliveryProofImages []string `protobuf:"bytes,30,rep,name=delivery_proof_images,json=deliveryProofImages,proto3" json:"delivery_proof_images,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *OrderInfo) Reset() {
@@ -1008,6 +1014,27 @@ func (x *OrderInfo) GetOperatorName() string {
 		return x.OperatorName
 	}
 	return ""
+}
+
+func (x *OrderInfo) GetDeliveryUserId() int64 {
+	if x != nil {
+		return x.DeliveryUserId
+	}
+	return 0
+}
+
+func (x *OrderInfo) GetDeliveryUserName() string {
+	if x != nil {
+		return x.DeliveryUserName
+	}
+	return ""
+}
+
+func (x *OrderInfo) GetDeliveryProofImages() []string {
+	if x != nil {
+		return x.DeliveryProofImages
+	}
+	return nil
 }
 
 type OrderItemInfo struct {
@@ -3706,6 +3733,390 @@ func (x *DeletePosHeldOrderReq) GetCommunityId() int64 {
 	return 0
 }
 
+// AssignDeliveryReq 后台指派配送请求
+type AssignDeliveryReq struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	OrderId int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 指派的履约人员 user_id；0=取消指派
+	DeliveryUserId int64 `protobuf:"varint,2,opt,name=delivery_user_id,json=deliveryUserId,proto3" json:"delivery_user_id,omitempty"`
+	// 履约人员姓名快照（列表/详情回显，gateway 填写）
+	DeliveryUserName string `protobuf:"bytes,3,opt,name=delivery_user_name,json=deliveryUserName,proto3" json:"delivery_user_name,omitempty"`
+	// 操作者社区语境（>0 时校验订单归属社区）
+	CommunityId   int64  `protobuf:"varint,4,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	OperatorType  string `protobuf:"bytes,5,opt,name=operator_type,json=operatorType,proto3" json:"operator_type,omitempty"`
+	OperatorId    int64  `protobuf:"varint,6,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AssignDeliveryReq) Reset() {
+	*x = AssignDeliveryReq{}
+	mi := &file_order_order_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AssignDeliveryReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AssignDeliveryReq) ProtoMessage() {}
+
+func (x *AssignDeliveryReq) ProtoReflect() protoreflect.Message {
+	mi := &file_order_order_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AssignDeliveryReq.ProtoReflect.Descriptor instead.
+func (*AssignDeliveryReq) Descriptor() ([]byte, []int) {
+	return file_order_order_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *AssignDeliveryReq) GetOrderId() int64 {
+	if x != nil {
+		return x.OrderId
+	}
+	return 0
+}
+
+func (x *AssignDeliveryReq) GetDeliveryUserId() int64 {
+	if x != nil {
+		return x.DeliveryUserId
+	}
+	return 0
+}
+
+func (x *AssignDeliveryReq) GetDeliveryUserName() string {
+	if x != nil {
+		return x.DeliveryUserName
+	}
+	return ""
+}
+
+func (x *AssignDeliveryReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
+func (x *AssignDeliveryReq) GetOperatorType() string {
+	if x != nil {
+		return x.OperatorType
+	}
+	return ""
+}
+
+func (x *AssignDeliveryReq) GetOperatorId() int64 {
+	if x != nil {
+		return x.OperatorId
+	}
+	return 0
+}
+
+// ListFulfillmentOrdersReq 工作台查单请求
+type ListFulfillmentOrdersReq struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 单类型：1=自提核销 2=送货上门
+	OrderType   int32 `protobuf:"varint,1,opt,name=order_type,json=orderType,proto3" json:"order_type,omitempty"`
+	CommunityId int64 `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 送货单按指派履约人员过滤（自提单忽略此字段，本社区全部可见可核销）
+	DeliveryUserId int64 `protobuf:"varint,3,opt,name=delivery_user_id,json=deliveryUserId,proto3" json:"delivery_user_id,omitempty"`
+	// 状态组：0=进行中（待处理 2/3 + 配送中 4） 5=已完成/已核销（status=5）
+	StatusGroup   int32              `protobuf:"varint,4,opt,name=status_group,json=statusGroup,proto3" json:"status_group,omitempty"`
+	Pagination    *common.Pagination `protobuf:"bytes,5,opt,name=pagination,proto3" json:"pagination,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFulfillmentOrdersReq) Reset() {
+	*x = ListFulfillmentOrdersReq{}
+	mi := &file_order_order_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFulfillmentOrdersReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFulfillmentOrdersReq) ProtoMessage() {}
+
+func (x *ListFulfillmentOrdersReq) ProtoReflect() protoreflect.Message {
+	mi := &file_order_order_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFulfillmentOrdersReq.ProtoReflect.Descriptor instead.
+func (*ListFulfillmentOrdersReq) Descriptor() ([]byte, []int) {
+	return file_order_order_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *ListFulfillmentOrdersReq) GetOrderType() int32 {
+	if x != nil {
+		return x.OrderType
+	}
+	return 0
+}
+
+func (x *ListFulfillmentOrdersReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
+func (x *ListFulfillmentOrdersReq) GetDeliveryUserId() int64 {
+	if x != nil {
+		return x.DeliveryUserId
+	}
+	return 0
+}
+
+func (x *ListFulfillmentOrdersReq) GetStatusGroup() int32 {
+	if x != nil {
+		return x.StatusGroup
+	}
+	return 0
+}
+
+func (x *ListFulfillmentOrdersReq) GetPagination() *common.Pagination {
+	if x != nil {
+		return x.Pagination
+	}
+	return nil
+}
+
+type ListFulfillmentOrdersResp struct {
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	List          []*OrderInfo               `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
+	Pagination    *common.PaginationResponse `protobuf:"bytes,2,opt,name=pagination,proto3" json:"pagination,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFulfillmentOrdersResp) Reset() {
+	*x = ListFulfillmentOrdersResp{}
+	mi := &file_order_order_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFulfillmentOrdersResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFulfillmentOrdersResp) ProtoMessage() {}
+
+func (x *ListFulfillmentOrdersResp) ProtoReflect() protoreflect.Message {
+	mi := &file_order_order_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFulfillmentOrdersResp.ProtoReflect.Descriptor instead.
+func (*ListFulfillmentOrdersResp) Descriptor() ([]byte, []int) {
+	return file_order_order_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *ListFulfillmentOrdersResp) GetList() []*OrderInfo {
+	if x != nil {
+		return x.List
+	}
+	return nil
+}
+
+func (x *ListFulfillmentOrdersResp) GetPagination() *common.PaginationResponse {
+	if x != nil {
+		return x.Pagination
+	}
+	return nil
+}
+
+// StartDeliveryReq 开始配送请求（status 2/3 → 4）
+type StartDeliveryReq struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	OrderId int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 操作的履约人员（须与订单指派人一致）
+	DeliveryUserId int64  `protobuf:"varint,2,opt,name=delivery_user_id,json=deliveryUserId,proto3" json:"delivery_user_id,omitempty"`
+	CommunityId    int64  `protobuf:"varint,3,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	OperatorType   string `protobuf:"bytes,4,opt,name=operator_type,json=operatorType,proto3" json:"operator_type,omitempty"`
+	OperatorId     int64  `protobuf:"varint,5,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *StartDeliveryReq) Reset() {
+	*x = StartDeliveryReq{}
+	mi := &file_order_order_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartDeliveryReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartDeliveryReq) ProtoMessage() {}
+
+func (x *StartDeliveryReq) ProtoReflect() protoreflect.Message {
+	mi := &file_order_order_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartDeliveryReq.ProtoReflect.Descriptor instead.
+func (*StartDeliveryReq) Descriptor() ([]byte, []int) {
+	return file_order_order_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *StartDeliveryReq) GetOrderId() int64 {
+	if x != nil {
+		return x.OrderId
+	}
+	return 0
+}
+
+func (x *StartDeliveryReq) GetDeliveryUserId() int64 {
+	if x != nil {
+		return x.DeliveryUserId
+	}
+	return 0
+}
+
+func (x *StartDeliveryReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
+func (x *StartDeliveryReq) GetOperatorType() string {
+	if x != nil {
+		return x.OperatorType
+	}
+	return ""
+}
+
+func (x *StartDeliveryReq) GetOperatorId() int64 {
+	if x != nil {
+		return x.OperatorId
+	}
+	return 0
+}
+
+// CompleteDeliveryReq 送达完成请求（status 4 → 5，强制拍照留证）
+type CompleteDeliveryReq struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrderId        int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	DeliveryUserId int64                  `protobuf:"varint,2,opt,name=delivery_user_id,json=deliveryUserId,proto3" json:"delivery_user_id,omitempty"`
+	CommunityId    int64                  `protobuf:"varint,3,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	OperatorType   string                 `protobuf:"bytes,4,opt,name=operator_type,json=operatorType,proto3" json:"operator_type,omitempty"`
+	OperatorId     int64                  `protobuf:"varint,5,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	// 签收凭证照片 URL（1~N 张，服务端强制非空，决策点②）
+	ProofImages   []string `protobuf:"bytes,6,rep,name=proof_images,json=proofImages,proto3" json:"proof_images,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompleteDeliveryReq) Reset() {
+	*x = CompleteDeliveryReq{}
+	mi := &file_order_order_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompleteDeliveryReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompleteDeliveryReq) ProtoMessage() {}
+
+func (x *CompleteDeliveryReq) ProtoReflect() protoreflect.Message {
+	mi := &file_order_order_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompleteDeliveryReq.ProtoReflect.Descriptor instead.
+func (*CompleteDeliveryReq) Descriptor() ([]byte, []int) {
+	return file_order_order_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *CompleteDeliveryReq) GetOrderId() int64 {
+	if x != nil {
+		return x.OrderId
+	}
+	return 0
+}
+
+func (x *CompleteDeliveryReq) GetDeliveryUserId() int64 {
+	if x != nil {
+		return x.DeliveryUserId
+	}
+	return 0
+}
+
+func (x *CompleteDeliveryReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
+func (x *CompleteDeliveryReq) GetOperatorType() string {
+	if x != nil {
+		return x.OperatorType
+	}
+	return ""
+}
+
+func (x *CompleteDeliveryReq) GetOperatorId() int64 {
+	if x != nil {
+		return x.OperatorId
+	}
+	return 0
+}
+
+func (x *CompleteDeliveryReq) GetProofImages() []string {
+	if x != nil {
+		return x.ProofImages
+	}
+	return nil
+}
+
 var File_order_order_proto protoreflect.FileDescriptor
 
 const file_order_order_proto_rawDesc = "" +
@@ -3777,7 +4188,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\x06remark\x18\x05 \x01(\tR\x06remark\x12'\n" +
 	"\x0fexpress_company\x18\x06 \x01(\tR\x0eexpressCompany\x12\x1d\n" +
 	"\n" +
-	"express_no\x18\a \x01(\tR\texpressNo\"\xfa\x06\n" +
+	"express_no\x18\a \x01(\tR\texpressNo\"\x86\b\n" +
 	"\tOrderInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x19\n" +
 	"\border_no\x18\x02 \x01(\tR\aorderNo\x12!\n" +
@@ -3812,7 +4223,10 @@ const file_order_order_proto_rawDesc = "" +
 	"\x06source\x18\x19 \x01(\x05R\x06source\x12\x1f\n" +
 	"\voperator_id\x18\x1a \x01(\x03R\n" +
 	"operatorId\x12#\n" +
-	"\roperator_name\x18\x1b \x01(\tR\foperatorName\"\x8d\x02\n" +
+	"\roperator_name\x18\x1b \x01(\tR\foperatorName\x12(\n" +
+	"\x10delivery_user_id\x18\x1c \x01(\x03R\x0edeliveryUserId\x12,\n" +
+	"\x12delivery_user_name\x18\x1d \x01(\tR\x10deliveryUserName\x122\n" +
+	"\x15delivery_proof_images\x18\x1e \x03(\tR\x13deliveryProofImages\"\x8d\x02\n" +
 	"\rOrderItemInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +
@@ -4049,7 +4463,44 @@ const file_order_order_proto_rawDesc = "" +
 	"\x04list\x18\x01 \x03(\v2\x17.order.PosHeldOrderInfoR\x04list\"J\n" +
 	"\x15DeletePosHeldOrderReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
-	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId2\xe0\f\n" +
+	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"\xef\x01\n" +
+	"\x11AssignDeliveryReq\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\x03R\aorderId\x12(\n" +
+	"\x10delivery_user_id\x18\x02 \x01(\x03R\x0edeliveryUserId\x12,\n" +
+	"\x12delivery_user_name\x18\x03 \x01(\tR\x10deliveryUserName\x12!\n" +
+	"\fcommunity_id\x18\x04 \x01(\x03R\vcommunityId\x12#\n" +
+	"\roperator_type\x18\x05 \x01(\tR\foperatorType\x12\x1f\n" +
+	"\voperator_id\x18\x06 \x01(\x03R\n" +
+	"operatorId\"\xdd\x01\n" +
+	"\x18ListFulfillmentOrdersReq\x12\x1d\n" +
+	"\n" +
+	"order_type\x18\x01 \x01(\x05R\torderType\x12!\n" +
+	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12(\n" +
+	"\x10delivery_user_id\x18\x03 \x01(\x03R\x0edeliveryUserId\x12!\n" +
+	"\fstatus_group\x18\x04 \x01(\x05R\vstatusGroup\x122\n" +
+	"\n" +
+	"pagination\x18\x05 \x01(\v2\x12.common.PaginationR\n" +
+	"pagination\"}\n" +
+	"\x19ListFulfillmentOrdersResp\x12$\n" +
+	"\x04list\x18\x01 \x03(\v2\x10.order.OrderInfoR\x04list\x12:\n" +
+	"\n" +
+	"pagination\x18\x02 \x01(\v2\x1a.common.PaginationResponseR\n" +
+	"pagination\"\xc0\x01\n" +
+	"\x10StartDeliveryReq\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\x03R\aorderId\x12(\n" +
+	"\x10delivery_user_id\x18\x02 \x01(\x03R\x0edeliveryUserId\x12!\n" +
+	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\x12#\n" +
+	"\roperator_type\x18\x04 \x01(\tR\foperatorType\x12\x1f\n" +
+	"\voperator_id\x18\x05 \x01(\x03R\n" +
+	"operatorId\"\xe6\x01\n" +
+	"\x13CompleteDeliveryReq\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\x03R\aorderId\x12(\n" +
+	"\x10delivery_user_id\x18\x02 \x01(\x03R\x0edeliveryUserId\x12!\n" +
+	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\x12#\n" +
+	"\roperator_type\x18\x04 \x01(\tR\foperatorType\x12\x1f\n" +
+	"\voperator_id\x18\x05 \x01(\x03R\n" +
+	"operatorId\x12!\n" +
+	"\fproof_images\x18\x06 \x03(\tR\vproofImages2\x8a\x0f\n" +
 	"\fOrderService\x126\n" +
 	"\vCreateOrder\x12\x15.order.CreateOrderReq\x1a\x10.order.OrderInfo\x122\n" +
 	"\bGetOrder\x12\x12.order.GetOrderReq\x1a\x12.order.OrderDetail\x129\n" +
@@ -4074,7 +4525,11 @@ const file_order_order_proto_rawDesc = "" +
 	"\x13PreviewFreeShipping\x12\x1d.order.PreviewFreeShippingReq\x1a\x1e.order.PreviewFreeShippingResp\x12K\n" +
 	"\x12CreatePosHeldOrder\x12\x1c.order.CreatePosHeldOrderReq\x1a\x17.order.PosHeldOrderInfo\x12N\n" +
 	"\x11ListPosHeldOrders\x12\x1b.order.ListPosHeldOrdersReq\x1a\x1c.order.ListPosHeldOrdersResp\x12J\n" +
-	"\x12DeletePosHeldOrder\x12\x1c.order.DeletePosHeldOrderReq\x1a\x16.common.CommonResponseB:Z8github.com/jcbowen/market/src/backend/common/proto/orderb\x06proto3"
+	"\x12DeletePosHeldOrder\x12\x1c.order.DeletePosHeldOrderReq\x1a\x16.common.CommonResponse\x12B\n" +
+	"\x0eAssignDelivery\x12\x18.order.AssignDeliveryReq\x1a\x16.common.CommonResponse\x12Z\n" +
+	"\x15ListFulfillmentOrders\x12\x1f.order.ListFulfillmentOrdersReq\x1a .order.ListFulfillmentOrdersResp\x12@\n" +
+	"\rStartDelivery\x12\x17.order.StartDeliveryReq\x1a\x16.common.CommonResponse\x12F\n" +
+	"\x10CompleteDelivery\x12\x1a.order.CompleteDeliveryReq\x1a\x16.common.CommonResponseB:Z8github.com/jcbowen/market/src/backend/common/proto/orderb\x06proto3"
 
 var (
 	file_order_order_proto_rawDescOnce sync.Once
@@ -4088,7 +4543,7 @@ func file_order_order_proto_rawDescGZIP() []byte {
 	return file_order_order_proto_rawDescData
 }
 
-var file_order_order_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_order_order_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
 var file_order_order_proto_goTypes = []any{
 	(*OrderItem)(nil),                   // 0: order.OrderItem
 	(*CreateOrderReq)(nil),              // 1: order.CreateOrderReq
@@ -4139,83 +4594,99 @@ var file_order_order_proto_goTypes = []any{
 	(*ListPosHeldOrdersReq)(nil),        // 46: order.ListPosHeldOrdersReq
 	(*ListPosHeldOrdersResp)(nil),       // 47: order.ListPosHeldOrdersResp
 	(*DeletePosHeldOrderReq)(nil),       // 48: order.DeletePosHeldOrderReq
-	(*common.Pagination)(nil),           // 49: common.Pagination
-	(*common.PaginationResponse)(nil),   // 50: common.PaginationResponse
-	(*common.CommonResponse)(nil),       // 51: common.CommonResponse
+	(*AssignDeliveryReq)(nil),           // 49: order.AssignDeliveryReq
+	(*ListFulfillmentOrdersReq)(nil),    // 50: order.ListFulfillmentOrdersReq
+	(*ListFulfillmentOrdersResp)(nil),   // 51: order.ListFulfillmentOrdersResp
+	(*StartDeliveryReq)(nil),            // 52: order.StartDeliveryReq
+	(*CompleteDeliveryReq)(nil),         // 53: order.CompleteDeliveryReq
+	(*common.Pagination)(nil),           // 54: common.Pagination
+	(*common.PaginationResponse)(nil),   // 55: common.PaginationResponse
+	(*common.CommonResponse)(nil),       // 56: common.CommonResponse
 }
 var file_order_order_proto_depIdxs = []int32{
 	0,  // 0: order.CreateOrderReq.items:type_name -> order.OrderItem
 	2,  // 1: order.PreviewFreeShippingReq.items:type_name -> order.PreviewFreeShippingItem
-	49, // 2: order.ListOrdersReq.pagination:type_name -> common.Pagination
+	54, // 2: order.ListOrdersReq.pagination:type_name -> common.Pagination
 	9,  // 3: order.OrderDetail.order:type_name -> order.OrderInfo
 	10, // 4: order.OrderDetail.items:type_name -> order.OrderItemInfo
 	11, // 5: order.OrderDetail.status_logs:type_name -> order.OrderStatusLog
 	9,  // 6: order.ListOrdersResp.list:type_name -> order.OrderInfo
-	50, // 7: order.ListOrdersResp.pagination:type_name -> common.PaginationResponse
+	55, // 7: order.ListOrdersResp.pagination:type_name -> common.PaginationResponse
 	14, // 8: order.ApplyRefundReq.items:type_name -> order.ApplyRefundItem
 	16, // 9: order.RefundInfo.items:type_name -> order.RefundItemInfo
 	18, // 10: order.RefundInfo.logs:type_name -> order.RefundLogInfo
 	14, // 11: order.AdminCreateRefundReq.items:type_name -> order.ApplyRefundItem
-	49, // 12: order.ListRefundsReq.pagination:type_name -> common.Pagination
+	54, // 12: order.ListRefundsReq.pagination:type_name -> common.Pagination
 	17, // 13: order.ListRefundsResp.list:type_name -> order.RefundInfo
-	50, // 14: order.ListRefundsResp.pagination:type_name -> common.PaginationResponse
+	55, // 14: order.ListRefundsResp.pagination:type_name -> common.PaginationResponse
 	33, // 15: order.ProductRankingsResp.list:type_name -> order.ProductRankingItem
 	36, // 16: order.RevenueReportResp.list:type_name -> order.RevenueReportItem
 	41, // 17: order.GetUserFrequentProductsResp.list:type_name -> order.FrequentProductItem
 	43, // 18: order.CreatePosHeldOrderReq.items:type_name -> order.PosHeldOrderItem
 	43, // 19: order.PosHeldOrderInfo.items:type_name -> order.PosHeldOrderItem
 	45, // 20: order.ListPosHeldOrdersResp.list:type_name -> order.PosHeldOrderInfo
-	1,  // 21: order.OrderService.CreateOrder:input_type -> order.CreateOrderReq
-	5,  // 22: order.OrderService.GetOrder:input_type -> order.GetOrderReq
-	6,  // 23: order.OrderService.ListOrders:input_type -> order.ListOrdersReq
-	7,  // 24: order.OrderService.CancelOrder:input_type -> order.CancelOrderReq
-	8,  // 25: order.OrderService.UpdateOrderStatus:input_type -> order.UpdateOrderStatusReq
-	38, // 26: order.OrderService.VerifyPickup:input_type -> order.VerifyPickupReq
-	15, // 27: order.OrderService.ApplyRefund:input_type -> order.ApplyRefundReq
-	19, // 28: order.OrderService.AdminCreateRefund:input_type -> order.AdminCreateRefundReq
-	20, // 29: order.OrderService.ListRefunds:input_type -> order.ListRefundsReq
-	25, // 30: order.OrderService.ApproveRefund:input_type -> order.ApproveRefundReq
-	26, // 31: order.OrderService.RejectRefund:input_type -> order.RejectRefundReq
-	27, // 32: order.OrderService.RetryRefund:input_type -> order.RetryRefundReq
-	21, // 33: order.OrderService.GetRefundConfig:input_type -> order.GetRefundConfigReq
-	23, // 34: order.OrderService.SaveRefundConfig:input_type -> order.SaveRefundConfigReq
-	28, // 35: order.OrderService.GetOrderStatistics:input_type -> order.GetOrderStatisticsReq
-	30, // 36: order.OrderService.GetSalesStatistics:input_type -> order.GetSalesStatisticsReq
-	32, // 37: order.OrderService.GetProductRankings:input_type -> order.GetProductRankingsReq
-	35, // 38: order.OrderService.GetRevenueReport:input_type -> order.GetRevenueReportReq
-	40, // 39: order.OrderService.GetUserFrequentProducts:input_type -> order.GetUserFrequentProductsReq
-	3,  // 40: order.OrderService.PreviewFreeShipping:input_type -> order.PreviewFreeShippingReq
-	44, // 41: order.OrderService.CreatePosHeldOrder:input_type -> order.CreatePosHeldOrderReq
-	46, // 42: order.OrderService.ListPosHeldOrders:input_type -> order.ListPosHeldOrdersReq
-	48, // 43: order.OrderService.DeletePosHeldOrder:input_type -> order.DeletePosHeldOrderReq
-	9,  // 44: order.OrderService.CreateOrder:output_type -> order.OrderInfo
-	12, // 45: order.OrderService.GetOrder:output_type -> order.OrderDetail
-	13, // 46: order.OrderService.ListOrders:output_type -> order.ListOrdersResp
-	51, // 47: order.OrderService.CancelOrder:output_type -> common.CommonResponse
-	51, // 48: order.OrderService.UpdateOrderStatus:output_type -> common.CommonResponse
-	39, // 49: order.OrderService.VerifyPickup:output_type -> order.VerifyPickupResp
-	17, // 50: order.OrderService.ApplyRefund:output_type -> order.RefundInfo
-	17, // 51: order.OrderService.AdminCreateRefund:output_type -> order.RefundInfo
-	24, // 52: order.OrderService.ListRefunds:output_type -> order.ListRefundsResp
-	51, // 53: order.OrderService.ApproveRefund:output_type -> common.CommonResponse
-	51, // 54: order.OrderService.RejectRefund:output_type -> common.CommonResponse
-	51, // 55: order.OrderService.RetryRefund:output_type -> common.CommonResponse
-	22, // 56: order.OrderService.GetRefundConfig:output_type -> order.RefundConfig
-	51, // 57: order.OrderService.SaveRefundConfig:output_type -> common.CommonResponse
-	29, // 58: order.OrderService.GetOrderStatistics:output_type -> order.OrderStatisticsResp
-	31, // 59: order.OrderService.GetSalesStatistics:output_type -> order.SalesStatisticsResp
-	34, // 60: order.OrderService.GetProductRankings:output_type -> order.ProductRankingsResp
-	37, // 61: order.OrderService.GetRevenueReport:output_type -> order.RevenueReportResp
-	42, // 62: order.OrderService.GetUserFrequentProducts:output_type -> order.GetUserFrequentProductsResp
-	4,  // 63: order.OrderService.PreviewFreeShipping:output_type -> order.PreviewFreeShippingResp
-	45, // 64: order.OrderService.CreatePosHeldOrder:output_type -> order.PosHeldOrderInfo
-	47, // 65: order.OrderService.ListPosHeldOrders:output_type -> order.ListPosHeldOrdersResp
-	51, // 66: order.OrderService.DeletePosHeldOrder:output_type -> common.CommonResponse
-	44, // [44:67] is the sub-list for method output_type
-	21, // [21:44] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	54, // 21: order.ListFulfillmentOrdersReq.pagination:type_name -> common.Pagination
+	9,  // 22: order.ListFulfillmentOrdersResp.list:type_name -> order.OrderInfo
+	55, // 23: order.ListFulfillmentOrdersResp.pagination:type_name -> common.PaginationResponse
+	1,  // 24: order.OrderService.CreateOrder:input_type -> order.CreateOrderReq
+	5,  // 25: order.OrderService.GetOrder:input_type -> order.GetOrderReq
+	6,  // 26: order.OrderService.ListOrders:input_type -> order.ListOrdersReq
+	7,  // 27: order.OrderService.CancelOrder:input_type -> order.CancelOrderReq
+	8,  // 28: order.OrderService.UpdateOrderStatus:input_type -> order.UpdateOrderStatusReq
+	38, // 29: order.OrderService.VerifyPickup:input_type -> order.VerifyPickupReq
+	15, // 30: order.OrderService.ApplyRefund:input_type -> order.ApplyRefundReq
+	19, // 31: order.OrderService.AdminCreateRefund:input_type -> order.AdminCreateRefundReq
+	20, // 32: order.OrderService.ListRefunds:input_type -> order.ListRefundsReq
+	25, // 33: order.OrderService.ApproveRefund:input_type -> order.ApproveRefundReq
+	26, // 34: order.OrderService.RejectRefund:input_type -> order.RejectRefundReq
+	27, // 35: order.OrderService.RetryRefund:input_type -> order.RetryRefundReq
+	21, // 36: order.OrderService.GetRefundConfig:input_type -> order.GetRefundConfigReq
+	23, // 37: order.OrderService.SaveRefundConfig:input_type -> order.SaveRefundConfigReq
+	28, // 38: order.OrderService.GetOrderStatistics:input_type -> order.GetOrderStatisticsReq
+	30, // 39: order.OrderService.GetSalesStatistics:input_type -> order.GetSalesStatisticsReq
+	32, // 40: order.OrderService.GetProductRankings:input_type -> order.GetProductRankingsReq
+	35, // 41: order.OrderService.GetRevenueReport:input_type -> order.GetRevenueReportReq
+	40, // 42: order.OrderService.GetUserFrequentProducts:input_type -> order.GetUserFrequentProductsReq
+	3,  // 43: order.OrderService.PreviewFreeShipping:input_type -> order.PreviewFreeShippingReq
+	44, // 44: order.OrderService.CreatePosHeldOrder:input_type -> order.CreatePosHeldOrderReq
+	46, // 45: order.OrderService.ListPosHeldOrders:input_type -> order.ListPosHeldOrdersReq
+	48, // 46: order.OrderService.DeletePosHeldOrder:input_type -> order.DeletePosHeldOrderReq
+	49, // 47: order.OrderService.AssignDelivery:input_type -> order.AssignDeliveryReq
+	50, // 48: order.OrderService.ListFulfillmentOrders:input_type -> order.ListFulfillmentOrdersReq
+	52, // 49: order.OrderService.StartDelivery:input_type -> order.StartDeliveryReq
+	53, // 50: order.OrderService.CompleteDelivery:input_type -> order.CompleteDeliveryReq
+	9,  // 51: order.OrderService.CreateOrder:output_type -> order.OrderInfo
+	12, // 52: order.OrderService.GetOrder:output_type -> order.OrderDetail
+	13, // 53: order.OrderService.ListOrders:output_type -> order.ListOrdersResp
+	56, // 54: order.OrderService.CancelOrder:output_type -> common.CommonResponse
+	56, // 55: order.OrderService.UpdateOrderStatus:output_type -> common.CommonResponse
+	39, // 56: order.OrderService.VerifyPickup:output_type -> order.VerifyPickupResp
+	17, // 57: order.OrderService.ApplyRefund:output_type -> order.RefundInfo
+	17, // 58: order.OrderService.AdminCreateRefund:output_type -> order.RefundInfo
+	24, // 59: order.OrderService.ListRefunds:output_type -> order.ListRefundsResp
+	56, // 60: order.OrderService.ApproveRefund:output_type -> common.CommonResponse
+	56, // 61: order.OrderService.RejectRefund:output_type -> common.CommonResponse
+	56, // 62: order.OrderService.RetryRefund:output_type -> common.CommonResponse
+	22, // 63: order.OrderService.GetRefundConfig:output_type -> order.RefundConfig
+	56, // 64: order.OrderService.SaveRefundConfig:output_type -> common.CommonResponse
+	29, // 65: order.OrderService.GetOrderStatistics:output_type -> order.OrderStatisticsResp
+	31, // 66: order.OrderService.GetSalesStatistics:output_type -> order.SalesStatisticsResp
+	34, // 67: order.OrderService.GetProductRankings:output_type -> order.ProductRankingsResp
+	37, // 68: order.OrderService.GetRevenueReport:output_type -> order.RevenueReportResp
+	42, // 69: order.OrderService.GetUserFrequentProducts:output_type -> order.GetUserFrequentProductsResp
+	4,  // 70: order.OrderService.PreviewFreeShipping:output_type -> order.PreviewFreeShippingResp
+	45, // 71: order.OrderService.CreatePosHeldOrder:output_type -> order.PosHeldOrderInfo
+	47, // 72: order.OrderService.ListPosHeldOrders:output_type -> order.ListPosHeldOrdersResp
+	56, // 73: order.OrderService.DeletePosHeldOrder:output_type -> common.CommonResponse
+	56, // 74: order.OrderService.AssignDelivery:output_type -> common.CommonResponse
+	51, // 75: order.OrderService.ListFulfillmentOrders:output_type -> order.ListFulfillmentOrdersResp
+	56, // 76: order.OrderService.StartDelivery:output_type -> common.CommonResponse
+	56, // 77: order.OrderService.CompleteDelivery:output_type -> common.CommonResponse
+	51, // [51:78] is the sub-list for method output_type
+	24, // [24:51] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_order_order_proto_init() }
@@ -4229,7 +4700,7 @@ func file_order_order_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_order_order_proto_rawDesc), len(file_order_order_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   49,
+			NumMessages:   54,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

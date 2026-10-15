@@ -54,7 +54,7 @@
 defineOptions({ name: 'UserList' })
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
-import { getUserList, createUser, setUserStatus } from '@/api/user'
+import { getUserList, createUser, setUserStatus, setUserFulfiller } from '@/api/user'
 import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 import UserOrdersModal from './components/UserOrdersModal.vue'
@@ -92,6 +92,35 @@ function renderStatus(status: number) {
     : h(NTag, { type: 'error', size: 'small' }, { default: () => '已拉黑' })
 }
 
+/** 渲染履约人员标记（B 履约工作台：送货上门 + 自提核销） */
+function renderFulfiller(row: User) {
+  return row.is_fulfiller
+    ? h(NTag, { type: 'info', size: 'small', bordered: false }, { default: () => '履约人员' })
+    : h('span', { style: 'color:var(--n-text-color-disabled)' }, '-')
+}
+
+/**
+ * 二次确认后设置/取消履约人员
+ * @param row 目标会员
+ * @param isFulfiller true 设为履约人员 false 取消
+ */
+function confirmSetFulfiller(row: User, isFulfiller: boolean) {
+  const action = isFulfiller ? '设为履约人员' : '取消履约人员'
+  dialog.warning({
+    title: `${action}确认`,
+    content: isFulfiller
+      ? `将「${row.nickname || row.phone}」设为本社区履约人员？该会员将可在 C 端履约工作台送货上门与核销自提订单。`
+      : `确定取消「${row.nickname || row.phone}」的本社区履约人员身份？其 C 端履约工作台入口将立即失效。`,
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      await setUserFulfiller(row.id, isFulfiller)
+      message.success(`${action}成功`)
+      loadUsers()
+    },
+  })
+}
+
 /** 渲染操作列：查看订单 + 拉黑/恢复 */
 function renderActions(row: User) {
   const buttons = [
@@ -107,6 +136,18 @@ function renderActions(row: User) {
     ),
   ]
   if (authStore.hasPermission('user:update')) {
+    buttons.push(
+      h(
+        NButton,
+        {
+          size: 'small',
+          type: 'info',
+          secondary: true,
+          onClick: () => confirmSetFulfiller(row, !row.is_fulfiller),
+        },
+        { default: () => (row.is_fulfiller ? '取消履约' : '设为履约') },
+      ),
+    )
     buttons.push(
       row.status === 1
         ? h(
@@ -131,9 +172,10 @@ const userColumns: DataTableColumns<User> = [
   { title: '手机号', key: 'phone', width: 120 },
   { title: '所属社区', key: 'community_name', width: 150, ellipsis: { tooltip: true } },
   { title: '状态', key: 'status', width: 80, render: (row) => renderStatus(row.status) },
+  { title: '履约', key: 'is_fulfiller', width: 90, render: (row) => renderFulfiller(row) },
   { title: '注册时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.created_at) },
   { title: '最后登录', key: 'last_login_at', width: 170, render: (row) => formatDateTime(row.last_login_at) },
-  { title: '操作', key: 'actions', width: 130, render: (row) => renderActions(row) },
+  { title: '操作', key: 'actions', width: 200, render: (row) => renderActions(row) },
 ]
 
 const userLoading = ref(false)

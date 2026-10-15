@@ -2,6 +2,7 @@ package main
 
 import (
 	stdctx "context"
+	"encoding/json"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
@@ -171,6 +172,57 @@ func (s *server) VerifyPickup(ctx stdctx.Context, req *order.VerifyPickupReq) (*
 	return resp, nil
 }
 
+// AssignDelivery 后台指派/取消指派配送员（B 履约工作台）
+func (s *server) AssignDelivery(ctx stdctx.Context, req *order.AssignDeliveryReq) (*common.CommonResponse, error) {
+	if err := s.orderService.AssignDelivery(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ListFulfillmentOrders 履约工作台查单（送货按指派人过滤；自提本社区全部）
+func (s *server) ListFulfillmentOrders(ctx stdctx.Context, req *order.ListFulfillmentOrdersReq) (*order.ListFulfillmentOrdersResp, error) {
+	list, total, err := s.orderService.ListFulfillmentOrders(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	page, pageSize := int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize())
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 50 {
+		pageSize = 10
+	}
+	resp := &order.ListFulfillmentOrdersResp{
+		List: make([]*order.OrderInfo, 0, len(list)),
+		Pagination: &common.PaginationResponse{
+			Total:    int32(total),
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+	}
+	for _, o := range list {
+		resp.List = append(resp.List, ToOrderInfo(o))
+	}
+	return resp, nil
+}
+
+// StartDelivery 履约人员开始配送（status 2/3 → 4）
+func (s *server) StartDelivery(ctx stdctx.Context, req *order.StartDeliveryReq) (*common.CommonResponse, error) {
+	if err := s.orderService.StartDelivery(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// CompleteDelivery 履约人员送达完成（status 4 → 5，强制签收照片）
+func (s *server) CompleteDelivery(ctx stdctx.Context, req *order.CompleteDeliveryReq) (*common.CommonResponse, error) {
+	if err := s.orderService.CompleteDelivery(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // CreatePosHeldOrder 创建收银台挂单
 func (s *server) CreatePosHeldOrder(ctx stdctx.Context, req *order.CreatePosHeldOrderReq) (*order.PosHeldOrderInfo, error) {
 	info, err := s.posHeldService.Create(ctx, req)
@@ -275,7 +327,7 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 	if o == nil {
 		return nil
 	}
-	return &order.OrderInfo{
+	info := &order.OrderInfo{
 		Id:             o.ID,
 		OrderNo:        o.OrderNo,
 		CommunityId:    o.CommunityID,
@@ -303,7 +355,17 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		Source:         o.Source,
 		OperatorId:     o.OperatorID,
 		OperatorName:   o.OperatorName,
+		DeliveryUserId:   o.DeliveryUserID,
+		DeliveryUserName: o.DeliveryUserName,
 	}
+	// 送达签收凭证：DB 存 JSON 数组字符串，解析失败静默为空
+	if o.DeliveryProofImages != "" {
+		var imgs []string
+		if err := json.Unmarshal([]byte(o.DeliveryProofImages), &imgs); err == nil {
+			info.DeliveryProofImages = imgs
+		}
+	}
+	return info
 }
 
 // ToOrderItemInfo 将订单商品项模型转换为 proto 信息

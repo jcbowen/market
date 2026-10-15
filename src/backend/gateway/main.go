@@ -122,6 +122,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	productHandler := handler.NewProductHandler(clients.ProductClient)
 	cartHandler := handler.NewCartHandler(clients.CartClient)
 	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient, cfg.Business.OrderTimeout)
+	// C 端上传（履约签收照片等）：独立 handler 持有 product 客户端，IsDisplay=false
+	fulfillmentUploadHandler := handler.NewFulfillmentUploadHandler(clients.ProductClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
 	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat)
 	// IP 定位：本地 GeoLite2-City 数据库，相对路径以可执行文件所在目录为基准
@@ -193,6 +195,16 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.POST("/orders/:id/refund", orderHandler.ApplyRefund)
 			authUser.GET("/refund/config", orderHandler.GetRefundConfig)
 
+			// 履约工作台（B）：handler 内统一校验履约人员身份
+			authUser.GET("/user/fulfillment-status", orderHandler.GetFulfillmentStatus)
+			authUser.GET("/fulfillment/orders", orderHandler.ListFulfillmentOrders)
+			authUser.POST("/fulfillment/orders/:id/start-delivery", orderHandler.StartDelivery)
+			authUser.POST("/fulfillment/orders/:id/complete-delivery", orderHandler.CompleteDelivery)
+			authUser.POST("/fulfillment/orders/:id/verify-pickup", orderHandler.VerifyPickupByStaff)
+
+			// C 端图片上传（履约签收照片等凭证用途，IsDisplay=false 不进附件选择器）
+			authUser.POST("/upload/image", fulfillmentUploadHandler.UploadImage)
+
 			authUser.POST("/payments", paymentHandler.CreatePayment)
 			authUser.GET("/payments/:id", paymentHandler.GetPayment)
 
@@ -249,6 +261,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/orders/:id/ship", gwMiddleware.RequirePermission("order:update"), adminHandler.ShipOrder)
 			authAdmin.PUT("/orders/:id/complete", gwMiddleware.RequirePermission("order:update"), adminHandler.CompleteOrder)
 			authAdmin.POST("/orders/:id/verify-pickup", gwMiddleware.RequirePermission("order:update"), adminHandler.AdminVerifyPickup)
+			// 履约工作台（B）：指派配送 + 履约人员配置
+			authAdmin.PUT("/orders/:id/assign-delivery", gwMiddleware.RequirePermission("order:update"), adminHandler.AssignDelivery)
+			authAdmin.GET("/fulfillers", gwMiddleware.RequirePermission("user:view"), adminHandler.ListFulfillers)
+			authAdmin.PUT("/users/:id/fulfiller", gwMiddleware.RequirePermission("user:update"), adminHandler.SetFulfiller)
 			authAdmin.POST("/orders/:id/refund", gwMiddleware.RequirePermission("refund:update"), adminHandler.AdminCreateRefund)
 
 			// 收银台代客下单（G）：下单/挂单写操作用 order:create，挂单查看用 order:view

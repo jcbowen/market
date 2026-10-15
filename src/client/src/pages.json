@@ -91,6 +91,12 @@
       "style": {
         "navigationBarTitleText": "满减活动"
       }
+    },
+    {
+      "path": "pages/fulfillment/fulfillment",
+      "style": {
+        "navigationBarTitleText": "履约工作台"
+      }
     }
   ],
   "globalStyle": {

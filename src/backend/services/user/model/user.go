@@ -21,6 +21,9 @@ type User struct {
 	LastLoginAt  *string `gorm:"column:last_login_at;type:datetime;comment:最后登录时间" json:"last_login_at"`
 	CreatedAt    string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	UpdatedAt    string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+
+	// IsFulfiller 是否过滤语境社区的履约人员（非表字段，ListUsers 批量填充）
+	IsFulfiller bool `gorm:"-" json:"is_fulfiller"`
 }
 
 // TableName 返回用户表名

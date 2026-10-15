@@ -40,6 +40,16 @@ service OrderService {
   rpc CreatePosHeldOrder(CreatePosHeldOrderReq) returns (PosHeldOrderInfo);
   rpc ListPosHeldOrders(ListPosHeldOrdersReq) returns (ListPosHeldOrdersResp);
   rpc DeletePosHeldOrder(DeletePosHeldOrderReq) returns (common.CommonResponse);
+
+  // --- 履约工作台（B） ---
+  // 后台指派配送员（delivery_user_id=0 表示取消指派）
+  rpc AssignDelivery(AssignDeliveryReq) returns (common.CommonResponse);
+  // 工作台查单：送货单按指派人过滤，自提单为本社区全部待核销/已核销
+  rpc ListFulfillmentOrders(ListFulfillmentOrdersReq) returns (ListFulfillmentOrdersResp);
+  // 开始配送：status 2/3 → 4（履约人员操作，不经后台 ShipOrder 的物流单号校验）
+  rpc StartDelivery(StartDeliveryReq) returns (common.CommonResponse);
+  // 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
+  rpc CompleteDelivery(CompleteDeliveryReq) returns (common.CommonResponse);
 }
 
 message OrderItem {
@@ -166,6 +176,12 @@ message OrderInfo {
   // 经手人（收银员/管理员）ID 与姓名快照；C 端订单为 0/空
   int64 operator_id = 26;
   string operator_name = 27;
+  // --- 履约工作台（B） ---
+  // 指派的履约人员（0=未指派）与姓名快照
+  int64 delivery_user_id = 28;
+  string delivery_user_name = 29;
+  // 送达签收凭证照片 URL（决策点②拍照留证）
+  repeated string delivery_proof_images = 30;
 }
 
 message OrderItemInfo {
@@ -475,4 +491,57 @@ message DeletePosHeldOrderReq {
   int64 id = 1;
   // 社区语境（>0 时校验挂单归属，防跨社区删除）
   int64 community_id = 2;
+}
+
+// --- 履约工作台（B） ---
+
+// AssignDeliveryReq 后台指派配送请求
+message AssignDeliveryReq {
+  int64 order_id = 1;
+  // 指派的履约人员 user_id；0=取消指派
+  int64 delivery_user_id = 2;
+  // 履约人员姓名快照（列表/详情回显，gateway 填写）
+  string delivery_user_name = 3;
+  // 操作者社区语境（>0 时校验订单归属社区）
+  int64 community_id = 4;
+  string operator_type = 5;
+  int64 operator_id = 6;
+}
+
+// ListFulfillmentOrdersReq 工作台查单请求
+message ListFulfillmentOrdersReq {
+  // 单类型：1=自提核销 2=送货上门
+  int32 order_type = 1;
+  int64 community_id = 2;
+  // 送货单按指派履约人员过滤（自提单忽略此字段，本社区全部可见可核销）
+  int64 delivery_user_id = 3;
+  // 状态组：0=进行中（待处理 2/3 + 配送中 4） 5=已完成/已核销（status=5）
+  int32 status_group = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListFulfillmentOrdersResp {
+  repeated OrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// StartDeliveryReq 开始配送请求（status 2/3 → 4）
+message StartDeliveryReq {
+  int64 order_id = 1;
+  // 操作的履约人员（须与订单指派人一致）
+  int64 delivery_user_id = 2;
+  int64 community_id = 3;
+  string operator_type = 4;
+  int64 operator_id = 5;
+}
+
+// CompleteDeliveryReq 送达完成请求（status 4 → 5，强制拍照留证）
+message CompleteDeliveryReq {
+  int64 order_id = 1;
+  int64 delivery_user_id = 2;
+  int64 community_id = 3;
+  string operator_type = 4;
+  int64 operator_id = 5;
+  // 签收凭证照片 URL（1~N 张，服务端强制非空，决策点②）
+  repeated string proof_images = 6;
 }

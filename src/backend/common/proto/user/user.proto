@@ -64,6 +64,14 @@ service UserService {
   rpc SetUserStatus(SetUserStatusReq) returns (common.CommonResponse);
   // CreateMember 后台添加会员（手机号注册到指定社区）
   rpc CreateMember(CreateMemberReq) returns (UserInfo);
+
+  // --- 履约人员（B 社区履约工作台） ---
+  // 设置/取消某社区履约人员标记（后台会员管理操作）
+  rpc SetFulfiller(SetFulfillerReq) returns (common.CommonResponse);
+  // 列出某社区全部履约人员（后台订单指派弹窗数据源）
+  rpc ListFulfillers(ListFulfillersReq) returns (ListFulfillersResp);
+  // 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
+  rpc CheckFulfiller(CheckFulfillerReq) returns (CheckFulfillerResp);
 }
 
 message GetUserByIdReq {
@@ -105,6 +113,8 @@ message UserInfo {
   string created_at = 12;
   // 当前过滤语境下的社区名称（ListUsers 按社区过滤时由服务端填充）
   string community_name = 13;
+  // 是否当前语境社区的履约人员（B 履约工作台，ListUsers 按社区过滤时填充）
+  bool is_fulfiller = 14;
 }
 
 message UpdateUserProfileReq {
@@ -603,4 +613,39 @@ message CreateMemberReq {
   int32 gender = 3;
   // 注册归属社区（后台当前社区语境）
   int64 community_id = 4;
+}
+
+// --- 履约人员（B 社区履约工作台） ---
+
+// SetFulfillerReq 设置/取消履约人员请求
+message SetFulfillerReq {
+  int64 user_id = 1;
+  int64 community_id = 2;
+  // true=设为履约人员（送货上门 + 自提核销） false=取消
+  bool is_fulfiller = 3;
+}
+
+// FulfillerInfo 履约人员信息（指派弹窗展示）
+message FulfillerInfo {
+  int64 user_id = 1;
+  string nickname = 2;
+  string phone = 3;
+}
+
+message ListFulfillersReq {
+  int64 community_id = 1;
+}
+
+message ListFulfillersResp {
+  repeated FulfillerInfo list = 1;
+}
+
+// CheckFulfillerReq 校验履约人员请求
+message CheckFulfillerReq {
+  int64 user_id = 1;
+  int64 community_id = 2;
+}
+
+message CheckFulfillerResp {
+  bool is_fulfiller = 1;
 }

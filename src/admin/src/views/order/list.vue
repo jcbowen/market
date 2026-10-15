@@ -75,7 +75,7 @@
         :loading="loading"
         remote
         :row-key="(row: Order) => row.id"
-        :scroll-x="isNarrow ? 670 : 1360"
+        :scroll-x="isNarrow ? 670 : 1450"
         :pagination="pagination"
         v-model:checked-row-keys="checkedRowKeys"
         @update:page="onPageChange"
@@ -126,6 +126,34 @@
       />
     </n-space>
   </n-modal>
+
+  <!-- 指派配送弹窗（B 履约工作台：选本社区履约人员送货） -->
+  <n-modal
+    v-model:show="assignVisible"
+    preset="dialog"
+    title="指派配送"
+    positive-text="确认指派"
+    negative-text="取消"
+    :loading="assignLoading"
+    @positive-click="submitAssign"
+  >
+    <n-space vertical>
+      <n-text>订单号：{{ assignOrder?.order_no }}</n-text>
+      <n-text depth="3">指派后履约人员在 C 端工作台送货（开始配送 → 送达拍照），不走物流发货</n-text>
+      <n-spin :show="assignLoadingList">
+        <n-radio-group v-model:value="assignUserId" style="display: block">
+          <n-space vertical :size="8">
+            <n-text v-if="fulfillers.length === 0" depth="3">
+              本社区暂无履约人员，请先到「会员管理」将会员设为履约人员
+            </n-text>
+            <n-radio v-for="f in fulfillers" :key="f.user_id" :value="f.user_id">
+              {{ f.nickname }}（{{ f.phone }}）
+            </n-radio>
+          </n-space>
+        </n-radio-group>
+      </n-spin>
+    </n-space>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -134,7 +162,8 @@ defineOptions({ name: 'OrderList' })
 import { computed, h, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { completeOrder, getOrderList, verifyPickup } from '@/api/order'
+import { completeOrder, getOrderList, verifyPickup, assignDelivery } from '@/api/order'
+import { getFulfillers } from '@/api/user'
 import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
 import OrderDetailModal from './detail.vue'
 import ShipModal from './components/ShipModal.vue'
@@ -259,6 +288,12 @@ const columns: DataTableColumns<Order> = [
   },
   { title: '经手人', key: 'operator_name', width: 90, render: (row) => row.operator_name || '-' },
   {
+    title: '配送员',
+    key: 'delivery_user_name',
+    width: 90,
+    render: (row) => (row.delivery_type === DELIVERY_TYPE.DELIVERY ? row.delivery_user_name || '-' : '-'),
+  },
+  {
     title: '订单金额',
     key: 'total_amount',
     width: 110,
@@ -280,7 +315,7 @@ const columns: DataTableColumns<Order> = [
   {
     title: '操作',
     key: 'actions',
-    width: 220,
+    width: 280,
     render(row) {
       const buttons = [
         h(
@@ -295,7 +330,15 @@ const columns: DataTableColumns<Order> = [
             h(
               NButton,
               { size: 'small', type: 'primary', onClick: () => openShip([row.id]) },
-              { default: () => '发货' },
+              { default: () => (row.delivery_user_id ? '改物流' : '发货') },
+            ),
+          )
+          // 社区自配送：指派履约人员，C 端工作台送货（B）
+          buttons.push(
+            h(
+              NButton,
+              { size: 'small', type: 'info', secondary: true, onClick: () => openAssign(row) },
+              { default: () => (row.delivery_user_id ? '改指派' : '指派') },
             ),
           )
         } else {
@@ -523,6 +566,55 @@ async function submitVerify() {
     // 错误提示由请求拦截器统一弹出
   } finally {
     verifyLoading.value = false
+  }
+}
+
+// --- 指派配送（B 履约工作台） ---
+const assignVisible = ref(false)
+const assignOrder = ref<Order | null>(null)
+const assignUserId = ref<number | null>(null)
+const assignLoading = ref(false)
+const assignLoadingList = ref(false)
+const fulfillers = ref<{ user_id: number; nickname: string; phone: string }[]>([])
+
+/**
+ * 打开指派配送弹窗（加载本社区履约人员列表）
+ * @param row 订单行
+ */
+async function openAssign(row: Order) {
+  assignOrder.value = row
+  assignUserId.value = row.delivery_user_id && row.delivery_user_id > 0 ? row.delivery_user_id : null
+  assignVisible.value = true
+  assignLoadingList.value = true
+  try {
+    const res = await getFulfillers()
+    fulfillers.value = res.data.data ?? []
+  } finally {
+    assignLoadingList.value = false
+  }
+}
+
+/**
+ * 提交指派：写入履约人员（服务端校验履约身份与社区归属）
+ */
+async function submitAssign() {
+  const row = assignOrder.value
+  if (!row) return
+  if (!assignUserId.value) {
+    message.warning('请选择履约人员')
+    return false
+  }
+  assignLoading.value = true
+  try {
+    const res = await assignDelivery(row.id, assignUserId.value)
+    message.success(`已指派给 ${res.data.data.delivery_user_name || '履约人员'}`)
+    assignVisible.value = false
+    loadData()
+    return true
+  } catch {
+    return false
+  } finally {
+    assignLoading.value = false
   }
 }
 

@@ -43,6 +43,10 @@ const (
 	OrderService_CreatePosHeldOrder_FullMethodName      = "/order.OrderService/CreatePosHeldOrder"
 	OrderService_ListPosHeldOrders_FullMethodName       = "/order.OrderService/ListPosHeldOrders"
 	OrderService_DeletePosHeldOrder_FullMethodName      = "/order.OrderService/DeletePosHeldOrder"
+	OrderService_AssignDelivery_FullMethodName          = "/order.OrderService/AssignDelivery"
+	OrderService_ListFulfillmentOrders_FullMethodName   = "/order.OrderService/ListFulfillmentOrders"
+	OrderService_StartDelivery_FullMethodName           = "/order.OrderService/StartDelivery"
+	OrderService_CompleteDelivery_FullMethodName        = "/order.OrderService/CompleteDelivery"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -80,6 +84,15 @@ type OrderServiceClient interface {
 	CreatePosHeldOrder(ctx context.Context, in *CreatePosHeldOrderReq, opts ...grpc.CallOption) (*PosHeldOrderInfo, error)
 	ListPosHeldOrders(ctx context.Context, in *ListPosHeldOrdersReq, opts ...grpc.CallOption) (*ListPosHeldOrdersResp, error)
 	DeletePosHeldOrder(ctx context.Context, in *DeletePosHeldOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// --- 履约工作台（B） ---
+	// 后台指派配送员（delivery_user_id=0 表示取消指派）
+	AssignDelivery(ctx context.Context, in *AssignDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 工作台查单：送货单按指派人过滤，自提单为本社区全部待核销/已核销
+	ListFulfillmentOrders(ctx context.Context, in *ListFulfillmentOrdersReq, opts ...grpc.CallOption) (*ListFulfillmentOrdersResp, error)
+	// 开始配送：status 2/3 → 4（履约人员操作，不经后台 ShipOrder 的物流单号校验）
+	StartDelivery(ctx context.Context, in *StartDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
+	CompleteDelivery(ctx context.Context, in *CompleteDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 }
 
 type orderServiceClient struct {
@@ -320,6 +333,46 @@ func (c *orderServiceClient) DeletePosHeldOrder(ctx context.Context, in *DeleteP
 	return out, nil
 }
 
+func (c *orderServiceClient) AssignDelivery(ctx context.Context, in *AssignDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_AssignDelivery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) ListFulfillmentOrders(ctx context.Context, in *ListFulfillmentOrdersReq, opts ...grpc.CallOption) (*ListFulfillmentOrdersResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFulfillmentOrdersResp)
+	err := c.cc.Invoke(ctx, OrderService_ListFulfillmentOrders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) StartDelivery(ctx context.Context, in *StartDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_StartDelivery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) CompleteDelivery(ctx context.Context, in *CompleteDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_CompleteDelivery_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrderServiceServer is the server API for OrderService service.
 // All implementations must embed UnimplementedOrderServiceServer
 // for forward compatibility.
@@ -355,6 +408,15 @@ type OrderServiceServer interface {
 	CreatePosHeldOrder(context.Context, *CreatePosHeldOrderReq) (*PosHeldOrderInfo, error)
 	ListPosHeldOrders(context.Context, *ListPosHeldOrdersReq) (*ListPosHeldOrdersResp, error)
 	DeletePosHeldOrder(context.Context, *DeletePosHeldOrderReq) (*common.CommonResponse, error)
+	// --- 履约工作台（B） ---
+	// 后台指派配送员（delivery_user_id=0 表示取消指派）
+	AssignDelivery(context.Context, *AssignDeliveryReq) (*common.CommonResponse, error)
+	// 工作台查单：送货单按指派人过滤，自提单为本社区全部待核销/已核销
+	ListFulfillmentOrders(context.Context, *ListFulfillmentOrdersReq) (*ListFulfillmentOrdersResp, error)
+	// 开始配送：status 2/3 → 4（履约人员操作，不经后台 ShipOrder 的物流单号校验）
+	StartDelivery(context.Context, *StartDeliveryReq) (*common.CommonResponse, error)
+	// 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
+	CompleteDelivery(context.Context, *CompleteDeliveryReq) (*common.CommonResponse, error)
 	mustEmbedUnimplementedOrderServiceServer()
 }
 
@@ -433,6 +495,18 @@ func (UnimplementedOrderServiceServer) ListPosHeldOrders(context.Context, *ListP
 }
 func (UnimplementedOrderServiceServer) DeletePosHeldOrder(context.Context, *DeletePosHeldOrderReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeletePosHeldOrder not implemented")
+}
+func (UnimplementedOrderServiceServer) AssignDelivery(context.Context, *AssignDeliveryReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AssignDelivery not implemented")
+}
+func (UnimplementedOrderServiceServer) ListFulfillmentOrders(context.Context, *ListFulfillmentOrdersReq) (*ListFulfillmentOrdersResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFulfillmentOrders not implemented")
+}
+func (UnimplementedOrderServiceServer) StartDelivery(context.Context, *StartDeliveryReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartDelivery not implemented")
+}
+func (UnimplementedOrderServiceServer) CompleteDelivery(context.Context, *CompleteDeliveryReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteDelivery not implemented")
 }
 func (UnimplementedOrderServiceServer) mustEmbedUnimplementedOrderServiceServer() {}
 func (UnimplementedOrderServiceServer) testEmbeddedByValue()                      {}
@@ -869,6 +943,78 @@ func _OrderService_DeletePosHeldOrder_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_AssignDelivery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignDeliveryReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).AssignDelivery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_AssignDelivery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).AssignDelivery(ctx, req.(*AssignDeliveryReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_ListFulfillmentOrders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFulfillmentOrdersReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).ListFulfillmentOrders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_ListFulfillmentOrders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).ListFulfillmentOrders(ctx, req.(*ListFulfillmentOrdersReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_StartDelivery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartDeliveryReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).StartDelivery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_StartDelivery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).StartDelivery(ctx, req.(*StartDeliveryReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_CompleteDelivery_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteDeliveryReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).CompleteDelivery(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_CompleteDelivery_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).CompleteDelivery(ctx, req.(*CompleteDeliveryReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrderService_ServiceDesc is the grpc.ServiceDesc for OrderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -967,6 +1113,22 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeletePosHeldOrder",
 			Handler:    _OrderService_DeletePosHeldOrder_Handler,
+		},
+		{
+			MethodName: "AssignDelivery",
+			Handler:    _OrderService_AssignDelivery_Handler,
+		},
+		{
+			MethodName: "ListFulfillmentOrders",
+			Handler:    _OrderService_ListFulfillmentOrders_Handler,
+		},
+		{
+			MethodName: "StartDelivery",
+			Handler:    _OrderService_StartDelivery_Handler,
+		},
+		{
+			MethodName: "CompleteDelivery",
+			Handler:    _OrderService_CompleteDelivery_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -47,6 +47,8 @@
     <!-- 功能列表 -->
     <view class="menu-card">
       <u-cell-group>
+        <!-- 履约工作台（B）：仅履约人员可见（onShow 实时查询身份） -->
+        <u-cell v-if="isFulfiller" icon="server-man" title="履约工作台" value="送货 · 核销" isLink @click="goFulfillment" />
         <u-cell icon="map" title="收货地址" @click="goAddressList" />
         <u-cell icon="coupon" title="优惠券包" @click="goCoupon" />
         <u-cell icon="clock" title="限时秒杀" @click="goFlash" />
@@ -89,6 +91,7 @@ import { ref } from 'vue'
 import { onShow, onReachBottom } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getProducts } from '@/api/product'
+import { getFulfillmentStatus } from '@/api/fulfillment'
 import { formatPrice, maskPhone } from '@/utils/format'
 import {
   goLogin,
@@ -105,6 +108,9 @@ import type { Product } from '@/api/types'
 
 const userStore = useUserStore()
 
+// 履约工作台入口（B）：登录用户实时查询是否履约人员，非履约人员不展示
+const isFulfiller = ref(false)
+
 const products = ref<Product[]>([])
 const page = ref(1)
 const pageSize = 10
@@ -117,7 +123,30 @@ onShow(() => {
   // 重置加载状态，避免上次 nomore/loading 门禁导致 onShow 重新加载时直接 return
   loadStatus.value = 'loadmore'
   loadProducts()
+  // 履约人员身份查询：失败/未登录静默隐藏入口
+  checkFulfiller()
 })
+
+/**
+ * 查询当前用户是否履约人员（控制履约工作台入口显隐）
+ */
+async function checkFulfiller() {
+  isFulfiller.value = false
+  if (!userStore.isLogin) return
+  try {
+    const res = await getFulfillmentStatus()
+    isFulfiller.value = !!res.data?.is_fulfiller
+  } catch {
+    // 查询失败保持隐藏
+  }
+}
+
+/**
+ * 跳转履约工作台
+ */
+function goFulfillment() {
+  uni.navigateTo({ url: '/pages/fulfillment/fulfillment' })
+}
 
 onReachBottom(() => {
   loadProducts()

@@ -139,6 +139,32 @@ export function setUserStatus(id: number, status: number) {
 }
 
 /**
+ * 设置/取消会员在本社区的履约人员标记（B 履约工作台）
+ * 履约人员可送货上门 + 自提核销
+ * @param id 会员 ID
+ * @param isFulfiller true 设为履约人员 false 取消
+ * @returns 操作结果
+ */
+export function setUserFulfiller(id: number, isFulfiller: boolean) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/users/${id}/fulfiller`,
+    method: 'PUT',
+    data: { is_fulfiller: isFulfiller },
+  })
+}
+
+/**
+ * 获取本社区履约人员列表（订单指派弹窗数据源）
+ * @returns 履约人员列表（user_id/nickname/phone）
+ */
+export function getFulfillers() {
+  return request<ApiResult<{ user_id: number; nickname: string; phone: string }[]>>({
+    url: '/api/v1/admin/fulfillers',
+    method: 'GET',
+  })
+}
+
+/**
  * 获取当前账号可进入的社区列表（社区选择页用）
  * 普通管理员返回其任职社区；超管返回全部社区（含停业，附状态标识）
  * @returns 社区简表

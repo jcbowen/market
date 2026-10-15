@@ -236,3 +236,58 @@ export function del<T = unknown>(
 ): Promise<ApiResponse<T>> {
   return request<T>({ url, method: 'DELETE', data, header })
 }
+
+/**
+ * 上传文件（multipart/form-data，uni.uploadFile）
+ * token 注入与 401 处理与 request 一致；响应体为 JSON 字符串需手动解析
+ * @param url 接口地址（如 /upload/image）
+ * @param filePath 本地文件路径（uni.chooseImage 返回）
+ * @param name 文件字段名，默认 file
+ * @returns Promise<ApiResponse<T>>
+ */
+export function upload<T = unknown>(
+  url: string,
+  filePath: string,
+  name = 'file',
+): Promise<ApiResponse<T>> {
+  const token = getToken()
+  const fullUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`
+  return new Promise((resolve, reject) => {
+    uni.uploadFile({
+      url: fullUrl,
+      filePath,
+      name,
+      header: token ? { Authorization: `Bearer ${token}` } : {},
+      timeout: REQUEST_TIMEOUT,
+      success: (res) => {
+        if (res.statusCode === 401) {
+          handleUnauthorized()
+          reject(new Error('登录已过期'))
+          return
+        }
+        let resp: ApiResponse<T> | null = null
+        try {
+          resp = JSON.parse(res.data) as ApiResponse<T>
+        } catch {
+          reject(new Error('响应解析失败'))
+          return
+        }
+        if (resp && UNAUTHORIZED_CODES.includes(resp.code)) {
+          handleUnauthorized()
+          reject(new Error(resp.message || '登录已过期'))
+          return
+        }
+        if (resp && resp.code !== SUCCESS_CODE) {
+          showError(resp.message || '上传失败')
+          reject(new Error(resp.message || '上传失败'))
+          return
+        }
+        resolve(resp as ApiResponse<T>)
+      },
+      fail: (err) => {
+        showError(err.errMsg || '上传失败')
+        reject(new Error(err.errMsg || '上传失败'))
+      },
+    })
+  })
+}

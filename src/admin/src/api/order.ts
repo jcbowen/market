@@ -127,6 +127,21 @@ export function verifyPickup(id: number, pickup_code: string) {
 }
 
 /**
+ * 指派/取消指派配送员（B 履约工作台）
+ * 指派后履约人员在 C 端工作台送货（开始配送/送达拍照），不经传统物流发货
+ * @param id 订单 ID
+ * @param deliveryUserId 履约人员 user_id；0=取消指派
+ * @returns 操作结果（含履约人员姓名快照）
+ */
+export function assignDelivery(id: number, deliveryUserId: number) {
+  return request<ApiResult<{ success: boolean; delivery_user_name: string }>>({
+    url: `/api/v1/admin/orders/${id}/assign-delivery`,
+    method: 'PUT',
+    data: { delivery_user_id: deliveryUserId },
+  })
+}
+
+/**
  * 获取订单详情
  * @param id 订单 ID
  * @returns 订单详情

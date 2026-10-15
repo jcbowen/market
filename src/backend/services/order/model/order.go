@@ -38,7 +38,12 @@ type Order struct {
 	// 经手人（收银员/管理员）：source=2 时记录，便于对账与追责
 	OperatorID   int64    `gorm:"column:operator_id;type:bigint;default:0;comment:经手人 ID" json:"operator_id"`
 	OperatorName string   `gorm:"column:operator_name;type:varchar(50);comment:经手人姓名快照" json:"operator_name"`
-	PayTime       *string  `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`
+	// 履约工作台（B）：配送指派与签收凭证
+	// 指派的履约人员（0=未指派）；姓名快照避免列表页再 RPC 查会员
+	DeliveryUserID      int64   `gorm:"column:delivery_user_id;type:bigint;default:0;comment:指派履约人员 ID 0=未指派" json:"delivery_user_id"`
+	DeliveryUserName    string  `gorm:"column:delivery_user_name;type:varchar(50);comment:履约人员姓名快照" json:"delivery_user_name"`
+	DeliveryProofImages string  `gorm:"column:delivery_proof_images;type:text;comment:送达签收凭证照片 URL JSON 数组" json:"delivery_proof_images"`
+	PayTime             *string `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`
 	DeliverTime   *string  `gorm:"column:deliver_time;type:datetime;comment:发货时间" json:"deliver_time"`
 	CompleteTime  *string  `gorm:"column:complete_time;type:datetime;comment:完成时间" json:"complete_time"`
 	CancelTime    *string  `gorm:"column:cancel_time;type:datetime;comment:取消时间" json:"cancel_time"`

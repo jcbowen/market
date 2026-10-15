@@ -13,6 +13,9 @@ type UserCommunity struct {
 	UserID      int64  `gorm:"column:user_id;type:bigint;not null;uniqueIndex:uk_user_community,priority:1;comment:用户 ID" json:"user_id"`
 	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;uniqueIndex:uk_user_community,priority:2;comment:社区 ID" json:"community_id"`
 	Source      string `gorm:"column:source;type:varchar(20);default:'';comment:关联来源：address收货地址/order下单/admin后台添加/backfill存量回填" json:"source"`
+	// 履约人员标记（B 履约工作台）：该用户在该社区可送货上门 + 自提核销
+	// bool 零值坑：Create 时 false 会被 GORM 跳列落 DB 默认值，恰好即期望值 false，无需特殊处理
+	IsFulfiller bool   `gorm:"column:is_fulfiller;type:tinyint(1);default:0;comment:是否履约人员 0否 1是" json:"is_fulfiller"`
 	CreatedAt   string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	UpdatedAt   string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
