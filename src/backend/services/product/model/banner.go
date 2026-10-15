@@ -6,7 +6,7 @@ import (
 
 // Banner Banner 轮播图模型
 // 对应 banner 表，按社区与展示位置隔离
-// 展示位置：1首页 2分类页
+// 展示位置：1旧首页(已废弃，无展示位) 2分类页(现首页)；community_id=0 表示全平台通用
 // 状态：0禁用 1启用
 //
 //nolint:lll
@@ -18,7 +18,7 @@ type Banner struct {
 	Title       string  `gorm:"column:title;type:varchar(100);comment:标题" json:"title"`
 	ImageURL    string  `gorm:"column:image_url;type:varchar(255);not null;comment:图片 URL" json:"image_url"`
 	LinkURL     string  `gorm:"column:link_url;type:varchar(255);comment:跳转链接" json:"link_url"`
-	Position    int32   `gorm:"column:position;type:tinyint;not null;comment:1首页 2分类页" json:"position"`
+	Position    int32   `gorm:"column:position;type:tinyint;not null;comment:1旧首页(已废弃) 2分类页" json:"position"`
 	Sort        int32   `gorm:"column:sort;type:int;default:0;comment:排序值" json:"sort"`
 	Status      int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
 	StartTime   *string `gorm:"column:start_time;type:datetime;comment:上架开始时间" json:"start_time"`

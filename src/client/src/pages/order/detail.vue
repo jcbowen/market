@@ -18,6 +18,14 @@
       </text>
     </view>
 
+    <!-- 自提取货码：待自提（已支付/备货中）时展示，到店出示核销 -->
+    <view v-if="isPickup && showPickupCode" class="pickup-card">
+      <text class="pickup-title">取货码</text>
+      <text class="pickup-code">{{ order.pickup_code }}</text>
+      <image v-if="pickupQrcodeUrl" class="pickup-qrcode" :src="pickupQrcodeUrl" mode="aspectFit" />
+      <text class="pickup-tip">到店出示此码，由工作人员扫码或输码核销</text>
+    </view>
+
     <view class="goods-card">
       <view
         v-for="item in order.items"
@@ -74,10 +82,10 @@
         <u-button type="success" text="去支付" @click="onPay" />
       </view>
       <view
-        v-if="order.status === 1"
+        v-if="canCancel(order)"
         class="action-btn"
       >
-        <u-button text="取消订单" @click="onCancel" />
+        <u-button plain type="info" text="取消订单" @click="onCancel" />
       </view>
       <view
         v-if="canReceive(order)"
@@ -86,10 +94,10 @@
         <u-button type="success" :text="receiveButtonText(order)" @click="onReceive" />
       </view>
       <view
-        v-if="[2, 3, 4].includes(order.status)"
+        v-if="canRefund(order)"
         class="action-btn"
       >
-        <u-button text="申请退款" @click="onRefund" />
+        <u-button plain type="info" text="申请退款" @click="onRefund" />
       </view>
     </view>
 
@@ -101,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { onLoad, onUnload, onHide, onShow } from '@dcloudio/uni-app'
 import { getOrderDetail, confirmReceive } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
@@ -109,7 +117,7 @@ import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderList } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
-import { canReceive, receiveButtonText, DELIVERY_TYPE_PICKUP } from '@/utils/order'
+import { canReceive, receiveButtonText, canCancel, canRefund, DELIVERY_TYPE_PICKUP } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
@@ -152,6 +160,37 @@ const order = ref<Order>({
 
 /** 是否自提单 */
 const isPickup = computed(() => order.value.delivery_type === DELIVERY_TYPE_PICKUP)
+
+// --- 自提取货码 ---
+// 待自提（已支付2/备货中3）时展示取货码与二维码；已完成/已取消不再展示
+// @ts-ignore qrcode-generator 为无类型声明的本地静态库
+import qrcodeLib from '../../static/qrcode.min.js'
+
+const pickupQrcodeUrl = ref('')
+
+/** 是否展示取货码卡片 */
+const showPickupCode = computed(() => {
+  const s = order.value.status
+  return !!order.value.pickup_code && (s === 2 || s === 3)
+})
+
+/** 生成取货码二维码（扫码核销用；生成失败静默降级为仅数字码） */
+watch(
+  () => order.value.pickup_code,
+  (code) => {
+    pickupQrcodeUrl.value = ''
+    if (!code || !showPickupCode.value) return
+    try {
+      const qr = qrcodeLib(0, 'M')
+      qr.addData(code)
+      qr.make()
+      pickupQrcodeUrl.value = qr.createDataURL(6, 8)
+    } catch {
+      pickupQrcodeUrl.value = ''
+    }
+  },
+  { immediate: true },
+)
 
 const statusTip = computed(() => {
   if (order.value.status === 1) {
@@ -505,6 +544,45 @@ function onRefund() {
   font-size: 32rpx;
   font-weight: bold;
   color: #ff4d4f;
+}
+
+.receive-button {
+  flex: 1;
+}
+
+/* 自提取货码卡片 */
+.pickup-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 20rpx 30rpx;
+  padding: 36rpx;
+  border-radius: 16rpx;
+  background-color: #ffffff;
+}
+
+.pickup-title {
+  font-size: 28rpx;
+  color: #666666;
+}
+
+.pickup-code {
+  margin: 20rpx 0;
+  font-size: 64rpx;
+  font-weight: bold;
+  color: #07c160;
+  letter-spacing: 8rpx;
+}
+
+.pickup-qrcode {
+  width: 260rpx;
+  height: 260rpx;
+}
+
+.pickup-tip {
+  margin-top: 20rpx;
+  font-size: 24rpx;
+  color: #999999;
 }
 
 .footer-bar {

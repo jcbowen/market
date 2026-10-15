@@ -1,8 +1,8 @@
 <template>
   <view class="address-edit-page">
-    <!-- 未选择社区：默认不允许社区外配送，阻断保存 -->
-    <view v-if="communityChecked && !community" class="community-tip-card">
-      <text class="community-tip-text">您还未选择社区，请先在「我的-切换社区」中选择所在社区后再添加收货地址</text>
+    <!-- 未选择社区：默认不允许社区外配送，阻断保存；点击可直接去切换 -->
+    <view v-if="communityChecked && !community" class="community-tip-card" @click="goCommunitySelect">
+      <text class="community-tip-text">您还未选择社区，点击此处或前往「我的-切换社区」中选择所在社区后再添加收货地址</text>
     </view>
 
     <view class="form-card">
@@ -18,8 +18,13 @@
         <template v-if="!allowOutside">
           <u-form-item label="所在社区" border-bottom>
             <view class="prefix-block">
-              <text class="prefix-community">{{ community?.name || '未选择社区' }}</text>
+              <view class="community-row">
+                <text class="prefix-community">{{ community?.name || '未选择社区' }}</text>
+                <text class="switch-btn" @click.stop="goCommunitySelect">切换</text>
+              </view>
               <text class="prefix-region">{{ prefixText || '社区省市区未配置，请联系管理员' }}</text>
+              <text v-if="community?.address" class="prefix-address">社区地址：{{ community.address }}</text>
+              <text v-if="community?.pickup_address" class="prefix-address">自提点：{{ community.pickup_address }}</text>
             </view>
           </u-form-item>
           <u-form-item label="详细地址" prop="detail" border-bottom>
@@ -75,11 +80,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { createAddress, updateAddress, getCommunity, locateRegion } from '@/api/user'
 import { joinRegionAddress } from '@/utils/region'
 import { loadProvinces, loadCities, loadDistricts } from '@/utils/regionCache'
 import { useUserStore } from '@/stores/user'
+import { goCommunitySelect } from '@/utils/navigate'
 import type { Address, Community } from '@/api/types'
 import type { Region } from '@/api/user'
 
@@ -330,8 +336,12 @@ onLoad((query) => {
   addressId.value = Number(query?.id) || 0
 })
 
-onMounted(() => {
+// 社区信息每次展示时刷新：从社区选择页切换返回后能立即更新，且不重置已填表单（页面栈保留）
+onShow(() => {
   loadCommunity()
+})
+
+onMounted(() => {
   if (addressId.value) {
     const eventChannel = getOpenerEventChannel()
     eventChannel.on('addressData', (data: Address) => {
@@ -449,16 +459,37 @@ async function onSave() {
   flex-direction: column;
 }
 
+.community-row {
+  display: flex;
+  align-items: center;
+}
+
 .prefix-community {
   font-size: 28rpx;
   color: #333333;
   font-weight: bold;
 }
 
+.switch-btn {
+  margin-left: 16rpx;
+  padding: 4rpx 20rpx;
+  border: 1rpx solid #07c160;
+  border-radius: 999rpx;
+  font-size: 22rpx;
+  color: #07c160;
+}
+
 .prefix-region {
   margin-top: 6rpx;
   font-size: 26rpx;
   color: #666666;
+}
+
+.prefix-address {
+  margin-top: 4rpx;
+  font-size: 24rpx;
+  color: #999999;
+  line-height: 1.5;
 }
 
 .default-card {

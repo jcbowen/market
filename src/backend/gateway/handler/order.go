@@ -161,13 +161,45 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 			"delivery_type": o.DeliveryType,
 			"total_amount":  o.TotalAmount,
 			"pay_amount":    o.PayAmount,
-			"items":         items,
-			"created_at":    o.CreatedAt,
+			// 支付类型（1微信 2支付宝 3货到付款；0=未支付/未知），
+			// 供前端区分货到付款单的"取消订单/申请退款"按钮显示
+			"pay_type":   h.orderPayType(c, o.Id),
+			"items":      items,
+			"created_at": o.CreatedAt,
 			// 待支付订单的超时截止时间，供前端展示倒计时（与 order-service 超时取消同一配置）
 			"expire_at": orderExpireAt(o.Status, o.CreatedAt, h.orderTimeoutSec),
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
+}
+
+// ListFrequentProducts 获取当前用户常买商品（购物车"常买商品"列表）
+// 统计口径：仅计有效订单（已支付及之后），按购买次数降序，默认返回 10 条
+// 参数：
+//   - c: gin 上下文
+func (h *OrderHandler) ListFrequentProducts(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.orderClient.GetUserFrequentProducts(c.Request.Context(), &order.GetUserFrequentProductsReq{
+		UserId: uc.UserID,
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	list := make([]gin.H, 0, len(resp.List))
+	for _, p := range resp.List {
+		list = append(list, gin.H{
+			"product_id":     p.ProductId,
+			"product_name":   p.ProductName,
+			"product_image":  p.ProductImage,
+			"sku_id":         p.SkuId,
+			"purchase_count": p.PurchaseCount,
+			"total_quantity": p.TotalQuantity,
+		})
+	}
+	response.Success(c, gin.H{"list": list})
 }
 
 // GetOrder 获取订单详情
@@ -246,11 +278,14 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"delivery_time":   o.DeliveryTime,
 		"cancel_reason":   o.CancelReason,
 		"cancel_time":     o.CancelTime,
+		"pay_type":        h.orderPayType(c, o.Id),
 		"pay_type_text":   h.orderPayTypeText(c, o.Id),
 		"items":           items,
 		"address":         address,
 		"remark":          o.Remark,
 		"created_at":      o.CreatedAt,
+		// 自提核销码（仅自提单返回，C 端订单详情展示取货码/二维码）
+		"pickup_code": o.PickupCode,
 		"paid_at":         o.PayTime,
 		"delivered_at":    o.DeliverTime,
 		"received_at":     o.CompleteTime,
@@ -278,6 +313,22 @@ func orderExpireAt(status int32, createdAt string, orderTimeoutSec int) string {
 		return ""
 	}
 	return created.Add(time.Duration(orderTimeoutSec) * time.Second).Format("2006-01-02 15:04:05")
+}
+
+// orderPayType 查询订单支付类型数值
+// 未支付或查询不到支付记录时返回 0
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - int32: 支付类型（1微信 2支付宝 3货到付款；0=未支付/未知）
+func (h *OrderHandler) orderPayType(c *gin.Context, orderID int64) int32 {
+	resp, err := h.paymentClient.GetPayment(c.Request.Context(), &payment.GetPaymentReq{OrderId: orderID})
+	if err != nil || resp == nil {
+		return 0
+	}
+	return resp.PayType
 }
 
 // orderPayTypeText 查询订单支付方式文案
@@ -337,7 +388,8 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 }
 
 // ConfirmReceive 确认收货
-// 仅配送中（status=4）或自提已支付（status=2 且 delivery_type=1）订单可确认收货
+// 仅配送中（status=4）的配送单可确认收货；
+// 自提单已收紧为必须凭取货码核销（决策点⑤），C 端不可自行确认收货
 // 参数：
 //   - c: gin 上下文
 func (h *OrderHandler) ConfirmReceive(c *gin.Context) {
@@ -354,8 +406,11 @@ func (h *OrderHandler) ConfirmReceive(c *gin.Context) {
 		return
 	}
 	o := orderResp.Order
-	canReceive := o.Status == 4 || (o.Status == 2 && o.DeliveryType == 1)
-	if !canReceive {
+	if o.Status != 4 {
+		if o.DeliveryType == 1 {
+			response.Error(c, errcode.ParamError, "自提订单请到店出示取货码，由工作人员核销")
+			return
+		}
 		response.Error(c, errcode.ParamError, "订单状态不允许确认收货")
 		return
 	}

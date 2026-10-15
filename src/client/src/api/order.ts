@@ -96,3 +96,25 @@ export function getRefundConfig() {
 export function confirmReceive(id: number) {
   return post<Order>(`/orders/${id}/receive`)
 }
+
+/** 常买商品项（购物车"常买商品"列表） */
+export interface FrequentProduct {
+  product_id: number
+  product_name: string
+  product_image: string
+  /** 该用户最常买的 SKU（一键加购用） */
+  sku_id: number
+  /** 购买次数（有效订单数） */
+  purchase_count: number
+  /** 累计购买件数 */
+  total_quantity: number
+}
+
+/**
+ * 获取当前用户常买商品
+ * 统计口径：仅计有效订单（已支付及之后），按购买次数降序
+ * @param limit 返回条数，默认 10
+ */
+export function getFrequentProducts(limit = 10) {
+  return get<{ list: FrequentProduct[] }>('/orders/frequent-products', { limit })
+}

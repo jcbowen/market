@@ -146,6 +146,24 @@ func (s *server) GetRevenueReport(ctx stdctx.Context, req *order.GetRevenueRepor
 	return &order.RevenueReportResp{List: list}, nil
 }
 
+// GetUserFrequentProducts 获取用户常买商品
+func (s *server) GetUserFrequentProducts(ctx stdctx.Context, req *order.GetUserFrequentProductsReq) (*order.GetUserFrequentProductsResp, error) {
+	list, err := s.orderService.GetUserFrequentProducts(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &order.GetUserFrequentProductsResp{List: list}, nil
+}
+
+// VerifyPickup 自提订单核销
+func (s *server) VerifyPickup(ctx stdctx.Context, req *order.VerifyPickupReq) (*order.VerifyPickupResp, error) {
+	resp, err := s.orderService.VerifyPickup(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
+}
+
 // ApplyRefund 申请退款
 func (s *server) ApplyRefund(ctx stdctx.Context, req *order.ApplyRefundReq) (*order.RefundInfo, error) {
 	refund, err := s.refundService.ApplyRefund(ctx, req)
@@ -246,6 +264,7 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		CancelTime:     ptrString(o.CancelTime),
 		CancelReason:   o.CancelReason,
 		CreatedAt:      o.CreatedAt,
+		PickupCode:     ptrString(o.PickupCode),
 		ExpressCompany: o.ExpressCompany,
 		ExpressNo:      o.ExpressNo,
 	}

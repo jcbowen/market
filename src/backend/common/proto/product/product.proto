@@ -766,6 +766,8 @@ message UpdateBannerReq {
   int32 status = 7;
   string start_time = 8;
   string end_time = 9;
+  // 适用社区（optional 显式传参才更新；0=全部社区通用）
+  optional int64 community_id = 10;
 }
 
 message DeleteBannerReq {

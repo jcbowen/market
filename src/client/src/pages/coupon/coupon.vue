@@ -3,8 +3,44 @@
     <u-tabs :list="tabs" :current="currentTab" @change="onTabChange" />
 
     <scroll-view class="coupon-list" scroll-y @scrolltolower="loadMore">
-      <!-- 可领取优惠券 -->
+      <!-- 我的优惠券（第一页，默认打开）：按状态筛选展示 -->
       <template v-if="currentTab === 0">
+        <view class="status-filter">
+          <text
+            v-for="opt in statusOptions"
+            :key="opt.value"
+            class="status-chip"
+            :class="{ active: myFilter === opt.value }"
+            @click="myFilter = opt.value"
+          >{{ opt.label }}</text>
+        </view>
+        <view
+          v-for="item in filteredUserCoupons"
+          :key="item.id"
+          class="coupon-card"
+          :class="{ used: item.status !== 1 || isCouponExpired(item) }"
+        >
+          <view class="coupon-left">
+            <!-- 面额按券类型展示：满减券 ¥20.00，折扣券 8.5折（type=2 折扣率） -->
+            <text class="coupon-value">{{ couponValueText(item) }}</text>
+            <text class="coupon-threshold">满 {{ formatPrice(item.threshold) }} 可用</text>
+          </view>
+          <view class="coupon-right">
+            <text class="coupon-name">{{ item.name }}</text>
+            <text class="coupon-time">有效期至 {{ formatDate(item.end_time) }}</text>
+            <text class="coupon-status">{{ couponStatusText(item) }}</text>
+          </view>
+        </view>
+        <u-empty
+          v-if="!filteredUserCoupons.length && loadStatus === 'nomore'"
+          mode="coupon"
+          text="暂无相关优惠券"
+          margin-top="80"
+        />
+      </template>
+
+      <!-- 领券中心（可领取） -->
+      <template v-else>
         <view
           v-for="item in coupons"
           :key="item.id"
@@ -29,44 +65,25 @@
         </view>
       </template>
 
-      <!-- 我的优惠券 -->
-      <template v-else>
-        <view
-          v-for="item in userCoupons"
-          :key="item.id"
-          class="coupon-card used"
-        >
-          <view class="coupon-left">
-            <!-- 面额按券类型展示：满减券 ¥20.00，折扣券 8.5折（type=2 折扣率） -->
-            <text class="coupon-value">{{ couponValueText(item) }}</text>
-            <text class="coupon-threshold">满 {{ formatPrice(item.threshold) }} 可用</text>
-          </view>
-          <view class="coupon-right">
-            <text class="coupon-name">{{ item.name }}</text>
-            <text class="coupon-time">有效期至 {{ formatDate(item.end_time) }}</text>
-            <text class="coupon-status">{{ couponStatusText(item) }}</text>
-          </view>
-        </view>
-      </template>
-
       <u-loadmore :status="loadStatus" />
     </scroll-view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getCoupons, receiveCoupon, getUserCoupons } from '@/api/marketing'
 import { formatDate, formatPrice } from '@/utils/format'
-import { couponValueText, couponStatusText } from '@/utils/coupon'
-import type { Coupon, UserCoupon } from '@/api/types'
+import { couponValueText, couponStatusText, isCouponExpired } from '@/utils/coupon'
+import type { UserCoupon, Coupon } from '@/api/types'
 
 const userStore = useUserStore()
+/** 优惠券包：第一页=我的券（默认），第二页=领券中心 */
 const tabs = ref([
-  { name: '可领取' },
-  { name: '我的' },
+  { name: '我的优惠券' },
+  { name: '领券中心' },
 ])
 const currentTab = ref(0)
 const coupons = ref<Coupon[]>([])
@@ -74,6 +91,27 @@ const userCoupons = ref<UserCoupon[]>([])
 const page = ref(1)
 const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
+
+/** 我的券状态筛选：0 全部 1 未使用 2 已使用 3 已过期（按状态分组展示的轻量实现） */
+const myFilter = ref<0 | 1 | 2 | 3>(0)
+const statusOptions = [
+  { label: '全部', value: 0 },
+  { label: '未使用', value: 1 },
+  { label: '已使用', value: 2 },
+  { label: '已过期', value: 3 },
+] as const
+
+/**
+ * 按状态过滤后的我的券列表
+ * 后端 /user/coupons 返回全量不分页，过期态由 end_time 动态判定，客户端过滤即可
+ */
+const filteredUserCoupons = computed(() => {
+  if (!myFilter.value) return userCoupons.value
+  return userCoupons.value.filter((c) => {
+    if (myFilter.value === 3) return c.status === 1 && isCouponExpired(c)
+    return c.status === myFilter.value && !(myFilter.value === 1 && isCouponExpired(c))
+  })
+})
 
 onShow(() => {
   resetAndReload()
@@ -113,10 +151,6 @@ async function loadData() {
   const seq = ++requestSeq
   try {
     if (currentTab.value === 0) {
-      const res = await getCoupons({ page: page.value, page_size: pageSize, community_id: userStore.communityInfo?.id })
-      const list = res.data?.list || []
-      if (seq === requestSeq) appendList(coupons, list)
-    } else {
       const res = await getUserCoupons({ page: page.value, page_size: pageSize })
       const list = res.data?.list || []
       if (seq !== requestSeq) return
@@ -124,6 +158,10 @@ async function loadData() {
       // 避免全量结果进入分页判断后滚动加载重复追加
       userCoupons.value = page.value === 1 ? list : [...userCoupons.value, ...list]
       loadStatus.value = 'nomore'
+    } else {
+      const res = await getCoupons({ page: page.value, page_size: pageSize, community_id: userStore.communityInfo?.id })
+      const list = res.data?.list || []
+      if (seq === requestSeq) appendList(coupons, list)
     }
   } catch {
     if (seq !== requestSeq) return
@@ -253,5 +291,26 @@ async function onReceive(id: number) {
   align-self: flex-start;
   min-width: 120rpx;
   padding: 0 28rpx;
+}
+
+/* 我的券状态筛选 chips */
+.status-filter {
+  display: flex;
+  gap: 16rpx;
+  margin-bottom: 20rpx;
+}
+
+.status-chip {
+  padding: 8rpx 28rpx;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  color: #666666;
+  background-color: #ffffff;
+}
+
+.status-chip.active {
+  color: #07c160;
+  background-color: rgba(7, 193, 96, 0.1);
+  font-weight: bold;
 }
 </style>

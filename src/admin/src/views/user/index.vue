@@ -43,6 +43,9 @@
         </n-form>
       </n-space>
     </n-modal>
+
+    <!-- 会员订单弹窗：查看该会员在当前社区（或超管跨社区）的订单 -->
+    <UserOrdersModal v-model:show="showOrdersModal" :user="ordersUser" />
   </div>
 </template>
 
@@ -54,6 +57,7 @@ import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
 import { getUserList, createUser, setUserStatus } from '@/api/user'
 import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
+import UserOrdersModal from './components/UserOrdersModal.vue'
 import type { DataTableColumns } from 'naive-ui'
 import type { User } from '@/api/types'
 
@@ -88,31 +92,36 @@ function renderStatus(status: number) {
     : h(NTag, { type: 'error', size: 'small' }, { default: () => '已拉黑' })
 }
 
-/** 渲染操作列：拉黑/恢复 */
+/** 渲染操作列：查看订单 + 拉黑/恢复 */
 function renderActions(row: User) {
-  if (!authStore.hasPermission('user:update')) return null
-  if (row.status === 1) {
-    return h(
+  const buttons = [
+    h(
       NButton,
       {
         size: 'small',
-        type: 'error',
+        type: 'primary',
         secondary: true,
-        onClick: () => confirmSetStatus(row, 0),
+        onClick: () => openOrders(row),
       },
-      { default: () => '拉黑' },
+      { default: () => '订单' },
+    ),
+  ]
+  if (authStore.hasPermission('user:update')) {
+    buttons.push(
+      row.status === 1
+        ? h(
+            NButton,
+            { size: 'small', type: 'error', secondary: true, onClick: () => confirmSetStatus(row, 0) },
+            { default: () => '拉黑' },
+          )
+        : h(
+            NButton,
+            { size: 'small', type: 'warning', secondary: true, onClick: () => confirmSetStatus(row, 1) },
+            { default: () => '恢复' },
+          ),
     )
   }
-  return h(
-    NButton,
-    {
-      size: 'small',
-      type: 'warning',
-      secondary: true,
-      onClick: () => confirmSetStatus(row, 1),
-    },
-    { default: () => '恢复' },
-  )
+  return buttons.length > 1 ? h('div', { style: 'display:flex;gap:8px' }, buttons) : buttons[0]
 }
 
 /** 会员表格列 */
@@ -124,7 +133,7 @@ const userColumns: DataTableColumns<User> = [
   { title: '状态', key: 'status', width: 80, render: (row) => renderStatus(row.status) },
   { title: '注册时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.created_at) },
   { title: '最后登录', key: 'last_login_at', width: 170, render: (row) => formatDateTime(row.last_login_at) },
-  { title: '操作', key: 'actions', width: 90, render: (row) => renderActions(row) },
+  { title: '操作', key: 'actions', width: 130, render: (row) => renderActions(row) },
 ]
 
 const userLoading = ref(false)
@@ -138,6 +147,19 @@ const users = ref<User[]>([])
 const showCreateModal = ref(false)
 const createLoading = ref(false)
 const createForm = reactive({ phone: '', nickname: '', gender: 0 })
+
+// 会员订单弹窗状态
+const showOrdersModal = ref(false)
+const ordersUser = ref<User | null>(null)
+
+/**
+ * 打开会员订单弹窗
+ * @param row 目标会员
+ */
+function openOrders(row: User) {
+  ordersUser.value = row
+  showOrdersModal.value = true
+}
 
 /**
  * 查询（重置回第一页）

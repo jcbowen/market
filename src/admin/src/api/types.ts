@@ -237,6 +237,9 @@ export interface Order {
   order_no: string
   user_id: number
   user_name: string
+  /** 订单所属社区（跨社区查询时回显） */
+  community_id?: number
+  community_name?: string
   total_amount: number
   discount_amount: number
   delivery_fee: number
@@ -526,6 +529,8 @@ export interface FullReduction {
  */
 export interface Banner {
   id: number
+  /** 适用社区：0=全部社区通用 */
+  community_id: number
   title: string
   image_url: string
   link_url?: string

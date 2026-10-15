@@ -31,6 +31,8 @@ type Order struct {
 	ExpressNo      string `gorm:"column:express_no;type:varchar(50);comment:物流单号（发货时写入）" json:"express_no"`
 	Remark        string  `gorm:"column:remark;type:varchar(255);comment:用户备注" json:"remark"`
 	CouponID      int64    `gorm:"column:coupon_id;type:bigint;default:0;comment:使用的优惠券 ID" json:"coupon_id"`
+	// 自提核销码：仅自提单（delivery_type=1）生成，配送单为 NULL（unique 允许多个 NULL）
+	PickupCode   *string  `gorm:"column:pickup_code;type:varchar(20);unique;comment:自提核销码" json:"pickup_code"`
 	PayTime       *string  `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`
 	DeliverTime   *string  `gorm:"column:deliver_time;type:datetime;comment:发货时间" json:"deliver_time"`
 	CompleteTime  *string  `gorm:"column:complete_time;type:datetime;comment:完成时间" json:"complete_time"`

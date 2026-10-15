@@ -60,7 +60,7 @@
       <n-space v-if="selectedRows.length > 0" align="center">
         <span>已选 {{ selectedRows.length }} 单</span>
         <n-button size="small" type="primary" @click="openBatchShip">批量发货</n-button>
-        <n-button size="small" type="success" @click="batchComplete">批量核销</n-button>
+        <n-button size="small" type="success" @click="batchComplete">批量完成</n-button>
       </n-space>
 
       <n-data-table
@@ -97,6 +97,29 @@
 
   <!-- 后台代客退款弹窗（发起即执行，免审核） -->
   <refund-modal v-model:show="refundVisible" :order-id="refundOrderId" @success="onActionSuccess" />
+
+  <!-- 自提核销弹窗（凭取货码核销，防冒领） -->
+  <n-modal
+    v-model:show="showVerifyModal"
+    preset="dialog"
+    title="自提核销"
+    positive-text="确认核销"
+    negative-text="取消"
+    :loading="verifyLoading"
+    @positive-click="submitVerify"
+  >
+    <n-space vertical>
+      <n-text>订单号：{{ verifyOrder?.order_no }}</n-text>
+      <n-text depth="3">请输入顾客出示的取货码（订单详情页展示的 8 位数字码）</n-text>
+      <n-input
+        v-model:value="verifyCode"
+        placeholder="8 位取货码"
+        maxlength="8"
+        :input-props="{ inputmode: 'numeric' }"
+        @keyup.enter="submitVerify"
+      />
+    </n-space>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -105,7 +128,7 @@ defineOptions({ name: 'OrderList' })
 import { computed, h, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { completeOrder, getOrderList } from '@/api/order'
+import { completeOrder, getOrderList, verifyPickup } from '@/api/order'
 import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
 import OrderDetailModal from './detail.vue'
 import ShipModal from './components/ShipModal.vue'
@@ -237,7 +260,7 @@ const columns: DataTableColumns<Order> = [
           { default: () => '详情' },
         ),
       ]
-      if (row.status === ORDER_STATUS.PAID) {
+      if (row.status === ORDER_STATUS.PAID || row.status === ORDER_STATUS.STOCKING) {
         if (row.delivery_type === DELIVERY_TYPE.DELIVERY) {
           buttons.push(
             h(
@@ -247,12 +270,12 @@ const columns: DataTableColumns<Order> = [
             ),
           )
         } else {
-          // 自提单：已支付即可核销完成，无需发货
+          // 自提单：凭顾客出示的取货码核销（输码校验，防冒领）
           buttons.push(
             h(
               NButton,
-              { size: 'small', type: 'success', onClick: () => confirmComplete(row) },
-              { default: () => '核销完成' },
+              { size: 'small', type: 'success', onClick: () => openVerify(row) },
+              { default: () => '核销' },
             ),
           )
         }
@@ -414,15 +437,14 @@ function openRefund(id: number) {
 }
 
 /**
- * 确认完成/核销单笔订单（二次确认）
+ * 确认完成单笔订单（配送单，二次确认；自提单走输码核销 openVerify）
  * @param row 订单行
  */
 function confirmComplete(row: Order) {
-  const isPickup = row.delivery_type === DELIVERY_TYPE.SELF_PICKUP
   dialog.warning({
-    title: isPickup ? '核销订单' : '完成订单',
+    title: '完成订单',
     content: `确认将订单 ${row.order_no} 标记为已完成？`,
-    positiveText: isPickup ? '确认核销' : '确认完成',
+    positiveText: '确认完成',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
@@ -435,27 +457,63 @@ function confirmComplete(row: Order) {
   })
 }
 
+// --- 自提核销（输码校验） ---
+const showVerifyModal = ref(false)
+const verifyOrder = ref<Order | null>(null)
+const verifyCode = ref('')
+const verifyLoading = ref(false)
+
 /**
- * 批量核销：对选中订单中可完成的（自提已支付 / 已发货）逐单完结
+ * 打开自提核销弹窗
+ * @param row 订单行
+ */
+function openVerify(row: Order) {
+  verifyOrder.value = row
+  verifyCode.value = ''
+  showVerifyModal.value = true
+}
+
+/**
+ * 提交核销：校验取货码后完成订单
+ */
+async function submitVerify() {
+  const row = verifyOrder.value
+  if (!row) return
+  if (!verifyCode.value.trim()) {
+    message.warning('请输入顾客出示的取货码')
+    return
+  }
+  verifyLoading.value = true
+  try {
+    await verifyPickup(row.id, verifyCode.value.trim())
+    message.success('核销成功')
+    showVerifyModal.value = false
+    loadData()
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    verifyLoading.value = false
+  }
+}
+
+/**
+ * 批量核销：对选中的「已发货配送单」逐单完结
+ * 自提单必须逐单凭取货码核销（防冒领），不参与批量
  */
 function batchComplete() {
-  const completable = selectedRows.value.filter(
-    (row) =>
-      row.status === ORDER_STATUS.SHIPPING ||
-      (row.status === ORDER_STATUS.PAID && row.delivery_type === DELIVERY_TYPE.SELF_PICKUP),
-  )
+  const completable = selectedRows.value.filter((row) => row.status === ORDER_STATUS.SHIPPING)
   if (completable.length === 0) {
     dialog.warning({
       title: '无法批量核销',
-      content: '选中订单中没有「已发货」或「待自提」的订单。',
+      content: '选中订单中没有「已发货的配送单」。自提单请使用「核销」按钮凭取货码逐单核销。',
       positiveText: '知道了',
     })
     return
   }
   dialog.warning({
-    title: '批量核销',
-    content: `确认将选中的 ${completable.length} 个订单标记为已完成？`,
-    positiveText: '确认核销',
+    title: '批量完成',
+    content: `确认将选中的 ${completable.length} 个已发货配送单标记为已完成？`,
+    positiveText: '确认完成',
     negativeText: '取消',
     onPositiveClick: async () => {
       let successCount = 0
@@ -467,7 +525,7 @@ function batchComplete() {
           // 错误提示由请求拦截器统一弹出，继续处理下一单
         }
       }
-      message.success(`批量核销完成：成功 ${successCount} 单`)
+      message.success(`批量完成：成功 ${successCount} 单`)
       loadData()
     },
   })

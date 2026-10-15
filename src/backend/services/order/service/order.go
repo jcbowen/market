@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	crand "crypto/rand"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
+	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
@@ -165,6 +167,27 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+	// 自提单生成取货核销码（C 端订单详情展示，履约人员/后台凭码核销）；
+	// 预查重避免撞唯一索引（8 位数字码空间 1e8，常规重试一次即可命中）
+	if req.DeliveryType == 1 {
+		for i := 0; i < 5; i++ {
+			code := genPickupCode()
+			if code == nil {
+				continue
+			}
+			var cnt int64
+			if err := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).Where("pickup_code = ?", *code).Count(&cnt).Error; err != nil {
+				return nil, bizerr.New(codes.Internal, "生成取货码失败")
+			}
+			if cnt == 0 {
+				orderModel.PickupCode = code
+				break
+			}
+		}
+		if orderModel.PickupCode == nil {
+			return nil, bizerr.New(codes.Internal, "生成取货码失败，请重试")
+		}
+	}
 
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(orderModel).Error; err != nil {
@@ -316,7 +339,45 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	return list, int(total), err
 }
 
+// cancelableStatuses 订单允许取消的状态集合
+// status=1（待支付）恒可取消；货到付款单未实际收款，未发货（2已支付/3备货中）也可直接取消，
+// 无需走退款审核（发货后 status=4 仍走退款/拒收流程）
+func cancelableStatuses(isCashOnDelivery bool) []int32 {
+	if isCashOnDelivery {
+		return []int32{1, 2, 3}
+	}
+	return []int32{1}
+}
+
+// containsInt32 判断 int32 切片是否包含指定元素
+func containsInt32(list []int32, item int32) bool {
+	for _, v := range list {
+		if v == item {
+			return true
+		}
+	}
+	return false
+}
+
+// isCashOnDeliveryOrder 判断订单是否为货到付款（pay_type=3，查询支付单判定）
+// 查询失败或无支付记录时按非货到付款处理（保守口径，不影响原有取消逻辑）
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - bool: 是否货到付款
+func (s *OrderService) isCashOnDeliveryOrder(ctx context.Context, orderID int64) bool {
+	resp, err := grpcclient.PaymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: orderID})
+	if err != nil || resp == nil {
+		return false
+	}
+	return resp.PayType == 3
+}
+
 // CancelOrder 取消订单
+// 货到付款订单未实际收款，未发货（status∈{2,3}）可直接取消：回滚库存、置已取消，不产生退款流水；
+// 在线支付订单仍仅允许待支付（status=1）取消，已支付走退款审核
 // 参数：
 //   - ctx: 上下文
 //   - req: 取消请求
@@ -332,13 +393,14 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		if o.UserID != req.UserId {
 			return fmt.Errorf("无权限取消该订单")
 		}
-		if o.Status != 1 {
+		allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, o.ID))
+		if !containsInt32(allowed, o.Status) {
 			return fmt.Errorf("订单状态不允许取消")
 		}
 
 		now := time.Now().Format("2006-01-02 15:04:05")
-		// 条件更新防并发：仅当订单仍处于待支付(1)时生效
-		res := tx.Model(&model.Order{}).Where("id = ? AND status = ?", o.ID, int32(1)).Updates(map[string]interface{}{
+		// 条件更新防并发：仅当订单仍处于允许取消的状态时生效
+		res := tx.Model(&model.Order{}).Where("id = ? AND status IN ?", o.ID, allowed).Updates(map[string]interface{}{
 			"status":        int32(6),
 			"updated_at":    now,
 			"cancel_time":   &now,
@@ -365,7 +427,7 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 			}
 		}
 
-		return s.createStatusLogTx(tx, o.ID, 1, 6, "user", req.UserId, req.Reason)
+		return s.createStatusLogTx(tx, o.ID, o.Status, 6, "user", req.UserId, req.Reason)
 	})
 }
 
@@ -456,6 +518,62 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 	})
 }
 
+// VerifyPickup 自提订单核销：校验取货码后置为已完成
+// 校验：自提单、核销码匹配、状态为已支付(2)/备货中(3)；核销成功写完成时间与状态日志（核销人/时间可追溯）。
+// 供后台兜底核销与履约工作台核销（B）共用；核销即完成，不涉及库存变更（下单时已扣减）
+// 参数：
+//   - ctx: 上下文
+//   - req: 核销请求
+//
+// 返回值：
+//   - *order.VerifyPickupResp: 核销结果
+//   - error: 错误信息
+func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickupReq) (*order.VerifyPickupResp, error) {
+	if req.PickupCode == "" {
+		return nil, bizerr.New(codes.InvalidArgument, "请输入取货码")
+	}
+	var resp *order.VerifyPickupResp
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var o model.Order
+		if err := tx.First(&o, req.OrderId).Error; err != nil {
+			return err
+		}
+		if o.DeliveryType != 1 {
+			return bizerr.New(codes.FailedPrecondition, "非自提订单，无需核销")
+		}
+		if o.PickupCode == nil || *o.PickupCode != req.PickupCode {
+			return bizerr.New(codes.FailedPrecondition, "取货码不正确，请核对后重试")
+		}
+		if o.Status != 2 && o.Status != 3 {
+			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许核销: %d", o.Status))
+		}
+
+		now := time.Now().Format("2006-01-02 15:04:05")
+		// 条件更新防并发：仅当订单仍处于待核销状态时生效（防重复核销）
+		res := tx.Model(&model.Order{}).Where("id = ? AND status IN ?", o.ID, []int32{2, 3}).Updates(map[string]interface{}{
+			"status":        int32(5),
+			"updated_at":    now,
+			"complete_time": &now,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
+		}
+
+		if err := s.createStatusLogTx(tx, o.ID, o.Status, 5, req.OperatorType, req.OperatorId, "核销码核销（取货码 "+*o.PickupCode+"）"); err != nil {
+			return err
+		}
+		resp = &order.VerifyPickupResp{OrderId: o.ID, Status: 5}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 // cancelOrderInTx 在事务中执行取消语义：条件更新状态、写取消原因/时间并逐行回补库存。
 // 供后台取消（UpdateOrderStatus 特判 status=6）复用；C 端 CancelOrder 有额外的归属校验，不走此方法。
 // 参数：
@@ -469,11 +587,13 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 // 返回值：
 //   - error: 错误信息
 func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *model.Order, operatorType string, operatorID int64, reason string) error {
-	if o.Status != 1 {
+	// 货到付款单未实际收款，未发货（2/3）也可直接取消（与 C 端 CancelOrder 同口径）
+	allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, o.ID))
+	if !containsInt32(allowed, o.Status) {
 		return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许取消: %d", o.Status))
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")
-	res := tx.Model(&model.Order{}).Where("id = ? AND status = ?", o.ID, int32(1)).Updates(map[string]interface{}{
+	res := tx.Model(&model.Order{}).Where("id = ? AND status IN ?", o.ID, allowed).Updates(map[string]interface{}{
 		"status":        int32(6),
 		"updated_at":    now,
 		"cancel_time":   &now,
@@ -793,6 +913,67 @@ func (s *OrderService) GetProductRankings(ctx context.Context, req *order.GetPro
 //   - ctx: 上下文
 //   - req: 报表请求
 //
+// GetUserFrequentProducts 获取用户常买商品（购物车"常买商品"列表）
+// 统计口径（决策点③）：仅计有效订单（已支付及之后，排除待支付1/已取消6/退款7/已退款8）；
+// 购买次数 = 去重订单数，另附该用户买该商品最常买的 SKU（供一键加购）
+// 参数：
+//   - ctx: 上下文
+//   - req: 请求（user_id + limit）
+//
+// 返回值：
+//   - []*order.FrequentProductItem: 常买商品列表（按购买次数降序）
+//   - error: 错误信息
+func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.GetUserFrequentProductsReq) ([]*order.FrequentProductItem, error) {
+	if req.UserId <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "缺少用户 ID")
+	}
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 10
+	}
+
+	// 有效订单口径：排除待支付(1)/已取消(6)/退款中(7)/已退款(8)
+	validStatuses := []int32{2, 3, 4, 5}
+
+	var rows []*order.FrequentProductItem
+	err := s.db.GetDb().WithContext(ctx).
+		Table("order_items").
+		Select("order_items.product_id, order_items.product_name, MAX(order_items.product_image) AS product_image, "+
+			"COUNT(DISTINCT orders.id) AS purchase_count, SUM(order_items.quantity) AS total_quantity").
+		Joins("JOIN orders ON orders.id = order_items.order_id").
+		Where("orders.user_id = ? AND orders.status IN ?", req.UserId, validStatuses).
+		Group("order_items.product_id, order_items.product_name").
+		Order("purchase_count DESC, total_quantity DESC").
+		Limit(limit).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// 附带每个商品该用户最常买的 SKU（按累计数量取 Top1，供一键加购）
+	for _, r := range rows {
+		var skuID int64
+		err := s.db.GetDb().WithContext(ctx).
+			Table("order_items").
+			Select("order_items.sku_id").
+			Joins("JOIN orders ON orders.id = order_items.order_id").
+			Where("orders.user_id = ? AND orders.status IN ? AND order_items.product_id = ?", req.UserId, validStatuses, r.ProductId).
+			Group("order_items.sku_id").
+			Order("SUM(order_items.quantity) DESC").
+			Limit(1).
+			Scan(&skuID).Error
+		if err == nil {
+			r.SkuId = skuID
+		}
+	}
+	return rows, nil
+}
+
+// GetRevenueReport 获取营收报表
+// 参数：
+//   - ctx: 上下文
+//   - req: 报表请求
+//
 // 返回值：
 //   - []*order.RevenueReportItem: 报表列表
 //   - error: 错误信息
@@ -811,7 +992,7 @@ func (s *OrderService) GetRevenueReport(ctx context.Context, req *order.GetReven
 	dateExpr := fmt.Sprintf("DATE_FORMAT(created_at, '%s')", dateFormat)
 	db := s.db.GetDb().WithContext(ctx).
 		Table("orders").
-		Select(dateExpr + " AS date, COALESCE(SUM(pay_amount),0) AS revenue, COUNT(*) AS order_count").
+		Select(dateExpr+" AS date, COALESCE(SUM(pay_amount),0) AS revenue, COUNT(*) AS order_count").
 		Where("status NOT IN ?", []int32{1, 6})
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
@@ -866,4 +1047,21 @@ func (s *OrderService) withDateRangeOnOrders(db *gorm.DB, startDate, endDate str
 //   - string: 订单编号
 func generateOrderNo() string {
 	return "DD" + time.Now().Format("20060102150405") + fmt.Sprintf("%04d", time.Now().Nanosecond()/1e5)
+}
+
+// genPickupCode 生成 8 位数字自提核销码（crypto/rand，正例空间 1e8，
+// 唯一索引兜底：极端碰撞时由 CreateOrder 的重试逻辑处理）
+func genPickupCode() *string {
+	const digits = "0123456789"
+	b := make([]byte, 8)
+	if _, err := crand.Read(b); err != nil {
+		// 随机源失败时降级为时间派生（极端场景，可接受）
+		s := fmt.Sprintf("%08d", time.Now().UnixNano()%1e8)
+		return &s
+	}
+	for i := range b {
+		b[i] = digits[int(b[i])%len(digits)]
+	}
+	s := string(b)
+	return &s
 }

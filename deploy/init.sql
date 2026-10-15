@@ -151,12 +151,12 @@ VALUES
   (5, 4, 2, 'EGG-30P', '', '30枚/箱', '{"规格":"30枚/箱"}', 12.90, 15.90, 9.50, 100, 10, 'https://placehold.co/300x300/brown/white?text=Egg', 1, NOW(), NOW());
 
 -- ============ Banner 轮播 ============
--- position：1首页 2分类页；start/end 为 NULL 表示不限时
+-- position：1旧首页(已废弃) 2分类页(现首页)；community_id=0 表示全平台通用
 INSERT INTO `banners` (`id`, `community_id`, `title`, `image_url`, `link_url`, `position`, `sort`, `status`, `start_time`, `end_time`, `created_at`, `updated_at`)
 VALUES
-  (1, 1, '新人专享满减', 'https://placehold.co/750x300/ff6b35/white?text=Banner1', '#', 1, 1, 1, NULL, NULL, NOW(), NOW()),
-  (2, 1, '时令水果上新', 'https://placehold.co/750x300/4caf50/white?text=Banner2', '#', 1, 2, 1, NULL, NULL, NOW(), NOW()),
-  (3, 2, '阳光花园精选', 'https://placehold.co/750x300/2196f3/white?text=Banner3', '#', 1, 1, 1, NULL, NULL, NOW(), NOW());
+  (1, 0, '新人专享满减', 'https://placehold.co/750x300/ff6b35/white?text=Banner1', '#', 2, 1, 1, NULL, NULL, NOW(), NOW()),
+  (2, 0, '时令水果上新', 'https://placehold.co/750x300/4caf50/white?text=Banner2', '#', 2, 2, 1, NULL, NULL, NOW(), NOW()),
+  (3, 2, '阳光花园精选', 'https://placehold.co/750x300/2196f3/white?text=Banner3', '#', 2, 1, 1, NULL, NULL, NOW(), NOW());
 
 -- ============ 营销活动 ============
 -- 满减：start/end 为 NULL 表示长期有效

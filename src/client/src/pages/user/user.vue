@@ -3,14 +3,14 @@
     <!-- 用户信息卡片 -->
     <view class="user-card">
       <view v-if="userStore.isLogin" class="user-info">
-        <image class="avatar" :src="userStore.userInfo?.avatar || '/static/logo.png'" mode="aspectFill" />
+        <image class="avatar" :src="userStore.userInfo?.avatar || '/static/default-avatar.png'" mode="aspectFill" />
         <view class="info">
           <text class="nickname">{{ userStore.userInfo?.nickname || '用户' }}</text>
           <text class="phone">{{ maskPhone(userStore.userInfo?.phone || '') }}</text>
         </view>
       </view>
       <view v-else class="user-info" @click="goLogin">
-        <image class="avatar" src="/static/logo.png" mode="aspectFill" />
+        <image class="avatar" src="/static/default-avatar.png" mode="aspectFill" />
         <view class="info">
           <text class="nickname">点击登录</text>
           <text class="phone">登录后享受更多服务</text>
@@ -48,7 +48,7 @@
     <view class="menu-card">
       <u-cell-group>
         <u-cell icon="map" title="收货地址" @click="goAddressList" />
-        <u-cell icon="coupon" title="领券中心" @click="goCoupon" />
+        <u-cell icon="coupon" title="优惠券包" @click="goCoupon" />
         <u-cell icon="clock" title="限时秒杀" @click="goFlash" />
         <u-cell icon="tags" title="满减活动" @click="goFullReduction" />
         <u-cell icon="home" title="切换社区" @click="goCommunitySelect" />
@@ -78,7 +78,8 @@
 
     <view v-if="userStore.isLogin" class="logout-btn">
       <!-- u-button 默认阻止事件冒泡（stop: true），click 必须绑在组件上而非外层 view -->
-      <u-button text="退出登录" @click="onLogout" />
+      <!-- 显式指定样式（plain 透明底 + 固定红色描边），不依赖 uview 默认卡片背景变量，规避深色模式漂移 -->
+      <u-button text="退出登录" plain type="error" @click="onLogout" />
     </view>
   </view>
 </template>

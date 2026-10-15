@@ -18,12 +18,29 @@ export function getOrderList(
     end_time?: string
     receiver_name?: string
     receiver_phone?: string
+    /** 按会员过滤（会员列表弹窗查订单） */
+    user_id?: number
+    /** 目标社区：仅超管可传，0=跨社区查全部；不传=当前社区语境 */
+    community_id?: number
   },
 ) {
   return request<ApiResult<PageResult<Order>>>({
     url: '/api/v1/admin/orders',
     method: 'GET',
     params,
+  })
+}
+
+/**
+ * 自提订单核销（兜底入口）：校验取货码后完成订单
+ * @param id 订单 ID
+ * @param pickup_code 顾客出示的取货码
+ */
+export function verifyPickup(id: number, pickup_code: string) {
+  return request<ApiResult<{ order_id: number; status: number }>>({
+    url: `/api/v1/admin/orders/${id}/verify-pickup`,
+    method: 'POST',
+    data: { pickup_code },
   })
 }
 

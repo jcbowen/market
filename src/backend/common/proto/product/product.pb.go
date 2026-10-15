@@ -6293,16 +6293,18 @@ func (x *CreateBannerReq) GetEndTime() string {
 }
 
 type UpdateBannerReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
-	ImageUrl      string                 `protobuf:"bytes,3,opt,name=image_url,json=imageUrl,proto3" json:"image_url,omitempty"`
-	LinkUrl       string                 `protobuf:"bytes,4,opt,name=link_url,json=linkUrl,proto3" json:"link_url,omitempty"`
-	Position      int32                  `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
-	Sort          int32                  `protobuf:"varint,6,opt,name=sort,proto3" json:"sort,omitempty"`
-	Status        int32                  `protobuf:"varint,7,opt,name=status,proto3" json:"status,omitempty"`
-	StartTime     string                 `protobuf:"bytes,8,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
-	EndTime       string                 `protobuf:"bytes,9,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Id        int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Title     string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	ImageUrl  string                 `protobuf:"bytes,3,opt,name=image_url,json=imageUrl,proto3" json:"image_url,omitempty"`
+	LinkUrl   string                 `protobuf:"bytes,4,opt,name=link_url,json=linkUrl,proto3" json:"link_url,omitempty"`
+	Position  int32                  `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
+	Sort      int32                  `protobuf:"varint,6,opt,name=sort,proto3" json:"sort,omitempty"`
+	Status    int32                  `protobuf:"varint,7,opt,name=status,proto3" json:"status,omitempty"`
+	StartTime string                 `protobuf:"bytes,8,opt,name=start_time,json=startTime,proto3" json:"start_time,omitempty"`
+	EndTime   string                 `protobuf:"bytes,9,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
+	// 适用社区（optional 显式传参才更新；0=全部社区通用）
+	CommunityId   *int64 `protobuf:"varint,10,opt,name=community_id,json=communityId,proto3,oneof" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6398,6 +6400,13 @@ func (x *UpdateBannerReq) GetEndTime() string {
 		return x.EndTime
 	}
 	return ""
+}
+
+func (x *UpdateBannerReq) GetCommunityId() int64 {
+	if x != nil && x.CommunityId != nil {
+		return *x.CommunityId
+	}
+	return 0
 }
 
 type DeleteBannerReq struct {
@@ -8197,7 +8206,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\x04sort\x18\x06 \x01(\x05R\x04sort\x12\x1d\n" +
 	"\n" +
 	"start_time\x18\a \x01(\tR\tstartTime\x12\x19\n" +
-	"\bend_time\x18\b \x01(\tR\aendTime\"\xf1\x01\n" +
+	"\bend_time\x18\b \x01(\tR\aendTime\"\xaa\x02\n" +
 	"\x0fUpdateBannerReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x1b\n" +
@@ -8208,7 +8217,10 @@ const file_product_product_proto_rawDesc = "" +
 	"\x06status\x18\a \x01(\x05R\x06status\x12\x1d\n" +
 	"\n" +
 	"start_time\x18\b \x01(\tR\tstartTime\x12\x19\n" +
-	"\bend_time\x18\t \x01(\tR\aendTime\"!\n" +
+	"\bend_time\x18\t \x01(\tR\aendTime\x12&\n" +
+	"\fcommunity_id\x18\n" +
+	" \x01(\x03H\x00R\vcommunityId\x88\x01\x01B\x0f\n" +
+	"\r_community_id\"!\n" +
 	"\x0fDeleteBannerReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\"\xf2\x02\n" +
 	"\x10AttachmentConfig\x12!\n" +
@@ -8697,6 +8709,7 @@ func file_product_product_proto_init() {
 	if File_product_product_proto != nil {
 		return
 	}
+	file_product_product_proto_msgTypes[88].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

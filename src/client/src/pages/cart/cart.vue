@@ -105,6 +105,28 @@
       :initial-quantity="switchItem?.quantity || 0"
       @confirm="onSkuConfirm"
     />
+
+    <!-- 常买商品：登录后展示（含空购物车时的复购入口），点击一键加购 -->
+    <view v-if="userStore.isLogin && frequentProducts.length" class="frequent-section">
+      <text class="frequent-title">常买商品</text>
+      <view class="frequent-list">
+        <view
+          v-for="p in frequentProducts"
+          :key="p.product_id"
+          class="frequent-card"
+          @click="onAddFrequent(p)"
+        >
+          <image class="frequent-image" :src="p.product_image || '/static/logo.png'" mode="aspectFill" />
+          <view class="frequent-info">
+            <text class="frequent-name">{{ p.product_name }}</text>
+            <text class="frequent-count">买过 {{ p.purchase_count }} 次</text>
+          </view>
+          <view class="frequent-add">
+            <u-icon name="plus-circle" size="22" color="#07c160" />
+          </view>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -115,8 +137,9 @@ import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
 import { getCommunityList } from '@/api/user'
 import { getCart, updateCartItem, removeCartItem, selectAllCartItems, addCartItem, clearInvalidItems } from '@/api/cart'
+import { getFrequentProducts, type FrequentProduct } from '@/api/order'
 import { formatPrice } from '@/utils/format'
-import { goHome, goOrderConfirm, goLogin } from '@/utils/navigate'
+import { goHome, goOrderConfirm, goLogin, goProductDetail } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
 import type { CartItem, Community, Product, Sku } from '@/api/types'
 
@@ -198,7 +221,42 @@ onShow(() => {
   }
   loadCommunities()
   loadCart()
+  loadFrequentProducts()
 })
+
+/** 常买商品列表（登录后加载，按购买次数降序） */
+const frequentProducts = ref<FrequentProduct[]>([])
+
+/**
+ * 加载常买商品
+ */
+async function loadFrequentProducts() {
+  try {
+    const res = await getFrequentProducts(10)
+    frequentProducts.value = res.data?.list || []
+  } catch {
+    frequentProducts.value = []
+  }
+}
+
+/**
+ * 常买商品一键加购（按该用户最常买的 SKU 加 1 件）
+ * 无 SKU 记录时兜底跳商品详情
+ * @param p 常买商品
+ */
+async function onAddFrequent(p: FrequentProduct) {
+  if (!p.sku_id) {
+    goProductDetail(p.product_id)
+    return
+  }
+  try {
+    await addCartItem(p.product_id, p.sku_id, 1, userStore.communityInfo?.id)
+    uni.showToast({ title: '已加入购物车', icon: 'success' })
+    loadCart()
+  } catch {
+    // 请求拦截器已统一提示
+  }
+}
 
 /**
  * 加载社区列表，用于显示购物车分组名称
@@ -634,5 +692,66 @@ function onSettlement() {
   margin-top: 4rpx;
   font-size: 20rpx;
   color: #ff9800;
+}
+
+/* 常买商品区块 */
+.frequent-section {
+  margin: 20rpx;
+  padding: 24rpx;
+  border-radius: 16rpx;
+  background-color: #ffffff;
+}
+
+.frequent-title {
+  display: block;
+  margin-bottom: 20rpx;
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
+.frequent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.frequent-card {
+  display: flex;
+  align-items: center;
+}
+
+.frequent-image {
+  width: 110rpx;
+  height: 110rpx;
+  border-radius: 12rpx;
+  flex-shrink: 0;
+}
+
+.frequent-info {
+  flex: 1;
+  min-width: 0;
+  margin: 0 20rpx;
+}
+
+.frequent-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 26rpx;
+  color: #333333;
+}
+
+.frequent-count {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #999999;
+}
+
+.frequent-add {
+  flex-shrink: 0;
+  padding: 10rpx;
 }
 </style>

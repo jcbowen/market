@@ -184,6 +184,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 			authUser.POST("/orders", orderHandler.CreateOrder)
 			authUser.GET("/orders", orderHandler.ListOrders)
+			authUser.GET("/orders/frequent-products", orderHandler.ListFrequentProducts)
 			authUser.GET("/orders/:id", orderHandler.GetOrder)
 			authUser.PUT("/orders/:id/cancel", orderHandler.CancelOrder)
 			authUser.POST("/orders/:id/receive", orderHandler.ConfirmReceive)
@@ -245,6 +246,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/orders/:id/cancel", gwMiddleware.RequirePermission("order:update"), adminHandler.AdminCancelOrder)
 			authAdmin.POST("/orders/:id/ship", gwMiddleware.RequirePermission("order:update"), adminHandler.ShipOrder)
 			authAdmin.PUT("/orders/:id/complete", gwMiddleware.RequirePermission("order:update"), adminHandler.CompleteOrder)
+			authAdmin.POST("/orders/:id/verify-pickup", gwMiddleware.RequirePermission("order:update"), adminHandler.AdminVerifyPickup)
 			authAdmin.POST("/orders/:id/refund", gwMiddleware.RequirePermission("refund:update"), adminHandler.AdminCreateRefund)
 
 			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetOrderStatistics)

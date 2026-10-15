@@ -62,6 +62,30 @@
   <ship-modal v-model:show="shipVisible" :order-ids="shipOrderIds" @success="onActionSuccess" />
   <cancel-order-modal v-model:show="cancelVisible" :order-id="cancelOrderId" @success="onActionSuccess" />
   <refund-modal v-model:show="refundVisible" :order-id="refundOrderId" @success="onActionSuccess" />
+
+  <!-- 自提核销弹窗（凭取货码核销，防冒领） -->
+  <n-modal
+    :show="showVerifyModal"
+    preset="dialog"
+    title="自提核销"
+    positive-text="确认核销"
+    negative-text="取消"
+    :loading="verifyLoading"
+    @update:show="(v: boolean) => (showVerifyModal = v)"
+    @positive-click="submitVerify"
+  >
+    <n-space vertical>
+      <n-text>订单号：{{ detail?.order_no }}</n-text>
+      <n-text depth="3">请输入顾客出示的取货码（订单详情页展示的 8 位数字码）</n-text>
+      <n-input
+        v-model:value="verifyCode"
+        placeholder="8 位取货码"
+        maxlength="8"
+        :input-props="{ inputmode: 'numeric' }"
+        @keyup.enter="submitVerify"
+      />
+    </n-space>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -71,7 +95,7 @@ defineOptions({ name: 'OrderDetailModal' })
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, NTag, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { completeOrder, getOrderDetail } from '@/api/order'
+import { completeOrder, getOrderDetail, verifyPickup } from '@/api/order'
 import type { OrderDetail, OrderItem, OrderStatusLog } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import { DELIVERY_TYPE, ORDER_STATUS, deliveryTypeText, orderStatusTagType, orderStatusText } from '@/constants/order'
@@ -152,10 +176,13 @@ const actions = computed(() => {
     list.push({ key: 'ship', label: '发货', type: 'primary', run: () => openShip(d.id) })
   }
   if (d.status === ORDER_STATUS.PAID && d.delivery_type === DELIVERY_TYPE.SELF_PICKUP) {
-    list.push({ key: 'verify', label: '核销完成', type: 'success', run: () => confirmComplete(d, true) })
+    list.push({ key: 'verify', label: '核销', type: 'success', run: () => openVerify(d) })
+  }
+  if (d.status === ORDER_STATUS.STOCKING && d.delivery_type === DELIVERY_TYPE.SELF_PICKUP) {
+    list.push({ key: 'verify', label: '核销', type: 'success', run: () => openVerify(d) })
   }
   if (d.status === ORDER_STATUS.SHIPPING) {
-    list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d, false) })
+    list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d) })
   }
   // 已支付/备货中/配送中允许后台代客退款（与后端可退状态一致）
   if (d.status === ORDER_STATUS.PAID || d.status === ORDER_STATUS.STOCKING || d.status === ORDER_STATUS.SHIPPING) {
@@ -179,11 +206,11 @@ function openRefund(id: number) {
   refundVisible.value = true
 }
 
-function confirmComplete(d: OrderDetail, isPickup: boolean) {
+function confirmComplete(d: OrderDetail) {
   dialog.warning({
-    title: isPickup ? '核销订单' : '完成订单',
+    title: '完成订单',
     content: `确认将订单 ${d.order_no} 标记为已完成？`,
-    positiveText: isPickup ? '确认核销' : '确认完成',
+    positiveText: '确认完成',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
@@ -195,6 +222,43 @@ function confirmComplete(d: OrderDetail, isPickup: boolean) {
       }
     },
   })
+}
+
+// --- 自提核销（输码校验） ---
+const showVerifyModal = ref(false)
+const verifyCode = ref('')
+const verifyLoading = ref(false)
+
+/**
+ * 打开自提核销弹窗
+ * @param d 订单详情
+ */
+function openVerify(d: OrderDetail) {
+  verifyCode.value = ''
+  showVerifyModal.value = true
+}
+
+/**
+ * 提交核销：校验取货码后完成订单
+ */
+async function submitVerify() {
+  const d = detail.value
+  if (!d) return
+  if (!verifyCode.value.trim()) {
+    dialog.warning({ title: '提示', content: '请输入顾客出示的取货码', positiveText: '知道了' })
+    return
+  }
+  verifyLoading.value = true
+  try {
+    await verifyPickup(d.id, verifyCode.value.trim())
+    showVerifyModal.value = false
+    loadDetail(d.id)
+    emit('refresh')
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    verifyLoading.value = false
+  }
 }
 
 /**

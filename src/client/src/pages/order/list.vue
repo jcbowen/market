@@ -47,7 +47,9 @@
             @click.stop="onPay(order)"
           />
           <u-button
-            v-if="order.status === 1"
+            v-if="canCancel(order)"
+            plain
+            type="info"
             size="small"
             text="取消订单"
             @click.stop="onCancel(order.id)"
@@ -60,7 +62,9 @@
             @click.stop="onReceive(order)"
           />
           <u-button
-            v-if="[2, 3, 4].includes(order.status)"
+            v-if="canRefund(order)"
+            plain
+            type="info"
             size="small"
             text="申请退款"
             @click.stop="onRefund(order.id)"
@@ -86,7 +90,7 @@ import { getPaymentChannels } from '@/api/payment'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderDetail, goLogin } from '@/utils/navigate'
-import { canReceive, receiveButtonText } from '@/utils/order'
+import { canReceive, receiveButtonText, canCancel, canRefund } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'

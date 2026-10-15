@@ -37,17 +37,27 @@ func NewBannerService(db *mysql.Instance) *BannerService {
 //   - error: 错误信息
 func (s *BannerService) ListBanners(ctx context.Context, req *product.ListBannersReq) ([]*model.Banner, error) {
 	var list []*model.Banner
-	db := s.db.GetDb().WithContext(ctx).Where("community_id = ?", req.CommunityId)
+	// C 端带全局兜底：community_id=0 表示全平台通用，任何社区可见；
+	// 管理态保持精确匹配（后台按社区语境管理各自 banner）
+	if req.IsAdmin {
+		db := s.db.GetDb().WithContext(ctx).Where("community_id = ?", req.CommunityId)
+		if req.Position > 0 {
+			db = db.Where("position = ?", req.Position)
+		}
+		// 管理态不过滤有效期（后台需管理下架/过期的 banner）
+		err := db.Order("sort asc, id desc").Find(&list).Error
+		return list, err
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	db := s.db.GetDb().WithContext(ctx).
+		Where("(community_id = ? OR community_id = 0)", req.CommunityId)
 	if req.Position > 0 {
 		db = db.Where("position = ?", req.Position)
 	}
 	// C 端调用：只查启用且在有效期内的
-	if !req.IsAdmin {
-		now := time.Now().Format("2006-01-02 15:04:05")
-		db = db.Where("status = ?", 1).
-			Where("(start_time IS NULL OR start_time <= ?)", now).
-			Where("(end_time IS NULL OR end_time >= ?)", now)
-	}
+	db = db.Where("status = ?", 1).
+		Where("(start_time IS NULL OR start_time <= ?)", now).
+		Where("(end_time IS NULL OR end_time >= ?)", now)
 	err := db.Order("sort asc, id desc").Find(&list).Error
 	return list, err
 }
@@ -98,6 +108,10 @@ func (s *BannerService) UpdateBanner(ctx context.Context, req *product.UpdateBan
 		"status":    req.Status,
 		"start_time": strPtr(req.StartTime),
 		"end_time":   strPtr(req.EndTime),
+	}
+	// 适用社区仅显式传参时更新（optional 字段，nil=不修改；0=全部社区通用）
+	if req.CommunityId != nil {
+		updates["community_id"] = *req.CommunityId
 	}
 	if err := s.db.GetDb().WithContext(ctx).Model(&banner).Updates(updates).Error; err != nil {
 		return nil, err

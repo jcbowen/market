@@ -1629,7 +1629,43 @@ func (h *AdminHandler) UpdateProductStatus(c *gin.Context) {
 
 // --- 订单管理 ---
 
+// AdminVerifyPickupReq 后台自提核销请求
+type AdminVerifyPickupReq struct {
+	PickupCode string `json:"pickup_code" binding:"required"`
+}
+
+// AdminVerifyPickup 后台自提订单核销（兜底入口）：校验取货码后完成订单
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) AdminVerifyPickup(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req AdminVerifyPickupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.orderClient.VerifyPickup(c.Request.Context(), &order.VerifyPickupReq{
+		OrderId:      id,
+		PickupCode:   req.PickupCode,
+		OperatorType: "admin",
+		OperatorId:   uc.UserID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
 // ListAdminOrders 获取管理端订单列表
+// 支持按会员过滤（user_id，会员列表弹窗查订单）；
+// 超管可显式传 community_id=0 跨社区查询全部订单（普通管理员始终限定当前社区语境）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
@@ -1637,8 +1673,20 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
+	// 目标社区：默认当前社区语境；超管显式传 community_id 时以其为准（0=跨社区查全部）
+	communityID := h.getAdminCommunityID(c)
+	isSuper := appcontext.GetUserContext(c).Role == "super_admin"
+	if isSuper && c.Query("community_id") != "" {
+		if id, err := strconv.ParseInt(c.Query("community_id"), 10, 64); err == nil && id >= 0 {
+			communityID = id
+		}
+	}
+	// 会员过滤（会员列表弹窗查订单）
+	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
+
 	resp, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
-		CommunityId:   h.getAdminCommunityID(c),
+		CommunityId:   communityID,
+		UserId:        userID,
 		Status:        int32(status),
 		OrderNo:       c.Query("order_no"),
 		StartTime:     c.Query("start_time"),
@@ -1653,6 +1701,18 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 	if err != nil {
 		response.GRPCError(c, err)
 		return
+	}
+
+	// 跨社区查询（community_id=0）时回显订单所属社区名称
+	communityNames := map[int64]string{}
+	if communityID == 0 {
+		for _, o := range resp.List {
+			if o.CommunityId > 0 && communityNames[o.CommunityId] == "" {
+				if comm, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: o.CommunityId}); err == nil && comm != nil {
+					communityNames[o.CommunityId] = comm.Name
+				}
+			}
+		}
 	}
 
 	list := make([]gin.H, 0, len(resp.List))
@@ -1672,6 +1732,8 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"order_no":        o.OrderNo,
 			"user_id":         o.UserId,
 			"user_name":       userName,
+			"community_id":    o.CommunityId,
+			"community_name":  communityNames[o.CommunityId],
 			"total_amount":    o.TotalAmount,
 			"discount_amount": o.DiscountAmount,
 			"delivery_fee":    o.DeliveryFee,
@@ -2722,6 +2784,8 @@ type CreateBannerReq struct {
 	Sort      int32  `json:"sort"`
 	StartTime string `json:"start_time"`
 	EndTime   string `json:"end_time"`
+	// 适用社区（仅超管可指定；0=全部社区通用；不传=当前社区语境）
+	CommunityID *int64 `json:"community_id"`
 }
 
 // CreateBanner 创建 Banner
@@ -2734,8 +2798,14 @@ func (h *AdminHandler) CreateBanner(c *gin.Context) {
 		return
 	}
 
+	// 适用社区：默认当前社区语境；超管显式传 community_id 时以其为准（0=全部社区）
+	communityID := h.getAdminCommunityID(c)
+	if req.CommunityID != nil && appcontext.GetUserContext(c).Role == "super_admin" {
+		communityID = *req.CommunityID
+	}
+
 	resp, err := h.productClient.CreateBanner(c.Request.Context(), &product.CreateBannerReq{
-		CommunityId: h.getAdminCommunityID(c),
+		CommunityId: communityID,
 		Title:       req.Title,
 		ImageUrl:    req.ImageURL,
 		LinkUrl:     req.LinkURL,
@@ -2761,6 +2831,8 @@ type UpdateBannerReq struct {
 	Status    int32  `json:"status"`
 	StartTime string `json:"start_time"`
 	EndTime   string `json:"end_time"`
+	// 适用社区（仅超管可指定；0=全部社区通用；不传=不修改）
+	CommunityID *int64 `json:"community_id"`
 }
 
 // UpdateBanner 更新 Banner
@@ -2779,16 +2851,23 @@ func (h *AdminHandler) UpdateBanner(c *gin.Context) {
 		return
 	}
 
+	// 适用社区仅超管显式传参时透传（optional 语义：nil=不修改，0=全部社区）
+	var communityID *int64
+	if req.CommunityID != nil && appcontext.GetUserContext(c).Role == "super_admin" {
+		communityID = req.CommunityID
+	}
+
 	resp, err := h.productClient.UpdateBanner(c.Request.Context(), &product.UpdateBannerReq{
-		Id:        id,
-		Title:     req.Title,
-		ImageUrl:  req.ImageURL,
-		LinkUrl:   req.LinkURL,
-		Position:  req.Position,
-		Sort:      req.Sort,
-		Status:    req.Status,
-		StartTime: req.StartTime,
-		EndTime:   req.EndTime,
+		Id:          id,
+		Title:       req.Title,
+		ImageUrl:    req.ImageURL,
+		LinkUrl:     req.LinkURL,
+		Position:    req.Position,
+		Sort:        req.Sort,
+		Status:      req.Status,
+		StartTime:   req.StartTime,
+		EndTime:     req.EndTime,
+		CommunityId: communityID,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

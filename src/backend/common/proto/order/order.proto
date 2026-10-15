@@ -12,6 +12,8 @@ service OrderService {
   rpc ListOrders(ListOrdersReq) returns (ListOrdersResp);
   rpc CancelOrder(CancelOrderReq) returns (common.CommonResponse);
   rpc UpdateOrderStatus(UpdateOrderStatusReq) returns (common.CommonResponse);
+  // 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
+  rpc VerifyPickup(VerifyPickupReq) returns (VerifyPickupResp);
 
   // 退款
   rpc ApplyRefund(ApplyRefundReq) returns (RefundInfo);
@@ -30,6 +32,8 @@ service OrderService {
   rpc GetSalesStatistics(GetSalesStatisticsReq) returns (SalesStatisticsResp);
   rpc GetProductRankings(GetProductRankingsReq) returns (ProductRankingsResp);
   rpc GetRevenueReport(GetRevenueReportReq) returns (RevenueReportResp);
+  // 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
+  rpc GetUserFrequentProducts(GetUserFrequentProductsReq) returns (GetUserFrequentProductsResp);
 }
 
 message OrderItem {
@@ -112,6 +116,8 @@ message OrderInfo {
   // 物流信息（发货时写入，独立字段，不再拼接进 remark）
   string express_company = 22;
   string express_no = 23;
+  // 自提核销码（仅自提单生成，配送单为空）
+  string pickup_code = 24;
 }
 
 message OrderItemInfo {
@@ -328,4 +334,43 @@ message RevenueReportItem {
 
 message RevenueReportResp {
   repeated RevenueReportItem list = 1;
+}
+
+// --- 自提核销 ---
+message VerifyPickupReq {
+  int64 order_id = 1;
+  // 顾客出示的取货码（数字码）
+  string pickup_code = 2;
+  // 操作者类型：admin（后台兜底）/ staff（履约人员，B 工作台）
+  string operator_type = 3;
+  int64 operator_id = 4;
+}
+
+message VerifyPickupResp {
+  int64 order_id = 1;
+  int32 status = 2;
+}
+
+// --- 用户常买商品 ---
+message GetUserFrequentProductsReq {
+  int64 user_id = 1;
+  // 返回条数，默认 10
+  int32 limit = 2;
+}
+
+message FrequentProductItem {
+  int64 product_id = 1;
+  string product_name = 2;
+  // 商品图片快照（order_items.product_image，取该用户购买记录中的一张）
+  string product_image = 3;
+  // 该用户买该商品最常买的 SKU（用于一键加购）
+  int64 sku_id = 4;
+  // 购买次数（有效订单数，口径=已支付及之后，排除待支付/取消/退款）
+  int32 purchase_count = 5;
+  // 累计购买件数
+  int32 total_quantity = 6;
+}
+
+message GetUserFrequentProductsResp {
+  repeated FrequentProductItem list = 1;
 }

@@ -23,6 +23,14 @@
         <n-form-item label="展示位置">
           <n-select v-model:value="form.position" :options="positionOptions" placeholder="请选择展示位置" />
         </n-form-item>
+        <n-form-item label="适用社区">
+          <n-select
+            v-model:value="form.community_id"
+            :options="communityOptions"
+            placeholder="请选择适用社区"
+            :loading="communityLoading"
+          />
+        </n-form-item>
         <n-form-item label="排序">
           <n-input-number v-model:value="form.sort" placeholder="数值越小越靠前" style="width: 100%;" />
         </n-form-item>
@@ -56,15 +64,52 @@ import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import LinkSelector from '@/components/LinkSelector.vue'
 import type { DataTableColumns } from 'naive-ui'
 import { getBannerList, createBanner, updateBanner, deleteBanner } from '@/api/marketing'
+import { getCommunityList } from '@/api/user'
+import { useAuthStore } from '@/stores/auth'
 import type { Banner } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 
 const message = useMessage()
+const authStore = useAuthStore()
 
 // C 端旧首页已下线（分类页升级为首页），position=1 不再有任何展示位，仅保留选项供历史数据显示
 const positionOptions = [
   { label: '分类页', value: 2 },
 ]
+
+// 适用社区下拉：全部社区(0) + 全部启用的社区
+const communityOptions = ref<{ label: string; value: number }[]>([
+  { label: '全部社区', value: 0 },
+])
+const communityLoading = ref(false)
+const communityNameMap = ref<Record<number, string>>({})
+
+/**
+ * 加载社区列表（下拉选项 + 表格列回显）
+ * 仅在有 community:view 权限时调用（与 Layout 社区名称映射同一权限口径），
+ * 无权限时静默降级：下拉仅"全部社区"，表格列回显"社区 #id"
+ */
+async function loadCommunities() {
+  if (!authStore.hasPermission('community:view')) return
+  communityLoading.value = true
+  try {
+    const res = await getCommunityList({ page: 1, page_size: 200 })
+    const list = res.data.data.list || []
+    communityOptions.value = [
+      { label: '全部社区', value: 0 },
+      ...list.map((c: { id: number; name: string }) => ({ label: c.name, value: c.id })),
+    ]
+    const map: Record<number, string> = {}
+    list.forEach((c: { id: number; name: string }) => {
+      map[c.id] = c.name
+    })
+    communityNameMap.value = map
+  } catch {
+    // 拉取失败静默降级，不影响主流程
+  } finally {
+    communityLoading.value = false
+  }
+}
 
 const columns: DataTableColumns<Banner> = [
   { title: 'ID', key: 'id', width: 70 },
@@ -84,6 +129,16 @@ const columns: DataTableColumns<Banner> = [
     width: 90,
     render(row) {
       return row.position === 1 ? '首页' : '分类页'
+    },
+  },
+  {
+    title: '适用社区',
+    key: 'community_id',
+    width: 120,
+    render(row) {
+      return row.community_id === 0
+        ? '全部社区'
+        : (communityNameMap.value[row.community_id] || `社区#${row.community_id}`)
     },
   },
   { title: '排序', key: 'sort', width: 80 },
@@ -120,6 +175,7 @@ const modalLoading = ref(false)
 const timeRange = ref<[number, number] | null>(null)
 const form = reactive<Partial<Banner>>({
   id: undefined,
+  community_id: 0,
   title: '',
   image_url: '',
   link_url: '',
@@ -158,6 +214,8 @@ async function loadBanners() {
  */
 function openModal(row?: Banner) {
   form.id = row?.id
+  // 新增默认当前社区语境（不传 community_id 由后端取 header）；编辑回显原适用社区
+  form.community_id = row?.community_id ?? undefined
   form.title = row?.title || ''
   form.image_url = row?.image_url || ''
   form.link_url = row?.link_url || ''
@@ -211,6 +269,10 @@ async function saveBanner() {
       sort: form.sort,
       status: form.status,
     }
+    // 适用社区：未选择时不下发，由后端取当前社区语境（编辑时不下发=不修改）
+    if (form.community_id !== undefined && form.community_id !== null) {
+      data.community_id = form.community_id
+    }
     if (timeRange.value) {
       data.start_time = formatTime(timeRange.value[0])
       data.end_time = formatTime(timeRange.value[1])
@@ -247,5 +309,6 @@ async function remove(row: Banner) {
 
 onMounted(() => {
   loadBanners()
+  loadCommunities()
 })
 </script>

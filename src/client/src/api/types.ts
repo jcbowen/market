@@ -173,6 +173,10 @@ export interface Order {
   /** 期望配送时间（自提单为空） */
   delivery_time?: string
   pay_amount: number
+  /** 支付类型：1 微信 2 支付宝 3 货到付款；0=未支付/未知 */
+  pay_type?: number
+  /** 自提核销码（仅自提单返回，订单详情展示取货码/二维码） */
+  pickup_code?: string
   pay_type_text?: string
   items: OrderItem[]
   address: Address
