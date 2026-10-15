@@ -1,7 +1,10 @@
 <template>
   <view class="order-detail-page">
     <view class="status-card">
-      <text class="status-text">{{ order.status_text }}</text>
+      <view class="status-row">
+        <text class="status-text">{{ order.status_text }}</text>
+        <text v-if="isStoreOrder(order)" class="store-tag">门店单</text>
+      </view>
       <text class="status-tip">{{ statusTip }}</text>
     </view>
 
@@ -48,6 +51,7 @@
           <text class="copy-btn" @click="copyOrderNo">复制</text>
         </view>
         <text>创建时间: {{ formatDate(order.created_at) }}</text>
+        <text v-if="isStoreOrder(order)">订单来源: 门店（收银台代客下单）</text>
         <text>支付方式: {{ order.pay_type_text || '未支付' }}</text>
         <text>配送方式: {{ isPickup ? '社区自提' : '送货上门' }}</text>
         <text v-if="order.delivery_time">期望配送时间: {{ order.delivery_time }}</text>
@@ -117,7 +121,7 @@ import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderList } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
-import { canReceive, receiveButtonText, canCancel, canRefund, DELIVERY_TYPE_PICKUP } from '@/utils/order'
+import { canReceive, receiveButtonText, canCancel, canRefund, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
@@ -385,6 +389,22 @@ function onRefund() {
 .status-card {
   padding: 40rpx 30rpx;
   background: linear-gradient(135deg, #07c160, #10b981);
+}
+
+/* 门店单标识行（收银台代客下单，展示但只读） */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.store-tag {
+  font-size: 22rpx;
+  line-height: 1;
+  color: #ffffff;
+  border: 1rpx solid rgba(255, 255, 255, 0.8);
+  border-radius: 6rpx;
+  padding: 6rpx 12rpx;
 }
 
 .status-text {

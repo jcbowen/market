@@ -13,7 +13,10 @@
         @click="goOrderDetail(order.id)"
       >
         <view class="order-header">
-          <text class="order-no">订单号: {{ order.order_no }}</text>
+          <view class="order-no-wrap">
+            <text v-if="isStoreOrder(order)" class="store-tag">门店</text>
+            <text class="order-no">订单号: {{ order.order_no }}</text>
+          </view>
           <text class="order-status">{{ order.status_text }}</text>
         </view>
         <view
@@ -40,7 +43,7 @@
         </view>
         <view class="order-actions">
           <u-button
-            v-if="order.status === 1"
+            v-if="order.status === 1 && !isStoreOrder(order)"
             type="success"
             size="small"
             text="去支付"
@@ -90,7 +93,7 @@ import { getPaymentChannels } from '@/api/payment'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderDetail, goLogin } from '@/utils/navigate'
-import { canReceive, receiveButtonText, canCancel, canRefund } from '@/utils/order'
+import { canReceive, receiveButtonText, canCancel, canRefund, isStoreOrder } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
@@ -339,6 +342,24 @@ function refreshList() {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16rpx;
+}
+
+/* 门店单标识（收银台代客下单，展示但只读） */
+.order-no-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  min-width: 0;
+}
+
+.store-tag {
+  flex-shrink: 0;
+  font-size: 20rpx;
+  line-height: 1;
+  color: #ff9900;
+  border: 1rpx solid #ff9900;
+  border-radius: 6rpx;
+  padding: 4rpx 8rpx;
 }
 
 .order-no {

@@ -161,10 +161,12 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 			"delivery_type": o.DeliveryType,
 			"total_amount":  o.TotalAmount,
 			"pay_amount":    o.PayAmount,
-			// 支付类型（1微信 2支付宝 3货到付款；0=未支付/未知），
+			// 支付类型（1微信 2支付宝 3货到付款 4现金；0=未支付/未知），
 			// 供前端区分货到付款单的"取消订单/申请退款"按钮显示
-			"pay_type":   h.orderPayType(c, o.Id),
-			"items":      items,
+			"pay_type": h.orderPayType(c, o.Id),
+			// 订单来源（1=C端用户 2=收银台代客）：门店单在 C 端展示但只读（隐藏操作按钮）
+			"source":    o.Source,
+			"items":     items,
 			"created_at": o.CreatedAt,
 			// 待支付订单的超时截止时间，供前端展示倒计时（与 order-service 超时取消同一配置）
 			"expire_at": orderExpireAt(o.Status, o.CreatedAt, h.orderTimeoutSec),
@@ -339,6 +341,8 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"cancel_time":     o.CancelTime,
 		"pay_type":        h.orderPayType(c, o.Id),
 		"pay_type_text":   h.orderPayTypeText(c, o.Id),
+		// 订单来源（1=C端用户 2=收银台代客）：门店单在 C 端展示但只读（隐藏操作按钮）
+		"source":          o.Source,
 		"items":           items,
 		"address":         address,
 		"remark":          o.Remark,
@@ -381,7 +385,7 @@ func orderExpireAt(status int32, createdAt string, orderTimeoutSec int) string {
 //   - orderID: 订单 ID
 //
 // 返回值：
-//   - int32: 支付类型（1微信 2支付宝 3货到付款；0=未支付/未知）
+//   - int32: 支付类型（1微信 2支付宝 3货到付款 4现金；0=未支付/未知）
 func (h *OrderHandler) orderPayType(c *gin.Context, orderID int64) int32 {
 	resp, err := h.paymentClient.GetPayment(c.Request.Context(), &payment.GetPaymentReq{OrderId: orderID})
 	if err != nil || resp == nil {
@@ -410,6 +414,8 @@ func (h *OrderHandler) orderPayTypeText(c *gin.Context, orderID int64) string {
 		return "支付宝支付"
 	case 3:
 		return "货到付款"
+	case 4:
+		return "现金"
 	default:
 		return ""
 	}
@@ -465,6 +471,11 @@ func (h *OrderHandler) ConfirmReceive(c *gin.Context) {
 		return
 	}
 	o := orderResp.Order
+	// 门店单（收银台代客）C 端只读：确认收货由门店/履约人员完成
+	if o.Source == 2 {
+		response.Error(c, errcode.ParamError, "门店订单请联系门店处理")
+		return
+	}
 	if o.Status != 4 {
 		if o.DeliveryType == 1 {
 			response.Error(c, errcode.ParamError, "自提订单请到店出示取货码，由工作人员核销")

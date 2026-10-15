@@ -8,7 +8,9 @@ import (
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
+	"google.golang.org/grpc/codes"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -70,6 +72,10 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 	}
 	if o.UserID != req.UserId {
 		return nil, fmt.Errorf("无权限申请退款")
+	}
+	// 门店订单（收银台代客 source=2）C 端只读：退款走后台入口（AdminCreateRefund）处理
+	if o.Source == 2 {
+		return nil, bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
 	}
 	if o.Status != 2 && o.Status != 3 && o.Status != 4 {
 		return nil, fmt.Errorf("订单状态不允许申请退款")

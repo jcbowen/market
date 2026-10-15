@@ -36,8 +36,8 @@ export function getOrderList(
 // --- 收银台（G） ---
 
 /**
- * 收银台代客下单（现金当场结清）
- * @param data 下单参数（user_id=0 为散客；配送单必须带联系人/电话/地址）
+ * 收银台代客下单（按所选支付方式当场结清）
+ * @param data 下单参数（user_id=0 为散客；配送单必须带联系人/电话/地址；pay_type 支付方式，缺省现金 4）
  * @returns 订单信息（含取货码，自提单）
  */
 export function createPosOrder(data: {
@@ -48,6 +48,7 @@ export function createPosOrder(data: {
   contact_address?: string
   remark?: string
   coupon_id?: number
+  pay_type?: number
   items: Array<{ sku_id: number; quantity: number }>
 }) {
   return request<

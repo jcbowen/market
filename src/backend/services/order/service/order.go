@@ -430,6 +430,11 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		if o.UserID != req.UserId {
 			return fmt.Errorf("无权限取消该订单")
 		}
+		// 门店订单（收银台代客 source=2）C 端只读：取消走后台处理，
+		// 防止门店已收款的现金单被 C 端按"货到付款"口径直接取消（无退款流水造成资损）
+		if o.Source == 2 {
+			return bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
+		}
 		allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, o.ID))
 		if !containsInt32(allowed, o.Status) {
 			return fmt.Errorf("订单状态不允许取消")

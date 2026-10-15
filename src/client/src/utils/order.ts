@@ -11,33 +11,52 @@ export const DELIVERY_TYPE_DELIVERY = 2
 /** 支付类型：货到付款 */
 export const PAY_TYPE_CASH_ON_DELIVERY = 3
 
-/** 可执行取消/退款操作的订单结构（列表与详情响应均含 status/delivery_type/pay_type） */
+/** 订单来源：收银台代客（门店单，C 端展示但只读） */
+export const ORDER_SOURCE_POS = 2
+
+/** 可执行取消/退款操作的订单结构（列表与详情响应均含 status/delivery_type/pay_type/source） */
 export interface OrderActionTarget {
   status: number
   delivery_type: number
   pay_type?: number
+  /** 订单来源：1=C端用户 2=收银台代客（门店单）；缺省按 C 端单处理 */
+  source?: number
+}
+
+/**
+ * 判断订单是否为门店单（收银台代客下单）
+ * 门店单在 C 端展示但只读：取消/退款/支付等操作由门店处理，C 端不提供任何操作按钮
+ * @param o 订单
+ * @returns 是否门店单
+ */
+export function isStoreOrder(o: Pick<OrderActionTarget, 'source'>): boolean {
+  return o.source === ORDER_SOURCE_POS
 }
 
 /**
  * 判断订单是否可取消
  * 待支付(1)恒可取消；货到付款单未实际收款，未发货（2已支付/3备货中）也可直接取消
  * （与后端 order-service CancelOrder 的 cancelableStatuses 口径一致）；
+ * 门店单（收银台代客）C 端只读，一律不可取消（后端接口同样拒绝）；
  * 发货后（4 配送中）不可直接取消，走退款/拒收流程
  * @param o 订单
  * @returns 是否可取消
  */
 export function canCancel(o: OrderActionTarget): boolean {
+  if (isStoreOrder(o)) return false
   if (o.status === 1) return true
   return o.pay_type === PAY_TYPE_CASH_ON_DELIVERY && (o.status === 2 || o.status === 3)
 }
 
 /**
  * 判断订单是否可申请退款
- * 已支付及之后（2/3/4）可申请；货到付款未发货单（2/3）应直接取消而非退款，不显示退款入口
+ * 已支付及之后（2/3/4）可申请；货到付款未发货单（2/3）应直接取消而非退款，不显示退款入口；
+ * 门店单（收银台代客）C 端只读，退款由门店处理，不提供退款入口
  * @param o 订单
  * @returns 是否可申请退款
  */
 export function canRefund(o: OrderActionTarget): boolean {
+  if (isStoreOrder(o)) return false
   if (![2, 3, 4].includes(o.status)) return false
   // 货到付款 + 未发货：走直接取消，不提供退款入口
   if (o.pay_type === PAY_TYPE_CASH_ON_DELIVERY && o.status !== 4) return false
@@ -48,11 +67,12 @@ export function canRefund(o: OrderActionTarget): boolean {
  * 判断订单是否可确认收货
  * 与后端 gateway/handler/order.go ConfirmReceive 保持一致：
  * 仅配送中(4)的配送单可确认；自提单已收紧为必须凭取货码到店核销（决策点⑤），
- * C 端不可自行"确认自提"
+ * C 端不可自行"确认自提"；门店单（收银台代客）C 端只读，由门店/履约人员完成
  * @param o 订单（含 status 与 delivery_type）
  * @returns 是否可确认收货
  */
 export function canReceive(o: OrderActionTarget): boolean {
+  if (isStoreOrder(o)) return false
   return o.status === 4
 }
 

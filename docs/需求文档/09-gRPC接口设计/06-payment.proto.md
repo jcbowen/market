@@ -23,7 +23,7 @@ service PaymentService {
 message CreatePaymentReq {
   int64 order_id = 1;
   int64 user_id = 2;
-  int32 pay_type = 3;       // 1微信 2支付宝 3现金
+  int32 pay_type = 3;       // 1微信 2支付宝 3货到付款 4现金（收银台，含 0 元单；后续付款码渠道预留 5/6）
   double amount = 4;
   string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
 }

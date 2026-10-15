@@ -101,13 +101,19 @@
             <span>商品 {{ totalQuantity }} 件</span>
             <span class="amount">￥{{ totalAmount.toFixed(2) }}</span>
           </div>
+          <div class="pay-method-row">
+            <span class="pay-method-label">支付方式</span>
+            <n-radio-group v-model:value="payType" size="small">
+              <n-radio v-for="m in PAY_METHODS" :key="m.value" :value="m.value">{{ m.label }}</n-radio>
+            </n-radio-group>
+          </div>
           <div class="summary-hint">配送费与优惠券/满减以下单结果为准</div>
         </div>
         <n-space justify="end" :size="12" class="actions">
           <n-button :disabled="!cart.length" @click="openHeldList">挂单({{ heldCount }})</n-button>
           <n-button type="warning" :disabled="!cart.length" @click="onHold">挂单</n-button>
           <n-button type="primary" size="large" :loading="checkingOut" :disabled="!cart.length" @click="onCheckout">
-            现金结账 ￥{{ totalAmount.toFixed(2) }}
+            {{ payMethodLabel }}结账 ￥{{ totalAmount.toFixed(2) }}
           </n-button>
         </n-space>
       </div>
@@ -206,7 +212,7 @@ import { DELIVERY_TYPE } from '@/constants/order'
 
 /**
  * 收银台页面（G 后台代客下单，决策点⑥⑨）
- * 选会员（可散客）→ 搜索加商品 → 现金当场结清；支持挂单暂存/恢复/删除。
+ * 选会员（可散客）→ 搜索加商品 → 选择支付方式结账（当前仅现金，后续付款码渠道扩展）；支持挂单暂存/恢复/删除。
  * 商品实时价格与优惠（券/满减/免配送费）均由服务端下单时计算，页面金额仅作参考。
  */
 
@@ -511,8 +517,13 @@ function onDeleteHeld(h: PosHeldOrder) {
 const showPaidModal = ref(false)
 const lastPaid = ref<{ order_no: string; pay_amount: number; pickup_code?: string } | null>(null)
 
+// 支付方式选项（pay_type：4=现金；后续微信/支付宝付款码渠道在此追加 5/6，服务端未开放的值会被拒绝）
+const PAY_METHODS = [{ label: '现金', value: 4 }]
+const payType = ref(PAY_METHODS[0]!.value)
+const payMethodLabel = computed(() => PAY_METHODS.find((m) => m.value === payType.value)?.label ?? '现金')
+
 /**
- * 现金结账：代客下单（source=收银台）+ 现金当场结清
+ * 结账：代客下单（source=收银台）+ 按所选支付方式当场结清（当前仅现金）
  */
 function onCheckout() {
   if (!cart.value.length) return
@@ -522,8 +533,8 @@ function onCheckout() {
     return
   }
   dialog.warning({
-    title: '现金结账',
-    content: `确认已收现金 ￥${totalAmount.value.toFixed(2)}，为${member.value ? `会员 ${member.value.nickname || member.value.phone}` : '散客'}结账？`,
+    title: `${payMethodLabel.value}结账`,
+    content: `确认已收${payMethodLabel.value} ￥${totalAmount.value.toFixed(2)}，为${member.value ? `会员 ${member.value.nickname || member.value.phone}` : '散客'}结账？`,
     positiveText: '确认收款',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -536,6 +547,7 @@ function onCheckout() {
           contact_phone: contact.value.phone.trim() || member.value?.phone || '',
           contact_address: contact.value.address.trim(),
           coupon_id: couponId.value ?? 0,
+          pay_type: payType.value,
           items: cart.value.map((r) => ({ sku_id: r.sku_id, quantity: r.quantity })),
         })
         if (res.data.code === 0) {
@@ -773,6 +785,18 @@ onMounted(() => {
       font-weight: 700;
       color: #d03050;
       font-variant-numeric: tabular-nums;
+    }
+  }
+
+  .pay-method-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+
+    .pay-method-label {
+      font-size: 13px;
+      color: #666;
     }
   }
 

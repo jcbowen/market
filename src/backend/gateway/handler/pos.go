@@ -15,11 +15,16 @@ import (
 
 /**
  * 收银台代客下单（G，决策点⑥⑨）
- * - 代客下单：复用 order.CreateOrder（source=2 收银台），现金通道当场结清（pay_type=3，
- *   支付单创建即置已支付并同步订单状态）；散客（user_id=0）免会员下单
+ * - 代客下单：复用 order.CreateOrder（source=2 收银台），收银员选择支付方式当场结清
+ *   （本次仅现金 pay_type=4，后续接入微信/支付宝付款码时扩展 5/6）；散客（user_id=0）免会员下单
+ * - 零元单（全额优惠）统一走支付单（amount=0 创建即成功），保持「订单必有支付记录」口径
  * - 挂单：pos_held_orders 后端暂存草稿，不生成正式订单、不占库存
  * - 订单归属当前后台社区语境（X-Community-Id），会员可选任意社区（到店消费语义）
  */
+
+// posPayTypeCash 收银台支付方式：现金
+// 后续接入微信/支付宝付款码收款时在此扩展常量（如 posPayTypeWechatQR=5），支付单与订单落库随之透传
+const posPayTypeCash int32 = 4
 
 // PosOrderItemReq 代客下单商品项
 type PosOrderItemReq struct {
@@ -27,10 +32,12 @@ type PosOrderItemReq struct {
 	Quantity int32 `json:"quantity" binding:"required,min=1"`
 }
 
-// CreatePosOrderReq 代客下单请求（现金当场结清）
+// CreatePosOrderReq 代客下单请求（当场结清）
 type CreatePosOrderReq struct {
 	// 会员 ID（0=散客）
-	UserID         int64             `json:"user_id"`
+	UserID int64 `json:"user_id"`
+	// 支付方式（4=现金；0 时默认现金。后续扩展付款码渠道）
+	PayType        int32             `json:"pay_type"`
 	DeliveryType   int32             `json:"delivery_type" binding:"required,oneof=1 2"`
 	ContactName    string            `json:"contact_name"`
 	ContactPhone   string            `json:"contact_phone"`
@@ -41,8 +48,8 @@ type CreatePosOrderReq struct {
 }
 
 // CreatePosOrder 代客下单（收银台）
-// 流程：创建订单（source=2，经手人=当前管理员）→ 现金收款（pay_type=3 创建即支付成功）
-// → 返回订单信息。实付为 0（全额优惠）时跳过支付单，直接置已支付。
+// 流程：创建订单（source=2，经手人=当前管理员）→ 按所选支付方式创建支付单（创建即支付成功，
+// 含 0 元全额优惠单）→ 返回订单信息。
 //
 // 接口: POST /api/v1/admin/pos/orders
 //
@@ -52,6 +59,14 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 	var req CreatePosOrderReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	// 收银台支付方式：缺省现金；本次仅现金可选，后续接入付款码渠道时在此放行
+	if req.PayType == 0 {
+		req.PayType = posPayTypeCash
+	}
+	if req.PayType != posPayTypeCash {
+		response.Error(c, errcode.ParamError, "该支付方式暂未开通，请选择现金收款")
 		return
 	}
 
@@ -93,27 +108,15 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 		return
 	}
 
-	// 现金当场结清：实付 0（全额优惠/免配送费叠加）时无支付单可建，直接置已支付
-	if resp.PayAmount > 0 {
-		if _, err := h.paymentClient.CreatePayment(c.Request.Context(), &payment.CreatePaymentReq{
-			OrderId: resp.Id,
-			UserId:  req.UserID,
-			PayType: 3,
-			Amount:  resp.PayAmount,
-		}); err != nil {
-			log.Printf("收银台现金收款失败 order_id=%d: %v", resp.Id, err)
-			response.Error(c, errcode.InternalServerError, "订单已创建（"+resp.OrderNo+"）但收款失败，请在订单列表处理")
-			return
-		}
-	} else if _, err := h.orderClient.UpdateOrderStatus(c.Request.Context(), &order.UpdateOrderStatusReq{
-		Id:           resp.Id,
-		Status:       2,
-		OperatorType: "admin",
-		OperatorId:   uc.UserID,
-		Remark:       "收银台零元订单，自动结清",
+	// 当场结清：统一创建支付单（含 0 元全额优惠单，amount=0 创建即成功），保持「订单必有支付记录」口径
+	if _, err := h.paymentClient.CreatePayment(c.Request.Context(), &payment.CreatePaymentReq{
+		OrderId: resp.Id,
+		UserId:  req.UserID,
+		PayType: req.PayType,
+		Amount:  resp.PayAmount,
 	}); err != nil {
-		log.Printf("零元订单置已支付失败 order_id=%d: %v", resp.Id, err)
-		response.Error(c, errcode.InternalServerError, "订单已创建（"+resp.OrderNo+"）但结清失败，请在订单列表处理")
+		log.Printf("收银台收款失败 order_id=%d pay_type=%d: %v", resp.Id, req.PayType, err)
+		response.Error(c, errcode.InternalServerError, "订单已创建（"+resp.OrderNo+"）但收款失败，请在订单列表处理")
 		return
 	}
 

@@ -173,8 +173,10 @@ export interface Order {
   /** 期望配送时间（自提单为空） */
   delivery_time?: string
   pay_amount: number
-  /** 支付类型：1 微信 2 支付宝 3 货到付款；0=未支付/未知 */
+  /** 支付类型：1 微信 2 支付宝 3 货到付款 4 现金（收银台）；0=未支付/未知 */
   pay_type?: number
+  /** 订单来源：1=C端用户 2=收银台代客（门店单，展示但只读）；缺省按 C 端单处理 */
+  source?: number
   /** 自提核销码（仅自提单返回，订单详情展示取货码/二维码） */
   pickup_code?: string
   pay_type_text?: string

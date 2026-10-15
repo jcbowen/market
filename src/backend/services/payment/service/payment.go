@@ -68,7 +68,8 @@ func (s *PaymentService) reloadPayConfig() {
 }
 
 // CreatePayment 创建支付单并生成第三方支付调起参数
-// 现金/货到付款无需第三方调起参数，创建成功后直接同步订单状态为已支付
+// 现金(4)/货到付款(3)无需第三方调起参数，创建成功后直接同步订单状态为已支付；
+// 收银台全额优惠的 0 元单（pay_type=4 且 amount=0）同样落支付单，保持「订单必有支付记录」的统一口径
 // 幂等策略：订单已有支付成功记录时拒绝创建；已有同方式同金额的待支付单时直接复用该记录
 // 参数：
 //   - ctx: 上下文
@@ -76,17 +77,17 @@ func (s *PaymentService) reloadPayConfig() {
 //
 // 返回值：
 //   - *model.Payment: 支付记录模型
-//   - string: 微信/支付宝调起参数 JSON，现金支付返回空字符串
+//   - string: 微信/支付宝调起参数 JSON，现金/货到付款支付返回空字符串
 //   - error: 错误信息
 func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreatePaymentReq) (*model.Payment, string, error) {
-	if req.OrderId <= 0 || req.Amount <= 0 {
+	if req.OrderId <= 0 || req.Amount < 0 {
 		return nil, "", fmt.Errorf("参数错误")
 	}
-	if req.PayType != 1 && req.PayType != 2 && req.PayType != 3 {
+	if req.PayType != 1 && req.PayType != 2 && req.PayType != 3 && req.PayType != 4 {
 		return nil, "", fmt.Errorf("不支持的支付方式")
 	}
 	// user_id 允许为 0 的场景：收银台散客单现金收款（无会员账户，第三方渠道仍要求实名用户）
-	if req.UserId <= 0 && req.PayType != 3 {
+	if req.UserId <= 0 && req.PayType != 3 && req.PayType != 4 {
 		return nil, "", fmt.Errorf("参数错误")
 	}
 
@@ -128,8 +129,8 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		payParams, err = s.buildWechatPayParams(ctx, p, req.Openid)
 	case 2:
 		payParams, err = s.buildAlipayParams(ctx, p)
-	case 3:
-		// 货到付款直接标记为支付成功，并同步订单状态
+	case 3, 4:
+		// 货到付款(3)/收银台现金(4)直接标记为支付成功，并同步订单状态（4 含 0 元全额优惠单）
 		p.Status = 2
 		p.PayTime = &now
 	}
@@ -142,12 +143,16 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		if err := tx.Create(p).Error; err != nil {
 			return err
 		}
-		if req.PayType == 3 {
+		if req.PayType == 3 || req.PayType == 4 {
+			remark := "货到付款，支付成功"
+			if req.PayType == 4 {
+				remark = "门店现金收款"
+			}
 			_, err = grpcclient.OrderClient.UpdateOrderStatus(ctx, &order.UpdateOrderStatusReq{
 				Id:           req.OrderId,
 				Status:       2,
 				OperatorType: "system",
-				Remark:       "货到付款，支付成功",
+				Remark:       remark,
 			})
 			if err != nil {
 				return fmt.Errorf("同步订单支付状态失败: %w", err)
