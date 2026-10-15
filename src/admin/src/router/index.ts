@@ -213,6 +213,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '行政区划', permission: 'region:view', group: '系统管理', space: 'system' },
       },
       {
+        path: 'system/banners',
+        name: 'SystemBannerList',
+        component: () => import('@/views/system/banners.vue'),
+        meta: { title: '全局 Banner', permission: 'marketing:view', group: '系统管理', space: 'system' },
+      },
+      {
         path: 'system/communities/edit/:id',
         name: 'CommunityEdit',
         component: () => import('@/views/system/community-form.vue'),

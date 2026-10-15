@@ -37,10 +37,10 @@ func NewBannerService(db *mysql.Instance) *BannerService {
 //   - error: 错误信息
 func (s *BannerService) ListBanners(ctx context.Context, req *product.ListBannersReq) ([]*model.Banner, error) {
 	var list []*model.Banner
-	// C 端带全局兜底：community_id=0 表示全平台通用，任何社区可见；
-	// 管理态保持精确匹配（后台按社区语境管理各自 banner）
+	// 管理态带全局兜底：community_id=0 表示全平台通用，社区语境（含系统管理查全局）均可见；
+	// 系统管理语境传 0 时即精确命中全局 banner
 	if req.IsAdmin {
-		db := s.db.GetDb().WithContext(ctx).Where("community_id = ?", req.CommunityId)
+		db := s.db.GetDb().WithContext(ctx).Where("(community_id = ? OR community_id = 0)", req.CommunityId)
 		if req.Position > 0 {
 			db = db.Where("position = ?", req.Position)
 		}

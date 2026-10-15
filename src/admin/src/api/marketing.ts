@@ -239,10 +239,11 @@ export function updateFreeShipping(id: number, data: Partial<FreeShipping>) {
 
 /**
  * 获取 Banner 列表
+ * 仅超管可传 community_id 显式指定语境（0=仅全局 banner，系统管理页使用），非超管忽略
  * @param params 查询参数
  * @returns Banner 列表
  */
-export function getBannerList(params: { title?: string; position?: number; status?: number }) {
+export function getBannerList(params: { title?: string; position?: number; status?: number; community_id?: number }) {
   return request<ApiResult<Banner[]>>({
     url: '/api/v1/admin/banners',
     method: 'GET',

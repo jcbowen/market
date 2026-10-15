@@ -3086,11 +3086,18 @@ func toFreeShippingScopes(inputs []FreeShippingScopeInput) []*product.FreeShippi
 // --- Banner 管理 ---
 
 // ListAdminBanners 获取 Banner 列表
-// 管理态返回全部记录，支持按位置筛选
+// 管理态返回全部记录，支持按位置筛选；
+// 仅超管可显式传 community_id（0=仅全局 banner，系统管理语境使用），非超管忽略该参数，
+// 其余场景按当前社区语境查询（含全局兜底）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminBanners(c *gin.Context) {
 	communityID := h.getAdminCommunityID(c)
+	if v := c.Query("community_id"); v != "" && appcontext.GetUserContext(c).Role == "super_admin" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id >= 0 {
+			communityID = id
+		}
+	}
 	position, _ := strconv.Atoi(c.DefaultQuery("position", "0"))
 
 	resp, err := h.productClient.ListBanners(c.Request.Context(), &product.ListBannersReq{

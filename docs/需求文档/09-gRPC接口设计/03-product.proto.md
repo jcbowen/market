@@ -726,8 +726,11 @@ message ListFullReductionsResp {
 
 // --- Banner ---
 message ListBannersReq {
+  // 社区 ID；C 端与管理态均带全局兜底（community_id=0 的全平台通用记录始终一并返回）；
+  // 管理态传 0 即仅查全局 banner（系统管理语境使用）
   int64 community_id = 1;
   int32 position = 2;
+  // 管理态：不过滤状态/有效期，返回全量
   bool is_admin = 3;
 }
 

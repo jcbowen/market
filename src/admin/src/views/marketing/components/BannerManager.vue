@@ -4,7 +4,7 @@
       <n-space wrap>
         <n-input v-model:value="searchTitle" placeholder="标题" clearable />
         <n-button type="primary" @click="loadBanners">查询</n-button>
-        <n-button type="primary" @click="openModal()">新增 Banner</n-button>
+        <n-button type="primary" @click="openModal()">{{ isSystemScope ? '新增全局 Banner' : '新增 Banner' }}</n-button>
       </n-space>
       <n-data-table :columns="columns" :data="filteredBanners" :loading="loading" scroll-x="900" />
     </n-space>
@@ -24,7 +24,10 @@
           <n-select v-model:value="form.position" :options="positionOptions" placeholder="请选择展示位置" />
         </n-form-item>
         <n-form-item label="适用社区">
+          <!-- 系统管理语境锁定为全平台通用，社区业务语境可选（不选=当前社区语境） -->
+          <n-input v-if="isSystemScope" value="全平台通用" disabled />
           <n-select
+            v-else
             v-model:value="form.community_id"
             :options="communityOptions"
             placeholder="请选择适用社区"
@@ -69,6 +72,15 @@ import { useAuthStore } from '@/stores/auth'
 import type { Banner } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 
+/**
+ * 组件语境：
+ * - community（默认）：社区业务语境，管理当前社区 banner，全局 banner 只读展示
+ * - system：系统管理语境，仅管理全局 banner（community_id=0，适用社区锁定"全平台通用"）
+ */
+const props = defineProps<{ scope?: 'community' | 'system' }>()
+
+const isSystemScope = computed(() => props.scope === 'system')
+
 const message = useMessage()
 const authStore = useAuthStore()
 
@@ -87,10 +99,11 @@ const communityNameMap = ref<Record<number, string>>({})
 /**
  * 加载社区列表（下拉选项 + 表格列回显）
  * 仅在有 community:view 权限时调用（与 Layout 社区名称映射同一权限口径），
- * 无权限时静默降级：下拉仅"全部社区"，表格列回显"社区 #id"
+ * 无权限时静默降级：下拉仅"全部社区"，表格列回显"社区 #id"；
+ * 系统管理语境仅管理全局 banner，无需社区下拉与名称映射
  */
 async function loadCommunities() {
-  if (!authStore.hasPermission('community:view')) return
+  if (isSystemScope.value || !authStore.hasPermission('community:view')) return
   communityLoading.value = true
   try {
     const res = await getCommunityList({ page: 1, page_size: 200 })
@@ -136,9 +149,11 @@ const columns: DataTableColumns<Banner> = [
     key: 'community_id',
     width: 120,
     render(row) {
-      return row.community_id === 0
-        ? '全部社区'
-        : (communityNameMap.value[row.community_id] || `社区#${row.community_id}`)
+      // 全局 banner 用"全平台通用"标识（社区业务语境只读展示）
+      if (row.community_id === 0) {
+        return h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '全平台通用' })
+      }
+      return communityNameMap.value[row.community_id] || `社区#${row.community_id}`
     },
   },
   { title: '排序', key: 'sort', width: 80 },
@@ -157,6 +172,10 @@ const columns: DataTableColumns<Banner> = [
     key: 'actions',
     width: 130,
     render(row) {
+      // 社区业务语境下全局 banner 只读，修改入口在系统管理页
+      if (!isSystemScope.value && row.community_id === 0) {
+        return h('span', { style: 'color: #999;' }, '只读')
+      }
       return h(NSpace, null, {
         default: () => [
           h(NButton, { size: 'small', onClick: () => openModal(row) }, { default: () => '编辑' }),
@@ -195,11 +214,13 @@ const filteredBanners = computed(() => {
 
 /**
  * 加载 Banner 列表
+ * 系统管理语境显式传 community_id=0（仅全局 banner，超管专用参数）；
+ * 社区业务语境不传，走当前社区语境（后端返回本社区 + 全局兜底）
  */
 async function loadBanners() {
   loading.value = true
   try {
-    const res = await getBannerList({})
+    const res = await getBannerList(isSystemScope.value ? { community_id: 0 } : {})
     if (res.data.code === 0) {
       banners.value = res.data.data || []
     }
@@ -214,8 +235,9 @@ async function loadBanners() {
  */
 function openModal(row?: Banner) {
   form.id = row?.id
-  // 新增默认当前社区语境（不传 community_id 由后端取 header）；编辑回显原适用社区
-  form.community_id = row?.community_id ?? undefined
+  // 新增默认当前社区语境（不传 community_id 由后端取 header）；编辑回显原适用社区；
+  // 系统管理语境新增固定全局（0）
+  form.community_id = row?.community_id ?? (isSystemScope.value ? 0 : undefined)
   form.title = row?.title || ''
   form.image_url = row?.image_url || ''
   form.link_url = row?.link_url || ''
@@ -269,8 +291,11 @@ async function saveBanner() {
       sort: form.sort,
       status: form.status,
     }
-    // 适用社区：未选择时不下发，由后端取当前社区语境（编辑时不下发=不修改）
-    if (form.community_id !== undefined && form.community_id !== null) {
+    // 适用社区：未选择时不下发，由后端取当前社区语境（编辑时不下发=不修改）；
+    // 系统管理语境固定下发 0（超管显式指定=全部社区通用）
+    if (isSystemScope.value) {
+      data.community_id = 0
+    } else if (form.community_id !== undefined && form.community_id !== null) {
       data.community_id = form.community_id
     }
     if (timeRange.value) {

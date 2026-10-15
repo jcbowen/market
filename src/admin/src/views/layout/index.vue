@@ -402,6 +402,7 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
         { label: '社区权限', key: '/system/community-permissions', permission: 'community:view', superOnly: true },
         { label: '账号管理', key: '/system/accounts', permission: 'admin:view', superOnly: true },
         { label: '行政区划', key: '/system/regions', permission: 'region:view' },
+        { label: '全局 Banner', key: '/system/banners', permission: 'marketing:view' },
         { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
         { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
