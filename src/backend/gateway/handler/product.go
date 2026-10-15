@@ -137,8 +137,9 @@ func (h *ProductHandler) ListCoupons(c *gin.Context) {
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
 	resp, err := h.productClient.ListCoupons(c.Request.Context(), &product.ListCouponsReq{
-		CommunityId: communityID,
-		Status:      int32(status),
+		CommunityId:      communityID,
+		Status:           int32(status),
+		CenterVisibleOnly: true, // C 端领券中心仅展示已发布且进入领券中心的券
 	})
 	if err != nil {
 		response.GRPCError(c, err)

@@ -16,12 +16,13 @@ import { ref, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NSpace, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getCouponList, deleteCoupon } from '@/api/marketing'
+import { getCouponList, deleteCoupon, updateCoupon } from '@/api/marketing'
 import type { Coupon } from '@/api/types'
 
 /**
  * 优惠券管理页面
- * 展示优惠券列表并支持创建、删除
+ * 状态机：publish_status（草稿/已发布/已下架）+ grant_status（发放中/停止发放）
+ * 编辑边界（决策点⑧）：草稿全字段可编辑；已发布/已下架仅可补充数量/停发恢复/规则文案
  */
 const router = useRouter()
 const list = ref<Coupon[]>([])
@@ -33,30 +34,80 @@ const typeMap: Record<number, string> = {
   2: '折扣券',
 }
 
+const publishMap: Record<number, { text: string; type: 'default' | 'success' | 'warning' }> = {
+  0: { text: '草稿', type: 'default' },
+  1: { text: '已发布', type: 'success' },
+  2: { text: '已下架', type: 'warning' },
+}
+
+/** 商品范围列渲染 */
+function renderScopes(row: Coupon) {
+  const scopes = row.scopes || []
+  if (!scopes.length) return '全场通用'
+  const parts = scopes.map((s) => {
+    const prefix = s.scope_type === 4 || s.scope_type === 5 ? '排除:' : ''
+    const name = s.scope_type === 4 || s.scope_type === 2
+      ? s.category_name || `分类#${s.category_id}`
+      : s.product_name || `商品#${s.product_id}`
+    return `${prefix}${name}`
+  })
+  return parts.join('、')
+}
+
 const columns: DataTableColumns<Coupon> = [
-  { title: 'ID', key: 'id', width: 80 },
-  { title: '名称', key: 'name' },
-  { title: '类型', key: 'type', render(row) { return typeMap[row.type] || '未知' } },
-  { title: '门槛', key: 'threshold' },
-  { title: '面值/折扣', key: 'discount_value' },
-  { title: '总量', key: 'total_count' },
-  { title: '已领取', key: 'received_count' },
+  { title: 'ID', key: 'id', width: 70 },
+  { title: '名称', key: 'name', width: 140, ellipsis: { tooltip: true } },
+  { title: '类型', key: 'type', width: 80, render(row) { return typeMap[row.type] || '未知' } },
+  { title: '门槛', key: 'threshold', width: 70 },
+  { title: '面值/折扣', key: 'discount_value', width: 90 },
+  { title: '总量/已领/已用', key: 'count', width: 120, render: (row) => `${row.total_count} / ${row.received_count} / ${row.used_count}` },
+  { title: '商品范围', key: 'scopes', ellipsis: { tooltip: true }, render: renderScopes },
   {
-    title: '状态',
-    key: 'status',
+    title: '发布状态',
+    key: 'publish_status',
+    width: 90,
     render(row) {
-      return h(NTag, { type: row.status === 1 ? 'success' : 'default' }, { default: () => (row.status === 1 ? '启用' : '禁用') })
+      const p = publishMap[row.publish_status] || { text: '未知', type: 'default' as const }
+      return h(NTag, { type: p.type }, { default: () => p.text })
+    },
+  },
+  {
+    title: '发放',
+    key: 'grant_status',
+    width: 90,
+    render(row) {
+      const stopped = row.publish_status !== 0 && row.grant_status !== 1
+      return h(NTag, { type: stopped ? 'warning' : 'success' }, { default: () => (stopped ? '已停发' : '发放中') })
     },
   },
   {
     title: '操作',
     key: 'actions',
+    width: 260,
     render(row) {
-      return h(NSpace, null, {
-        default: () => [
-          h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' }),
-        ],
-      })
+      const actions = [
+        h(NButton, { size: 'small', onClick: () => router.push(`/marketing/coupons/${row.id}/edit`) }, { default: () => '编辑' }),
+      ]
+      if (row.publish_status === 0) {
+        actions.push(
+          h(NButton, { size: 'small', type: 'success', onClick: () => publish(row) }, { default: () => '发布' })
+        )
+      } else if (row.publish_status === 1) {
+        actions.push(
+          h(NButton, { size: 'small', type: 'warning', onClick: () => unpublish(row) }, { default: () => '下架' })
+        )
+        actions.push(
+          h(
+            NButton,
+            { size: 'small', type: row.grant_status === 1 ? 'warning' : 'success', onClick: () => toggleGrant(row) },
+            { default: () => (row.grant_status === 1 ? '停止发放' : '恢复发放') }
+          )
+        )
+      }
+      actions.push(
+        h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' })
+      )
+      return h(NSpace, { size: 'small' }, { default: () => actions })
     },
   },
 ]
@@ -69,6 +120,24 @@ async function loadData() {
     list.value = res.data.data.list
     pagination.value.itemCount = res.data.data.total
   }
+}
+
+/** 发布（草稿 → 已发布） */
+async function publish(row: Coupon) {
+  const res = await updateCoupon(row.id, { publish_status: 1 } as Partial<Coupon>)
+  if (res.data.code === 0) loadData()
+}
+
+/** 下架（已发布 → 已下架；已领取的券仍可使用） */
+async function unpublish(row: Coupon) {
+  const res = await updateCoupon(row.id, { publish_status: 2 } as Partial<Coupon>)
+  if (res.data.code === 0) loadData()
+}
+
+/** 停止/恢复发放（停止后已领的券仍可用，只是不再发） */
+async function toggleGrant(row: Coupon) {
+  const res = await updateCoupon(row.id, { grant_status: row.grant_status === 1 ? 0 : 1 } as Partial<Coupon>)
+  if (res.data.code === 0) loadData()
 }
 
 async function remove(row: Coupon) {

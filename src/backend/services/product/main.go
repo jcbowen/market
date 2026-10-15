@@ -61,6 +61,7 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.StockCheckItem{},
 		&model.Coupon{},
 		&model.UserCoupon{},
+		&model.CouponProductScope{},
 		&model.FlashSale{},
 		&model.FlashSaleItem{},
 		&model.FullReduction{},

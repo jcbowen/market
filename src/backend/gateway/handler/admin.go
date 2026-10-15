@@ -2481,17 +2481,32 @@ func (h *AdminHandler) ListAdminCoupons(c *gin.Context) {
 	response.SuccessWithPage(c, resp.List, len(resp.List), page, pageSize)
 }
 
+// CouponScopeInput 优惠券商品范围入参
+// scope_type：2指定分类 3指定商品 4排除分类 5排除商品（1全场=不传范围行）
+type CouponScopeInput struct {
+	ScopeType  int32 `json:"scope_type"`
+	CategoryID int64 `json:"category_id"`
+	ProductID  int64 `json:"product_id"`
+}
+
 // CreateCouponReq 创建优惠券请求
 type CreateCouponReq struct {
-	Name          string  `json:"name" binding:"required"`
-	Type          int32   `json:"type" binding:"required"`
-	Threshold     float64 `json:"threshold"`
-	DiscountValue float64 `json:"discount_value" binding:"required"`
-	TotalCount    int32   `json:"total_count" binding:"required"`
-	PerUserLimit  int32   `json:"per_user_limit"`
-	StartTime     string  `json:"start_time"`
-	EndTime       string  `json:"end_time"`
-	ValidDays     int32   `json:"valid_days"`
+	Name            string             `json:"name" binding:"required"`
+	Type            int32              `json:"type" binding:"required"`
+	Threshold       float64            `json:"threshold"`
+	DiscountValue   float64            `json:"discount_value" binding:"required"`
+	TotalCount      int32              `json:"total_count" binding:"required"`
+	PerUserLimit    int32              `json:"per_user_limit"`
+	StartTime       string             `json:"start_time"`
+	EndTime         string             `json:"end_time"`
+	ValidDays       int32              `json:"valid_days"`
+	PublishStatus   int32              `json:"publish_status"` // 0草稿（默认）1直接发布
+	IsCenterVisible *bool              `json:"is_center_visible"`
+	ExpireType      int32              `json:"expire_type"` // 1领取后N天 2指定可用范围
+	UseStartTime    string             `json:"use_start_time"`
+	UseEndTime      string             `json:"use_end_time"`
+	RuleText        string             `json:"rule_text"`
+	Scopes          []CouponScopeInput `json:"scopes"`
 }
 
 // CreateCoupon 创建优惠券
@@ -2505,16 +2520,23 @@ func (h *AdminHandler) CreateCoupon(c *gin.Context) {
 	}
 
 	resp, err := h.productClient.CreateCoupon(c.Request.Context(), &product.CreateCouponReq{
-		CommunityId:   h.getAdminCommunityID(c),
-		Name:          req.Name,
-		Type:          req.Type,
-		Threshold:     req.Threshold,
-		DiscountValue: req.DiscountValue,
-		TotalCount:    req.TotalCount,
-		PerUserLimit:  req.PerUserLimit,
-		StartTime:     req.StartTime,
-		EndTime:       req.EndTime,
-		ValidDays:     req.ValidDays,
+		CommunityId:     h.getAdminCommunityID(c),
+		Name:            req.Name,
+		Type:            req.Type,
+		Threshold:       req.Threshold,
+		DiscountValue:   req.DiscountValue,
+		TotalCount:      req.TotalCount,
+		PerUserLimit:    req.PerUserLimit,
+		StartTime:       req.StartTime,
+		EndTime:         req.EndTime,
+		ValidDays:       req.ValidDays,
+		PublishStatus:   req.PublishStatus,
+		IsCenterVisible: req.IsCenterVisible,
+		ExpireType:      req.ExpireType,
+		UseStartTime:    req.UseStartTime,
+		UseEndTime:      req.UseEndTime,
+		RuleText:        req.RuleText,
+		Scopes:          toCouponScopes(req.Scopes),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2525,11 +2547,29 @@ func (h *AdminHandler) CreateCoupon(c *gin.Context) {
 
 // UpdateCouponReq 更新优惠券请求
 type UpdateCouponReq struct {
-	Name   string `json:"name"`
-	Status int32  `json:"status"`
+	Name          string             `json:"name"`
+	Status        int32              `json:"status"`
+	Type          int32              `json:"type"`
+	Threshold     float64            `json:"threshold"`
+	DiscountValue float64            `json:"discount_value"`
+	TotalCount    *int32             `json:"total_count"` // 补充数量
+	PerUserLimit  int32              `json:"per_user_limit"`
+	StartTime     string             `json:"start_time"`
+	EndTime       string             `json:"end_time"`
+	ValidDays     int32              `json:"valid_days"`
+	PublishStatus int32              `json:"publish_status"` // 发布/下架状态机
+	GrantStatus   *int32             `json:"grant_status"`   // 0停止发放 1恢复发放；nil=不修改
+	IsCenterVisible *bool            `json:"is_center_visible"`
+	ExpireType    int32              `json:"expire_type"`
+	UseStartTime  string             `json:"use_start_time"`
+	UseEndTime    string             `json:"use_end_time"`
+	RuleText      *string            `json:"rule_text"` // 指针区分未传与清空
+	Scopes        *[]CouponScopeInput `json:"scopes"`   // nil=不修改；空数组=清空（恢复全场）
 }
 
-// UpdateCoupon 更新优惠券
+// UpdateCoupon 更新优惠券（编辑放开，决策点⑧）：
+// 草稿态全字段可编辑；已发布/已下架仅允许「补充数量、停止/恢复发放、规则文案」，
+// 面额/门槛/类型/时间/范围锁定（已领取的 user_coupon 是快照，不受模板改动影响）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateCoupon(c *gin.Context) {
@@ -2545,16 +2585,70 @@ func (h *AdminHandler) UpdateCoupon(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.productClient.UpdateCoupon(c.Request.Context(), &product.UpdateCouponReq{
-		Id:     id,
-		Name:   req.Name,
-		Status: req.Status,
-	})
+	// 读当前券判断发布状态，按状态裁剪可编辑字段
+	cur, err := h.productClient.GetCoupon(c.Request.Context(), &product.GetCouponReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	isDraft := cur.PublishStatus == 0
+
+	rpcReq := &product.UpdateCouponReq{
+		Id: id,
+		// Status 启停已由「发布状态机」取代，不再单独透传
+	}
+	// 全状态通用：发布/下架流转、发放启停、规则文案、启停
+	rpcReq.PublishStatus = req.PublishStatus
+	rpcReq.GrantStatus = req.GrantStatus
+	if req.RuleText != nil {
+		rpcReq.RuleText = *req.RuleText
+	}
+
+	if isDraft {
+		// 草稿态：全字段可编辑
+		rpcReq.Name = req.Name
+		rpcReq.Type = req.Type
+		rpcReq.Threshold = req.Threshold
+		rpcReq.DiscountValue = req.DiscountValue
+		rpcReq.PerUserLimit = req.PerUserLimit
+		rpcReq.StartTime = req.StartTime
+		rpcReq.EndTime = req.EndTime
+		rpcReq.ValidDays = req.ValidDays
+		rpcReq.IsCenterVisible = req.IsCenterVisible
+		rpcReq.ExpireType = req.ExpireType
+		rpcReq.UseStartTime = req.UseStartTime
+		rpcReq.UseEndTime = req.UseEndTime
+		if req.Scopes != nil {
+			rpcReq.Scopes = toCouponScopes(*req.Scopes)
+		}
+	}
+	// 补充数量：仅允许增加，全状态可用
+	if req.TotalCount != nil {
+		rpcReq.TotalCount = *req.TotalCount
+	}
+
+	resp, err := h.productClient.UpdateCoupon(c.Request.Context(), rpcReq)
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, resp)
+}
+
+// toCouponScopes 优惠券范围入参转 proto
+func toCouponScopes(inputs []CouponScopeInput) []*product.CouponScopeReq {
+	if len(inputs) == 0 {
+		return nil
+	}
+	scopes := make([]*product.CouponScopeReq, 0, len(inputs))
+	for _, in := range inputs {
+		scopes = append(scopes, &product.CouponScopeReq{
+			ScopeType:  in.ScopeType,
+			CategoryId: in.CategoryID,
+			ProductId:  in.ProductID,
+		})
+	}
+	return scopes
 }
 
 // DeleteCoupon 删除优惠券

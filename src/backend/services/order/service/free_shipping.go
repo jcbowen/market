@@ -107,6 +107,64 @@ func (s *OrderService) calcFreeShipping(ctx context.Context, communityID int64, 
 	return res
 }
 
+// couponEligibleAmount 计算订单中「券范围内商品」的金额合计
+// 范围语义（与优惠券模板 coupon_product_scopes 一致）：
+//   - 无指定行（scope_type 2/3）：全场通用，全部商品计入
+//   - 有指定行：仅指定分类/商品计入（选分类=该分类全部商品）
+//   - 排除行（scope_type 4/5）：从计入集合中剔除
+//
+// 门槛判断与优惠计算均按该金额（方案 M 决策：仅范围内商品额计入门槛/享受优惠）
+// 参数：
+//   - coupon: 优惠券 proto 信息（含 scopes；nil/空 scopes 视为全场）
+//   - items: 结算商品范围上下文
+//
+// 返回值：
+//   - float64: 范围内商品金额合计
+func couponEligibleAmount(coupon *product.CouponInfo, items []itemScope) float64 {
+	if coupon == nil || len(coupon.Scopes) == 0 {
+		var total float64
+		for _, it := range items {
+			total += it.totalPrice
+		}
+		return total
+	}
+	includeCategories := make(map[int64]struct{})
+	includeProducts := make(map[int64]struct{})
+	excludeCategories := make(map[int64]struct{})
+	excludeProducts := make(map[int64]struct{})
+	hasInclude := false
+	for _, sc := range coupon.Scopes {
+		switch sc.ScopeType {
+		case 2:
+			includeCategories[sc.CategoryId] = struct{}{}
+			hasInclude = true
+		case 3:
+			includeProducts[sc.ProductId] = struct{}{}
+			hasInclude = true
+		case 4:
+			excludeCategories[sc.CategoryId] = struct{}{}
+		case 5:
+			excludeProducts[sc.ProductId] = struct{}{}
+		}
+	}
+	var total float64
+	for _, it := range items {
+		_, inExclude := excludeProducts[it.productID]
+		if _, ok := excludeCategories[it.categoryID]; ok || inExclude {
+			continue
+		}
+		if hasInclude {
+			_, inCat := includeCategories[it.categoryID]
+			_, inProd := includeProducts[it.productID]
+			if !inCat && !inProd {
+				continue
+			}
+		}
+		total += it.totalPrice
+	}
+	return total
+}
+
 // PreviewFreeShipping 免配送费试算（C 端确认页展示）
 // 按商品清单逐个取 SKU/商品（价格口径与 CreateOrder 一致：优先生效秒杀价），
 // 计算参与商品额与门槛差额，供确认页展示「已免配送费 / 还差 X 元 / 不参与商品」

@@ -132,7 +132,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	var discountAmount float64
 	var userCouponID int64
 	if req.CouponId > 0 {
-		couponDiscount, ucID, err := s.applyCoupon(ctx, req.UserId, req.CouponId, totalAmount)
+		couponDiscount, ucID, err := s.applyCoupon(ctx, req.UserId, req.CouponId, itemScopes)
 		if err != nil {
 			return nil, bizerr.New(codes.FailedPrecondition, err.Error())
 		}
@@ -686,17 +686,19 @@ func calculateDiscount(totalAmount float64, coupon *product.CouponInfo) float64 
 }
 
 // applyCoupon 根据优惠券 ID 查找用户可用的优惠券并计算抵扣
+// 门槛校验与优惠计算均按「券范围内商品金额」（见 couponEligibleAmount）：
+// 仅范围内商品计入门槛并享受优惠，范围外商品不影响
 // 参数：
 //   - ctx: 上下文
 //   - userID: 用户 ID
 //   - couponID: 优惠券 ID
-//   - amount: 订单金额（用于校验门槛）
+//   - items: 结算商品范围上下文
 //
 // 返回值：
 //   - float64: 抵扣金额
 //   - int64: 用户优惠券 ID（供后续 UseCoupon 使用）
 //   - error: 错误信息
-func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, amount float64) (float64, int64, error) {
+func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, items []itemScope) (float64, int64, error) {
 	ucResp, err := grpcclient.ProductClient.ListUserCoupons(ctx, &product.ListUserCouponsReq{
 		UserId: userID,
 		Status: 1,
@@ -714,14 +716,16 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 	if target == nil {
 		return 0, 0, fmt.Errorf("未找到可用优惠券")
 	}
-	if amount < target.Threshold {
-		return 0, 0, fmt.Errorf("订单金额不满足优惠券使用门槛")
-	}
 	coupon, err := grpcclient.ProductClient.GetCoupon(ctx, &product.GetCouponReq{Id: couponID})
 	if err != nil {
 		return 0, 0, err
 	}
-	return calculateDiscount(amount, coupon), target.Id, nil
+	// 券范围内商品金额（门槛与优惠基数）
+	eligible := couponEligibleAmount(coupon, items)
+	if eligible < target.Threshold {
+		return 0, 0, fmt.Errorf("订单中可使用该券的商品金额不满足使用门槛")
+	}
+	return calculateDiscount(eligible, coupon), target.Id, nil
 }
 
 // getActiveFlashSalePrice 获取 SKU 在当前社区生效的秒杀价

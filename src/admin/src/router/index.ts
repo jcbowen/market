@@ -127,6 +127,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '创建优惠券', permission: 'marketing:create', group: '营销管理', hidden: true },
       },
       {
+        path: 'marketing/coupons/:id/edit',
+        name: 'CouponEdit',
+        component: () => import('@/views/marketing/coupon-form.vue'),
+        meta: { title: '编辑优惠券', permission: 'marketing:update', group: '营销管理', hidden: true },
+      },
+      {
         path: 'marketing/flash-sales',
         name: 'FlashSaleList',
         component: () => import('@/views/marketing/flash-sales.vue'),

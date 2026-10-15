@@ -47,24 +47,25 @@ func (s *MarketingService) ListCoupons(ctx context.Context, req *product.ListCou
 	if req.Status > 0 {
 		db = db.Where("status = ?", req.Status)
 	}
-	err := db.Order("id desc").Find(&list).Error
-	return list, err
+	// C 端领券中心：仅已发布 + 进入领券中心的券
+	if req.CenterVisibleOnly {
+		db = db.Where("publish_status = 1 AND is_center_visible = 1")
+	}
+	if err := db.Order("id desc").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	s.loadCouponScopes(ctx, list)
+	return list, nil
 }
 
-// GetCoupon 获取优惠券详情
-// 参数：
-//   - ctx: 上下文
-//   - id: 优惠券 ID
-//
-// 返回值：
-//   - *model.Coupon: 优惠券模型
-//   - error: 错误信息
+// GetCoupon 获取优惠券详情（含商品范围）
 func (s *MarketingService) GetCoupon(ctx context.Context, id int64) (*model.Coupon, error) {
 	var c model.Coupon
 	err := s.db.GetDb().WithContext(ctx).First(&c, id).Error
 	if err != nil {
 		return nil, err
 	}
+	s.loadCouponScopes(ctx, []*model.Coupon{&c})
 	return &c, nil
 }
 
@@ -78,35 +79,70 @@ func (s *MarketingService) GetCoupon(ctx context.Context, id int64) (*model.Coup
 //   - error: 错误信息
 func (s *MarketingService) CreateCoupon(ctx context.Context, req *product.CreateCouponReq) (*model.Coupon, error) {
 	now := time.Now().Format("2006-01-02 15:04:05")
-	c := &model.Coupon{
-		CommunityID:   req.CommunityId,
-		Name:          req.Name,
-		Type:          req.Type,
-		Threshold:     req.Threshold,
-		DiscountValue: req.DiscountValue,
-		TotalCount:    req.TotalCount,
-		PerUserLimit:  req.PerUserLimit,
-		StartTime:     strPtr(req.StartTime),
-		EndTime:       strPtr(req.EndTime),
-		ValidDays:     req.ValidDays,
-		Status:        1,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+	// is_center_visible：缺省=进领券中心（1）
+	centerVisible := int32(1)
+	if req.IsCenterVisible != nil {
+		if *req.IsCenterVisible {
+			centerVisible = 1
+		} else {
+			centerVisible = 0
+		}
 	}
-	if err := s.db.GetDb().WithContext(ctx).Create(c).Error; err != nil {
+	c := &model.Coupon{
+		CommunityID:     req.CommunityId,
+		Name:            req.Name,
+		Type:            req.Type,
+		Threshold:       req.Threshold,
+		DiscountValue:   req.DiscountValue,
+		TotalCount:      req.TotalCount,
+		PerUserLimit:    req.PerUserLimit,
+		StartTime:       strPtr(req.StartTime),
+		EndTime:         strPtr(req.EndTime),
+		ValidDays:       req.ValidDays,
+		Status:          1,
+		PublishStatus:   req.PublishStatus, // 0=草稿（默认）1=直接发布
+		GrantStatus:     1,
+		IsCenterVisible: centerVisible,
+		ExpireType:      req.ExpireType, // 0 视为 1（领取后N天）
+		UseStartTime:    strPtr(req.UseStartTime),
+		UseEndTime:      strPtr(req.UseEndTime),
+		RuleText:        req.RuleText,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if c.ExpireType == 0 {
+		c.ExpireType = 1
+	}
+	// Create 前保存期望值：GORM 对带 default 标签的 int32 字段，Create 遇零值会跳过该列
+	// 落 DB 默认值 1 并回填结构体——后续回写必须用期望值而非结构体字段
+	wantPublish := req.PublishStatus
+	wantCenter := centerVisible
+	wantExpire := c.ExpireType
+	wantValidDays := c.ValidDays
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(c).Error; err != nil {
+			return err
+		}
+		// 显式回写零值语义字段（草稿 0 / 不进领券中心 0）
+		if err := tx.Model(c).Updates(map[string]interface{}{
+			"publish_status":    wantPublish,
+			"is_center_visible": wantCenter,
+			"grant_status":      int32(1),
+			"expire_type":       wantExpire,
+			"valid_days":        wantValidDays,
+		}).Error; err != nil {
+			return err
+		}
+		return s.saveCouponScopesTx(tx, c.ID, req.Scopes, now)
+	})
+	if err != nil {
 		return nil, err
 	}
+	s.loadCouponScopes(ctx, []*model.Coupon{c})
 	return c, nil
 }
 
-// UpdateCoupon 更新优惠券
-// 参数：
-//   - ctx: 上下文
-//   - req: 更新请求
-//
-// 返回值：
-//   - *model.Coupon: 优惠券模型
-//   - error: 错误信息
+// UpdateCoupon 更新优惠券（编辑放开：字段级应用，编辑边界由 gateway 按发布状态裁剪）
 func (s *MarketingService) UpdateCoupon(ctx context.Context, req *product.UpdateCouponReq) (*model.Coupon, error) {
 	var c model.Coupon
 	if err := s.db.GetDb().WithContext(ctx).First(&c, req.Id).Error; err != nil {
@@ -115,13 +151,80 @@ func (s *MarketingService) UpdateCoupon(ctx context.Context, req *product.Update
 	if req.Name != "" {
 		c.Name = req.Name
 	}
-	if req.Status >= 0 {
-		c.Status = req.Status
+	if req.Type > 0 {
+		c.Type = req.Type
+	}
+	if req.Threshold > 0 {
+		c.Threshold = req.Threshold
+	}
+	if req.DiscountValue > 0 {
+		c.DiscountValue = req.DiscountValue
+	}
+	// 补充数量：仅允许增加（已领取量不可被调小截断）
+	if req.TotalCount > c.TotalCount {
+		c.TotalCount = req.TotalCount
+	}
+	if req.PerUserLimit > 0 {
+		c.PerUserLimit = req.PerUserLimit
+	}
+	if req.StartTime != "" {
+		c.StartTime = strPtr(req.StartTime)
+	}
+	if req.EndTime != "" {
+		c.EndTime = strPtr(req.EndTime)
+	}
+	if req.ValidDays > 0 {
+		c.ValidDays = req.ValidDays
+	}
+	// status：proto optional，nil=不修改（0=禁用 是合法值）
+	if req.Status != nil {
+		c.Status = *req.Status
+	}
+	if req.PublishStatus > 0 {
+		c.PublishStatus = req.PublishStatus
+	}
+	// grant_status：proto optional，nil=不修改（0=停止发放 是合法值）
+	if req.GrantStatus != nil {
+		c.GrantStatus = *req.GrantStatus
+	}
+	// is_center_visible：proto optional，nil=不修改
+	if req.IsCenterVisible != nil {
+		if *req.IsCenterVisible {
+			c.IsCenterVisible = 1
+		} else {
+			c.IsCenterVisible = 0
+		}
+	}
+	if req.ExpireType > 0 {
+		c.ExpireType = req.ExpireType
+	}
+	if req.UseStartTime != "" {
+		c.UseStartTime = strPtr(req.UseStartTime)
+	}
+	if req.UseEndTime != "" {
+		c.UseEndTime = strPtr(req.UseEndTime)
+	}
+	if req.RuleText != "" {
+		c.RuleText = req.RuleText
 	}
 	c.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
-	if err := s.db.GetDb().WithContext(ctx).Save(&c).Error; err != nil {
+
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&c).Error; err != nil {
+			return err
+		}
+		if req.Scopes == nil {
+			return nil
+		}
+		if err := tx.Where("coupon_id = ?", c.ID).Delete(&model.CouponProductScope{}).Error; err != nil {
+			return err
+		}
+		return s.saveCouponScopesTx(tx, c.ID, req.Scopes, c.UpdatedAt)
+	})
+	if err != nil {
 		return nil, err
 	}
+	s.loadCouponScopes(ctx, []*model.Coupon{&c})
 	return &c, nil
 }
 
@@ -156,6 +259,9 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 		if c.Status != 1 {
 			return fmt.Errorf("优惠券未启用")
 		}
+		if c.GrantStatus != 1 {
+			return fmt.Errorf("优惠券已停止发放")
+		}
 		if c.ReceivedCount >= c.TotalCount {
 			return fmt.Errorf("优惠券已领完")
 		}
@@ -174,10 +280,17 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 			return fmt.Errorf("已超过每人限领数量")
 		}
 
-		expireAt := c.EndTime
-		if c.ValidDays > 0 {
+		// 到期时间按 expire_type：
+		// 1（默认）=领取后 valid_days 天；valid_days=0 回退领取窗口 end_time（存量口径）
+		// 2=固定可用范围，直接取 use_end_time
+		var expireAt *string
+		if c.ExpireType == 2 {
+			expireAt = c.UseEndTime
+		} else if c.ValidDays > 0 {
 			validUntil := now.AddDate(0, 0, int(c.ValidDays)).Format("2006-01-02 15:04:05")
 			expireAt = &validUntil
+		} else {
+			expireAt = c.EndTime
 		}
 		uc := &model.UserCoupon{
 			UserID:        req.UserId,
@@ -778,21 +891,137 @@ func ToCouponInfo(c *model.Coupon) *product.CouponInfo {
 	if c == nil {
 		return nil
 	}
-	return &product.CouponInfo{
-		Id:            c.ID,
-		CommunityId:   c.CommunityID,
-		Name:          c.Name,
-		Type:          c.Type,
-		Threshold:     c.Threshold,
-		DiscountValue: c.DiscountValue,
-		TotalCount:    c.TotalCount,
-		ReceivedCount: c.ReceivedCount,
-		UsedCount:     c.UsedCount,
-		PerUserLimit:  c.PerUserLimit,
-		StartTime:     ptrString(c.StartTime),
-		EndTime:       ptrString(c.EndTime),
-		ValidDays:     c.ValidDays,
-		Status:        c.Status,
+	info := &product.CouponInfo{
+		Id:              c.ID,
+		CommunityId:     c.CommunityID,
+		Name:            c.Name,
+		Type:            c.Type,
+		Threshold:       c.Threshold,
+		DiscountValue:   c.DiscountValue,
+		TotalCount:      c.TotalCount,
+		ReceivedCount:   c.ReceivedCount,
+		UsedCount:       c.UsedCount,
+		PerUserLimit:    c.PerUserLimit,
+		StartTime:       ptrString(c.StartTime),
+		EndTime:         ptrString(c.EndTime),
+		ValidDays:       c.ValidDays,
+		Status:          c.Status,
+		PublishStatus:   c.PublishStatus,
+		GrantStatus:     c.GrantStatus,
+		IsCenterVisible: c.IsCenterVisible == 1,
+		ExpireType:      c.ExpireType,
+		UseStartTime:    ptrString(c.UseStartTime),
+		UseEndTime:      ptrString(c.UseEndTime),
+		RuleText:        c.RuleText,
+		Scopes:          make([]*product.CouponScopeInfo, 0, len(c.Scopes)),
+	}
+	for _, sc := range c.Scopes {
+		info.Scopes = append(info.Scopes, ToCouponScopeInfo(sc))
+	}
+	return info
+}
+
+// loadCouponScopes 批量加载优惠券商品范围并回填展示名
+// 参数：
+//   - ctx: 上下文
+//   - coupons: 优惠券模型列表（Scopes 字段会被覆写）
+func (s *MarketingService) loadCouponScopes(ctx context.Context, coupons []*model.Coupon) {
+	if len(coupons) == 0 {
+		return
+	}
+	couponIDs := make([]int64, 0, len(coupons))
+	for _, c := range coupons {
+		couponIDs = append(couponIDs, c.ID)
+	}
+	var scopes []*model.CouponProductScope
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("coupon_id IN ?", couponIDs).
+		Find(&scopes).Error; err != nil {
+		return
+	}
+	s.fillCouponScopeNames(ctx, scopes)
+	scopeMap := make(map[int64][]*model.CouponProductScope, len(coupons))
+	for _, sc := range scopes {
+		scopeMap[sc.CouponID] = append(scopeMap[sc.CouponID], sc)
+	}
+	for _, c := range coupons {
+		c.Scopes = scopeMap[c.ID]
+	}
+}
+
+// fillCouponScopeNames 回填范围项的分类名/商品名（失败静默跳过）
+func (s *MarketingService) fillCouponScopeNames(ctx context.Context, scopes []*model.CouponProductScope) {
+	categoryIDs := make([]int64, 0)
+	productIDs := make([]int64, 0)
+	for _, sc := range scopes {
+		switch sc.ScopeType {
+		case model.CouponScopeTypeIncludeCategory, model.CouponScopeTypeExcludeCategory:
+			if sc.CategoryID > 0 {
+				categoryIDs = append(categoryIDs, sc.CategoryID)
+			}
+		case model.CouponScopeTypeIncludeProduct, model.CouponScopeTypeExcludeProduct:
+			if sc.ProductID > 0 {
+				productIDs = append(productIDs, sc.ProductID)
+			}
+		}
+	}
+	categoryNames := make(map[int64]string)
+	if len(categoryIDs) > 0 {
+		var categories []*model.Category
+		if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", categoryIDs).Find(&categories).Error; err == nil {
+			for _, c := range categories {
+				categoryNames[c.ID] = c.Name
+			}
+		}
+	}
+	productNames := make(map[int64]string)
+	if len(productIDs) > 0 {
+		var products []*model.Product
+		if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", productIDs).Find(&products).Error; err == nil {
+			for _, p := range products {
+				productNames[p.ID] = p.Name
+			}
+		}
+	}
+	for _, sc := range scopes {
+		sc.CategoryName = categoryNames[sc.CategoryID]
+		sc.ProductName = productNames[sc.ProductID]
+	}
+}
+
+// saveCouponScopesTx 事务内保存优惠券商品范围（全量）
+func (s *MarketingService) saveCouponScopesTx(tx *gorm.DB, couponID int64, scopes []*product.CouponScopeReq, now string) error {
+	for _, sc := range scopes {
+		// 全场语义不落行（无行=全场），避免冗余
+		if sc.ScopeType == model.CouponScopeTypeAll {
+			continue
+		}
+		row := &model.CouponProductScope{
+			CouponID:   couponID,
+			ScopeType:  sc.ScopeType,
+			CategoryID: sc.CategoryId,
+			ProductID:  sc.ProductId,
+			CreatedAt:  now,
+		}
+		if err := tx.Create(row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ToCouponScopeInfo 将优惠券范围模型转换为 proto 信息
+func ToCouponScopeInfo(sc *model.CouponProductScope) *product.CouponScopeInfo {
+	if sc == nil {
+		return nil
+	}
+	return &product.CouponScopeInfo{
+		Id:           sc.ID,
+		ScopeType:    sc.ScopeType,
+		CategoryId:   sc.CategoryID,
+		CategoryName: sc.CategoryName,
+		ProductId:    sc.ProductID,
+		ProductName:  sc.ProductName,
 	}
 }
 

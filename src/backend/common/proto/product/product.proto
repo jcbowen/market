@@ -548,10 +548,21 @@ message GetReferencePricingReq {
 message ListCouponsReq {
   int64 community_id = 1;
   int32 status = 2;
+  // 仅领券中心可见（is_center_visible=1 且 publish_status=1），C 端领券中心使用
+  bool center_visible_only = 3;
 }
 
 message GetCouponReq {
   int64 id = 1;
+}
+
+// 优惠券商品范围项
+// scope_type：1全场 2指定分类 3指定商品 4排除分类 5排除商品；
+// 无范围行=全场通用；指定与排除可组合（先取指定集合再剔除排除项）
+message CouponScopeReq {
+  int32 scope_type = 1;
+  int64 category_id = 2;
+  int64 product_id = 3;
 }
 
 message CreateCouponReq {
@@ -565,16 +576,48 @@ message CreateCouponReq {
   string start_time = 8;
   string end_time = 9;
   int32 valid_days = 10;
+  int32 publish_status = 11;      // 0草稿 1已发布 2已下架，创建默认草稿
+  optional bool is_center_visible = 12; // 是否进入领券中心；缺省=进领券中心
+  int32 expire_type = 13;         // 1领取后N天 2指定可用范围
+  string use_start_time = 14;     // expire_type=2 的可用范围起点
+  string use_end_time = 15;       // expire_type=2 的可用范围终点
+  string rule_text = 16;          // 规则文案
+  repeated CouponScopeReq scopes = 17; // 商品范围，全量提交
 }
 
 message UpdateCouponReq {
   int64 id = 1;
   string name = 2;
-  int32 status = 3;
+  optional int32 status = 3; // 0禁用 1启用；缺省=不修改（int32 零值歧义规避）
+  double threshold = 4;
+  double discount_value = 5;
+  int32 total_count = 6;
+  int32 per_user_limit = 7;
+  string start_time = 8;
+  string end_time = 9;
+  int32 valid_days = 10;
+  int32 type = 11;
+  int32 publish_status = 12;    // 发布/下架状态机
+  optional int32 grant_status = 13; // 0停止发放 1发放中；缺省=不修改
+  optional bool is_center_visible = 14; // 缺省=不修改该字段
+  int32 expire_type = 15;
+  string use_start_time = 16;
+  string use_end_time = 17;
+  string rule_text = 18;
+  repeated CouponScopeReq scopes = 19; // 全量替换；nil=不修改
 }
 
 message DeleteCouponReq {
   int64 id = 1;
+}
+
+message CouponScopeInfo {
+  int64 id = 1;
+  int32 scope_type = 2;
+  int64 category_id = 3;
+  string category_name = 4;
+  int64 product_id = 5;
+  string product_name = 6;
 }
 
 message CouponInfo {
@@ -592,6 +635,14 @@ message CouponInfo {
   string end_time = 12;
   int32 valid_days = 13;
   int32 status = 14;
+  int32 publish_status = 15;    // 0草稿 1已发布 2已下架
+  int32 grant_status = 16;      // 0停止发放 1发放中
+  bool is_center_visible = 17;
+  int32 expire_type = 18;       // 1领取后N天 2指定可用范围
+  string use_start_time = 19;
+  string use_end_time = 20;
+  string rule_text = 21;
+  repeated CouponScopeInfo scopes = 22;
 }
 
 message ListCouponsResp {

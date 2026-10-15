@@ -477,6 +477,19 @@ export interface Account {
 }
 
 /**
+ * 优惠券商品范围项
+ * scope_type：1全场 2指定分类 3指定商品 4排除分类 5排除商品；无行=全场通用
+ */
+export interface CouponScope {
+  id?: number
+  scope_type: number
+  category_id: number
+  category_name?: string
+  product_id: number
+  product_name?: string
+}
+
+/**
  * 优惠券
  */
 export interface Coupon {
@@ -490,9 +503,26 @@ export interface Coupon {
   total_count: number
   per_user_limit?: number
   received_count: number
+  used_count: number
+  /** 领取时间窗口（与可用范围分离） */
   start_time: string
   end_time: string
+  valid_days: number
   status: number
+  /** 发布状态：0草稿 1已发布 2已下架 */
+  publish_status: number
+  /** 发放状态：0停止发放 1发放中 */
+  grant_status: number
+  /** 是否进入领券中心（0/1） */
+  is_center_visible: number
+  /** 到期类型：1领取后N天 2指定可用范围 */
+  expire_type: number
+  use_start_time?: string
+  use_end_time?: string
+  /** 规则文案 */
+  rule_text?: string
+  /** 商品范围（空=全场通用） */
+  scopes?: CouponScope[]
 }
 
 /**
