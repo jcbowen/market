@@ -326,56 +326,134 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 		if c.GrantStatus != 1 {
 			return fmt.Errorf("优惠券已停止发放")
 		}
-		if c.ReceivedCount >= c.TotalCount {
-			return fmt.Errorf("优惠券已领完")
-		}
-		now := time.Now()
-		// 未配置时间窗口（nil）时不限制领取时间
-		if (c.StartTime != nil && now.Before(parseTime(*c.StartTime))) ||
-			(c.EndTime != nil && now.After(parseTime(*c.EndTime))) {
-			return fmt.Errorf("不在领取时间范围内")
-		}
-
-		var count int64
-		if err := tx.Model(&model.UserCoupon{}).Where("user_id = ? AND coupon_id = ?", req.UserId, req.CouponId).Count(&count).Error; err != nil {
-			return err
-		}
-		if int32(count) >= c.PerUserLimit {
-			return fmt.Errorf("已超过每人限领数量")
-		}
-
-		// 到期时间按 expire_type：
-		// 1（默认）=领取后 valid_days 天；valid_days=0 回退领取窗口 end_time（存量口径）
-		// 2=固定可用范围，直接取 use_end_time
-		var expireAt *string
-		if c.ExpireType == 2 {
-			expireAt = c.UseEndTime
-		} else if c.ValidDays > 0 {
-			validUntil := now.AddDate(0, 0, int(c.ValidDays)).Format("2006-01-02 15:04:05")
-			expireAt = &validUntil
-		} else {
-			expireAt = c.EndTime
-		}
-		uc := &model.UserCoupon{
-			UserID:        req.UserId,
-			CouponID:      c.ID,
-			Name:          c.Name,
-			Type:          c.Type,
-			Threshold:     c.Threshold,
-			DiscountValue: c.DiscountValue,
-			Status:        1,
-			ExpireAt:      expireAt,
-			CreatedAt:     now.Format("2006-01-02 15:04:05"),
-			UpdatedAt:     now.Format("2006-01-02 15:04:05"),
-		}
-		if err := tx.Create(uc).Error; err != nil {
-			return err
-		}
-
-		c.ReceivedCount++
-		c.UpdatedAt = now.Format("2006-01-02 15:04:05")
-		return tx.Save(&c).Error
+		return s.grantToUserTx(tx, &c, req.UserId, 1, 0, "", time.Now())
 	})
+}
+
+// GrantCoupon 后台手动发放优惠券（批量，逐人独立校验）
+// 发放规则与 C 端自领一致：仅「已发布 + 发放中 + 启用」的券可发放；
+// 券级校验（归属社区/状态）整体做一次，逐人校验（限领/总量/窗口）在各自事务内进行，
+// 单人失败不影响其他人，失败原因逐条返回给前端展示。
+// 参数：
+//   - ctx: 上下文
+//   - req: 发放请求（券 + 目标会员 + 经手人快照）
+//
+// 返回值：
+//   - *product.GrantCouponResp: 成功人数 + 逐人失败原因
+//   - error: 错误信息
+func (s *MarketingService) GrantCoupon(ctx context.Context, req *product.GrantCouponReq) (*product.GrantCouponResp, error) {
+	if req.CouponId <= 0 || len(req.UserIds) == 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "参数错误：请选择要发放的会员")
+	}
+	// 券级校验一次性完成（社区隔离 + 状态闸口），避免逐人加锁后整体失败
+	var c model.Coupon
+	if err := s.db.GetDb().WithContext(ctx).First(&c, req.CouponId).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bizerr.New(codes.NotFound, "优惠券不存在")
+		}
+		return nil, err
+	}
+	if req.CommunityId > 0 && c.CommunityID != req.CommunityId {
+		return nil, bizerr.New(codes.PermissionDenied, "无权操作其他社区的优惠券")
+	}
+	if c.PublishStatus != 1 {
+		return nil, bizerr.New(codes.FailedPrecondition, "优惠券未发布或已下架，不能发放")
+	}
+	if c.GrantStatus != 1 {
+		return nil, bizerr.New(codes.FailedPrecondition, "优惠券已停止发放")
+	}
+	if c.Status != 1 {
+		return nil, bizerr.New(codes.FailedPrecondition, "优惠券未启用")
+	}
+
+	resp := &product.GrantCouponResp{Failures: make([]*product.CouponGrantFailure, 0)}
+	now := time.Now()
+	for _, uid := range req.UserIds {
+		if uid <= 0 {
+			continue
+		}
+		// 逐人独立事务：事务内重新加锁读券，总量/限领校验基于最新计数
+		err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var cur model.Coupon
+			if err := tx.Clauses(lockClause()).First(&cur, req.CouponId).Error; err != nil {
+				return err
+			}
+			return s.grantToUserTx(tx, &cur, uid, 2, req.OperatorId, req.OperatorName, now)
+		})
+		if err != nil {
+			resp.Failures = append(resp.Failures, &product.CouponGrantFailure{UserId: uid, Reason: err.Error()})
+			continue
+		}
+		resp.GrantedCount++
+	}
+	return resp, nil
+}
+
+// grantToUserTx 事务内将券发放给单个会员（C 端自领与后台手动发放共用）
+// 调用方需保证券已加锁且状态校验通过；限领/总量/领取窗口/到期计算在此校验与落库
+// 参数：
+//   - tx: 事务对象
+//   - c: 已加锁的优惠券模型（ReceivedCount 会被自增）
+//   - userID: 目标会员
+//   - source: 来源 1用户自领 2后台发放
+//   - operatorID / operatorName: 后台发放时的经手人快照（自领传 0/空）
+//   - now: 当前时间
+//
+// 返回值：
+//   - error: 错误信息
+func (s *MarketingService) grantToUserTx(tx *gorm.DB, c *model.Coupon, userID int64, source int32, operatorID int64, operatorName string, now time.Time) error {
+	if c.ReceivedCount >= c.TotalCount {
+		return fmt.Errorf("优惠券已领完")
+	}
+	// 未配置时间窗口（nil）时不限制领取时间
+	if (c.StartTime != nil && now.Before(parseTime(*c.StartTime))) ||
+		(c.EndTime != nil && now.After(parseTime(*c.EndTime))) {
+		return fmt.Errorf("不在领取时间范围内")
+	}
+
+	var count int64
+	if err := tx.Model(&model.UserCoupon{}).Where("user_id = ? AND coupon_id = ?", userID, c.ID).Count(&count).Error; err != nil {
+		return err
+	}
+	if int32(count) >= c.PerUserLimit {
+		return fmt.Errorf("已超过每人限领数量")
+	}
+
+	// 到期时间按 expire_type：
+	// 1（默认）=领取后 valid_days 天；valid_days=0 回退领取窗口 end_time（存量口径）
+	// 2=固定可用范围，直接取 use_end_time
+	var expireAt *string
+	if c.ExpireType == 2 {
+		expireAt = c.UseEndTime
+	} else if c.ValidDays > 0 {
+		validUntil := now.AddDate(0, 0, int(c.ValidDays)).Format("2006-01-02 15:04:05")
+		expireAt = &validUntil
+	} else {
+		expireAt = c.EndTime
+	}
+	nowStr := now.Format("2006-01-02 15:04:05")
+	uc := &model.UserCoupon{
+		UserID:        userID,
+		CouponID:      c.ID,
+		Name:          c.Name,
+		Type:          c.Type,
+		Threshold:     c.Threshold,
+		DiscountValue: c.DiscountValue,
+		Status:        1,
+		Source:        source,
+		OperatorID:    operatorID,
+		OperatorName:  operatorName,
+		ExpireAt:      expireAt,
+		CreatedAt:     nowStr,
+		UpdatedAt:     nowStr,
+	}
+	if err := tx.Create(uc).Error; err != nil {
+		return err
+	}
+
+	c.ReceivedCount++
+	c.UpdatedAt = nowStr
+	return tx.Save(c).Error
 }
 
 // ListUserCoupons 查询用户优惠券列表
@@ -394,6 +472,56 @@ func (s *MarketingService) ListUserCoupons(ctx context.Context, req *product.Lis
 	}
 	err := db.Order("id desc").Find(&list).Error
 	return list, err
+}
+
+// ListCouponRecords 后台领取/发放记录查询（user_coupons 分页）
+// user_coupons 本身无社区字段，通过 coupons.community_id 关联把记录范围限定在本社区发放的券，防跨社区泄露
+// 参数：
+//   - ctx: 上下文
+//   - req: 查询请求（券/会员/状态/来源筛选 + 社区语境 + 分页）
+//
+// 返回值：
+//   - []*model.UserCoupon: 记录列表
+//   - int64: 总条数
+//   - error: 错误信息
+func (s *MarketingService) ListCouponRecords(ctx context.Context, req *product.ListCouponRecordsReq) ([]*model.UserCoupon, int64, error) {
+	db := s.db.GetDb().WithContext(ctx).Model(&model.UserCoupon{}).
+		Joins("JOIN coupons ON coupons.id = user_coupons.coupon_id").
+		Where("coupons.community_id = ?", req.CommunityId)
+	if req.CouponId > 0 {
+		db = db.Where("user_coupons.coupon_id = ?", req.CouponId)
+	}
+	if req.UserId > 0 {
+		db = db.Where("user_coupons.user_id = ?", req.UserId)
+	}
+	if req.Status > 0 {
+		db = db.Where("user_coupons.status = ?", req.Status)
+	}
+	if req.Source > 0 {
+		db = db.Where("user_coupons.source = ?", req.Source)
+	}
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	page, pageSize := int32(1), int32(10)
+	if req.Pagination != nil {
+		page = req.Pagination.Page
+		pageSize = req.Pagination.PageSize
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 10
+	}
+	if page <= 0 {
+		page = 1
+	}
+	var list []*model.UserCoupon
+	err := db.Select("user_coupons.*").
+		Order("user_coupons.id desc").
+		Offset(int((page - 1) * pageSize)).
+		Limit(int(pageSize)).
+		Find(&list).Error
+	return list, total, err
 }
 
 // UseCoupon 使用优惠券
@@ -1175,6 +1303,29 @@ func ToUserCouponInfo(uc *model.UserCoupon) *product.UserCouponInfo {
 		DiscountValue: uc.DiscountValue,
 		Status:        uc.Status,
 		ExpireAt:      ptrString(uc.ExpireAt),
+	}
+}
+
+// ToCouponRecordInfo 将用户优惠券模型转换为后台领取/发放记录信息
+func ToCouponRecordInfo(uc *model.UserCoupon) *product.CouponRecordInfo {
+	if uc == nil {
+		return nil
+	}
+	return &product.CouponRecordInfo{
+		Id:            uc.ID,
+		CouponId:      uc.CouponID,
+		CouponName:    uc.Name,
+		Type:          uc.Type,
+		Threshold:     uc.Threshold,
+		DiscountValue: uc.DiscountValue,
+		UserId:        uc.UserID,
+		Status:        uc.Status,
+		OrderId:       uc.OrderID,
+		Source:        uc.Source,
+		OperatorId:    uc.OperatorID,
+		OperatorName:  uc.OperatorName,
+		ExpireAt:      ptrString(uc.ExpireAt),
+		CreatedAt:     uc.CreatedAt,
 	}
 }
 

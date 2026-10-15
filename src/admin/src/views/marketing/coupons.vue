@@ -3,9 +3,18 @@
     <n-space vertical>
       <n-space>
         <n-button type="primary" @click="router.push('/marketing/coupons/create')">创建优惠券</n-button>
+        <n-button @click="router.push('/marketing/coupon-records')">领取/发放记录</n-button>
       </n-space>
       <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" />
     </n-space>
+
+    <!-- 手动发放：会员多选弹窗（公共 UserPicker，收银台/发券共用） -->
+    <UserPicker
+      v-model:show="pickerShow"
+      multiple
+      :title="pickerTitle"
+      @confirm="onGrantConfirm"
+    />
   </n-card>
 </template>
 
@@ -16,13 +25,15 @@ import { ref, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getCouponList, deleteCoupon, updateCoupon } from '@/api/marketing'
-import type { Coupon } from '@/api/types'
+import { getCouponList, deleteCoupon, updateCoupon, grantCoupon } from '@/api/marketing'
+import type { Coupon, User } from '@/api/types'
+import UserPicker from '@/components/UserPicker.vue'
 
 /**
  * 优惠券管理页面
  * 状态机：publish_status（草稿/已发布/已下架）+ grant_status（发放中/停止发放）
  * 编辑边界（决策点⑧）：草稿全字段可编辑；已发布/已下架仅可补充数量/停发恢复/规则文案
+ * 手动发放（M②期）：仅已发布 + 发放中的券可批量发放给指定会员，逐人独立校验
  */
 const router = useRouter()
 const dialog = useDialog()
@@ -30,6 +41,12 @@ const message = useMessage()
 const list = ref<Coupon[]>([])
 const loading = ref(false)
 const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
+
+/** 手动发放弹窗状态 */
+const pickerShow = ref(false)
+const pickerTitle = ref('选择会员')
+const grantingCoupon = ref<Coupon | null>(null)
+const granting = ref(false)
 
 const typeMap: Record<number, string> = {
   1: '满减券',
@@ -85,7 +102,7 @@ const columns: DataTableColumns<Coupon> = [
   {
     title: '操作',
     key: 'actions',
-    width: 260,
+    width: 320,
     render(row) {
       const actions = [
         h(NButton, { size: 'small', onClick: () => router.push(`/marketing/coupons/${row.id}/edit`) }, { default: () => '编辑' }),
@@ -112,7 +129,16 @@ const columns: DataTableColumns<Coupon> = [
             h(NButton, { size: 'small', type: 'success', onClick: () => publish(row) }, { default: () => '重新上架' })
           )
         }
+        // 手动发放：仅发放中的已发布券可发（停发/下架后端也会拦截）
+        if (row.grant_status === 1) {
+          actions.push(
+            h(NButton, { size: 'small', type: 'info', loading: granting.value, onClick: () => openGrant(row) }, { default: () => '手动发放' })
+          )
+        }
       }
+      actions.push(
+        h(NButton, { size: 'small', onClick: () => router.push({ path: '/marketing/coupon-records', query: { coupon_id: String(row.id) } }) }, { default: () => '发放记录' })
+      )
       actions.push(
         h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' })
       )
@@ -170,6 +196,51 @@ async function toggleGrant(row: Coupon) {
     loadData()
   } else {
     message.error(res.data.message || '操作失败')
+  }
+}
+
+/** 打开手动发放弹窗（提示余量，避免超发后批量失败） */
+function openGrant(row: Coupon) {
+  grantingCoupon.value = row
+  pickerTitle.value = `发放「${row.name}」给会员`
+  pickerShow.value = true
+}
+
+/** 确认发放：批量提交，展示成功人数与逐人失败原因 */
+async function onGrantConfirm(users: User[]) {
+  const coupon = grantingCoupon.value
+  if (!coupon || !users.length) return
+  const remaining = coupon.total_count - coupon.received_count
+  if (users.length > remaining) {
+    message.warning(`当前仅剩 ${remaining} 个发放名额，已选 ${users.length} 人，请分批发放`)
+    return
+  }
+  granting.value = true
+  try {
+    const res = await grantCoupon(coupon.id, users.map((u) => u.id))
+    if (res.data.code === 0) {
+      const { granted_count, failures } = res.data.data
+      if (!failures.length) {
+        message.success(`已成功发放 ${granted_count} 人`)
+      } else {
+        // 部分失败：逐人原因弹窗展示（超限/领完等）
+        const lines = failures.map((f) => {
+          const u = users.find((x) => x.id === f.user_id)
+          return `· ${u ? u.nickname || `会员#${f.user_id}` : `会员#${f.user_id}`}：${f.reason}`
+        })
+        dialog.warning({
+          title: '发放结果',
+          content: `成功 ${granted_count} 人，失败 ${failures.length} 人：` + lines.join(''),
+          positiveText: '知道了',
+        })
+      }
+      pickerShow.value = false
+      loadData()
+    } else {
+      message.error(res.data.message || '发放失败')
+    }
+  } finally {
+    granting.value = false
   }
 }
 

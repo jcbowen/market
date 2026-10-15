@@ -60,6 +60,10 @@ service ProductService {
   rpc UseCoupon(UseCouponReq) returns (common.CommonResponse);
   // 取消/退款时回补用户券（按订单 ID 找到已核销的 user_coupon，幂等）
   rpc ReleaseCoupon(ReleaseCouponReq) returns (common.CommonResponse);
+  // 后台手动发放优惠券给指定会员（批量，逐人校验限领/总量/发放状态）
+  rpc GrantCoupon(GrantCouponReq) returns (GrantCouponResp);
+  // 后台领取/发放记录查询（user_coupons 按社区语境过滤）
+  rpc ListCouponRecords(ListCouponRecordsReq) returns (ListCouponRecordsResp);
 
   rpc ListFlashSales(ListFlashSalesReq) returns (ListFlashSalesResp);
   rpc GetFlashSale(GetFlashSaleReq) returns (FlashSaleDetail);
@@ -686,6 +690,71 @@ message ListUserCouponsResp {
 message UseCouponReq {
   int64 user_coupon_id = 1;
   int64 order_id = 2;
+}
+
+// GrantCouponReq 后台手动发放优惠券
+message GrantCouponReq {
+  int64 coupon_id = 1;
+  // 发放目标会员（批量；逐人独立校验，单人不合格不影响其他人）
+  repeated int64 user_ids = 2;
+  // 发放操作者（管理员）ID 与用户名快照
+  int64 operator_id = 3;
+  string operator_name = 4;
+  // 操作者社区语境（>0 时校验券归属社区，跨社区发放直接拒绝）
+  int64 community_id = 5;
+}
+
+// CouponGrantFailure 单个会员发放失败原因
+message CouponGrantFailure {
+  int64 user_id = 1;
+  string reason = 2;
+}
+
+message GrantCouponResp {
+  // 实际成功发放人数
+  int32 granted_count = 1;
+  // 发放失败的会员及原因（超限/停发/下架等）
+  repeated CouponGrantFailure failures = 2;
+}
+
+// ListCouponRecordsReq 后台领取/发放记录查询
+message ListCouponRecordsReq {
+  // 按券筛选（0=该社区全部券的记录）
+  int64 coupon_id = 1;
+  // 按会员筛选（0=全部）
+  int64 user_id = 2;
+  // 状态筛选：1未使用 2已使用 3已过期（0=全部）
+  int32 status = 3;
+  // 来源筛选：1用户自领 2后台发放（0=全部）
+  int32 source = 4;
+  // 社区语境（用于把记录范围限定在本社区发放的券，防跨社区泄露）
+  int64 community_id = 5;
+  common.Pagination pagination = 6;
+}
+
+message CouponRecordInfo {
+  int64 id = 1;
+  int64 coupon_id = 2;
+  string coupon_name = 3;
+  int32 type = 4;
+  double threshold = 5;
+  double discount_value = 6;
+  int64 user_id = 7;
+  // 会员昵称/手机号由 gateway 按 user_id 批量回填
+  string user_nickname = 8;
+  string user_phone = 9;
+  int32 status = 10;        // 1未使用 2已使用 3已过期
+  int64 order_id = 11;
+  int32 source = 12;        // 1用户自领 2后台发放
+  int64 operator_id = 13;
+  string operator_name = 14;
+  string expire_at = 15;
+  string created_at = 16;   // 领取/发放时间
+}
+
+message ListCouponRecordsResp {
+  repeated CouponRecordInfo list = 1;
+  common.PaginationResponse pagination = 2;
 }
 
 message ListFlashSalesReq {

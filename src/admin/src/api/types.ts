@@ -526,6 +526,31 @@ export interface Coupon {
 }
 
 /**
+ * 优惠券领取/发放记录（后台）
+ */
+export interface CouponRecord {
+  id: number
+  coupon_id: number
+  coupon_name: string
+  type: number
+  threshold: number
+  discount_value: number
+  user_id: number
+  user_nickname: string
+  user_phone: string
+  /** 1未使用 2已使用 3已过期 */
+  status: number
+  order_id: number
+  /** 来源：1用户自领 2后台发放 */
+  source: number
+  operator_id: number
+  operator_name: string
+  expire_at: string
+  /** 领取/发放时间 */
+  created_at: string
+}
+
+/**
  * 秒杀活动
  */
 export interface Seckill {

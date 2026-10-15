@@ -510,6 +510,40 @@ func (s *server) ReleaseCoupon(ctx stdctx.Context, req *product.ReleaseCouponReq
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// GrantCoupon 后台手动发放优惠券（批量，逐人独立校验）
+func (s *server) GrantCoupon(ctx stdctx.Context, req *product.GrantCouponReq) (*product.GrantCouponResp, error) {
+	resp, err := s.marketingService.GrantCoupon(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
+}
+
+// ListCouponRecords 后台领取/发放记录查询
+func (s *server) ListCouponRecords(ctx stdctx.Context, req *product.ListCouponRecordsReq) (*product.ListCouponRecordsResp, error) {
+	list, total, err := s.marketingService.ListCouponRecords(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	page, pageSize := int32(1), int32(10)
+	if req.Pagination != nil {
+		page = req.Pagination.Page
+		pageSize = req.Pagination.PageSize
+	}
+	resp := &product.ListCouponRecordsResp{
+		List: make([]*product.CouponRecordInfo, 0, len(list)),
+		Pagination: &common.PaginationResponse{
+			Total:    int32(total),
+			Page:     page,
+			PageSize: pageSize,
+		},
+	}
+	for _, uc := range list {
+		resp.List = append(resp.List, service.ToCouponRecordInfo(uc))
+	}
+	return resp, nil
+}
+
 // ReceiveCoupon 领取优惠券
 func (s *server) ReceiveCoupon(ctx stdctx.Context, req *product.ReceiveCouponReq) (*common.CommonResponse, error) {
 	if err := s.marketingService.ReceiveCoupon(ctx, req); err != nil {

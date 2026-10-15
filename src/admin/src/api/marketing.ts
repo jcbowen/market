@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, Banner, Coupon, FreeShipping, FullReduction, PageParams, PageResult, Seckill } from './types'
+import type { ApiResult, Banner, Coupon, CouponRecord, FreeShipping, FullReduction, PageParams, PageResult, Seckill } from './types'
 
 /**
  * 营销管理相关 API
@@ -56,6 +56,32 @@ export function deleteCoupon(id: number) {
   return request<ApiResult<null>>({
     url: `/api/v1/admin/coupons/${id}`,
     method: 'DELETE',
+  })
+}
+
+/**
+ * 手动发放优惠券（批量选会员，逐人独立校验，单人失败不影响其他人）
+ * @param id 优惠券 ID
+ * @param userIds 目标会员 ID 列表
+ * @returns 成功发放人数 + 失败列表（user_id + reason）
+ */
+export function grantCoupon(id: number, userIds: number[]) {
+  return request<ApiResult<{ granted_count: number; failures: { user_id: number; reason: string }[] }>>({
+    url: `/api/v1/admin/coupons/${id}/grant`,
+    method: 'POST',
+    data: { user_ids: userIds },
+  })
+}
+
+/**
+ * 领取/发放记录（user_coupons，按当前社区语境过滤）
+ * @param params 筛选参数（券/会员/状态/来源）
+ */
+export function getCouponRecords(params: PageParams & { coupon_id?: number; user_id?: number; status?: number; source?: number }) {
+  return request<ApiResult<PageResult<CouponRecord>>>({
+    url: '/api/v1/admin/coupon-records',
+    method: 'GET',
+    params,
   })
 }
 

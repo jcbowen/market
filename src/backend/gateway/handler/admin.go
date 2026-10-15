@@ -2676,6 +2676,98 @@ func (h *AdminHandler) DeleteCoupon(c *gin.Context) {
 	response.Success(c, gin.H{"id": id})
 }
 
+// GrantCouponReq 手动发放优惠券请求
+type GrantCouponReq struct {
+	UserIDs []int64 `json:"user_ids" binding:"required,min=1"`
+}
+
+// GrantCoupon 手动发放优惠券（M②期：后台选会员批量发券，逐人独立校验）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GrantCoupon(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req GrantCouponReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.productClient.GrantCoupon(c.Request.Context(), &product.GrantCouponReq{
+		CouponId:     id,
+		UserIds:      req.UserIDs,
+		OperatorId:   uc.UserID,
+		OperatorName: c.GetString("admin_username"),
+		CommunityId:  h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	// failures 为空时输出空数组，避免 JSON null
+	failures := resp.Failures
+	if failures == nil {
+		failures = make([]*product.CouponGrantFailure, 0)
+	}
+	response.Success(c, gin.H{
+		"granted_count": resp.GrantedCount,
+		"failures":      failures,
+	})
+}
+
+// ListCouponRecords 领取/发放记录（user_coupons 按当前社区语境过滤）
+// 会员昵称/手机号按记录 user_id 逐个回填（与订单列表同一模式）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ListCouponRecords(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	couponID, _ := strconv.ParseInt(c.Query("coupon_id"), 10, 64)
+	userID, _ := strconv.ParseInt(c.Query("user_id"), 10, 64)
+	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
+	source, _ := strconv.Atoi(c.DefaultQuery("source", "0"))
+
+	resp, err := h.productClient.ListCouponRecords(c.Request.Context(), &product.ListCouponRecordsReq{
+		CouponId:    couponID,
+		UserId:      userID,
+		Status:      int32(status),
+		Source:      int32(source),
+		CommunityId: h.getAdminCommunityID(c),
+		Pagination: &common.Pagination{
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	// 回填会员昵称/手机号（同人缓存避免重复 RPC）
+	userCache := make(map[int64]*user.UserInfo)
+	for _, r := range resp.List {
+		if r.UserId <= 0 {
+			continue
+		}
+		if u, ok := userCache[r.UserId]; ok {
+			r.UserNickname = u.Nickname
+			r.UserPhone = u.Phone
+			continue
+		}
+		u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: r.UserId})
+		if err == nil && u != nil {
+			userCache[r.UserId] = u
+			r.UserNickname = u.Nickname
+			r.UserPhone = u.Phone
+		}
+	}
+
+	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
+}
+
 // ListAdminFlashSales 获取管理端秒杀活动列表
 // 参数：
 //   - c: gin 上下文

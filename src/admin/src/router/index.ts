@@ -133,6 +133,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '编辑优惠券', permission: 'marketing:update', group: '营销管理', hidden: true },
       },
       {
+        path: 'marketing/coupon-records',
+        name: 'CouponRecords',
+        component: () => import('@/views/marketing/coupon-records.vue'),
+        meta: { title: '领取/发放记录', permission: 'marketing:view', group: '营销管理' },
+      },
+      {
         path: 'marketing/flash-sales',
         name: 'FlashSaleList',
         component: () => import('@/views/marketing/flash-sales.vue'),

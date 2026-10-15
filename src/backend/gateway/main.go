@@ -271,6 +271,9 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/coupons", gwMiddleware.RequirePermission("marketing:create"), adminHandler.CreateCoupon)
 			authAdmin.PUT("/coupons/:id", gwMiddleware.RequirePermission("marketing:update"), adminHandler.UpdateCoupon)
 			authAdmin.DELETE("/coupons/:id", gwMiddleware.RequirePermission("marketing:delete"), adminHandler.DeleteCoupon)
+			// 手动发放优惠券（M②期）+ 领取/发放记录
+			authAdmin.POST("/coupons/:id/grant", gwMiddleware.RequirePermission("marketing:update"), adminHandler.GrantCoupon)
+			authAdmin.GET("/coupon-records", gwMiddleware.RequirePermission("marketing:view"), adminHandler.ListCouponRecords)
 
 			authAdmin.GET("/flash-sales", gwMiddleware.RequirePermission("marketing:view"), adminHandler.ListAdminFlashSales)
 			authAdmin.POST("/flash-sales", gwMiddleware.RequirePermission("marketing:create"), adminHandler.CreateFlashSale)

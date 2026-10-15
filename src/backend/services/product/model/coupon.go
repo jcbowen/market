@@ -56,6 +56,7 @@ func (Coupon) TableName() string {
 // UserCoupon 用户优惠券模型
 // 记录用户领取的优惠券及使用状态
 // 状态：1未使用 2已使用 3已过期
+// 来源（source）：1用户自领 2后台手动发放；后台发放时记录经手人（operator_id/operator_name 快照）
 //
 //nolint:lll
 //go:generate go tool gormgen -struct UserCoupon
@@ -70,6 +71,9 @@ type UserCoupon struct {
 	DiscountValue float64 `gorm:"column:discount_value;type:decimal(10,2);default:0;comment:优惠值（满减金额 / 折扣率如 0.85）" json:"discount_value"`
 	Status     int32   `gorm:"column:status;type:tinyint;default:1;comment:1未使用 2已使用 3已过期" json:"status"`
 	OrderID    int64   `gorm:"column:order_id;type:bigint;default:0;comment:关联订单 ID" json:"order_id"`
+	Source       int32  `gorm:"column:source;type:tinyint;default:1;comment:来源 1用户自领 2后台发放" json:"source"`
+	OperatorID   int64  `gorm:"column:operator_id;type:bigint;default:0;comment:发放经手人 ID（后台发放时）" json:"operator_id"`
+	OperatorName string `gorm:"column:operator_name;type:varchar(100);comment:发放经手人用户名快照" json:"operator_name"`
 	ExpireAt   *string `gorm:"column:expire_at;type:datetime;comment:过期时间（领取时间 + valid_days）" json:"expire_at"`
 	CreatedAt  string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	UpdatedAt  string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
