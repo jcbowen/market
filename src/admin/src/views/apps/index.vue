@@ -1,5 +1,5 @@
 <template>
-  <n-card title="应用" class="apps-card">
+  <n-card title="应用管理" class="apps-card">
     <template #header-extra>
       <n-input
         v-model:value="keyword"
