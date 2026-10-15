@@ -165,8 +165,8 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 			// 供前端区分货到付款单的"取消订单/申请退款"按钮显示
 			"pay_type": h.orderPayType(c, o.Id),
 			// 订单来源（1=C端用户 2=收银台代客）：门店单在 C 端展示但只读（隐藏操作按钮）
-			"source":    o.Source,
-			"items":     items,
+			"source":     o.Source,
+			"items":      items,
 			"created_at": o.CreatedAt,
 			// 待支付订单的超时截止时间，供前端展示倒计时（与 order-service 超时取消同一配置）
 			"expire_at": orderExpireAt(o.Status, o.CreatedAt, h.orderTimeoutSec),
@@ -342,16 +342,16 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"pay_type":        h.orderPayType(c, o.Id),
 		"pay_type_text":   h.orderPayTypeText(c, o.Id),
 		// 订单来源（1=C端用户 2=收银台代客）：门店单在 C 端展示但只读（隐藏操作按钮）
-		"source":          o.Source,
-		"items":           items,
-		"address":         address,
-		"remark":          o.Remark,
-		"created_at":      o.CreatedAt,
+		"source":     o.Source,
+		"items":      items,
+		"address":    address,
+		"remark":     o.Remark,
+		"created_at": o.CreatedAt,
 		// 自提核销码（仅自提单返回，C 端订单详情展示取货码/二维码）
-		"pickup_code": o.PickupCode,
-		"paid_at":         o.PayTime,
-		"delivered_at":    o.DeliverTime,
-		"received_at":     o.CompleteTime,
+		"pickup_code":  o.PickupCode,
+		"paid_at":      o.PayTime,
+		"delivered_at": o.DeliverTime,
+		"received_at":  o.CompleteTime,
 		// 待支付订单的超时截止时间，供前端展示倒计时（与 order-service 超时取消同一配置）
 		"expire_at": orderExpireAt(o.Status, o.CreatedAt, h.orderTimeoutSec),
 	}
@@ -597,8 +597,12 @@ func clientOrderStatusText(status, deliveryType int32) string {
 	case 1:
 		return "待支付"
 	case 2:
-		if deliveryType == 1 {
+		switch deliveryType {
+		case 1:
 			return "待自提"
+		case 3:
+			// 到店单（收银台即买即走）：已支付即完成消费，无待自提/待发货语义
+			return "已支付"
 		}
 		return "待发货"
 	case 3:
@@ -606,6 +610,9 @@ func clientOrderStatusText(status, deliveryType int32) string {
 	case 4:
 		if deliveryType == 1 {
 			return "待自提"
+		}
+		if deliveryType == 3 {
+			return "已支付"
 		}
 		return "待收货"
 	case 5:

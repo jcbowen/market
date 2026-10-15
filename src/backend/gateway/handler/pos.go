@@ -30,6 +30,8 @@ const posPayTypeCash int32 = 4
 type PosOrderItemReq struct {
 	SkuID    int64 `json:"sku_id" binding:"required"`
 	Quantity int32 `json:"quantity" binding:"required,min=1"`
+	// 单品改价：>0 时以该价成交（仅对当前订单生效，不改商品档案价）；0/缺省=按服务端实时价
+	Price float64 `json:"price"`
 }
 
 // CreatePosOrderReq 代客下单请求（当场结清）
@@ -37,19 +39,22 @@ type CreatePosOrderReq struct {
 	// 会员 ID（0=散客）
 	UserID int64 `json:"user_id"`
 	// 支付方式（4=现金；0 时默认现金。后续扩展付款码渠道）
-	PayType        int32             `json:"pay_type"`
-	DeliveryType   int32             `json:"delivery_type" binding:"required,oneof=1 2"`
-	ContactName    string            `json:"contact_name"`
-	ContactPhone   string            `json:"contact_phone"`
-	ContactAddress string            `json:"contact_address"`
-	Remark         string            `json:"remark"`
-	CouponID       int64             `json:"coupon_id"`
+	PayType int32 `json:"pay_type"`
+	// 配送类型：1自提 2配送 3到店（到店仅收银台可用，即买即走，不生成取货码、无需核销）
+	DeliveryType   int32  `json:"delivery_type" binding:"required,oneof=1 2 3"`
+	ContactName    string `json:"contact_name"`
+	ContactPhone   string `json:"contact_phone"`
+	ContactAddress string `json:"contact_address"`
+	Remark         string `json:"remark"`
+	CouponID       int64  `json:"coupon_id"`
+	// 手动优惠总额（收银台抹零/整单改价折算）：服务端校验不可超应付
+	ManualDiscount float64           `json:"manual_discount"`
 	Items          []PosOrderItemReq `json:"items" binding:"required,min=1"`
 }
 
 // CreatePosOrder 代客下单（收银台）
-// 流程：创建订单（source=2，经手人=当前管理员）→ 按所选支付方式创建支付单（创建即支付成功，
-// 含 0 元全额优惠单）→ 返回订单信息。
+// 流程：校验进行中班次（强制开工，无班次拒绝收银）→ 创建订单（source=2，经手人=当前管理员，
+// 归属当前班次）→ 按所选支付方式创建支付单（创建即支付成功，含 0 元全额优惠单）→ 返回订单信息。
 //
 // 接口: POST /api/v1/admin/pos/orders
 //
@@ -77,9 +82,25 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 	}
 
 	uc := appcontext.GetUserContext(c)
+	communityID := h.getAdminCommunityID(c)
+
+	// 强制开工：无进行中班次不能收银（交班体系，后端强制校验）
+	shiftResp, err := h.orderClient.GetCurrentShift(c.Request.Context(), &order.GetCurrentShiftReq{
+		CommunityId: communityID,
+		OperatorId:  uc.UserID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	if shiftResp == nil || shiftResp.Id <= 0 {
+		response.Error(c, errcode.ParamError, "当前没有进行中的班次，请先开工后再收银")
+		return
+	}
+
 	items := make([]*order.OrderItem, 0, len(req.Items))
 	for _, item := range req.Items {
-		items = append(items, &order.OrderItem{SkuId: item.SkuID, Quantity: item.Quantity})
+		items = append(items, &order.OrderItem{SkuId: item.SkuID, Quantity: item.Quantity, Price: item.Price})
 	}
 
 	// 散客单不允许用券（券挂在会员名下）
@@ -90,7 +111,7 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 
 	resp, err := h.orderClient.CreateOrder(c.Request.Context(), &order.CreateOrderReq{
 		UserId:         req.UserID,
-		CommunityId:    h.getAdminCommunityID(c),
+		CommunityId:    communityID,
 		DeliveryType:   req.DeliveryType,
 		Remark:         req.Remark,
 		CouponId:       couponID,
@@ -101,6 +122,8 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 		ContactName:    req.ContactName,
 		ContactPhone:   req.ContactPhone,
 		ContactAddress: req.ContactAddress,
+		ManualDiscount: req.ManualDiscount,
+		ShiftId:        shiftResp.Id,
 	})
 	if err != nil {
 		log.Printf("收银台创建订单失败: %v", err)

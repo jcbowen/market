@@ -677,7 +677,7 @@ func (h *AdminHandler) ListCommunityAdmins(c *gin.Context) {
 
 	resp, err := h.userClient.ListAdmins(c.Request.Context(), &user.ListAdminsReq{
 		CommunityId: communityID,
-		Pagination: &common.Pagination{Page: 1, PageSize: 100},
+		Pagination:  &common.Pagination{Page: 1, PageSize: 100},
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -739,13 +739,13 @@ func (h *AdminHandler) AddCommunityAdmin(c *gin.Context) {
 	}
 
 	admin, err := h.userClient.CreateAdmin(c.Request.Context(), &user.CreateAdminReq{
-		Username:            req.Username,
-		Password:            req.Password,
-		RealName:            req.RealName,
-		Phone:               req.Phone,
-		CommunityId:         communityID,
+		Username:             req.Username,
+		Password:             req.Password,
+		RealName:             req.RealName,
+		Phone:                req.Phone,
+		CommunityId:          communityID,
 		AssignCommunityAdmin: true,
-		OperatorIsSuper:     true,
+		OperatorIsSuper:      true,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -1075,7 +1075,7 @@ type UpdateCommunityPermissionsReq struct {
 // 对应页面均在系统管理空间（社区管理/行政区划/支付·售后·附件配置），业务菜单不展示；
 // 保存社区权限时自动剔除（前端同样过滤，此处兜底），存量 ["*"] 上限社区保存一次即收敛
 var systemLevelPermissions = map[string]struct{}{
-	"community:view":   {}, "community:create": {}, "community:update": {}, "community:delete": {},
+	"community:view": {}, "community:create": {}, "community:update": {}, "community:delete": {},
 	"region:view": {}, "region:update": {},
 	"settings:view": {}, "settings:update": {},
 }
@@ -1822,6 +1822,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 		EndTime:       c.Query("end_time"),
 		ReceiverName:  c.Query("receiver_name"),
 		ReceiverPhone: c.Query("receiver_phone"),
+		PickupCode:    c.Query("pickup_code"),
 		Pagination: &common.Pagination{
 			Page:     int32(page),
 			PageSize: int32(pageSize),
@@ -1865,6 +1866,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"community_name":  communityNames[o.CommunityId],
 			"total_amount":    o.TotalAmount,
 			"discount_amount": o.DiscountAmount,
+			"manual_discount": o.ManualDiscount,
 			"delivery_fee":    o.DeliveryFee,
 			"pay_amount":      o.PayAmount,
 			"delivery_type":   o.DeliveryType,
@@ -1872,6 +1874,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"status_text":     orderStatusText(o.Status, o.DeliveryType),
 			"source":          o.Source,
 			"operator_name":   o.OperatorName,
+			"shift_id":        o.ShiftId,
 			"created_at":      o.CreatedAt,
 		})
 	}
@@ -1916,15 +1919,17 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 	items := make([]gin.H, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		items = append(items, gin.H{
-			"id":            item.Id,
-			"product_id":    item.ProductId,
-			"sku_id":        item.SkuId,
-			"product_name":  item.ProductName,
-			"sku_name":      item.SpecName,
-			"product_image": item.ProductImage,
-			"price":         item.Price,
-			"quantity":      item.Quantity,
-			"total_amount":  item.TotalPrice,
+			"id":             item.Id,
+			"product_id":     item.ProductId,
+			"sku_id":         item.SkuId,
+			"product_name":   item.ProductName,
+			"sku_name":       item.SpecName,
+			"product_image":  item.ProductImage,
+			"price":          item.Price,
+			"quantity":       item.Quantity,
+			"total_amount":   item.TotalPrice,
+			"original_price": item.OriginalPrice,
+			"price_modified": item.PriceModified,
 		})
 	}
 
@@ -1946,6 +1951,7 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"user_name":       userName,
 		"total_amount":    o.TotalAmount,
 		"discount_amount": o.DiscountAmount,
+		"manual_discount": o.ManualDiscount,
 		"delivery_fee":    o.DeliveryFee,
 		"pay_amount":      o.PayAmount,
 		"delivery_type":   o.DeliveryType,
@@ -1962,6 +1968,8 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"express_no":      o.ExpressNo,
 		"source":          o.Source,
 		"operator_name":   o.OperatorName,
+		"shift_id":        o.ShiftId,
+		"pickup_code":     o.PickupCode,
 		"created_at":      o.CreatedAt,
 		"items":           items,
 		"address":         address,
@@ -2680,24 +2688,24 @@ func (h *AdminHandler) CreateCoupon(c *gin.Context) {
 
 // UpdateCouponReq 更新优惠券请求
 type UpdateCouponReq struct {
-	Name          string             `json:"name"`
-	Status        int32              `json:"status"`
-	Type          int32              `json:"type"`
-	Threshold     float64            `json:"threshold"`
-	DiscountValue float64            `json:"discount_value"`
-	TotalCount    *int32             `json:"total_count"` // 补充数量
-	PerUserLimit  int32              `json:"per_user_limit"`
-	StartTime     string             `json:"start_time"`
-	EndTime       string             `json:"end_time"`
-	ValidDays     int32              `json:"valid_days"`
-	PublishStatus int32              `json:"publish_status"` // 发布/下架状态机
-	GrantStatus   *int32             `json:"grant_status"`   // 0停止发放 1恢复发放；nil=不修改
-	IsCenterVisible *bool            `json:"is_center_visible"`
-	ExpireType    int32              `json:"expire_type"`
-	UseStartTime  string             `json:"use_start_time"`
-	UseEndTime    string             `json:"use_end_time"`
-	RuleText      *string            `json:"rule_text"` // 指针区分未传与清空
-	Scopes        *[]CouponScopeInput `json:"scopes"`   // nil=不修改；空数组=清空（恢复全场）
+	Name            string              `json:"name"`
+	Status          int32               `json:"status"`
+	Type            int32               `json:"type"`
+	Threshold       float64             `json:"threshold"`
+	DiscountValue   float64             `json:"discount_value"`
+	TotalCount      *int32              `json:"total_count"` // 补充数量
+	PerUserLimit    int32               `json:"per_user_limit"`
+	StartTime       string              `json:"start_time"`
+	EndTime         string              `json:"end_time"`
+	ValidDays       int32               `json:"valid_days"`
+	PublishStatus   int32               `json:"publish_status"` // 发布/下架状态机
+	GrantStatus     *int32              `json:"grant_status"`   // 0停止发放 1恢复发放；nil=不修改
+	IsCenterVisible *bool               `json:"is_center_visible"`
+	ExpireType      int32               `json:"expire_type"`
+	UseStartTime    string              `json:"use_start_time"`
+	UseEndTime      string              `json:"use_end_time"`
+	RuleText        *string             `json:"rule_text"` // 指针区分未传与清空
+	Scopes          *[]CouponScopeInput `json:"scopes"`    // nil=不修改；空数组=清空（恢复全场）
 }
 
 // UpdateCoupon 更新优惠券（编辑放开，决策点⑧）：
@@ -3106,11 +3114,11 @@ func (h *AdminHandler) ListFreeShippings(c *gin.Context) {
 
 // CreateFreeShippingReq 创建免配送费活动请求
 type CreateFreeShippingReq struct {
-	Name      string                    `json:"name" binding:"required"`
-	Threshold float64                   `json:"threshold" binding:"required"`
-	StartTime string                    `json:"start_time"`
-	EndTime   string                    `json:"end_time"`
-	Scopes    []FreeShippingScopeInput  `json:"scopes"`
+	Name      string                   `json:"name" binding:"required"`
+	Threshold float64                  `json:"threshold" binding:"required"`
+	StartTime string                   `json:"start_time"`
+	EndTime   string                   `json:"end_time"`
+	Scopes    []FreeShippingScopeInput `json:"scopes"`
 }
 
 // CreateFreeShipping 创建免配送费活动
@@ -3140,11 +3148,11 @@ func (h *AdminHandler) CreateFreeShipping(c *gin.Context) {
 
 // UpdateFreeShippingReq 更新免配送费活动请求
 type UpdateFreeShippingReq struct {
-	Name      string                   `json:"name"`
-	Threshold float64                  `json:"threshold"`
-	StartTime string                   `json:"start_time"`
-	EndTime   string                   `json:"end_time"`
-	Status    int32                    `json:"status"`
+	Name      string                    `json:"name"`
+	Threshold float64                   `json:"threshold"`
+	StartTime string                    `json:"start_time"`
+	EndTime   string                    `json:"end_time"`
+	Status    int32                     `json:"status"`
 	Scopes    *[]FreeShippingScopeInput `json:"scopes"` // nil=不修改范围；空数组=清空范围
 }
 
@@ -3677,6 +3685,13 @@ func (h *AdminHandler) UpdateCommunity(c *gin.Context) {
 		return
 	}
 
+	// 渠道开关不在超管编辑表单内：整表覆盖前回填当前值，避免被 bool 零值误关
+	cur, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
 	resp, err := h.userClient.UpdateCommunity(c.Request.Context(), &user.UpdateCommunityInfoReq{
 		Id:              id,
 		Name:            req.Name,
@@ -3699,6 +3714,9 @@ func (h *AdminHandler) UpdateCommunity(c *gin.Context) {
 		ProvinceCode:    req.ProvinceCode,
 		CityCode:        req.CityCode,
 		DistrictCode:    req.DistrictCode,
+		// 渠道开关保持当前值（门店设置接口维护）
+		EnableSelfPickup: cur.EnableSelfPickup,
+		EnableDelivery:   cur.EnableDelivery,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -3739,6 +3757,9 @@ type CommunityProfileReq struct {
 	DeliveryRangeKm      float64 `json:"delivery_range_km"`
 	BusinessHours        string  `json:"business_hours"`
 	AllowOutsideDelivery bool    `json:"allow_outside_delivery"`
+	// 取货渠道开关（社区级配置，C 端与收银台共用；到店不受控恒可用）
+	EnableSelfPickup bool `json:"enable_self_pickup"`
+	EnableDelivery   bool `json:"enable_delivery"`
 }
 
 // GetCommunityProfile 获取当前社区门店设置
@@ -3816,6 +3837,8 @@ func (h *AdminHandler) UpdateCommunityProfile(c *gin.Context) {
 		DeliveryRangeKm:      req.DeliveryRangeKm,
 		BusinessHours:        req.BusinessHours,
 		AllowOutsideDelivery: req.AllowOutsideDelivery,
+		EnableSelfPickup:     req.EnableSelfPickup,
+		EnableDelivery:       req.EnableDelivery,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -4059,10 +4082,11 @@ func (h *AdminHandler) toAdminVO(admin *user.AdminInfo) gin.H {
 
 // orderStatusText 将订单状态码转换为后台展示文案
 // 与 C 端 clientOrderStatusText 对齐：自提单的"已支付/已发货"展示为「待自提」，
-// 避免后台对自提单误显示「待发货」并引导管理员填写物流
+// 避免后台对自提单误显示「待发货」并引导管理员填写物流；
+// 到店单（delivery_type=3）无物流/自提语义，已支付即展示「已支付」
 // 参数：
 //   - status: 订单状态码
-//   - deliveryType: 配送方式（1 自提 2 配送）
+//   - deliveryType: 配送方式（1 自提 2 配送 3 到店）
 //
 // 返回值：
 //   - string: 状态中文描述
@@ -4071,8 +4095,11 @@ func orderStatusText(status, deliveryType int32) string {
 	case 1:
 		return "待支付"
 	case 2:
-		if deliveryType == 1 {
+		switch deliveryType {
+		case 1:
 			return "待自提"
+		case 3:
+			return "已支付"
 		}
 		return "待发货"
 	case 3:
@@ -4080,6 +4107,9 @@ func orderStatusText(status, deliveryType int32) string {
 	case 4:
 		if deliveryType == 1 {
 			return "待自提"
+		}
+		if deliveryType == 3 {
+			return "已支付"
 		}
 		return "已发货"
 	case 5:

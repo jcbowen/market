@@ -46,8 +46,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	if len(req.Items) == 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "订单商品不能为空")
 	}
-	if req.DeliveryType != 1 && req.DeliveryType != 2 {
-		return nil, bizerr.New(codes.InvalidArgument, "配送类型不合法，仅支持 1（自提）或 2（配送）")
+	// 配送类型：1自提 2配送 3到店（仅收银台，即买即走，不生成取货码、无需核销）
+	if req.DeliveryType != 1 && req.DeliveryType != 2 && req.DeliveryType != 3 {
+		return nil, bizerr.New(codes.InvalidArgument, "配送类型不合法，仅支持 1（自提）、2（配送）或 3（到店）")
+	}
+	// 到店模式目前仅收银台使用（即买即走，无取货码与配送履约），C 端不可选
+	if req.DeliveryType == 3 && req.Source != 2 {
+		return nil, bizerr.New(codes.InvalidArgument, "到店模式仅收银台可用")
 	}
 
 	// 社区信息统一获取（一次 RPC，自提/配送共用）：
@@ -61,6 +66,20 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	}
 	if communityInfo.Status != 1 {
 		return nil, bizerr.New(codes.FailedPrecondition, "当前社区已停业，暂不支持下单，请切换社区")
+	}
+	// 取货渠道社区级开关兜底（前端渠道按钮隐藏后仍可能绕过直调）：
+	// 自提/配送关闭时拒绝对应渠道下单；到店（delivery_type=3）不受渠道配置控制，恒可收银
+	if req.DeliveryType == 1 && !communityInfo.EnableSelfPickup {
+		return nil, bizerr.New(codes.FailedPrecondition, "当前社区未开启自提渠道，请切换为其他方式")
+	}
+	if req.DeliveryType == 2 && !communityInfo.EnableDelivery {
+		return nil, bizerr.New(codes.FailedPrecondition, "当前社区未开启配送渠道，请切换为其他方式")
+	}
+
+	// 收银单（source=2）必须携带班次 ID：网关下单前已校验进行中班次，
+	// 此处做服务端兜底（防止绕过网关直调 RPC 产生无班次归属的收银单，交班统计漏单）
+	if req.Source == 2 && req.ShiftId <= 0 {
+		return nil, bizerr.New(codes.FailedPrecondition, "收银单缺少班次信息，请先开工")
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -89,6 +108,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 			price = flashPrice
 		}
 
+		// 收银台单品改价（仅对当前订单生效，不改商品档案价）：
+		// item.Price>0 时以改价成交，original_price 留服务端实时价快照供后台对账
+		originalPrice := price
+		priceModified := int32(0)
+		if item.Price > 0 {
+			price = item.Price
+			priceModified = 1
+		}
+
 		totalPrice := price * float64(item.Quantity)
 		totalAmount += totalPrice
 		itemScopes = append(itemScopes, itemScope{
@@ -98,15 +126,17 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		})
 
 		orderItems = append(orderItems, &model.OrderItem{
-			ProductID:    skuInfo.ProductId,
-			SkuID:        item.SkuId,
-			ProductName:  productInfo.Product.Name,
-			SpecName:     skuInfo.SpecName,
-			ProductImage: productInfo.Product.CoverImage,
-			Price:        price,
-			Quantity:     item.Quantity,
-			TotalPrice:   totalPrice,
-			CreatedAt:    now,
+			ProductID:     skuInfo.ProductId,
+			SkuID:         item.SkuId,
+			ProductName:   productInfo.Product.Name,
+			SpecName:      skuInfo.SpecName,
+			ProductImage:  productInfo.Product.CoverImage,
+			Price:         price,
+			Quantity:      item.Quantity,
+			TotalPrice:    totalPrice,
+			OriginalPrice: originalPrice,
+			PriceModified: priceModified,
+			CreatedAt:     now,
 		})
 	}
 
@@ -141,6 +171,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	}
 
 	payAmount := totalAmount + deliveryFee - fullReductionAmount - discountAmount
+	// 手动优惠（收银台抹零/整单改价折算）：与券/满减叠加，但不可为负、不可超原应付（实付≥0 兜底）
+	if req.ManualDiscount > 0 {
+		if req.ManualDiscount > payAmount {
+			return nil, bizerr.New(codes.InvalidArgument, "手动优惠金额不能超过应付金额")
+		}
+		payAmount -= req.ManualDiscount
+	}
 	if payAmount < 0 {
 		payAmount = 0
 	}
@@ -189,6 +226,8 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		Source:         source,
 		OperatorID:     req.OperatorId,
 		OperatorName:   req.OperatorName,
+		ManualDiscount: req.ManualDiscount,
+		ShiftID:        req.ShiftId,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -355,6 +394,10 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	}
 	if req.ReceiverPhone != "" {
 		db = db.Where("contact_phone LIKE ?", "%"+req.ReceiverPhone+"%")
+	}
+	// 取货码精确查询（收银台核销 Tab 扫码/输码查单，本社区范围由 CommunityId 条件约束）
+	if req.PickupCode != "" {
+		db = db.Where("pickup_code = ?", req.PickupCode)
 	}
 	switch {
 	case req.Status == queryStatusRefundAggregate:

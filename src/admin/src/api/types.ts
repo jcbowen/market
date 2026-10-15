@@ -249,6 +249,12 @@ export interface Order {
   status_text: string
   /** 订单来源：1=C端 2=收银台（决策点⑨） */
   source?: number
+  /** 手动优惠金额（收银台整单改价/抹零折算，仅收银单） */
+  manual_discount?: number
+  /** 所属班次 ID（收银单归属，用于交班统计） */
+  shift_id?: number
+  /** 取货码（自提单，收银台核销/订单查询用） */
+  pickup_code?: string
   /** 经手人（收银员/管理员）姓名快照 */
   operator_name?: string
   /** 指派的履约人员（0=未指派）与姓名快照（B 履约工作台） */
@@ -318,6 +324,10 @@ export interface OrderItem {
   sku_name: string
   product_image: string
   price: number
+  /** 商品档案原价（price_modified=1 时 price 为收银改价后的成交价） */
+  original_price?: number
+  /** 是否发生过单品改价：1=是 */
+  price_modified?: number
   quantity: number
   total_amount: number
 }
@@ -481,6 +491,9 @@ export interface Community {
   city_code?: string
   district_code?: string
   allow_outside_delivery: boolean
+  /** 取货渠道开关（社区级配置，C 端与收银台共用；到店不受控恒可用） */
+  enable_self_pickup: boolean
+  enable_delivery: boolean
   sort: number
   status: number
 }
@@ -668,4 +681,69 @@ export interface Banner {
   end_time?: string
   created_at?: string
   updated_at?: string
+}
+
+/**
+ * 交班统计项（按支付方式分组的收款/退款）
+ */
+export interface PosShiftStatItem {
+  /** 支付方式：1=微信 2=支付宝 3=货到付款 4=现金 */
+  pay_type: number
+  amount: number
+  order_count: number
+}
+
+/**
+ * 交班统计汇总（进行中实时计算，已结束读快照）
+ * 字段对齐 proto PosShiftStatistics：income/refund 为按支付方式分组明细，总额在 total_income/total_refund
+ */
+export interface PosShiftStatistics {
+  /** 收款分组明细（按支付方式） */
+  income: PosShiftStatItem[]
+  /** 退款分组明细（按支付方式） */
+  refund: PosShiftStatItem[]
+  /** 收款合计（排除待支付/已取消） */
+  total_income: number
+  /** 退款合计 */
+  total_refund: number
+  /** 现金合计 = 现金收款 - 现金退款（交班实缴参考） */
+  cash_total: number
+  /** 班内订单数 */
+  order_count: number
+}
+
+/**
+ * 收银班次
+ */
+export interface PosShift {
+  id: number
+  community_id: number
+  operator_id: number
+  operator_name: string
+  /** 开班时间 */
+  start_time: string
+  /** 交班时间（进行中为空） */
+  end_time: string
+  /** 状态：1=进行中 2=已结束 */
+  status: number
+  /** 交班备注 */
+  note: string
+  statistics?: PosShiftStatistics
+  created_at: string
+}
+
+/**
+ * 班次分页
+ */
+export interface PosShiftPage {
+  list: PosShift[]
+  total: number
+}
+
+/**
+ * 应用偏好（常用应用，社区级共享存储）
+ */
+export interface AppPreferences {
+  /** 应用 key 列表（有序，排前面的展示靠前） */
+  app_keys: string[]
 }

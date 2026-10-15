@@ -12,44 +12,48 @@ import (
 //go:generate go tool gormgen -struct Order
 type Order struct {
 	base.MysqlBaseModel
-	ID            int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	OrderNo       string  `gorm:"column:order_no;type:varchar(50);not null;unique;comment:订单号" json:"order_no"`
-	CommunityID   int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
-	UserID        int64   `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
-	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款" json:"status"`
-	TotalAmount   float64 `gorm:"column:total_amount;type:decimal(10,2);not null;comment:订单总额" json:"total_amount"`
+	ID             int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	OrderNo        string  `gorm:"column:order_no;type:varchar(50);not null;unique;comment:订单号" json:"order_no"`
+	CommunityID    int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
+	UserID         int64   `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
+	Status         int32   `gorm:"column:status;type:tinyint;default:1;comment:1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款" json:"status"`
+	TotalAmount    float64 `gorm:"column:total_amount;type:decimal(10,2);not null;comment:订单总额" json:"total_amount"`
 	DiscountAmount float64 `gorm:"column:discount_amount;type:decimal(10,2);default:0.00;comment:优惠金额，默认0" json:"discount_amount"`
-	DeliveryFee   float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0.00;comment:配送费，默认0" json:"delivery_fee"`
-	PayAmount     float64 `gorm:"column:pay_amount;type:decimal(10,2);not null;comment:实付金额" json:"pay_amount"`
-	DeliveryType  int32   `gorm:"column:delivery_type;type:tinyint;default:1;comment:1自提 2配送" json:"delivery_type"`
-	DeliveryTime  string  `gorm:"column:delivery_time;type:varchar(50);comment:期望配送时间" json:"delivery_time"`
-	AddressID     int64   `gorm:"column:address_id;type:bigint;default:0;comment:地址 ID" json:"address_id"`
-	ContactName   string  `gorm:"column:contact_name;type:varchar(50);comment:联系人" json:"contact_name"`
-	ContactPhone  string  `gorm:"column:contact_phone;type:varchar(20);comment:联系电话" json:"contact_phone"`
-	ContactAddress string `gorm:"column:contact_address;type:varchar(255);comment:收货联系人地址" json:"contact_address"`
-	ExpressCompany string `gorm:"column:express_company;type:varchar(50);comment:物流公司（发货时写入）" json:"express_company"`
-	ExpressNo      string `gorm:"column:express_no;type:varchar(50);comment:物流单号（发货时写入）" json:"express_no"`
-	Remark        string  `gorm:"column:remark;type:varchar(255);comment:用户备注" json:"remark"`
-	CouponID      int64    `gorm:"column:coupon_id;type:bigint;default:0;comment:使用的优惠券 ID" json:"coupon_id"`
+	DeliveryFee    float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0.00;comment:配送费，默认0" json:"delivery_fee"`
+	PayAmount      float64 `gorm:"column:pay_amount;type:decimal(10,2);not null;comment:实付金额" json:"pay_amount"`
+	DeliveryType   int32   `gorm:"column:delivery_type;type:tinyint;default:1;comment:1自提 2配送 3到店" json:"delivery_type"`
+	DeliveryTime   string  `gorm:"column:delivery_time;type:varchar(50);comment:期望配送时间" json:"delivery_time"`
+	AddressID      int64   `gorm:"column:address_id;type:bigint;default:0;comment:地址 ID" json:"address_id"`
+	ContactName    string  `gorm:"column:contact_name;type:varchar(50);comment:联系人" json:"contact_name"`
+	ContactPhone   string  `gorm:"column:contact_phone;type:varchar(20);comment:联系电话" json:"contact_phone"`
+	ContactAddress string  `gorm:"column:contact_address;type:varchar(255);comment:收货联系人地址" json:"contact_address"`
+	ExpressCompany string  `gorm:"column:express_company;type:varchar(50);comment:物流公司（发货时写入）" json:"express_company"`
+	ExpressNo      string  `gorm:"column:express_no;type:varchar(50);comment:物流单号（发货时写入）" json:"express_no"`
+	Remark         string  `gorm:"column:remark;type:varchar(255);comment:用户备注" json:"remark"`
+	CouponID       int64   `gorm:"column:coupon_id;type:bigint;default:0;comment:使用的优惠券 ID" json:"coupon_id"`
 	// 自提核销码：仅自提单（delivery_type=1）生成，配送单为 NULL（unique 允许多个 NULL）
-	PickupCode   *string  `gorm:"column:pickup_code;type:varchar(20);unique;comment:自提核销码" json:"pickup_code"`
+	PickupCode *string `gorm:"column:pickup_code;type:varchar(20);unique;comment:自提核销码" json:"pickup_code"`
 	// 订单来源：1=C端用户自下单（默认，零值 Create 时走 DB default）2=后台收银台代客下单
-	Source       int32    `gorm:"column:source;type:tinyint;default:1;comment:订单来源 1C端用户 2收银台代客" json:"source"`
+	Source int32 `gorm:"column:source;type:tinyint;default:1;comment:订单来源 1C端用户 2收银台代客" json:"source"`
 	// 经手人（收银员/管理员）：source=2 时记录，便于对账与追责
-	OperatorID   int64    `gorm:"column:operator_id;type:bigint;default:0;comment:经手人 ID" json:"operator_id"`
-	OperatorName string   `gorm:"column:operator_name;type:varchar(50);comment:经手人姓名快照" json:"operator_name"`
+	OperatorID   int64  `gorm:"column:operator_id;type:bigint;default:0;comment:经手人 ID" json:"operator_id"`
+	OperatorName string `gorm:"column:operator_name;type:varchar(50);comment:经手人姓名快照" json:"operator_name"`
+	// 手动优惠总额（收银台抹零/整单改价折算）：实付 = max(0, 应付 - manual_discount)
+	ManualDiscount float64 `gorm:"column:manual_discount;type:decimal(10,2);default:0.00;comment:手动优惠总额（抹零/整单改价）" json:"manual_discount"`
+	// 收银班次 ID（0=非收银单）：退款/交班统计按订单归属班次口径
+	ShiftID int64 `gorm:"column:shift_id;type:bigint;default:0;index;comment:收银班次 ID 0=非收银单" json:"shift_id"`
 	// 履约工作台（B）：配送指派与签收凭证
 	// 指派的履约人员（0=未指派）；姓名快照避免列表页再 RPC 查会员
 	DeliveryUserID      int64   `gorm:"column:delivery_user_id;type:bigint;default:0;comment:指派履约人员 ID 0=未指派" json:"delivery_user_id"`
 	DeliveryUserName    string  `gorm:"column:delivery_user_name;type:varchar(50);comment:履约人员姓名快照" json:"delivery_user_name"`
 	DeliveryProofImages string  `gorm:"column:delivery_proof_images;type:text;comment:送达签收凭证照片 URL JSON 数组" json:"delivery_proof_images"`
 	PayTime             *string `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`
-	DeliverTime   *string  `gorm:"column:deliver_time;type:datetime;comment:发货时间" json:"deliver_time"`
-	CompleteTime  *string  `gorm:"column:complete_time;type:datetime;comment:完成时间" json:"complete_time"`
-	CancelTime    *string  `gorm:"column:cancel_time;type:datetime;comment:取消时间" json:"cancel_time"`
-	CancelReason  string   `gorm:"column:cancel_reason;type:varchar(255);comment:取消原因" json:"cancel_reason"`
-	CreatedAt     string   `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt     string   `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	DeliverTime         *string `gorm:"column:deliver_time;type:datetime;comment:发货时间" json:"deliver_time"`
+	CompleteTime        *string `gorm:"column:complete_time;type:datetime;comment:完成时间" json:"complete_time"`
+	CancelTime          *string `gorm:"column:cancel_time;type:datetime;comment:取消时间" json:"cancel_time"`
+	CancelReason        string  `gorm:"column:cancel_reason;type:varchar(255);comment:取消原因" json:"cancel_reason"`
+	CreatedAt           string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt           string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回订单表名
@@ -76,7 +80,11 @@ type OrderItem struct {
 	Price        float64 `gorm:"column:price;type:decimal(10,2);not null;comment:下单时单价" json:"price"`
 	Quantity     int32   `gorm:"column:quantity;type:int;not null;comment:数量" json:"quantity"`
 	TotalPrice   float64 `gorm:"column:total_price;type:decimal(10,2);not null;comment:小计" json:"total_price"`
-	CreatedAt    string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	// 收银台改价痕迹：OriginalPrice=服务端实时单价快照（未改价时与 Price 相同）；
+	// PriceModified=1 表示该行单价被收银员手动修改（仅对当前订单生效，不改商品档案价）
+	OriginalPrice float64 `gorm:"column:original_price;type:decimal(10,2);default:0.00;comment:服务端实时单价快照（改价痕迹）" json:"original_price"`
+	PriceModified int32   `gorm:"column:price_modified;type:tinyint;default:0;comment:单价是否被手动修改 0否 1是" json:"price_modified"`
+	CreatedAt     string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 }
 
 // TableName 返回订单商品项表名
@@ -128,10 +136,10 @@ type Refund struct {
 	Reason        string  `gorm:"column:reason;type:varchar(255);comment:退款原因" json:"reason"`
 	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
 	RejectReason  string  `gorm:"column:reject_reason;type:varchar(255);comment:拒绝原因" json:"reject_reason"`
-	OperatorID    int64    `gorm:"column:operator_id;type:bigint;default:0;comment:审核操作人 ID" json:"operator_id"`
-	RefundTime    *string  `gorm:"column:refund_time;type:datetime;comment:退款成功时间" json:"refund_time"`
-	CreatedAt     string   `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt     string   `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	OperatorID    int64   `gorm:"column:operator_id;type:bigint;default:0;comment:审核操作人 ID" json:"operator_id"`
+	RefundTime    *string `gorm:"column:refund_time;type:datetime;comment:退款成功时间" json:"refund_time"`
+	CreatedAt     string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt     string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 
 	// OrderNo 关联订单号（非表字段，列表查询时填充）
 	OrderNo string `gorm:"-" json:"order_no"`

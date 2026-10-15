@@ -227,6 +227,9 @@ message CommunityInfo {
   string province_code = 20;
   string city_code = 21;
   string district_code = 22;
+  // 取货渠道开关（社区级配置，C 端与收银台共用；到店不在此列，收银台恒可用）
+  bool enable_self_pickup = 23;
+  bool enable_delivery = 24;
 }
 
 // ListCommunitiesReq 社区列表查询请求
@@ -289,6 +292,9 @@ message UpdateCommunityInfoReq {
   string province_code = 20;
   string city_code = 21;
   string district_code = 22;
+  // 取货渠道开关（整表提交全量覆盖；超管社区编辑接口需回填当前值防误关）
+  bool enable_self_pickup = 23;
+  bool enable_delivery = 24;
 }
 
 message DeleteCommunityReq {

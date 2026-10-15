@@ -41,6 +41,20 @@ service OrderService {
   rpc ListPosHeldOrders(ListPosHeldOrdersReq) returns (ListPosHeldOrdersResp);
   rpc DeletePosHeldOrder(DeletePosHeldOrderReq) returns (common.CommonResponse);
 
+  // --- 收银台交班体系 ---
+  // 开工：创建进行中班次（同操作员同社区已有进行中班次时报错）
+  rpc StartShift(StartShiftReq) returns (PosShiftInfo);
+  // 当前进行中班次（无则返回 statistics 为空的 PosShiftInfo，id=0 表示无进行中班次），含实时统计
+  rpc GetCurrentShift(GetCurrentShiftReq) returns (PosShiftInfo);
+  // 交班：生成统计快照 → 置已结束 → 返回快照
+  rpc EndShift(EndShiftReq) returns (PosShiftInfo);
+  // 交班记录分页（operator_id=0 本店全部班次，>0 仅该操作员）
+  rpc ListShifts(ListShiftsReq) returns (ListShiftsResp);
+
+  // --- 应用偏好（应用页「常用」，社区级单行） ---
+  rpc GetAppPreferences(GetAppPreferencesReq) returns (AppPreferencesInfo);
+  rpc SaveAppPreferences(SaveAppPreferencesReq) returns (common.CommonResponse);
+
   // --- 履约工作台（B） ---
   // 后台指派配送员（delivery_user_id=0 表示取消指派）
   rpc AssignDelivery(AssignDeliveryReq) returns (common.CommonResponse);
@@ -55,11 +69,14 @@ service OrderService {
 message OrderItem {
   int64 sku_id = 1;
   int32 quantity = 2;
+  // 收银台单品改价：>0 时以该价成交（仅对当前订单生效，不改商品档案价）；0=按服务端实时价
+  double price = 3;
 }
 
 message CreateOrderReq {
   int64 user_id = 1;
   int64 community_id = 2;
+  // 配送类型：1自提 2配送 3到店（到店仅收银台 source=2 可用，不生成取货码）
   int32 delivery_type = 3;
   int64 address_id = 4;
   string delivery_time = 5;
@@ -75,6 +92,10 @@ message CreateOrderReq {
   string contact_name = 12;
   string contact_phone = 13;
   string contact_address = 14;
+  // 手动优惠总额（收银台抹零/整单改价折算），实付 = max(0, 应付 - manual_discount)；超应付拒绝
+  double manual_discount = 15;
+  // 收银班次 ID（source=2 收银单必填，下单时由网关校验进行中班次后传入；0=非收银单）
+  int64 shift_id = 16;
 }
 
 // --- 免配送费试算 ---
@@ -125,6 +146,8 @@ message ListOrdersReq {
   string receiver_phone = 9;
   // 订单来源筛选：1=C端 2=收银台（0=全部）
   int32 source = 10;
+  // 取货码精确查询（收银台核销 Tab 扫码/输码查单）
+  string pickup_code = 11;
 }
 
 message CancelOrderReq {
@@ -182,6 +205,10 @@ message OrderInfo {
   string delivery_user_name = 29;
   // 送达签收凭证照片 URL（决策点②拍照留证）
   repeated string delivery_proof_images = 30;
+  // 手动优惠总额（收银台抹零/整单改价折算痕迹）
+  double manual_discount = 31;
+  // 收银班次 ID（0=非收银单）
+  int64 shift_id = 32;
 }
 
 message OrderItemInfo {
@@ -194,6 +221,9 @@ message OrderItemInfo {
   double price = 7;
   int32 quantity = 8;
   double total_price = 9;
+  // 收银台改价痕迹：original_price=服务端实时单价快照；price_modified=true 表示行单价被手动修改
+  double original_price = 10;
+  bool price_modified = 11;
 }
 
 message OrderStatusLog {
@@ -544,4 +574,102 @@ message CompleteDeliveryReq {
   int64 operator_id = 5;
   // 签收凭证照片 URL（1~N 张，服务端强制非空，决策点②）
   repeated string proof_images = 6;
+}
+
+// --- 收银台交班体系 ---
+
+// StartShiftReq 开工请求：创建进行中班次
+message StartShiftReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+  string operator_name = 3;
+  string note = 4;
+}
+
+// GetCurrentShiftReq 当前进行中班次查询（operator_id>0 限定该操作员）
+message GetCurrentShiftReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+}
+
+// EndShiftReq 交班请求：生成统计快照 → 置已结束
+message EndShiftReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+  string note = 3;
+}
+
+// ListShiftsReq 交班记录分页
+message ListShiftsReq {
+  int64 community_id = 1;
+  // 0=本店全部班次（有 order:view 权限时）；>0=仅该操作员
+  int64 operator_id = 2;
+  common.Pagination pagination = 3;
+  // 开班时间下限（YYYY-MM-DD HH:MM:SS，空=不过滤），交班记录近7天/近30天筛选
+  string start_time = 4;
+}
+
+// PosShiftStatItem 班次统计分组项（按支付方式）
+message PosShiftStatItem {
+  // 支付方式（1微信 2支付宝 4现金，后续付款码 5/6 自动纳入）
+  int32 pay_type = 1;
+  double amount = 2;
+  int32 order_count = 3;
+}
+
+// PosShiftStatistics 班次统计（收款/退款按支付方式分组）
+// 进行中班次为实时计算，已结束班次为交班时的快照
+message PosShiftStatistics {
+  // 收款金额按支付方式分组
+  repeated PosShiftStatItem income = 1;
+  // 退款金额按支付方式分组（按订单归属班次口径，关联订单支付方式）
+  repeated PosShiftStatItem refund = 2;
+  // 收款合计
+  double total_income = 3;
+  // 退款合计
+  double total_refund = 4;
+  // 现金合计（现金收款 - 现金退款，钱箱应交金额）
+  double cash_total = 5;
+  // 班内有效订单数（排除待支付/已取消）
+  int32 order_count = 6;
+}
+
+// PosShiftInfo 班次信息
+message PosShiftInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 operator_id = 3;
+  string operator_name = 4;
+  string start_time = 5;
+  // 进行中为空
+  string end_time = 6;
+  // 1进行中 2已结束
+  int32 status = 7;
+  string note = 8;
+  // 统计（无班次时整体缺省）
+  PosShiftStatistics statistics = 9;
+  string created_at = 10;
+}
+
+// ListShiftsResp 交班记录分页响应
+message ListShiftsResp {
+  repeated PosShiftInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// --- 应用偏好（应用页「常用」，社区级单行） ---
+
+message GetAppPreferencesReq {
+  int64 community_id = 1;
+}
+
+message AppPreferencesInfo {
+  // 常用应用 key 列表（有序，前端按此置顶）
+  repeated string app_keys = 1;
+}
+
+message SaveAppPreferencesReq {
+  int64 community_id = 1;
+  // 全量保存（覆盖式）
+  repeated string app_keys = 2;
 }

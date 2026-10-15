@@ -105,7 +105,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { MenuOutline, PersonCircleOutline, HomeOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, ArrowBackOutline } from '@vicons/ionicons5'
+import { MenuOutline, PersonCircleOutline, HomeOutline, GridOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, ArrowBackOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
@@ -262,7 +262,8 @@ function renderIcon(icon: unknown) {
 interface MenuItemConfig {
   label: string
   key: string
-  permission: string
+  /** 权限码；缺省表示登录即可见（如应用中心） */
+  permission?: string
   /** 仅超管可见（系统级入口，社区管理员即便持有对应权限码也不展示） */
   superOnly?: boolean
 }
@@ -296,6 +297,13 @@ const menuOptions = computed<MenuOption[]>(() => {
       icon: renderIcon(HomeOutline),
       permission: 'dashboard:view',
       children: [{ label: '数据概览', key: '/dashboard', permission: 'dashboard:view' }],
+    },
+    {
+      // 应用中心：宫格化应用入口（收银台等独立应用从这里进入，登录即可见）
+      label: '应用',
+      key: '/apps',
+      icon: renderIcon(GridOutline),
+      children: [{ label: '应用中心', key: '/apps' }],
     },
     {
       label: '商品管理',
@@ -374,7 +382,9 @@ const menuOptions = computed<MenuOption[]>(() => {
     .filter((group) => !group.permission || checkPermission(group.permission))
     .map((group) => {
       const children = group.children.filter(
-        (child) => checkPermission(child.permission) && (!child.superOnly || authStore.isSuperAdmin),
+        (child) =>
+          (!child.permission || checkPermission(child.permission)) &&
+          (!child.superOnly || authStore.isSuperAdmin),
       )
       if (children.length === 0) return null
       return {
@@ -413,7 +423,9 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
   return groups
     .map((group) => {
       const children = group.children.filter(
-        (child) => checkPermission(child.permission) && (!child.superOnly || authStore.isSuperAdmin),
+        (child) =>
+          (!child.permission || checkPermission(child.permission)) &&
+          (!child.superOnly || authStore.isSuperAdmin),
       )
       if (children.length === 0) return null
       return {

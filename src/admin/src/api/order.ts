@@ -1,5 +1,16 @@
 import { request } from './request'
-import type { ApiResult, Order, OrderDetail, PageParams, PageResult, PosHeldOrder, Refund } from './types'
+import type {
+  ApiResult,
+  AppPreferences,
+  Order,
+  OrderDetail,
+  PageParams,
+  PageResult,
+  PosHeldOrder,
+  PosShift,
+  PosShiftPage,
+  Refund,
+} from './types'
 
 /**
  * 订单管理相关 API
@@ -22,6 +33,8 @@ export function getOrderList(
     user_id?: number
     /** 来源过滤：1=C端 2=收银台（0=全部） */
     source?: number
+    /** 按取货码精确过滤（收银台核销/订单 Tab 扫码查询） */
+    pickup_code?: string
     /** 目标社区：仅超管可传，0=跨社区查全部；不传=当前社区语境 */
     community_id?: number
   },
@@ -37,7 +50,8 @@ export function getOrderList(
 
 /**
  * 收银台代客下单（按所选支付方式当场结清）
- * @param data 下单参数（user_id=0 为散客；配送单必须带联系人/电话/地址；pay_type 支付方式，缺省现金 4）
+ * @param data 下单参数（user_id=0 为散客；配送单必须带联系人/电话/地址；pay_type 支付方式，缺省现金 4；
+ *              items[].price 单品改价（>0 以该价成交）；manual_discount 整单优惠（改价/抹零折算，不超过应付）
  * @returns 订单信息（含取货码，自提单）
  */
 export function createPosOrder(data: {
@@ -49,7 +63,9 @@ export function createPosOrder(data: {
   remark?: string
   coupon_id?: number
   pay_type?: number
-  items: Array<{ sku_id: number; quantity: number }>
+  /** 整单手动优惠金额（整单改价/抹零折算），仅对本次订单生效 */
+  manual_discount?: number
+  items: Array<{ sku_id: number; quantity: number; /** 单品成交价（>0 覆盖档案价，仅本单生效） */ price?: number }>
 }) {
   return request<
     ApiResult<{
@@ -303,5 +319,91 @@ export function updateRefundSetting(policy: string) {
     url: '/api/v1/admin/settings/refund',
     method: 'PUT',
     data: { refund_freight_policy: policy },
+  })
+}
+
+// --- 收银台交班与应用偏好 ---
+
+/**
+ * 开工（开新班次）：同一操作员已有进行中班次时报错
+ * @param note 开班备注
+ * @returns 新班次信息
+ */
+export function startPosShift(note?: string) {
+  return request<ApiResult<PosShift>>({
+    url: '/api/v1/admin/pos/shifts/start',
+    method: 'POST',
+    data: { note },
+  })
+}
+
+/**
+ * 获取当前进行中的班次（本人语境）
+ * @returns 班次信息；id=0 表示当前无进行中班次
+ */
+export function getCurrentPosShift() {
+  return request<ApiResult<PosShift>>({
+    url: '/api/v1/admin/pos/shifts/current',
+    method: 'GET',
+  })
+}
+
+/**
+ * 交班（结束当前班次）：统计快照冻结后置为已结束
+ * @param note 交班备注
+ * @returns 已结束的班次信息（含统计快照）
+ */
+export function endPosShift(note?: string) {
+  return request<ApiResult<PosShift>>({
+    url: '/api/v1/admin/pos/shifts/end',
+    method: 'POST',
+    data: { note },
+  })
+}
+
+/**
+ * 我的交班记录（固定当前操作员）
+ * @param params 分页参数（start_time 开班时间下限，近7天/近30天筛选）
+ */
+export function getMyPosShifts(params: PageParams & { start_time?: string }) {
+  return request<ApiResult<PosShiftPage>>({
+    url: '/api/v1/admin/pos/shifts/mine',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 本店交班记录（order:view 权限，可按操作员过滤）
+ * @param params 分页与操作员过滤参数
+ */
+export function getPosShifts(params: PageParams & { operator_id?: number }) {
+  return request<ApiResult<PosShiftPage>>({
+    url: '/api/v1/admin/pos/shifts',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 获取应用偏好（常用应用，社区级共享存储）
+ * @returns 偏好信息；app_keys 为空表示尚未设置
+ */
+export function getAppPreferences() {
+  return request<ApiResult<AppPreferences>>({
+    url: '/api/v1/admin/app-preferences',
+    method: 'GET',
+  })
+}
+
+/**
+ * 保存应用偏好（常用应用，社区级共享存储）
+ * @param app_keys 应用 key 列表（有序）
+ */
+export function saveAppPreferences(app_keys: string[]) {
+  return request<ApiResult<AppPreferences>>({
+    url: '/api/v1/admin/app-preferences',
+    method: 'PUT',
+    data: { app_keys },
   })
 }

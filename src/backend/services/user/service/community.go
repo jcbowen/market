@@ -158,6 +158,8 @@ func ToCommunityInfo(c *model.Community) *user.CommunityInfo {
 		CityCode:             c.CityCode,
 		DistrictCode:         c.DistrictCode,
 		AllowOutsideDelivery: c.AllowOutsideDelivery,
+		EnableSelfPickup:     c.EnableSelfPickup,
+		EnableDelivery:       c.EnableDelivery,
 	}
 }
 
@@ -243,6 +245,9 @@ func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.Update
 	c.CityCode = req.CityCode
 	c.DistrictCode = req.DistrictCode
 	c.AllowOutsideDelivery = req.AllowOutsideDelivery
+	// 取货渠道开关：门店设置（白名单接口）维护；超管社区编辑未传时由网关回填当前值，避免整表覆盖误关
+	c.EnableSelfPickup = req.EnableSelfPickup
+	c.EnableDelivery = req.EnableDelivery
 	c.Sort = req.Sort
 	c.Status = req.Status
 	if err := s.db.GetDb().WithContext(ctx).Save(c).Error; err != nil {

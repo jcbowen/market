@@ -36,6 +36,10 @@ export interface Community {
   min_order_amount?: number
   /** 自提点地址（proto omitempty，未配置时为空，展示回退 address） */
   pickup_address?: string
+  /** 是否开启自提渠道（proto omitempty，false 时字段缺省；判断须用 ?? true 兼容旧缓存） */
+  enable_self_pickup?: boolean
+  /** 是否开启配送渠道（proto omitempty，false 时字段缺省；判断须用 ?? true 兼容旧缓存） */
+  enable_delivery?: boolean
 }
 
 /** 收货地址 */

@@ -99,6 +99,20 @@
           </n-space>
         </n-form-item>
 
+        <n-form-item label="自提渠道">
+          <n-space align="center">
+            <n-switch v-model:value="form.enable_self_pickup" />
+            <span class="form-hint">C 端下单页与收银台的「社区自提」选项开关；关闭后两处均不出现自提渠道，收银台到店模式不受影响</span>
+          </n-space>
+        </n-form-item>
+
+        <n-form-item label="配送渠道">
+          <n-space align="center">
+            <n-switch v-model:value="form.enable_delivery" />
+            <span class="form-hint">C 端下单页与收银台的「送货上门/配送」选项开关；关闭后两处均不出现配送渠道</span>
+          </n-space>
+        </n-form-item>
+
         <n-form-item :show-label="false" style="margin-top: 8px">
           <n-button type="primary" :loading="saving" @click="submit">保存</n-button>
         </n-form-item>
@@ -239,6 +253,9 @@ async function loadDetail() {
         delivery_range_km: res.data.data.delivery_range_km ?? 0,
         business_hours: res.data.data.business_hours ?? '',
         allow_outside_delivery: !!res.data.data.allow_outside_delivery,
+        // 渠道开关缺省视为开启（兼容旧数据/字段未返回）
+        enable_self_pickup: res.data.data.enable_self_pickup ?? true,
+        enable_delivery: res.data.data.enable_delivery ?? true,
       }
       // 营业时间回显：兼容存量 "HH:mm-HH:mm" 单段与 JSON 多段格式
       const parsed = parseBusinessHours(form.value.business_hours)
@@ -272,6 +289,8 @@ async function submit() {
       delivery_range_km: form.value.delivery_range_km,
       business_hours: form.value.business_hours,
       allow_outside_delivery: form.value.allow_outside_delivery,
+      enable_self_pickup: form.value.enable_self_pickup ?? true,
+      enable_delivery: form.value.enable_delivery ?? true,
     })
     if (res.data.code === 0) {
       message.success('保存成功')

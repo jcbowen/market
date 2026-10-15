@@ -1,8 +1,9 @@
 <template>
   <view class="confirm-page">
-    <!-- 配送方式：社区自提 / 送货上门 -->
+    <!-- 配送方式：社区自提 / 送货上门（按社区渠道开关渲染，缺省视为开启） -->
     <view class="delivery-card">
       <view
+        v-if="enableSelfPickup"
         :class="['delivery-option', deliveryType === DELIVERY_TYPE_PICKUP ? 'active' : '']"
         @click="deliveryType = DELIVERY_TYPE_PICKUP"
       >
@@ -11,11 +12,15 @@
         <text class="delivery-option-text">社区自提</text>
       </view>
       <view
+        v-if="enableDelivery"
         :class="['delivery-option', deliveryType === DELIVERY_TYPE_DELIVERY ? 'active' : '']"
         @click="deliveryType = DELIVERY_TYPE_DELIVERY"
       >
         <view class="delivery-radio" :class="{ checked: deliveryType === DELIVERY_TYPE_DELIVERY }" />
         <text class="delivery-option-text">送货上门</text>
+      </view>
+      <view v-if="!enableSelfPickup && !enableDelivery" class="delivery-option disabled">
+        <text class="delivery-option-text">当前社区暂未开启取货渠道，请联系门店</text>
       </view>
     </view>
 
@@ -205,6 +210,20 @@ const skuId = ref(0)
 const quantity = ref(1)
 /** 配送方式：1 社区自提 2 送货上门，默认自提（无运费、无起送门槛） */
 const deliveryType = ref<1 | 2>(DELIVERY_TYPE_PICKUP)
+
+// 社区渠道开关（proto omitempty：false 时字段缺省，?? true 兼容旧缓存）
+const enableSelfPickup = computed(() => userStore.communityInfo?.enable_self_pickup ?? true)
+const enableDelivery = computed(() => userStore.communityInfo?.enable_delivery ?? true)
+
+// 默认渠道自适应：默认渠道被关闭时切换到可用渠道（都关闭时保持自提，页面展示联系门店提示且由提交拦截）
+watch(
+  [enableSelfPickup, enableDelivery],
+  ([pickupOn, deliveryOn]) => {
+    if (!pickupOn && deliveryOn) deliveryType.value = DELIVERY_TYPE_DELIVERY
+    if (pickupOn && !deliveryOn) deliveryType.value = DELIVERY_TYPE_PICKUP
+  },
+  { immediate: true }
+)
 
 // 优先使用用户在地址列表页选择的地址，其次默认地址（避免选择动作无效）
 const selectedAddress = computed(() => {
@@ -574,6 +593,11 @@ async function clearSettledCart() {
  * 统一跳转订单详情，便于用户在待支付状态下重新支付
  */
 async function onSubmit() {
+  // 渠道兜底：双渠道均关闭时不允许提交（后端 CreateOrder 亦有校验）
+  if (!enableSelfPickup.value && !enableDelivery.value) {
+    uni.showToast({ title: '当前社区暂未开启取货渠道', icon: 'none' })
+    return
+  }
   // 地址仅送货上门时必填，自提无需收货地址
   if (deliveryType.value === DELIVERY_TYPE_DELIVERY && !selectedAddress.value) {
     uni.showToast({ title: '请选择收货地址', icon: 'none' })
@@ -646,6 +670,12 @@ async function onSubmit() {
 .delivery-option.active {
   color: #07c160;
   font-weight: bold;
+}
+
+/* 双渠道均关闭时的占位提示样式 */
+.delivery-option.disabled {
+  color: #bbbbbb;
+  font-size: 26rpx;
 }
 
 .delivery-option-text {

@@ -41,6 +41,7 @@ message OrderItem {
 message CreateOrderReq {
   int64 user_id = 1;
   int64 community_id = 2;
+  // 配送类型：1自提 2配送 3到店（到店仅收银台 source=2 可用，不生成取货码）
   int32 delivery_type = 3;
   int64 address_id = 4;
   string delivery_time = 5;

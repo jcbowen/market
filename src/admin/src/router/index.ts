@@ -93,13 +93,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/inventory/purchase.vue'),
         meta: { title: '补货建议', permission: 'inventory:view', group: '库存管理' },
       },
-      // 订单管理
+      // 应用中心：宫格化应用入口（当前仅收银台），登录即可见
       {
-        path: 'pos/cashier',
-        name: 'PosCashier',
-        component: () => import('@/views/order/cashier.vue'),
-        meta: { title: '收银台', permission: 'order:view', group: '订单管理' },
+        path: 'apps',
+        name: 'AppCenter',
+        component: () => import('@/views/apps/index.vue'),
+        meta: { title: '应用', group: '应用' },
       },
+      // 订单管理
       {
         path: 'orders',
         name: 'OrderList',
@@ -317,6 +318,33 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/select-community/index.vue'),
     meta: { title: '选择社区' },
   },
+  // --- 收银台独立应用（/pos 前缀）：不套后台框架，独立登录页与布局壳 ---
+  // 登录/退出/交班后统一落独立登录页，不回主系统
+  {
+    path: '/pos/login',
+    name: 'PosLogin',
+    component: () => import('@/views/pos/login.vue'),
+    meta: { title: '收银台登录', public: true },
+  },
+  {
+    path: '/pos',
+    name: 'PosLayout',
+    component: () => import('@/views/pos/layout.vue'),
+    children: [
+      {
+        path: 'cashier',
+        name: 'PosCashier',
+        component: () => import('@/views/pos/cashier/index.vue'),
+        meta: { title: '收银工作台', permission: 'order:create' },
+      },
+      {
+        path: 'shifts',
+        name: 'PosShifts',
+        component: () => import('@/views/pos/shifts.vue'),
+        meta: { title: '我的交班记录', permission: 'order:create' },
+      },
+    ],
+  },
   {
     path: '/login',
     name: 'Login',
@@ -357,6 +385,32 @@ export function resolveHomePath(authStore: ReturnType<typeof useAuthStore>): str
  */
 router.beforeEach(async (to) => {
   const authStore = useAuthStore()
+
+  // --- 收银台独立应用（/pos 前缀）：独立登录页与鉴权，不走主系统的社区选择/兜底首页逻辑 ---
+  if (to.path === '/pos' || to.path.startsWith('/pos/')) {
+    // 未登录：一律去收银台独立登录页（携带原始地址供登录后回跳）
+    if (!authStore.isAuthenticated) {
+      return to.path === '/pos/login' ? true : { path: '/pos/login', query: { redirect: to.fullPath } }
+    }
+    // 已登录访问收银台登录页：直接进收银台工作台
+    if (to.path === '/pos/login') {
+      return { path: '/pos/cashier' }
+    }
+    // 幂等恢复登录态，失败（token 失效）时 ensureReady 已自动登出，落独立登录页
+    if (!(await authStore.ensureReady())) {
+      return { path: '/pos/login', query: { redirect: to.fullPath } }
+    }
+    // 商品/订单均为社区级数据：多社区账号未选定社区时先去主系统选择社区，选完带原地址回来
+    if (authStore.needsCommunitySelection) {
+      return { path: '/select-community', query: { redirect: to.fullPath } }
+    }
+    // 权限判定：收银台页面要求 order:create（无权限跳主系统无权限提示页，保留登录态）
+    const posPermission = to.meta.permission as string | undefined
+    if (posPermission && !authStore.hasPermission(posPermission)) {
+      return { path: '/403', query: { from: to.fullPath } }
+    }
+    return true
+  }
 
   // unauthenticated：公开页放行，其余去登录（携带原始地址供登录成功后回跳）
   if (!authStore.isAuthenticated) {

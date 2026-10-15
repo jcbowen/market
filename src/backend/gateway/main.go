@@ -273,6 +273,19 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/pos/held-orders", gwMiddleware.RequirePermission("order:view"), adminHandler.ListPosHeldOrders)
 			authAdmin.DELETE("/pos/held-orders/:id", gwMiddleware.RequirePermission("order:create"), adminHandler.DeletePosHeldOrder)
 
+			// 收银台交班体系：开工/当前班次/交班用 order:create（收银员即可）；
+			// 记录查看分两路——我的班次用 order:create（默认仅自己），
+			// 本店全部班次用 order:view（无 order:view 的收银员无法查他人班次）
+			authAdmin.POST("/pos/shifts/start", gwMiddleware.RequirePermission("order:create"), adminHandler.PosStartShift)
+			authAdmin.GET("/pos/shifts/current", gwMiddleware.RequirePermission("order:create"), adminHandler.PosGetCurrentShift)
+			authAdmin.POST("/pos/shifts/end", gwMiddleware.RequirePermission("order:create"), adminHandler.PosEndShift)
+			authAdmin.GET("/pos/shifts/mine", gwMiddleware.RequirePermission("order:create"), adminHandler.PosListShiftsMine)
+			authAdmin.GET("/pos/shifts", gwMiddleware.RequirePermission("order:view"), adminHandler.PosListShifts)
+
+			// 应用偏好（应用页「常用应用」，社区级共享）：仅要求登录，应用页对所有管理员可见
+			authAdmin.GET("/app-preferences", adminHandler.GetAppPreferences)
+			authAdmin.PUT("/app-preferences", adminHandler.SaveAppPreferences)
+
 			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetOrderStatistics)
 			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetSalesStatistics)
 			authAdmin.GET("/statistics/rankings", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetProductRankings)

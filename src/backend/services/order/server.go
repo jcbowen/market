@@ -22,6 +22,8 @@ type server struct {
 	orderService   *service.OrderService
 	refundService  *service.RefundService
 	posHeldService *service.PosHeldService
+	shiftService   *service.ShiftService
+	prefService    *service.AppPreferenceService
 	paymentClient  payment.PaymentServiceClient
 }
 
@@ -37,6 +39,8 @@ func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient) *
 		orderService:   service.NewOrderService(db),
 		refundService:  service.NewRefundService(db, paymentClient),
 		posHeldService: service.NewPosHeldService(db),
+		shiftService:   service.NewShiftService(db),
+		prefService:    service.NewAppPreferenceService(db),
 		paymentClient:  paymentClient,
 	}
 }
@@ -249,6 +253,55 @@ func (s *server) DeletePosHeldOrder(ctx stdctx.Context, req *order.DeletePosHeld
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// StartShift 开工：创建进行中班次
+func (s *server) StartShift(ctx stdctx.Context, req *order.StartShiftReq) (*order.PosShiftInfo, error) {
+	info, err := s.shiftService.StartShift(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return info, nil
+}
+
+// GetCurrentShift 当前进行中班次（id=0 表示无进行中班次）
+func (s *server) GetCurrentShift(ctx stdctx.Context, req *order.GetCurrentShiftReq) (*order.PosShiftInfo, error) {
+	info, err := s.shiftService.GetCurrentShift(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return info, nil
+}
+
+// EndShift 交班：生成统计快照 → 置已结束
+func (s *server) EndShift(ctx stdctx.Context, req *order.EndShiftReq) (*order.PosShiftInfo, error) {
+	info, err := s.shiftService.EndShift(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return info, nil
+}
+
+// ListShifts 交班记录分页
+func (s *server) ListShifts(ctx stdctx.Context, req *order.ListShiftsReq) (*order.ListShiftsResp, error) {
+	return s.shiftService.ListShifts(ctx, req)
+}
+
+// GetAppPreferences 获取社区常用应用
+func (s *server) GetAppPreferences(ctx stdctx.Context, req *order.GetAppPreferencesReq) (*order.AppPreferencesInfo, error) {
+	info, err := s.prefService.Get(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return info, nil
+}
+
+// SaveAppPreferences 保存社区常用应用（覆盖式）
+func (s *server) SaveAppPreferences(ctx stdctx.Context, req *order.SaveAppPreferencesReq) (*common.CommonResponse, error) {
+	if err := s.prefService.Save(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // ApplyRefund 申请退款
 func (s *server) ApplyRefund(ctx stdctx.Context, req *order.ApplyRefundReq) (*order.RefundInfo, error) {
 	refund, err := s.refundService.ApplyRefund(ctx, req)
@@ -355,6 +408,8 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		Source:         o.Source,
 		OperatorId:     o.OperatorID,
 		OperatorName:   o.OperatorName,
+		ManualDiscount: o.ManualDiscount,
+		ShiftId:        o.ShiftID,
 		DeliveryUserId:   o.DeliveryUserID,
 		DeliveryUserName: o.DeliveryUserName,
 	}
@@ -379,15 +434,17 @@ func ToOrderItemInfo(item *model.OrderItem) *order.OrderItemInfo {
 		return nil
 	}
 	return &order.OrderItemInfo{
-		Id:           item.ID,
-		ProductId:    item.ProductID,
-		SkuId:        item.SkuID,
-		ProductName:  item.ProductName,
-		SpecName:     item.SpecName,
-		ProductImage: item.ProductImage,
-		Price:        item.Price,
-		Quantity:     item.Quantity,
-		TotalPrice:   item.TotalPrice,
+		Id:            item.ID,
+		ProductId:     item.ProductID,
+		SkuId:         item.SkuID,
+		ProductName:   item.ProductName,
+		SpecName:      item.SpecName,
+		ProductImage:  item.ProductImage,
+		Price:         item.Price,
+		Quantity:      item.Quantity,
+		TotalPrice:    item.TotalPrice,
+		OriginalPrice: item.OriginalPrice,
+		PriceModified: item.PriceModified == 1,
 	}
 }
 

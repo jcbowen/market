@@ -33,11 +33,15 @@ type Community struct {
 	CityCode     string `gorm:"column:city_code;type:varchar(12);comment:市级行政区划代码" json:"city_code"`
 	DistrictCode string `gorm:"column:district_code;type:varchar(12);comment:区县行政区划代码" json:"district_code"`
 	// 是否允许社区外配送（false 时 C 端收货地址前缀锁定为本社区省市区）
-	AllowOutsideDelivery bool   `gorm:"column:allow_outside_delivery;type:tinyint(1);default:0;comment:是否允许社区外配送 0否 1是" json:"allow_outside_delivery"`
-	Sort                 int32  `gorm:"column:sort;type:int;default:0;comment:排序，默认0" json:"sort"`
-	Status               int32  `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
-	CreatedAt            string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt            string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	AllowOutsideDelivery bool `gorm:"column:allow_outside_delivery;type:tinyint(1);default:0;comment:是否允许社区外配送 0否 1是" json:"allow_outside_delivery"`
+	// 取货渠道开关（社区级配置，C 端与收银台共用）：关闭的渠道下单页不渲染、服务端下单兜底拦截；
+	// 到店（delivery_type=3）不受此配置控制，收银台恒可用
+	EnableSelfPickup bool   `gorm:"column:enable_self_pickup;type:tinyint(1);default:1;comment:是否开启自提渠道 0否 1是，默认开启" json:"enable_self_pickup"`
+	EnableDelivery   bool   `gorm:"column:enable_delivery;type:tinyint(1);default:1;comment:是否开启配送渠道 0否 1是，默认开启" json:"enable_delivery"`
+	Sort             int32  `gorm:"column:sort;type:int;default:0;comment:排序，默认0" json:"sort"`
+	Status           int32  `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
+	CreatedAt        string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt        string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回社区表名

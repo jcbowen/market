@@ -21,10 +21,11 @@ export const QUERY_STATUS = {
   SHIPPING_AGGREGATE: 90,
 } as const
 
-/** 配送方式：1自提 2配送 */
+/** 配送方式：1自提 2配送 3到店（到店仅收银台可用，即买即走） */
 export const DELIVERY_TYPE = {
   SELF_PICKUP: 1,
   DELIVERY: 2,
+  STORE: 3,
 } as const
 
 /** 订单来源：1=C端用户自下单 2=后台收银台代客（决策点⑨） */
@@ -32,6 +33,21 @@ export const ORDER_SOURCE = {
   USER: 1,
   POS: 2,
 } as const
+
+/**
+ * 支付方式转文案（与后端 orderPayTypeText 对齐）
+ * @param payType 支付方式码
+ * @returns 中文描述
+ */
+export function payTypeText(payType: number): string {
+  const map: Record<number, string> = {
+    1: '微信',
+    2: '支付宝',
+    3: '货到付款',
+    4: '现金',
+  }
+  return map[payType] || `支付方式${payType}`
+}
 
 /** 来源筛选下拉项（0=全部） */
 export const orderSourceFilterOptions = [
@@ -115,11 +131,13 @@ export function orderStatusText(status: number): string {
 
 /**
  * 配送方式转文案
- * @param deliveryType 配送方式（1 自提 2 配送）
+ * @param deliveryType 配送方式（1 自提 2 配送 3 到店）
  * @returns 中文描述
  */
 export function deliveryTypeText(deliveryType: number): string {
-  return deliveryType === DELIVERY_TYPE.DELIVERY ? '配送' : '自提'
+  if (deliveryType === DELIVERY_TYPE.DELIVERY) return '配送'
+  if (deliveryType === DELIVERY_TYPE.STORE) return '到店'
+  return '自提'
 }
 
 /**
