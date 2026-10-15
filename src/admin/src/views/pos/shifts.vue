@@ -53,8 +53,8 @@
             <div class="receipt-title">交班小票</div>
             <div class="receipt-line">收银员：{{ activeShift.operator_name }}</div>
             <div class="receipt-line">班次编号：#{{ activeShift.id }}</div>
-            <div class="receipt-line">上班：{{ activeShift.start_time }}</div>
-            <div class="receipt-line">交班：{{ activeShift.end_time || '进行中' }}</div>
+            <div class="receipt-line">上班：{{ formatDateTime(activeShift.start_time) }}</div>
+            <div class="receipt-line">交班：{{ activeShift.end_time ? formatDateTime(activeShift.end_time) : '进行中' }}</div>
             <div class="receipt-divider">- - - - - - - - - - - - - - - -</div>
             <div class="receipt-section">收款</div>
             <!-- 固定展示 现金/微信/支付宝/余额，渠道未接入的支付方式数额为 0 -->
@@ -214,6 +214,17 @@ function formatTime(time: string): string {
   if (!Number.isFinite(date.getTime())) return time
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/**
+ * 日期时间文本（YYYY-MM-DD HH:mm）
+ * @param time 后端时间字符串（兼容 "YYYY-MM-DD HH:mm:ss" 与 RFC3339）
+ */
+function formatDateTime(time: string): string {
+  const date = parseDate(time)
+  if (!Number.isFinite(date.getTime())) return time
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 /**

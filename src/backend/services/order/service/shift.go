@@ -213,8 +213,9 @@ func (s *ShiftService) ListShifts(ctx context.Context, req *order.ListShiftsReq)
 
 	respList := make([]*order.PosShiftInfo, 0, len(list))
 	for _, m := range list {
-		// 列表页统计：进行中班次实时算（供「当前班次」概览），已结束读快照（省查询）
-		info, err := s.toShiftInfo(ctx, m, m.Status == 1)
+		// 列表页统计恒填充：进行中班次实时算（供「当前班次」概览），已结束班次读交班快照
+		// （此前误传 withStat=m.Status==1，导致已结束班次不带统计、前端金额全为 0）
+		info, err := s.toShiftInfo(ctx, m, true)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +338,26 @@ func (s *ShiftService) toShiftInfo(ctx context.Context, m *model.PosShift, withS
 	return info, nil
 }
 
+// normalizeTime 时间字符串归一化为 "2006-01-02 15:04:05"
+// 背景：datetime 列读库扫进 string 字段时，database/sql 会输出 RFC3339（如 2026-10-16T06:26:14+08:00），
+// 统一在出口处转换为前端友好的 "YYYY-MM-DD HH:mm:ss"；解析失败原样返回
+// 参数：
+//   - s: 原始时间字符串（"YYYY-MM-DD HH:mm:ss" 或 RFC3339）
+//
+// 返回值：
+//   - string: 归一化后的时间字符串
+func normalizeTime(s string) string {
+	if s == "" {
+		return s
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t.Format("2006-01-02 15:04:05")
+	}
+	return s
+}
+
 // ToPosShiftInfo 班次模型转 proto 信息（不含统计，统计由调用方按需填充）
+// 时间字段统一归一化为 "YYYY-MM-DD HH:mm:ss"（datetime 读库经 database/sql 会变 RFC3339）
 // 参数：
 //   - m: 班次模型
 //
@@ -352,13 +372,13 @@ func ToPosShiftInfo(m *model.PosShift) *order.PosShiftInfo {
 		CommunityId:  m.CommunityID,
 		OperatorId:   m.OperatorID,
 		OperatorName: m.OperatorName,
-		StartTime:    m.StartTime,
+		StartTime:    normalizeTime(m.StartTime),
 		Status:       m.Status,
 		Note:         m.Note,
-		CreatedAt:    m.CreatedAt,
+		CreatedAt:    normalizeTime(m.CreatedAt),
 	}
 	if m.EndTime != nil {
-		info.EndTime = *m.EndTime
+		info.EndTime = normalizeTime(*m.EndTime)
 	}
 	return info
 }
