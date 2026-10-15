@@ -12,7 +12,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/jcbowen/jcbaseGo v0.15.7
-	github.com/jcbowen/wego v0.0.7
+	github.com/jcbowen/wego v0.1.0
 	github.com/oschwald/geoip2-golang/v2 v2.5.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
