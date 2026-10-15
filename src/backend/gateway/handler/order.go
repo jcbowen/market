@@ -221,14 +221,19 @@ func (h *OrderHandler) PreviewFreeShipping(c *gin.Context) {
 		return
 	}
 	uc := appcontext.GetUserContext(c)
-	communityID := uc.CommunityID
-	if communityID <= 0 {
-		communityID, _ = strconv.ParseInt(c.GetHeader("X-Community-Id"), 10, 64)
+	// 实时查用户当前归属社区（与 CreateOrder 同口径）：
+	// token 中的 community_id 是登录快照，切换社区不重签 token，用快照会按旧社区试算；
+	// 也不信任客户端可伪造的 X-Community-Id，防止登录用户试算任意社区的活动与配送费配置
+	userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
 	}
-	if communityID <= 0 {
+	if userResp == nil || userResp.CommunityId <= 0 {
 		response.Error(c, errcode.ParamError, "缺少社区信息")
 		return
 	}
+	communityID := userResp.CommunityId
 
 	items := make([]*order.PreviewFreeShippingItem, 0, len(req.Items))
 	for _, item := range req.Items {

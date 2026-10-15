@@ -54,7 +54,9 @@ func (s *MarketingService) ListCoupons(ctx context.Context, req *product.ListCou
 	if err := db.Order("id desc").Find(&list).Error; err != nil {
 		return nil, err
 	}
-	s.loadCouponScopes(ctx, list)
+	if err := s.loadCouponScopes(ctx, list); err != nil {
+		return nil, err
+	}
 	return list, nil
 }
 
@@ -65,7 +67,9 @@ func (s *MarketingService) GetCoupon(ctx context.Context, id int64) (*model.Coup
 	if err != nil {
 		return nil, err
 	}
-	s.loadCouponScopes(ctx, []*model.Coupon{&c})
+	if err := s.loadCouponScopes(ctx, []*model.Coupon{&c}); err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
@@ -78,6 +82,10 @@ func (s *MarketingService) GetCoupon(ctx context.Context, id int64) (*model.Coup
 //   - *model.Coupon: 优惠券模型
 //   - error: 错误信息
 func (s *MarketingService) CreateCoupon(ctx context.Context, req *product.CreateCouponReq) (*model.Coupon, error) {
+	// 资金安全校验：折扣率区间、固定有效期截止时间（后端兜底，不信任前端）
+	if err := validateCouponRule(req.Type, req.DiscountValue, req.ExpireType, req.UseEndTime); err != nil {
+		return nil, err
+	}
 	now := time.Now().Format("2006-01-02 15:04:05")
 	// is_center_visible：缺省=进领券中心（1）
 	centerVisible := int32(1)
@@ -148,6 +156,45 @@ func (s *MarketingService) UpdateCoupon(ctx context.Context, req *product.Update
 	if err := s.db.GetDb().WithContext(ctx).First(&c, req.Id).Error; err != nil {
 		return nil, err
 	}
+
+	// 状态机白名单：发布状态仅允许 1/2，且草稿只能直接发布（禁止 0→2 跳过发布期）
+	if req.PublishStatus > 0 {
+		if req.PublishStatus != 1 && req.PublishStatus != 2 {
+			return nil, bizerr.New(codes.InvalidArgument, "非法的发布状态")
+		}
+		if c.PublishStatus == 0 && req.PublishStatus != 1 {
+			return nil, bizerr.New(codes.InvalidArgument, "草稿券只能发布，不能直接下架")
+		}
+	}
+	// 发放状态仅允许 0/1
+	if req.GrantStatus != nil && *req.GrantStatus != 0 && *req.GrantStatus != 1 {
+		return nil, bizerr.New(codes.InvalidArgument, "非法的发放状态")
+	}
+
+	// 按「合并后的有效值」做资金安全校验（面额/有效期仅草稿态可改，但校验不依赖该前提）
+	effType := c.Type
+	if req.Type > 0 {
+		effType = req.Type
+	}
+	effDiscount := c.DiscountValue
+	if req.DiscountValue > 0 {
+		effDiscount = req.DiscountValue
+	}
+	effExpire := c.ExpireType
+	if req.ExpireType > 0 {
+		effExpire = req.ExpireType
+	}
+	effUseEnd := ""
+	if c.UseEndTime != nil {
+		effUseEnd = *c.UseEndTime
+	}
+	if req.UseEndTime != "" {
+		effUseEnd = req.UseEndTime
+	}
+	if err := validateCouponRule(effType, effDiscount, effExpire, effUseEnd); err != nil {
+		return nil, err
+	}
+
 	if req.Name != "" {
 		c.Name = req.Name
 	}
@@ -224,19 +271,32 @@ func (s *MarketingService) UpdateCoupon(ctx context.Context, req *product.Update
 	if err != nil {
 		return nil, err
 	}
-	s.loadCouponScopes(ctx, []*model.Coupon{&c})
+	if err := s.loadCouponScopes(ctx, []*model.Coupon{&c}); err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
-// DeleteCoupon 删除优惠券
-// 参数：
-//   - ctx: 上下文
-//   - id: 优惠券 ID
-//
-// 返回值：
-//   - error: 错误信息
-func (s *MarketingService) DeleteCoupon(ctx context.Context, id int64) error {
-	return s.db.GetDb().WithContext(ctx).Delete(&model.Coupon{}, id).Error
+// DeleteCoupon 删除优惠券（社区隔离 + 已领取禁删；删除时清理范围行）
+func (s *MarketingService) DeleteCoupon(ctx context.Context, req *product.DeleteCouponReq) error {
+	var c model.Coupon
+	if err := s.db.GetDb().WithContext(ctx).First(&c, req.Id).Error; err != nil {
+		return err
+	}
+	// 社区隔离：仅允许删除本社区语境下的券
+	if req.CommunityId > 0 && c.CommunityID != req.CommunityId {
+		return bizerr.New(codes.PermissionDenied, "无权操作其他社区的优惠券")
+	}
+	// 已有用户领取的券不可删除：删除会导致持券用户下单时找不到模板券而整体失败
+	if c.ReceivedCount > 0 {
+		return bizerr.New(codes.FailedPrecondition, "优惠券已被领取，不能删除；请「停止发放」并保留供已领用户使用")
+	}
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("coupon_id = ?", req.Id).Delete(&model.CouponProductScope{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.Coupon{}, req.Id).Error
+	})
 }
 
 // ReceiveCoupon 用户领取优惠券
@@ -258,6 +318,10 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 		}
 		if c.Status != 1 {
 			return fmt.Errorf("优惠券未启用")
+		}
+		// 发布状态闸口：草稿/已下架的券一律不可领取（下架语义=领券中心不可见且不可领）
+		if c.PublishStatus != 1 {
+			return bizerr.New(codes.FailedPrecondition, "优惠券未发布或已下架")
 		}
 		if c.GrantStatus != 1 {
 			return fmt.Errorf("优惠券已停止发放")
@@ -368,6 +432,58 @@ func (s *MarketingService) UseCoupon(ctx context.Context, req *product.UseCoupon
 		c.UpdatedAt = now
 		return tx.Save(&c).Error
 	})
+}
+
+// ReleaseCoupon 取消订单时回补用户券：
+// 将该订单绑定的已使用 user_coupon 复位为未使用并清空订单关联，同时回退模板券 used_count。
+// 幂等：订单未绑定券或券已被回补时直接成功。
+func (s *MarketingService) ReleaseCoupon(ctx context.Context, req *product.ReleaseCouponReq) error {
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var uc model.UserCoupon
+		err := tx.Where("order_id = ? AND status = ?", req.OrderId, 2).First(&uc).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		now := time.Now().Format("2006-01-02 15:04:05")
+		// 条件更新防并发：仅当仍处于已使用状态时生效
+		res := tx.Model(&model.UserCoupon{}).Where("id = ? AND status = ?", uc.ID, 2).Updates(map[string]interface{}{
+			"status":     int32(1),
+			"order_id":   int64(0),
+			"updated_at": now,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
+		}
+		var c model.Coupon
+		if err := tx.First(&c, uc.CouponID).Error; err != nil {
+			return err
+		}
+		if c.UsedCount > 0 {
+			c.UsedCount--
+		}
+		c.UpdatedAt = now
+		return tx.Save(&c).Error
+	})
+}
+
+// validateCouponRule 优惠券面额规则校验（创建/草稿编辑共用，按合并后的有效值校验）
+// 折扣券 DiscountValue 语义是 0~1 的折扣率（0.85 = 85 折），
+// 误填 >=1 会算出负优惠放大实付金额，必须后端兜底；
+// 固定有效期（expire_type=2）必须配置使用截止时间，否则会生成永不过期的券
+func validateCouponRule(couponType int32, discountValue float64, expireType int32, useEndTime string) error {
+	if couponType == 2 && (discountValue <= 0 || discountValue >= 1) {
+		return bizerr.New(codes.InvalidArgument, "折扣率必须在 0 到 1 之间（如 0.85 表示 85 折）")
+	}
+	if expireType == 2 && useEndTime == "" {
+		return bizerr.New(codes.InvalidArgument, "固定有效期必须配置使用截止时间")
+	}
+	return nil
 }
 
 // ==================== 秒杀 ====================
@@ -546,6 +662,10 @@ func (s *MarketingService) UpdateFullReduction(ctx context.Context, req *product
 	if err := s.db.GetDb().WithContext(ctx).First(&fr, req.Id).Error; err != nil {
 		return nil, err
 	}
+	// 社区隔离：仅允许修改本社区语境下的活动
+	if req.CommunityId > 0 && fr.CommunityID != req.CommunityId {
+		return nil, bizerr.New(codes.PermissionDenied, "无权操作其他社区的活动")
+	}
 	if req.Name != "" {
 		fr.Name = req.Name
 	}
@@ -623,6 +743,10 @@ func (s *MarketingService) ListFreeShippings(ctx context.Context, req *product.L
 //   - *model.FreeShippingActivity: 活动模型
 //   - error: 错误信息
 func (s *MarketingService) CreateFreeShipping(ctx context.Context, req *product.CreateFreeShippingReq) (*model.FreeShippingActivity, error) {
+	// 门槛必须为正：负数/0 门槛会使所有配送订单免配送费（binding:required 拦不住负值，需后端兜底）
+	if req.Threshold <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "免配送费门槛必须大于 0")
+	}
 	now := time.Now().Format("2006-01-02 15:04:05")
 	activity := &model.FreeShippingActivity{
 		CommunityID: req.CommunityId,
@@ -662,6 +786,10 @@ func (s *MarketingService) UpdateFreeShipping(ctx context.Context, req *product.
 	var activity model.FreeShippingActivity
 	if err := s.db.GetDb().WithContext(ctx).First(&activity, req.Id).Error; err != nil {
 		return nil, err
+	}
+	// 社区隔离：仅允许修改本社区语境下的活动
+	if req.CommunityId > 0 && activity.CommunityID != req.CommunityId {
+		return nil, bizerr.New(codes.PermissionDenied, "无权操作其他社区的活动")
 	}
 	if req.Name != "" {
 		activity.Name = req.Name
@@ -922,12 +1050,14 @@ func ToCouponInfo(c *model.Coupon) *product.CouponInfo {
 }
 
 // loadCouponScopes 批量加载优惠券商品范围并回填展示名
+// 资金路径 fail-closed：范围加载失败必须返回错误，
+// 否则空 Scopes 会被 couponEligibleAmount 按「全场通用」计算门槛与优惠
 // 参数：
 //   - ctx: 上下文
 //   - coupons: 优惠券模型列表（Scopes 字段会被覆写）
-func (s *MarketingService) loadCouponScopes(ctx context.Context, coupons []*model.Coupon) {
+func (s *MarketingService) loadCouponScopes(ctx context.Context, coupons []*model.Coupon) error {
 	if len(coupons) == 0 {
-		return
+		return nil
 	}
 	couponIDs := make([]int64, 0, len(coupons))
 	for _, c := range coupons {
@@ -937,7 +1067,7 @@ func (s *MarketingService) loadCouponScopes(ctx context.Context, coupons []*mode
 	if err := s.db.GetDb().WithContext(ctx).
 		Where("coupon_id IN ?", couponIDs).
 		Find(&scopes).Error; err != nil {
-		return
+		return err
 	}
 	s.fillCouponScopeNames(ctx, scopes)
 	scopeMap := make(map[int64][]*model.CouponProductScope, len(coupons))
@@ -947,6 +1077,7 @@ func (s *MarketingService) loadCouponScopes(ctx context.Context, coupons []*mode
 	for _, c := range coupons {
 		c.Scopes = scopeMap[c.ID]
 	}
+	return nil
 }
 
 // fillCouponScopeNames 回填范围项的分类名/商品名（失败静默跳过）

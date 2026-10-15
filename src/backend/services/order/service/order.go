@@ -438,6 +438,13 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 			}
 		}
 
+		// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）
+		if o.CouponID > 0 {
+			if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
+				return fmt.Errorf("回补优惠券失败: %w", err)
+			}
+		}
+
 		return s.createStatusLogTx(tx, o.ID, o.Status, 6, "user", req.UserId, req.Reason)
 	})
 }
@@ -549,6 +556,10 @@ func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickup
 		if err := tx.First(&o, req.OrderId).Error; err != nil {
 			return err
 		}
+		// 社区隔离：核销人社区语境与订单归属社区不一致时直接拒绝（防止 A 社区管理员核销 B 社区订单）
+		if req.CommunityId > 0 && o.CommunityID != req.CommunityId {
+			return bizerr.New(codes.PermissionDenied, "无权核销其他社区的订单")
+		}
 		if o.DeliveryType != 1 {
 			return bizerr.New(codes.FailedPrecondition, "非自提订单，无需核销")
 		}
@@ -630,6 +641,14 @@ func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *mode
 			return fmt.Errorf("释放库存失败: %w", err)
 		}
 	}
+
+	// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）
+	if o.CouponID > 0 {
+		if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
+			return fmt.Errorf("回补优惠券失败: %w", err)
+		}
+	}
+
 	return s.createStatusLogTx(tx, o.ID, o.Status, 6, operatorType, operatorID, reason)
 }
 
@@ -679,6 +698,10 @@ func calculateDiscount(totalAmount float64, coupon *product.CouponInfo) float64 
 		discount := totalAmount * (1 - coupon.DiscountValue)
 		if discount > totalAmount {
 			return totalAmount
+		}
+		// 下限钳制：折扣率脏数据（>=1）会算出负优惠放大实付金额，必须兜底
+		if discount < 0 {
+			return 0
 		}
 		return discount
 	}

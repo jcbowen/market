@@ -1655,6 +1655,8 @@ func (h *AdminHandler) AdminVerifyPickup(c *gin.Context) {
 		PickupCode:   req.PickupCode,
 		OperatorType: "admin",
 		OperatorId:   uc.UserID,
+		// 社区隔离：服务端校验订单归属社区，跨社区核销直接拒绝
+		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2591,6 +2593,11 @@ func (h *AdminHandler) UpdateCoupon(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
+	// 社区隔离：仅允许操作本社区语境下的券
+	if communityID := h.getAdminCommunityID(c); communityID > 0 && cur.CommunityId != communityID {
+		response.Error(c, errcode.NoPermission, "无权操作其他社区的优惠券")
+		return
+	}
 	isDraft := cur.PublishStatus == 0
 
 	rpcReq := &product.UpdateCouponReq{
@@ -2661,7 +2668,7 @@ func (h *AdminHandler) DeleteCoupon(c *gin.Context) {
 		return
 	}
 
-	_, err = h.productClient.DeleteCoupon(c.Request.Context(), &product.DeleteCouponReq{Id: id})
+	_, err = h.productClient.DeleteCoupon(c.Request.Context(), &product.DeleteCouponReq{Id: id, CommunityId: h.getAdminCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -2839,6 +2846,8 @@ func (h *AdminHandler) UpdateFullReduction(c *gin.Context) {
 		StartTime:    req.StartTime,
 		EndTime:      req.EndTime,
 		Status:       req.Status,
+		// 社区隔离：服务端校验活动归属社区，跨社区修改直接拒绝
+		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2939,6 +2948,8 @@ func (h *AdminHandler) UpdateFreeShipping(c *gin.Context) {
 		StartTime: req.StartTime,
 		EndTime:   req.EndTime,
 		Status:    req.Status,
+		// 社区隔离：服务端校验活动归属社区，跨社区修改直接拒绝
+		CommunityId: h.getAdminCommunityID(c),
 	}
 	// 区分「不传 scopes」与「传空数组」：仅前者跳过范围替换
 	if req.Scopes != nil {

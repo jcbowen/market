@@ -128,7 +128,6 @@
 		})()
 		</script>
 
-		<script src="static/qrcode.min.js"></script>
 		<script>
 			/**
 			 * 额区状态栏真实时间：每 15 秒刷新，与真机状态栏一致。
@@ -147,16 +146,25 @@
 				update()
 				setInterval(update, 15000)
 			})()
+		</script>
+
+		<!--
+			机身右侧二维码：以 ESM 方式加载 qrcode.min.js。
+			该文件末尾带 `export default qrcode`（供 uni-app 页面 import），
+			不能用经典 <script src> 加载（会因 export 语法报错导致全局 qrcode 不存在）。
+		-->
+		<script type="module">
+			import qrcode from './static/qrcode.min.js'
 
 			/**
-			 * 机身右侧二维码：指向当前 origin 的 /s/ 入口。
+			 * 二维码指向当前 origin 的 /s/ 入口。
 			 * 手机扫码后由入口页宽窄屏检测自动进入全屏 App 模式；
 			 * 注意二维码内容取自地址栏 origin，需以局域网 IP 访问本页，手机方可打开。
 			 */
 			;(function () {
 				var url = window.location.origin + '/s/'
 				var box = document.getElementById('qr-code')
-				if (box && typeof qrcode === 'function') {
+				if (box) {
 					var qr = qrcode(0, 'M')
 					qr.addData(url)
 					qr.make()

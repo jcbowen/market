@@ -255,8 +255,16 @@ async function submit() {
     message.error('请填写优惠券名称')
     return
   }
-  if (form.value.type === 2 && (form.value.discount_value ?? 0) <= 0) {
-    message.error('折扣率必须大于 0')
+  if (form.value.type === 2) {
+    const dv = form.value.discount_value ?? 0
+    // 折扣率语义是 0~1（0.85 = 85 折），误填 8.5 会被后端算成负优惠
+    if (dv <= 0 || dv >= 1) {
+      message.error('折扣率必须在 0 到 1 之间（如 0.85 表示 85 折）')
+      return
+    }
+  }
+  if (form.value.expire_type === 2 && !useDateRange.value) {
+    message.error('固定有效期需选择可用时间范围')
     return
   }
   saving.value = true

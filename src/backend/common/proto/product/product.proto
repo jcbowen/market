@@ -58,6 +58,8 @@ service ProductService {
   rpc ReceiveCoupon(ReceiveCouponReq) returns (common.CommonResponse);
   rpc ListUserCoupons(ListUserCouponsReq) returns (ListUserCouponsResp);
   rpc UseCoupon(UseCouponReq) returns (common.CommonResponse);
+  // 取消/退款时回补用户券（按订单 ID 找到已核销的 user_coupon，幂等）
+  rpc ReleaseCoupon(ReleaseCouponReq) returns (common.CommonResponse);
 
   rpc ListFlashSales(ListFlashSalesReq) returns (ListFlashSalesResp);
   rpc GetFlashSale(GetFlashSaleReq) returns (FlashSaleDetail);
@@ -609,6 +611,13 @@ message UpdateCouponReq {
 
 message DeleteCouponReq {
   int64 id = 1;
+  // 操作者社区语境（>0 时校验券归属社区，跨社区删除直接拒绝）
+  int64 community_id = 2;
+}
+
+// ReleaseCouponReq 取消订单时回补用户券
+message ReleaseCouponReq {
+  int64 order_id = 1; // 订单 ID（按 order_id 定位已核销的 user_coupon）
 }
 
 message CouponScopeInfo {
@@ -761,6 +770,8 @@ message UpdateFullReductionReq {
   string start_time = 5;
   string end_time = 6;
   int32 status = 7;
+  // 操作者社区语境（>0 时校验活动归属社区，跨社区修改直接拒绝）
+  int64 community_id = 8;
 }
 
 message FullReductionInfo {
@@ -805,6 +816,8 @@ message UpdateFreeShippingReq {
   string end_time = 5;
   int32 status = 6;
   repeated FreeShippingScopeReq scopes = 7; // 排除范围，全量替换
+  // 操作者社区语境（>0 时校验活动归属社区，跨社区修改直接拒绝）
+  int64 community_id = 8;
 }
 
 message FreeShippingScopeInfo {

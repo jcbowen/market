@@ -14,7 +14,7 @@
 defineOptions({ name: 'CouponList' })
 import { ref, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NSpace, NTag } from 'naive-ui'
+import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getCouponList, deleteCoupon, updateCoupon } from '@/api/marketing'
 import type { Coupon } from '@/api/types'
@@ -25,6 +25,8 @@ import type { Coupon } from '@/api/types'
  * 编辑边界（决策点⑧）：草稿全字段可编辑；已发布/已下架仅可补充数量/停发恢复/规则文案
  */
 const router = useRouter()
+const dialog = useDialog()
+const message = useMessage()
 const list = ref<Coupon[]>([])
 const loading = ref(false)
 const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
@@ -92,10 +94,8 @@ const columns: DataTableColumns<Coupon> = [
         actions.push(
           h(NButton, { size: 'small', type: 'success', onClick: () => publish(row) }, { default: () => '发布' })
         )
-      } else if (row.publish_status === 1) {
-        actions.push(
-          h(NButton, { size: 'small', type: 'warning', onClick: () => unpublish(row) }, { default: () => '下架' })
-        )
+      } else {
+        // 已发布/已下架都要有发放开关，否则下架后无法停止发放（运营死角）
         actions.push(
           h(
             NButton,
@@ -103,6 +103,15 @@ const columns: DataTableColumns<Coupon> = [
             { default: () => (row.grant_status === 1 ? '停止发放' : '恢复发放') }
           )
         )
+        if (row.publish_status === 1) {
+          actions.push(
+            h(NButton, { size: 'small', type: 'warning', onClick: () => unpublish(row) }, { default: () => '下架' })
+          )
+        } else {
+          actions.push(
+            h(NButton, { size: 'small', type: 'success', onClick: () => publish(row) }, { default: () => '重新上架' })
+          )
+        }
       }
       actions.push(
         h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' })
@@ -122,27 +131,64 @@ async function loadData() {
   }
 }
 
-/** 发布（草稿 → 已发布） */
+/** 发布（草稿 → 已发布；已下架 → 重新上架） */
 async function publish(row: Coupon) {
   const res = await updateCoupon(row.id, { publish_status: 1 } as Partial<Coupon>)
-  if (res.data.code === 0) loadData()
+  if (res.data.code === 0) {
+    message.success('已发布')
+    loadData()
+  } else {
+    message.error(res.data.message || '发布失败')
+  }
 }
 
-/** 下架（已发布 → 已下架；已领取的券仍可使用） */
-async function unpublish(row: Coupon) {
-  const res = await updateCoupon(row.id, { publish_status: 2 } as Partial<Coupon>)
-  if (res.data.code === 0) loadData()
+/** 下架（已发布 → 已下架；已领取的券仍可使用，但不再可领） */
+function unpublish(row: Coupon) {
+  dialog.warning({
+    title: '下架优惠券',
+    content: `确认下架「${row.name}」？下架后用户不可再领取，已领取的券仍可使用。`,
+    positiveText: '确认下架',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      const res = await updateCoupon(row.id, { publish_status: 2 } as Partial<Coupon>)
+      if (res.data.code === 0) {
+        message.success('已下架')
+        loadData()
+      } else {
+        message.error(res.data.message || '下架失败')
+      }
+    },
+  })
 }
 
 /** 停止/恢复发放（停止后已领的券仍可用，只是不再发） */
 async function toggleGrant(row: Coupon) {
-  const res = await updateCoupon(row.id, { grant_status: row.grant_status === 1 ? 0 : 1 } as Partial<Coupon>)
-  if (res.data.code === 0) loadData()
+  const stopping = row.grant_status === 1
+  const res = await updateCoupon(row.id, { grant_status: stopping ? 0 : 1 } as Partial<Coupon>)
+  if (res.data.code === 0) {
+    message.success(stopping ? '已停止发放' : '已恢复发放')
+    loadData()
+  } else {
+    message.error(res.data.message || '操作失败')
+  }
 }
 
-async function remove(row: Coupon) {
-  const res = await deleteCoupon(row.id)
-  if (res.data.code === 0) loadData()
+function remove(row: Coupon) {
+  dialog.warning({
+    title: '删除优惠券',
+    content: `确认删除「${row.name}」？已有人领取的券无法删除，只能停止发放。`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      const res = await deleteCoupon(row.id)
+      if (res.data.code === 0) {
+        message.success('已删除')
+        loadData()
+      } else {
+        message.error(res.data.message || '删除失败')
+      }
+    },
+  })
 }
 
 onMounted(loadData)

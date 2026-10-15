@@ -58,6 +58,7 @@ const (
 	ProductService_ReceiveCoupon_FullMethodName                 = "/product.ProductService/ReceiveCoupon"
 	ProductService_ListUserCoupons_FullMethodName               = "/product.ProductService/ListUserCoupons"
 	ProductService_UseCoupon_FullMethodName                     = "/product.ProductService/UseCoupon"
+	ProductService_ReleaseCoupon_FullMethodName                 = "/product.ProductService/ReleaseCoupon"
 	ProductService_ListFlashSales_FullMethodName                = "/product.ProductService/ListFlashSales"
 	ProductService_GetFlashSale_FullMethodName                  = "/product.ProductService/GetFlashSale"
 	ProductService_CreateFlashSale_FullMethodName               = "/product.ProductService/CreateFlashSale"
@@ -136,6 +137,8 @@ type ProductServiceClient interface {
 	ReceiveCoupon(ctx context.Context, in *ReceiveCouponReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ListUserCoupons(ctx context.Context, in *ListUserCouponsReq, opts ...grpc.CallOption) (*ListUserCouponsResp, error)
 	UseCoupon(ctx context.Context, in *UseCouponReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 取消/退款时回补用户券（按订单 ID 找到已核销的 user_coupon，幂等）
+	ReleaseCoupon(ctx context.Context, in *ReleaseCouponReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ListFlashSales(ctx context.Context, in *ListFlashSalesReq, opts ...grpc.CallOption) (*ListFlashSalesResp, error)
 	GetFlashSale(ctx context.Context, in *GetFlashSaleReq, opts ...grpc.CallOption) (*FlashSaleDetail, error)
 	CreateFlashSale(ctx context.Context, in *CreateFlashSaleReq, opts ...grpc.CallOption) (*FlashSaleInfo, error)
@@ -557,6 +560,16 @@ func (c *productServiceClient) UseCoupon(ctx context.Context, in *UseCouponReq, 
 	return out, nil
 }
 
+func (c *productServiceClient) ReleaseCoupon(ctx context.Context, in *ReleaseCouponReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_ReleaseCoupon_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *productServiceClient) ListFlashSales(ctx context.Context, in *ListFlashSalesReq, opts ...grpc.CallOption) (*ListFlashSalesResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFlashSalesResp)
@@ -876,6 +889,8 @@ type ProductServiceServer interface {
 	ReceiveCoupon(context.Context, *ReceiveCouponReq) (*common.CommonResponse, error)
 	ListUserCoupons(context.Context, *ListUserCouponsReq) (*ListUserCouponsResp, error)
 	UseCoupon(context.Context, *UseCouponReq) (*common.CommonResponse, error)
+	// 取消/退款时回补用户券（按订单 ID 找到已核销的 user_coupon，幂等）
+	ReleaseCoupon(context.Context, *ReleaseCouponReq) (*common.CommonResponse, error)
 	ListFlashSales(context.Context, *ListFlashSalesReq) (*ListFlashSalesResp, error)
 	GetFlashSale(context.Context, *GetFlashSaleReq) (*FlashSaleDetail, error)
 	CreateFlashSale(context.Context, *CreateFlashSaleReq) (*FlashSaleInfo, error)
@@ -1030,6 +1045,9 @@ func (UnimplementedProductServiceServer) ListUserCoupons(context.Context, *ListU
 }
 func (UnimplementedProductServiceServer) UseCoupon(context.Context, *UseCouponReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UseCoupon not implemented")
+}
+func (UnimplementedProductServiceServer) ReleaseCoupon(context.Context, *ReleaseCouponReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseCoupon not implemented")
 }
 func (UnimplementedProductServiceServer) ListFlashSales(context.Context, *ListFlashSalesReq) (*ListFlashSalesResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFlashSales not implemented")
@@ -1817,6 +1835,24 @@ func _ProductService_UseCoupon_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_ReleaseCoupon_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseCouponReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ReleaseCoupon(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ReleaseCoupon_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ReleaseCoupon(ctx, req.(*ReleaseCouponReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProductService_ListFlashSales_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFlashSalesReq)
 	if err := dec(in); err != nil {
@@ -2461,6 +2497,10 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UseCoupon",
 			Handler:    _ProductService_UseCoupon_Handler,
+		},
+		{
+			MethodName: "ReleaseCoupon",
+			Handler:    _ProductService_ReleaseCoupon_Handler,
 		},
 		{
 			MethodName: "ListFlashSales",

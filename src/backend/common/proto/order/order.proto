@@ -372,6 +372,8 @@ message VerifyPickupReq {
   // 操作者类型：admin（后台兜底）/ staff（履约人员，B 工作台）
   string operator_type = 3;
   int64 operator_id = 4;
+  // 操作者社区语境（>0 时校验订单归属社区，跨社区核销直接拒绝；0=跳过校验）
+  int64 community_id = 5;
 }
 
 message VerifyPickupResp {

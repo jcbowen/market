@@ -2856,8 +2856,10 @@ type VerifyPickupReq struct {
 	// 顾客出示的取货码（数字码）
 	PickupCode string `protobuf:"bytes,2,opt,name=pickup_code,json=pickupCode,proto3" json:"pickup_code,omitempty"`
 	// 操作者类型：admin（后台兜底）/ staff（履约人员，B 工作台）
-	OperatorType  string `protobuf:"bytes,3,opt,name=operator_type,json=operatorType,proto3" json:"operator_type,omitempty"`
-	OperatorId    int64  `protobuf:"varint,4,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	OperatorType string `protobuf:"bytes,3,opt,name=operator_type,json=operatorType,proto3" json:"operator_type,omitempty"`
+	OperatorId   int64  `protobuf:"varint,4,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	// 操作者社区语境（>0 时校验订单归属社区，跨社区核销直接拒绝；0=跳过校验）
+	CommunityId   int64 `protobuf:"varint,5,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2916,6 +2918,13 @@ func (x *VerifyPickupReq) GetOperatorType() string {
 func (x *VerifyPickupReq) GetOperatorId() int64 {
 	if x != nil {
 		return x.OperatorId
+	}
+	return 0
+}
+
+func (x *VerifyPickupReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
 	}
 	return 0
 }
@@ -3422,14 +3431,15 @@ const file_order_order_proto_rawDesc = "" +
 	"\vorder_count\x18\x03 \x01(\x05R\n" +
 	"orderCount\"A\n" +
 	"\x11RevenueReportResp\x12,\n" +
-	"\x04list\x18\x01 \x03(\v2\x18.order.RevenueReportItemR\x04list\"\x93\x01\n" +
+	"\x04list\x18\x01 \x03(\v2\x18.order.RevenueReportItemR\x04list\"\xb6\x01\n" +
 	"\x0fVerifyPickupReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x1f\n" +
 	"\vpickup_code\x18\x02 \x01(\tR\n" +
 	"pickupCode\x12#\n" +
 	"\roperator_type\x18\x03 \x01(\tR\foperatorType\x12\x1f\n" +
 	"\voperator_id\x18\x04 \x01(\x03R\n" +
-	"operatorId\"E\n" +
+	"operatorId\x12!\n" +
+	"\fcommunity_id\x18\x05 \x01(\x03R\vcommunityId\"E\n" +
 	"\x10VerifyPickupResp\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\"K\n" +

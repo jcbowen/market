@@ -496,7 +496,15 @@ func (s *server) UpdateCoupon(ctx stdctx.Context, req *product.UpdateCouponReq) 
 
 // DeleteCoupon 删除优惠券
 func (s *server) DeleteCoupon(ctx stdctx.Context, req *product.DeleteCouponReq) (*common.CommonResponse, error) {
-	if err := s.marketingService.DeleteCoupon(ctx, req.Id); err != nil {
+	if err := s.marketingService.DeleteCoupon(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ReleaseCoupon 取消订单时回补用户券
+func (s *server) ReleaseCoupon(ctx stdctx.Context, req *product.ReleaseCouponReq) (*common.CommonResponse, error) {
+	if err := s.marketingService.ReleaseCoupon(ctx, req); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
