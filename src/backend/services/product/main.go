@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"google.golang.org/grpc"
@@ -9,6 +10,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 	"github.com/jcbowen/market/src/backend/services/product/model"
+	"github.com/jcbowen/market/src/backend/services/product/service"
 )
 
 /**
@@ -26,7 +28,7 @@ func main() {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
 	backfillProductSummary(db)
-	_ = bootstrap.InitRedis(cfg)
+	rds := bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer(
 		// 图片经 gateway 转发（本地上传模式）时单条消息可达数 MB，默认 4MB 上限不够用
@@ -35,6 +37,11 @@ func main() {
 	)
 	product.RegisterProductServiceServer(srv, newServer(db, cfg))
 	bootstrap.RegisterHealth(srv)
+
+	// 优惠券过期流转调度器：user_coupons status 1未使用 → 3已过期（幂等条件更新，见 service/scheduler.go）
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	go service.NewCouponScheduler(db, rds.GetClient()).Start(schedulerCtx)
 
 	if err := bootstrap.RunGRPCServer(srv, cfg.ProductService.GrpcPort); err != nil {
 		log.Fatalf("启动失败: %v", err)

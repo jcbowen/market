@@ -72,14 +72,17 @@
         <span class="field-tip">关闭后券仅可通过手动发放（二期）触达用户</span>
       </n-form-item>
       <n-form-item label="规则文案">
-        <n-input
-          v-model:value="form.rule_text"
-          type="textarea"
-          :rows="3"
-          maxlength="1000"
-          show-count
-          placeholder="展示给用户的规则说明，可手写；一键生成功能随后续版本提供"
-        />
+        <n-space vertical style="width: 100%">
+          <n-input
+            v-model:value="form.rule_text"
+            type="textarea"
+            :rows="3"
+            maxlength="1000"
+            show-count
+            placeholder="展示给用户的规则说明，可手写或按当前配置一键生成后修改"
+          />
+          <n-button size="small" @click="onGenerateRuleText">按当前配置一键生成</n-button>
+        </n-space>
       </n-form-item>
 
       <n-form-item label="保存方式" v-if="!isEdit">
@@ -110,7 +113,7 @@
 defineOptions({ name: 'CouponForm' })
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import ProductScopePicker from '@/components/ProductScopePicker.vue'
 import { getCouponList, createCoupon, updateCoupon } from '@/api/marketing'
 import type { Coupon, CouponScope } from '@/api/types'
@@ -134,6 +137,7 @@ interface PickedScope {
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const dialog = useDialog()
 
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
@@ -229,6 +233,75 @@ function onScopeConfirm(items: { type: 'category' | 'product'; id: number; name:
 
 function removeScope(index: number) {
   pickedScopes.value.splice(index, 1)
+}
+
+/**
+ * 按当前配置一键生成规则文案（M 第③期）
+ * 仅做输入框内容填充，生成后仍可人工编辑；已有内容时先确认覆盖
+ */
+function onGenerateRuleText() {
+  const lines: string[] = []
+  const name = form.value.name?.trim() || '本券'
+  const threshold = form.value.threshold ?? 0
+
+  if (form.value.type === 2) {
+    const rate = form.value.discount_value ?? 0
+    if (rate <= 0 || rate >= 1) {
+      message.error('请先填写 0 到 1 之间的折扣率（如 0.85 表示 85 折）')
+      return
+    }
+    lines.push(`1、${threshold > 0 ? `满 ${threshold} 元` : '无使用门槛'}可用，享受 ${rate * 10} 折优惠。`)
+  } else {
+    lines.push(`1、${threshold > 0 ? `满 ${threshold} 元` : '无使用门槛'}可减 ${form.value.discount_value ?? 0} 元。`)
+  }
+
+  if (form.value.expire_type === 2) {
+    if (useDateRange.value) {
+      lines.push(`2、可用时间：${formatTime(useDateRange.value[0])} 至 ${formatTime(useDateRange.value[1])}。`)
+    } else {
+      message.error('固定有效期需先选择可用时间范围')
+      return
+    }
+  } else if ((form.value.valid_days ?? 0) > 0) {
+    lines.push(`2、领取后 ${form.value.valid_days} 天内有效。`)
+  } else {
+    lines.push('2、有效期至领取窗口结束。')
+  }
+
+  if (grantDateRange.value) {
+    lines.push(`3、领取时间：${formatTime(grantDateRange.value[0])} 至 ${formatTime(grantDateRange.value[1])}；每人限领 ${form.value.per_user_limit ?? 1} 张。`)
+  } else {
+    lines.push(`3、长期可领；每人限领 ${form.value.per_user_limit ?? 1} 张。`)
+  }
+
+  if (pickedScopes.value.length) {
+    const parts = pickedScopes.value.map((s) => {
+      const target = s.type === 'category' ? `${s.name}（全部商品）` : s.name
+      return s.kind === 'include' ? target : `不含${target}`
+    })
+    lines.push(`4、适用范围：${parts.join('、')}。`)
+  } else {
+    lines.push('4、全场通用。')
+  }
+
+  lines.push(`5、${name}不兑现、不找零，订单取消后已用券自动退回。`)
+
+  const text = lines.join('\n')
+  if (form.value.rule_text?.trim()) {
+    dialog.warning({
+      title: '覆盖规则文案',
+      content: '当前已有规则文案，一键生成将覆盖现有内容，是否继续？',
+      positiveText: '覆盖',
+      negativeText: '取消',
+      onPositiveClick: () => {
+        form.value.rule_text = text
+        message.success('规则文案已生成，可继续手动修改')
+      },
+    })
+    return
+  }
+  form.value.rule_text = text
+  message.success('规则文案已生成，可继续手动修改')
 }
 
 function formatTime(ts: number) {

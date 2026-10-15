@@ -1,6 +1,3 @@
-# 注意：web_server/db/redis 由 jcbaseGo 结构体解析，其字段无 yaml tag，
-# yaml.v3 按“字段名全小写”匹配（如 enablessl、drivername），
-# camelCase 或下划线写法会被静默忽略并回落默认值，切勿改回 enable_ssl 等写法
 web_server:
     port: 18080
     enablessl: false
@@ -13,10 +10,11 @@ db:
     port: "3306"
     dbname: market
     username: root
-    password: "market123"
+    password: market123
     charset: utf8mb4
     tableprefix: ""
     parsetime: "True"
+    loc: Local
     singulartable: true
     disableforeignkeyconstraintwhenmigrating: true
 redis:
@@ -49,20 +47,16 @@ upload:
     allowed_types: []
     storage: local
     local_path: static/uploads/
+geoip:
+    db_path: data/geoip/GeoLite2-City.mmdb
 wechat:
-    app_id: "wx_test_appid"
+    app_id: wx_test_appid
     app_secret: ""
     mch_id: "1234567890"
     api_v3_key: ""
     cert_serial_no: ""
     private_key: ""
-    notify_url: "http://localhost:18080/api/v1/payments/callback/wechat"
-alipay:
-    app_id: "2024test_appid"
-    private_key: "test_private_key"
-    alipay_public_key: "test_public_key"
-    notify_url: "http://localhost:18080/api/v1/payments/callback/alipay"
-    return_url: "http://localhost:18080/s/order"
+    notify_url: http://localhost:18080/api/v1/payments/callback/wechat
 sms:
     provider: aliyun
     access_key: ""
@@ -85,12 +79,3 @@ cart_service:
     grpc_port: 50054
 payment_service:
     grpc_port: 50055
-
-# ========== 支付方式开关 ==========
-# enabled_channels 控制当前可用的支付渠道，同时决定 C 端展示顺序
-# 可选值：wechat（微信支付）、alipay（支付宝支付）、cash（货到付款/现金）
-# 微信支付是否实际展示还会校验微信 V3 配置是否完整
-payment:
-    enabled_channels:
-        - wechat
-        - cash

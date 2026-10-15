@@ -457,6 +457,8 @@ func (s *MarketingService) grantToUserTx(tx *gorm.DB, c *model.Coupon, userID in
 }
 
 // ListUserCoupons 查询用户优惠券列表
+// status=1（未使用）时同步排除已过期但尚未被调度器流转的行，
+// 保证下单 applyCoupon（按 status=1 拉取）不会选中已过期券
 // 参数：
 //   - ctx: 上下文
 //   - req: 查询请求
@@ -469,6 +471,9 @@ func (s *MarketingService) ListUserCoupons(ctx context.Context, req *product.Lis
 	db := s.db.GetDb().WithContext(ctx).Where("user_id = ?", req.UserId)
 	if req.Status > 0 {
 		db = db.Where("status = ?", req.Status)
+		if req.Status == 1 {
+			db = db.Where("(expire_at IS NULL OR expire_at >= NOW())")
+		}
 	}
 	err := db.Order("id desc").Find(&list).Error
 	return list, err
@@ -496,6 +501,10 @@ func (s *MarketingService) ListCouponRecords(ctx context.Context, req *product.L
 	}
 	if req.Status > 0 {
 		db = db.Where("user_coupons.status = ?", req.Status)
+		// 与 ListUserCoupons 同口径：未使用筛选排除已过期未流转的行
+		if req.Status == 1 {
+			db = db.Where("(user_coupons.expire_at IS NULL OR user_coupons.expire_at >= NOW())")
+		}
 	}
 	if req.Source > 0 {
 		db = db.Where("user_coupons.source = ?", req.Source)

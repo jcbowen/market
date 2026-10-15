@@ -105,7 +105,7 @@ func (s *Scheduler) retryStuckRefunds(ctx context.Context) {
 	if s.refundService == nil {
 		return
 	}
-	lockKey := "scheduler:refund:retry:lock"
+	lockKey := "scheduler:order:refund:retry:lock"
 	if !s.acquireLock(ctx, lockKey, 5*time.Minute) {
 		return
 	}
@@ -161,7 +161,7 @@ func (s *Scheduler) recoverStuckOrders(ctx context.Context) {
 //   - ctx: 上下文
 //   - orderTimeout: 超时时间（秒）
 func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
-	lockKey := "scheduler:timeout:cancel:lock"
+	lockKey := "scheduler:order:timeout:cancel:lock"
 	if !s.acquireLock(ctx, lockKey, 5*time.Minute) {
 		return
 	}
@@ -194,7 +194,7 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 //   - ctx: 上下文
 //   - autoCompleteDays: 自动完成天数
 func (s *Scheduler) autoCompleteOrders(ctx context.Context, autoCompleteDays int) {
-	lockKey := "scheduler:auto:complete:lock"
+	lockKey := "scheduler:order:auto:complete:lock"
 	if !s.acquireLock(ctx, lockKey, 5*time.Minute) {
 		return
 	}
