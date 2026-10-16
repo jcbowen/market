@@ -2067,11 +2067,14 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"pay_type":        payType,
 		"pay_type_text":   payTypeText,
 		"pickup_code":     o.PickupCode,
-		"created_at":      o.CreatedAt,
-		"items":           items,
-		"address":         address,
-		"status_logs":     statusLogs,
-		"refunds":         refunds,
+		// 配送员（履约人员姓名快照）与签收凭证图片（决策点②拍照留证）
+		"delivery_user_name":    o.DeliveryUserName,
+		"delivery_proof_images": o.DeliveryProofImages,
+		"created_at":            o.CreatedAt,
+		"items":                 items,
+		"address":               address,
+		"status_logs":           statusLogs,
+		"refunds":               refunds,
 	}
 	response.Success(c, data)
 }

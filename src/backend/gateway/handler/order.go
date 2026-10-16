@@ -363,6 +363,9 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"paid_at":      o.PayTime,
 		"delivered_at": o.DeliverTime,
 		"received_at":  o.CompleteTime,
+		// 履约人员姓名快照与送达签收凭证（决策点②拍照留证，C 端订单详情可查看）
+		"delivery_user_name":    o.DeliveryUserName,
+		"delivery_proof_images": o.DeliveryProofImages,
 		// 待支付订单的超时截止时间，供前端展示倒计时（与 order-service 超时取消同一配置）
 		"expire_at": orderExpireAt(o.Status, o.CreatedAt, h.orderTimeoutSec),
 	}
@@ -373,18 +376,22 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 // 仅 status=1（待支付）时返回 created_at + order_timeout，其余状态返回空串
 // 参数：
 //   - status: 订单状态
-//   - createdAt: 订单创建时间（格式 2006-01-02 15:04:05）
+//   - createdAt: 订单创建时间（兼容 2006-01-02 15:04:05 与 RFC3339 两种格式）
 //   - orderTimeoutSec: 超时秒数
 //
 // 返回值：
-//   - string: 截止时间字符串，非待支付订单返回空串
+//   - string: 截止时间字符串（2006-01-02 15:04:05），非待支付订单或解析失败返回空串
 func orderExpireAt(status int32, createdAt string, orderTimeoutSec int) string {
 	if status != 1 || createdAt == "" {
 		return ""
 	}
 	created, err := time.ParseInLocation("2006-01-02 15:04:05", createdAt, time.Local)
 	if err != nil {
-		return ""
+		// 兼容订单服务返回的 RFC3339 格式（如 2026-10-17T00:55:01+08:00）
+		created, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return ""
+		}
 	}
 	return created.Add(time.Duration(orderTimeoutSec) * time.Second).Format("2006-01-02 15:04:05")
 }

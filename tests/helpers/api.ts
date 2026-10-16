@@ -88,6 +88,15 @@ export async function clientLogin(request: RequestSource, phone: string): Promis
       ).json()) as ApiResponse;
       if (sel.code !== 0) throw new Error(`自动选择社区失败 code=${sel.code} message=${sel.message}`);
       info.user.community_id = first.id;
+      // 绑定发生在登录之后，JWT 中的 community_id 仍为旧值（0），
+      // 按 JWT 社区语境过滤的接口（如 banner 列表）会查不到社区数据，需重登刷新 token
+      const relogin = (await (
+        await ctx.post('/api/v1/auth/login/phone', { data: { phone } })
+      ).json()) as ApiResponse<ClientLoginInfo>;
+      if (relogin.code === 0 && relogin.data?.access_token) {
+        relogin.data.user.community_id = first.id;
+        return relogin.data;
+      }
     }
     return info;
   } finally {
@@ -232,14 +241,14 @@ export interface SkuRef {
  * 从环境选取一个有库存的在售 SKU
  * 流程：公开商品列表取第一个在售商品 → GET /api/v1/skus?product_id= 取库存>0 的 SKU
  * - 函数名: pickSku
- * - 参数: api — 请求上下文（鉴权与否均可，走公开接口）；keywords — 可选名称过滤
+ * - 参数: api — 请求上下文（鉴权与否均可，走公开接口）；keyword — 可选名称过滤（网关参数名为 keyword）
  * - 返回: Promise<SkuRef>
  * - 异常: 环境无在售商品/无库存 SKU 时抛出 Error
  * - 使用示例: const sku = await pickSku(api);
  */
-export async function pickSku(api: APIRequestContext, keywords?: string): Promise<SkuRef> {
+export async function pickSku(api: APIRequestContext, keyword?: string): Promise<SkuRef> {
   const params: Record<string, string | number> = { page: 1, page_size: 20, status: 1 };
-  if (keywords) params.keywords = keywords;
+  if (keyword) params.keyword = keyword;
   const listResp = await api.get('/api/v1/products', { params });
   const listBody = (await listResp.json()) as ApiResponse<PageData<{ id: number; name: string }>>;
   const products = asList<{ id: number }>(listBody.data);

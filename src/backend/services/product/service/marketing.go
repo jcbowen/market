@@ -317,14 +317,14 @@ func (s *MarketingService) ReceiveCoupon(ctx context.Context, req *product.Recei
 			return err
 		}
 		if c.Status != 1 {
-			return fmt.Errorf("优惠券未启用")
+			return bizerr.New(codes.FailedPrecondition, "优惠券未启用")
 		}
 		// 发布状态闸口：草稿/已下架的券一律不可领取（下架语义=领券中心不可见且不可领）
 		if c.PublishStatus != 1 {
 			return bizerr.New(codes.FailedPrecondition, "优惠券未发布或已下架")
 		}
 		if c.GrantStatus != 1 {
-			return fmt.Errorf("优惠券已停止发放")
+			return bizerr.New(codes.FailedPrecondition, "优惠券已停止发放")
 		}
 		return s.grantToUserTx(tx, &c, req.UserId, 1, 0, "", time.Now())
 	})
@@ -403,12 +403,12 @@ func (s *MarketingService) GrantCoupon(ctx context.Context, req *product.GrantCo
 //   - error: 错误信息
 func (s *MarketingService) grantToUserTx(tx *gorm.DB, c *model.Coupon, userID int64, source int32, operatorID int64, operatorName string, now time.Time) error {
 	if c.ReceivedCount >= c.TotalCount {
-		return fmt.Errorf("优惠券已领完")
+		return bizerr.New(codes.FailedPrecondition, "优惠券已领完")
 	}
 	// 未配置时间窗口（nil）时不限制领取时间
 	if (c.StartTime != nil && now.Before(parseTime(*c.StartTime))) ||
 		(c.EndTime != nil && now.After(parseTime(*c.EndTime))) {
-		return fmt.Errorf("不在领取时间范围内")
+		return bizerr.New(codes.FailedPrecondition, "不在领取时间范围内")
 	}
 
 	var count int64
@@ -416,7 +416,7 @@ func (s *MarketingService) grantToUserTx(tx *gorm.DB, c *model.Coupon, userID in
 		return err
 	}
 	if int32(count) >= c.PerUserLimit {
-		return fmt.Errorf("已超过每人限领数量")
+		return bizerr.New(codes.FailedPrecondition, "已超过每人限领数量")
 	}
 
 	// 到期时间按 expire_type：
