@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { onLaunch } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getCommunityList, getIpLocation } from '@/api/user'
+import { getCommunityList, getCommunityById, getIpLocation } from '@/api/user'
 import type { Community } from '@/api/types'
 
 onLaunch(() => {
@@ -25,8 +25,40 @@ onLaunch(() => {
 async function initCommunity() {
   const userStore = useUserStore()
   if (userStore.isLogin) {
+    // 兜底同步：服务端未绑定社区但本地已有社区选择（登录前自动/手动选的社区未落库），
+    // 补写服务端绑定，否则下单/存地址/运费试算等服务端按未选社区处理都会报错
+    if (!userStore.userInfo?.community_id && userStore.communityInfo?.id) {
+      try {
+        await userStore.switchCommunity(userStore.communityInfo)
+      } catch {
+        // 同步失败不阻断启动，下方按服务端绑定恢复时仍会兜底
+      }
+    }
+    // 本地已有社区缓存：仍按服务端绑定刷新一次完整社区信息。
+    // 绑定社区已删除/停业（营业列表匹配不到）时说明绑定已失效——
+    // 直接信任本地缓存会导致下单报"社区不存在"，需走自愈或兜底重选
     if (userStore.communityInfo?.id && userStore.communityInfo?.name) {
-      await ensureCommunityOpen(userStore)
+      if (await userStore.syncBoundCommunity()) {
+        await ensureCommunityOpen(userStore)
+        return
+      }
+      // 服务端绑定已失效：本地缓存社区若仍在营业列表中则补绑定沿用，否则自动重选
+      const local = userStore.communityInfo
+      const localValid = local?.id ? await getCommunityById(local.id) : null
+      if (localValid) {
+        try {
+          await userStore.switchCommunity(localValid)
+        } catch {
+          // 同步失败不阻断启动
+        }
+        await ensureCommunityOpen(userStore)
+        return
+      }
+      const fallback = await autoPickCommunity()
+      if (fallback) {
+        await userStore.switchCommunity(fallback)
+        uni.showToast({ title: `已为您选择「${fallback.name}」，点击顶部可切换`, icon: 'none' })
+      }
       return
     }
     // 本地无社区缓存：按用户绑定社区恢复；恢复失败（绑定社区停业/不存在）时自动兜底选社区

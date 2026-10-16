@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -94,6 +96,7 @@ func (s *AddressService) GetCommunityName(ctx context.Context, id int64) string 
 }
 
 // getUserCommunity 查询用户当前所属社区
+// 错误一律返回业务错误（InvalidArgument），保证网关透传文案而非吞成"服务器内部错误"
 // 参数：
 //   - ctx: 上下文
 //   - userID: 用户 ID
@@ -104,14 +107,20 @@ func (s *AddressService) GetCommunityName(ctx context.Context, id int64) string 
 func (s *AddressService) getUserCommunity(ctx context.Context, userID int64) (*model.Community, error) {
 	var u model.User
 	if err := s.db.GetDb().WithContext(ctx).Select("id, community_id").First(&u, userID).Error; err != nil {
-		return nil, fmt.Errorf("用户不存在")
+		if err == gorm.ErrRecordNotFound {
+			return nil, bizerr.New(codes.InvalidArgument, "用户不存在")
+		}
+		return nil, err
 	}
 	if u.CommunityID <= 0 {
-		return nil, fmt.Errorf("请先选择社区")
+		return nil, bizerr.New(codes.InvalidArgument, "请先选择社区")
 	}
 	var c model.Community
 	if err := s.db.GetDb().WithContext(ctx).First(&c, u.CommunityID).Error; err != nil {
-		return nil, fmt.Errorf("所属社区不存在，请重新选择社区")
+		if err == gorm.ErrRecordNotFound {
+			return nil, bizerr.New(codes.InvalidArgument, "所属社区不存在，请重新选择社区")
+		}
+		return nil, err
 	}
 	return &c, nil
 }
@@ -131,7 +140,7 @@ func (s *AddressService) GetAddress(ctx context.Context, id, userID int64) (*mod
 		Where("id = ? AND user_id = ?", id, userID).
 		First(&addr).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("地址不存在")
+		return nil, bizerr.New(codes.NotFound, "地址不存在")
 	}
 	return &addr, err
 }

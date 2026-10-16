@@ -122,8 +122,17 @@ async function handleLoginSuccess(data?: {
   }, refresh_token)
 
   // 拉取用户绑定社区的完整信息（含 delivery_fee/min_order_amount），
-  // 无条件执行：登录响应里的 community_name 只够展示，缺运费与起送门槛字段
-  await userStore.syncBoundCommunity()
+  // 无条件执行：登录响应里的 community_name 只够展示，缺运费与起送门槛字段。
+  // 绑定失败且本地已有社区选择（登录前自动/手动选的社区）时补同步到服务端：
+  // 否则服务端按 community_id=0 处理，下单/存地址/运费试算都会报"缺少社区信息"
+  const synced = await userStore.syncBoundCommunity()
+  if (!synced && userStore.communityInfo?.id) {
+    try {
+      await userStore.switchCommunity(userStore.communityInfo)
+    } catch {
+      // 同步失败不阻断登录流程，App 启动兜底会重试
+    }
+  }
 
   // 登录成功后，将本地购物车数据同步到服务端
   await syncLocalCartToServer()

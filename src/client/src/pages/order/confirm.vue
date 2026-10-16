@@ -91,10 +91,7 @@
           <text v-if="excludedText" class="fs-excluded">不参与：{{ excludedText }}</text>
         </view>
       </view>
-      <view v-else class="extra-item">
-        <text>配送费</text>
-        <text class="extra-value">免运费</text>
-      </view>
+      <!-- 自提无配送环节，不展示配送费行，避免"免运费"造成误解 -->
       <view class="extra-item" @click="onSelectChannel">
         <text>支付方式</text>
         <text class="extra-value">{{ selectedChannelName }}</text>
@@ -274,6 +271,12 @@ const excludedText = computed(() => {
  */
 async function loadFsPreview() {
   if (deliveryType.value !== DELIVERY_TYPE_DELIVERY || !orderItems.value.length) {
+    fsPreview.value = null
+    return
+  }
+  // 未选社区（服务端 community_id 为空）时不发起试算：
+  // 服务端会直接拒绝并弹"缺少社区信息"，这里静默跳过，由提交时统一引导
+  if (!userStore.communityInfo?.id) {
     fsPreview.value = null
     return
   }
@@ -596,6 +599,12 @@ async function onSubmit() {
   // 渠道兜底：双渠道均关闭时不允许提交（后端 CreateOrder 亦有校验）
   if (!enableSelfPickup.value && !enableDelivery.value) {
     uni.showToast({ title: '当前社区暂未开启取货渠道', icon: 'none' })
+    return
+  }
+  // 社区兜底：服务端按实时归属社区下单，本地无社区信息时提前拦截并引导，
+  // 避免提交后才收到服务端报错
+  if (!userStore.communityInfo?.id) {
+    uni.showToast({ title: '请先选择社区', icon: 'none' })
     return
   }
   // 地址仅送货上门时必填，自提无需收货地址

@@ -56,6 +56,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	if req.DeliveryType == 3 && req.Source != 2 {
 		return nil, bizerr.New(codes.InvalidArgument, "到店模式仅收银台可用")
 	}
+	// 社区前置校验：未选社区（community_id=0）时直接给出业务提示，
+	// 避免 GetCommunity(0) 报"社区不存在"误导用户
+	if req.CommunityId <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "请先选择社区")
+	}
 
 	// 社区信息统一获取（一次 RPC，自提/配送共用）：
 	// - 停业状态校验：无论自提还是配送，停业社区一律不允许下单。

@@ -11,7 +11,18 @@
           <u-input v-model="form.contact_name" placeholder="请输入联系人姓名" border="none" />
         </u-form-item>
         <u-form-item label="手机号" prop="contact_phone" border-bottom>
-          <u-input v-model="form.contact_phone" placeholder="请输入手机号" border="none" maxlength="11" />
+          <view class="field-with-chips">
+            <u-input v-model="form.contact_phone" placeholder="请输入手机号" border="none" maxlength="11" />
+            <!-- 快捷候选：账号手机号与其他地址手机号，按已输入前缀过滤，点击直接填入 -->
+            <view v-if="phoneCandidates.length" class="chip-row">
+              <text
+                v-for="p in phoneCandidates"
+                :key="p"
+                class="chip"
+                @click="form.contact_phone = p"
+              >{{ p }}</text>
+            </view>
+          </view>
         </u-form-item>
 
         <!-- 锁定模式：地址前缀取当前社区省市区，仅可填写详细地址 -->
@@ -45,14 +56,26 @@
         </template>
 
         <u-form-item label="标签">
-          <u-input v-model="form.tag" placeholder="如：家、公司" border="none" />
+          <view class="field-with-chips">
+            <u-input v-model="form.tag" placeholder="如：家、公司" border="none" />
+            <!-- 默认标签候选：点击填入，再次点击取消选中 -->
+            <view class="chip-row">
+              <text
+                v-for="t in defaultTags"
+                :key="t"
+                :class="['chip', { active: form.tag === t }]"
+                @click="form.tag = form.tag === t ? '' : t"
+              >{{ t }}</text>
+            </view>
+          </view>
         </u-form-item>
       </u-form>
     </view>
 
     <view class="default-card">
       <text>设为默认地址</text>
-      <u-switch v-model="form.is_default" />
+      <!-- 选中色改用主题绿：uview-plus 默认蓝与整体主题不搭 -->
+      <u-switch v-model="form.is_default" active-color="#07c160" />
     </view>
 
     <!-- 行政区划三级联动选择器（省 / 市 / 区县，数据来自区划代码库） -->
@@ -81,7 +104,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
-import { createAddress, updateAddress, getCommunity, locateRegion } from '@/api/user'
+import { createAddress, updateAddress, getCommunity, locateRegion, getAddressList } from '@/api/user'
 import { joinRegionAddress } from '@/utils/region'
 import { loadProvinces, loadCities, loadDistricts } from '@/utils/regionCache'
 import { useUserStore } from '@/stores/user'
@@ -124,6 +147,34 @@ const rules = ref({
 const community = ref<Community | null>(null)
 /** 社区详情是否已加载完成（避免未加载时误判为未选社区） */
 const communityChecked = ref(false)
+
+/** 默认标签候选（点击填入，再次点击取消） */
+const defaultTags = ['家', '公司', '学校']
+
+/** 已有地址列表（手机号候选数据源） */
+const addresses = ref<Address[]>([])
+
+/**
+ * 手机号快捷候选：账号手机号 + 其他地址手机号
+ * 已输入内容时按前缀过滤并排除与输入完全相同的项，最多展示 5 个
+ */
+const phoneCandidates = computed(() => {
+  const typed = (form.value.contact_phone || '').trim()
+  const pool = [userStore.userInfo?.phone || '', ...addresses.value.map((a) => a.contact_phone || '')]
+  const uniq = Array.from(new Set(pool.map((p) => p.trim()).filter(Boolean)))
+  const filtered = typed ? uniq.filter((p) => p.startsWith(typed) && p !== typed) : uniq
+  return filtered.slice(0, 5)
+})
+
+/** 拉取地址列表用于手机号候选（失败静默，不影响表单） */
+async function loadAddressCandidates() {
+  try {
+    const res = await getAddressList()
+    addresses.value = res.data || []
+  } catch {
+    addresses.value = []
+  }
+}
 
 /** 是否允许社区外配送（默认不允许：未取到社区信息时同样锁定） */
 const allowOutside = computed(() => !!community.value?.allow_outside_delivery)
@@ -339,6 +390,7 @@ onLoad((query) => {
 // 社区信息每次展示时刷新：从社区选择页切换返回后能立即更新，且不重置已填表单（页面栈保留）
 onShow(() => {
   loadCommunity()
+  loadAddressCandidates()
 })
 
 onMounted(() => {
@@ -520,5 +572,32 @@ async function onSave() {
 
 .region-placeholder {
   color: #c0c4cc;
+}
+
+/* 输入框 + 快捷候选纵向布局 */
+.field-with-chips {
+  flex: 1;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 10rpx;
+}
+
+.chip {
+  padding: 4rpx 20rpx;
+  border: 1rpx solid #07c160;
+  border-radius: 999rpx;
+  font-size: 22rpx;
+  color: #07c160;
+  background-color: rgba(7, 194, 96, 0.06);
+}
+
+.chip.active {
+  color: #ffffff;
+  border-color: #07c160;
+  background-color: #07c160;
 }
 </style>
