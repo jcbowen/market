@@ -15,9 +15,12 @@ concurrency:
   cancel-in-progress: true
 
 # runner 部署在国内服务器，proxy.golang.org 与 registry.npmjs.org 直连不可达，
-# 顶层 env 对所有 job 生效：Go 走七牛镜像，npm 走淘宝镜像，末尾 direct 兜底直连
+# 顶层 env 对所有 job 生效：Go 走七牛镜像、阿里云镜像兜底，npm 走淘宝镜像，
+# 末尾 direct 兜底直连。goproxy.cn 对新发布 tag 存在回源失败且缓存错误状态的情况
+# （如 wego v0.1.0，.info 可用但 .zip 超时），故增加阿里云镜像第二跳；
+# goproxy.io 对该模块返回 403，实测不可用，不加入链路。
 env:
-  GOPROXY: https://goproxy.cn,direct
+  GOPROXY: https://goproxy.cn,https://mirrors.aliyun.com/goproxy/,direct
   NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
 
 jobs:
