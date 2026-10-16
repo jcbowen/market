@@ -1,10 +1,12 @@
-# CI 流水线：后端（vet/test/build/lint）+ 前端（admin/client 构建）
+# CI 流水线：后端（vet/test/build/lint）+ 前端（admin/client 构建）+ tag 触发自动发布 Release
 # 说明：后端 Go module 位于 src/backend，前端位于 src/admin 与 src/client
+# Gitea Actions 与 GitHub Actions 语法兼容，本文件在 Gitea（act_runner）上可直接运行
 name: CI
 
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
     branches: [main, master]
 
@@ -16,6 +18,8 @@ jobs:
   backend:
     name: 后端 go vet/test/build
     runs-on: ubuntu-latest
+    # tag 推送仅触发 release job，检查类 job 跳过（release 内含 go test 回归）
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     defaults:
       run:
         working-directory: src/backend
@@ -52,6 +56,7 @@ jobs:
   golangci:
     name: golangci-lint
     runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     # lint 首次引入：存量代码可能存在历史问题，先以 advisory 模式运行不阻断合并；
     # 待本地按报告清理完成后移除 continue-on-error 改为阻断
     continue-on-error: true
@@ -73,6 +78,7 @@ jobs:
   admin-build:
     name: 后台管理前端构建
     runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     defaults:
       run:
         working-directory: src/admin
@@ -94,6 +100,7 @@ jobs:
   client-build:
     name: 用户端 H5 构建
     runs-on: ubuntu-latest
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     defaults:
       run:
         working-directory: src/client
@@ -111,3 +118,111 @@ jobs:
 
       - name: 构建 H5
         run: npm run build:h5
+
+  release:
+    name: 构建 Release 产物并发布
+    runs-on: ubuntu-latest
+    # 仅推送 v* 格式 tag（如 v1.0.0）时触发，产物上传到 Gitea Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: src/backend/go.sum
+
+      # 与 backend job 一致：drop 本地 replace 后从公共 Go proxy 拉取已发布版本
+      - name: 移除本地 replace 指令
+        working-directory: src/backend
+        run: |
+          go mod edit -dropreplace github.com/jcbowen/jcbaseGo
+          go mod edit -dropreplace github.com/jcbowen/wego
+
+      - name: 下载依赖
+        working-directory: src/backend
+        run: go mod tidy
+
+      # 发布前回归：测试不通过则中止发布
+      - name: 发布前回归测试
+        working-directory: src/backend
+        run: go test ./... -count=1
+
+      # 交叉编译 6 个服务（linux amd64/arm64），二进制名与 build.mjs SERVICES 保持一致
+      - name: 交叉编译后端（linux amd64/arm64）
+        working-directory: src/backend
+        run: |
+          for arch in amd64 arm64; do
+            for svc in gateway services/user services/product services/order services/cart services/payment; do
+              name=$(basename $svc); [ "$name" != "gateway" ] && name="${name}-service"
+              CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o ../../bin/linux-${arch}/${name} ./${svc}/
+            done
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            src/admin/package-lock.json
+            src/client/package-lock.json
+
+      # 两个前端构建均直接输出到项目根 bin/static/ 下（vite outDir / build-h5.js 后处理）
+      - name: 构建管理端前端
+        working-directory: src/admin
+        run: |
+          npm ci
+          npm run build
+
+      - name: 构建 C 端 H5
+        working-directory: src/client
+        run: |
+          npm ci
+          npm run build:h5
+
+      # 打包：解压后得到 market-{ver}-linux-{arch}/ 目录，布局对齐部署文档 9.3.5 的 /opt/market
+      - name: 打包 Release 产物
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p package
+          for arch in amd64 arm64; do
+            stage="market-${VERSION}-linux-${arch}"
+            rm -rf "package/${stage}" && mkdir -p "package/${stage}/static"
+            cp bin/linux-${arch}/* "package/${stage}/"
+            cp bin/config.yaml "package/${stage}/config.yaml"
+            cp -r bin/static/admin "package/${stage}/static/admin"
+            cp -r bin/static/h5 "package/${stage}/static/h5"
+            tar -czf "package/${stage}.tar.gz" -C package "${stage}"
+          done
+          ls -lh package/*.tar.gz
+
+      # 通过 Gitea API 发布：act_runner 内置 GITHUB_TOKEN（等价 GITEA_TOKEN），无需第三方 action
+      - name: 创建 Release 并上传产物
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          API="${GITHUB_SERVER_URL%/}/api/v1"
+          VERSION="${GITHUB_REF_NAME}"
+          AUTH="Authorization: token ${GITHUB_TOKEN}"
+          REPO="repos/${GITHUB_REPOSITORY}"
+
+          # 创建 Release；该 tag 已有 Release（重复触发）时改为获取并复用
+          RELEASE_ID=$(curl -sf -X POST "${API}/${REPO}/releases" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\",\"body\":\"自动发布：${VERSION}\"}" \
+            | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+          if [ -z "${RELEASE_ID}" ]; then
+            RELEASE_ID=$(curl -sf "${API}/${REPO}/releases/tags/${VERSION}" \
+              -H "$AUTH" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
+          fi
+          echo "Release ID: ${RELEASE_ID}"
+
+          for f in package/*.tar.gz; do
+            name=$(basename "${f}")
+            echo "上传 ${name} ..."
+            curl -sf -X POST "${API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+              -H "$AUTH" -F "attachment=@${f}" > /dev/null
+          done
+          echo "发布完成：${GITHUB_SERVER_URL%/}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
