@@ -115,12 +115,14 @@ const columns: DataTableColumns<Refund> = [
     key: 'type',
     width: 90,
     render(row) {
-      const isFull = row.type === 1
-      return h(
-        NTag,
-        { size: 'small', type: isFull ? 'info' : 'warning', bordered: false },
-        { default: () => (isFull ? '整单退' : '部分退') },
-      )
+      // 1 整单退 2 部分退 3 仅金额退（全额退完时服务端自动升级为整单退）
+      const meta: Record<number, { text: string; tag: 'info' | 'warning' | 'success' }> = {
+        1: { text: '整单退', tag: 'info' },
+        2: { text: '部分退', tag: 'warning' },
+        3: { text: '金额退', tag: 'success' },
+      }
+      const m = meta[row.type] ?? { text: '部分退', tag: 'warning' }
+      return h(NTag, { size: 'small', type: m.tag, bordered: false }, { default: () => m.text })
     },
   },
   {
@@ -211,8 +213,9 @@ const tableColumns = computed<DataTableColumns<Refund>>(() => {
 function renderExpandItems(row: Refund) {
   const hasItems = row.items && row.items.length > 0
   const hasLogs = row.logs && row.logs.length > 0
+  const emptyText = row.type === 3 ? '仅金额退款，不退商品' : '整单退款，含订单全部商品'
   if (!hasItems && !hasLogs) {
-    return h('div', { style: 'padding:8px;color:#999' }, '整单退款，含订单全部商品')
+    return h('div', { style: 'padding:8px;color:#999' }, emptyText)
   }
   const blocks: ReturnType<typeof h>[] = []
   if (hasItems) {
@@ -227,7 +230,7 @@ function renderExpandItems(row: Refund) {
       }),
     )
   } else {
-    blocks.push(h('div', { style: 'padding:4px 0 8px;color:#999;font-size:13px' }, '整单退款，含订单全部商品'))
+    blocks.push(h('div', { style: 'padding:4px 0 8px;color:#999;font-size:13px' }, emptyText))
   }
   if (hasLogs) {
     blocks.push(

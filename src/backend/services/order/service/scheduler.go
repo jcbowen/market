@@ -297,6 +297,7 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 				SkuId:    item.SkuID,
 				Quantity: item.Quantity,
 				OrderId:  o.ID,
+				BizNo:    fmt.Sprintf("cancel:%d", o.ID),
 			}); err != nil {
 				return fmt.Errorf("释放库存失败: %w", err)
 			}

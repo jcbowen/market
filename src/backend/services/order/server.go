@@ -54,9 +54,9 @@ func (s *server) CreateOrder(ctx stdctx.Context, req *order.CreateOrderReq) (*or
 	return ToOrderInfo(o), nil
 }
 
-// GetOrder 获取订单详情
+// GetOrder 获取订单详情（含商品明细、状态流转与每次售后记录）
 func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.OrderDetail, error) {
-	o, items, logs, err := s.orderService.GetOrder(ctx, req.Id, req.UserId)
+	o, items, logs, refunds, err := s.orderService.GetOrder(ctx, req.Id, req.UserId)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
@@ -65,12 +65,16 @@ func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.Or
 		Order:      ToOrderInfo(o),
 		Items:      make([]*order.OrderItemInfo, 0, len(items)),
 		StatusLogs: make([]*order.OrderStatusLog, 0, len(logs)),
+		Refunds:    make([]*order.RefundInfo, 0, len(refunds)),
 	}
 	for _, item := range items {
 		detail.Items = append(detail.Items, ToOrderItemInfo(item))
 	}
 	for _, log := range logs {
 		detail.StatusLogs = append(detail.StatusLogs, ToOrderStatusLog(log))
+	}
+	for _, r := range refunds {
+		detail.Refunds = append(detail.Refunds, ToRefundInfo(r))
 	}
 	return detail, nil
 }

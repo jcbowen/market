@@ -343,13 +343,15 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 		}
 		return s.createStatusLogTx(tx, orderModel.ID, 0, 1, logType, logOperator, "创建订单")
 	}); err != nil {
-		// 补偿路径：释放已扣减的库存，尽力而为不掩盖原错误
+		// 补偿路径：释放已扣减的库存，尽力而为不掩盖原错误；
+		// biz_no 按订单+SKU 独立，重复补偿重试仍被幂等约束拦截
 		for _, idx := range deductedIdx {
 			item := req.Items[idx]
 			if _, rErr := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
 				SkuId:    item.SkuId,
 				Quantity: item.Quantity,
 				OrderId:  orderModel.ID,
+				BizNo:    fmt.Sprintf("comp:%d:%d", orderModel.ID, item.SkuId),
 			}); rErr != nil {
 				log.Printf("下单失败补偿释放库存失败（订单 %d, SKU %d）: %v", orderModel.ID, item.SkuId, rErr)
 			}
@@ -390,26 +392,50 @@ func isDuplicateOrderNoErr(err error) bool {
 //   - []*model.OrderItem: 订单商品项
 //   - []*model.OrderStatusLog: 状态日志
 //   - error: 错误信息
-func (s *OrderService) GetOrder(ctx context.Context, id, userID int64) (*model.Order, []*model.OrderItem, []*model.OrderStatusLog, error) {
+func (s *OrderService) GetOrder(ctx context.Context, id, userID int64) (*model.Order, []*model.OrderItem, []*model.OrderStatusLog, []*model.Refund, error) {
 	var o model.Order
 	if err := s.db.GetDb().WithContext(ctx).First(&o, id).Error; err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if userID > 0 && o.UserID != userID {
-		return nil, nil, nil, fmt.Errorf("无权限查看该订单")
+		return nil, nil, nil, nil, fmt.Errorf("无权限查看该订单")
 	}
 
 	var items []*model.OrderItem
 	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", id).Find(&items).Error; err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	var logs []*model.OrderStatusLog
 	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", id).Order("id asc").Find(&logs).Error; err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
-	return &o, items, logs, nil
+	// 售后记录：本单全部退款单（含商品明细），订单详情按次展示
+	var refunds []*model.Refund
+	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", id).Order("id asc").Find(&refunds).Error; err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if len(refunds) > 0 {
+		refundIDs := make([]int64, 0, len(refunds))
+		for _, r := range refunds {
+			refundIDs = append(refundIDs, r.ID)
+		}
+		var refundItems []*model.RefundItem
+		if err := s.db.GetDb().WithContext(ctx).Where("refund_id IN ?", refundIDs).Find(&refundItems).Error; err != nil {
+			return nil, nil, nil, nil, err
+		}
+		itemMap := make(map[int64][]*model.RefundItem)
+		for _, item := range refundItems {
+			itemMap[item.RefundID] = append(itemMap[item.RefundID], item)
+		}
+		for _, r := range refunds {
+			r.OrderNo = o.OrderNo
+			r.Items = itemMap[r.ID]
+		}
+	}
+
+	return &o, items, logs, refunds, nil
 }
 
 // 查询专用虚拟状态：仅在 ListOrders 入参中用于聚合筛选，不落库、不参与流转
@@ -591,6 +617,7 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 				SkuId:    item.SkuID,
 				Quantity: item.Quantity,
 				OrderId:  o.ID,
+				BizNo:    fmt.Sprintf("cancel:%d", o.ID),
 			}); err != nil {
 				return fmt.Errorf("释放库存失败: %w", err)
 			}
@@ -826,6 +853,7 @@ func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *mode
 			SkuId:    item.SkuID,
 			Quantity: item.Quantity,
 			OrderId:  o.ID,
+			BizNo:    fmt.Sprintf("cancel:%d", o.ID),
 		}); err != nil {
 			return fmt.Errorf("释放库存失败: %w", err)
 		}

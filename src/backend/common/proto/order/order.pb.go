@@ -1304,10 +1304,12 @@ func (x *OrderStatusLog) GetCreatedAt() string {
 }
 
 type OrderDetail struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Order         *OrderInfo             `protobuf:"bytes,1,opt,name=order,proto3" json:"order,omitempty"`
-	Items         []*OrderItemInfo       `protobuf:"bytes,2,rep,name=items,proto3" json:"items,omitempty"`
-	StatusLogs    []*OrderStatusLog      `protobuf:"bytes,3,rep,name=status_logs,json=statusLogs,proto3" json:"status_logs,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Order      *OrderInfo             `protobuf:"bytes,1,opt,name=order,proto3" json:"order,omitempty"`
+	Items      []*OrderItemInfo       `protobuf:"bytes,2,rep,name=items,proto3" json:"items,omitempty"`
+	StatusLogs []*OrderStatusLog      `protobuf:"bytes,3,rep,name=status_logs,json=statusLogs,proto3" json:"status_logs,omitempty"`
+	// 本单全部售后（退款）记录：含每次退款单金额/类型/状态/明细，订单详情展示用
+	Refunds       []*RefundInfo `protobuf:"bytes,4,rep,name=refunds,proto3" json:"refunds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1359,6 +1361,13 @@ func (x *OrderDetail) GetItems() []*OrderItemInfo {
 func (x *OrderDetail) GetStatusLogs() []*OrderStatusLog {
 	if x != nil {
 		return x.StatusLogs
+	}
+	return nil
+}
+
+func (x *OrderDetail) GetRefunds() []*RefundInfo {
+	if x != nil {
+		return x.Refunds
 	}
 	return nil
 }
@@ -1670,7 +1679,7 @@ type RefundInfo struct {
 	PaymentNo    string                 `protobuf:"bytes,11,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
 	// 关联订单号
 	OrderNo string `protobuf:"bytes,12,opt,name=order_no,json=orderNo,proto3" json:"order_no,omitempty"`
-	// 退款类型：1整单退 2部分退
+	// 退款类型：1整单退 2部分退 3仅金额退（不退商品；退款完成后订单钱款全额退完时置为 1 整单退展示）
 	Type int32 `protobuf:"varint,13,opt,name=type,proto3" json:"type,omitempty"`
 	// 退款商品明细
 	Items []*RefundItemInfo `protobuf:"bytes,14,rep,name=items,proto3" json:"items,omitempty"`
@@ -1911,19 +1920,22 @@ func (x *RefundLogInfo) GetCreatedAt() string {
 }
 
 // AdminCreateRefundReq 后台代客退款请求（发起即执行，免审核）
-// 金额与运费口径与 C 端申请一致：服务端汇算为准，amount 仅允许调低
+// 金额以实付口径服务端汇算（含手动优惠分摊），amount 仅允许调低；
+// mode=1 整单/部分商品退（items 为空=整单退，金额可调低）；mode=2 仅金额退（不退商品、不回补库存，amount 必填且不超过剩余可退）
 type AdminCreateRefundReq struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	OrderId int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
 	Amount  float64                `protobuf:"fixed64,2,opt,name=amount,proto3" json:"amount,omitempty"`
 	Reason  string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
-	// 退款商品明细；为空表示整单退
+	// 退款商品明细；mode=1 时为空表示整单退，mode=2 时必须为空
 	Items []*ApplyRefundItem `protobuf:"bytes,4,rep,name=items,proto3" json:"items,omitempty"`
 	// 运费退还策略为 user_decide 时是否退还运费
 	RefundFreight bool  `protobuf:"varint,5,opt,name=refund_freight,json=refundFreight,proto3" json:"refund_freight,omitempty"`
 	OperatorId    int64 `protobuf:"varint,6,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
 	// 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；内部调用传 0 跳过
-	CommunityId   int64 `protobuf:"varint,7,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	CommunityId int64 `protobuf:"varint,7,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 退款模式：0/1=按商品退（空 items 整单退） 2=仅金额退
+	Mode          int32 `protobuf:"varint,8,opt,name=mode,proto3" json:"mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2003,6 +2015,13 @@ func (x *AdminCreateRefundReq) GetOperatorId() int64 {
 func (x *AdminCreateRefundReq) GetCommunityId() int64 {
 	if x != nil {
 		return x.CommunityId
+	}
+	return 0
+}
+
+func (x *AdminCreateRefundReq) GetMode() int32 {
+	if x != nil {
+		return x.Mode
 	}
 	return 0
 }
@@ -5099,12 +5118,13 @@ const file_order_order_proto_rawDesc = "" +
 	"\roperator_type\x18\x03 \x01(\tR\foperatorType\x12\x16\n" +
 	"\x06remark\x18\x04 \x01(\tR\x06remark\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\tR\tcreatedAt\"\x99\x01\n" +
+	"created_at\x18\x05 \x01(\tR\tcreatedAt\"\xc6\x01\n" +
 	"\vOrderDetail\x12&\n" +
 	"\x05order\x18\x01 \x01(\v2\x10.order.OrderInfoR\x05order\x12*\n" +
 	"\x05items\x18\x02 \x03(\v2\x14.order.OrderItemInfoR\x05items\x126\n" +
 	"\vstatus_logs\x18\x03 \x03(\v2\x15.order.OrderStatusLogR\n" +
-	"statusLogs\"r\n" +
+	"statusLogs\x12+\n" +
+	"\arefunds\x18\x04 \x03(\v2\x11.order.RefundInfoR\arefunds\"r\n" +
 	"\x0eListOrdersResp\x12$\n" +
 	"\x04list\x18\x01 \x03(\v2\x10.order.OrderInfoR\x04list\x12:\n" +
 	"\n" +
@@ -5159,7 +5179,7 @@ const file_order_order_proto_rawDesc = "" +
 	"operatorId\x12\x16\n" +
 	"\x06remark\x18\x05 \x01(\tR\x06remark\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\tR\tcreatedAt\"\xfa\x01\n" +
+	"created_at\x18\x06 \x01(\tR\tcreatedAt\"\x8e\x02\n" +
 	"\x14AdminCreateRefundReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x16\n" +
 	"\x06amount\x18\x02 \x01(\x01R\x06amount\x12\x16\n" +
@@ -5168,7 +5188,8 @@ const file_order_order_proto_rawDesc = "" +
 	"\x0erefund_freight\x18\x05 \x01(\bR\rrefundFreight\x12\x1f\n" +
 	"\voperator_id\x18\x06 \x01(\x03R\n" +
 	"operatorId\x12!\n" +
-	"\fcommunity_id\x18\a \x01(\x03R\vcommunityId\"\x7f\n" +
+	"\fcommunity_id\x18\a \x01(\x03R\vcommunityId\x12\x12\n" +
+	"\x04mode\x18\b \x01(\x05R\x04mode\"\x7f\n" +
 	"\x0eListRefundsReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x122\n" +
@@ -5553,101 +5574,102 @@ var file_order_order_proto_depIdxs = []int32{
 	9,  // 3: order.OrderDetail.order:type_name -> order.OrderInfo
 	10, // 4: order.OrderDetail.items:type_name -> order.OrderItemInfo
 	11, // 5: order.OrderDetail.status_logs:type_name -> order.OrderStatusLog
-	9,  // 6: order.ListOrdersResp.list:type_name -> order.OrderInfo
-	66, // 7: order.ListOrdersResp.pagination:type_name -> common.PaginationResponse
-	14, // 8: order.ApplyRefundReq.items:type_name -> order.ApplyRefundItem
-	16, // 9: order.RefundInfo.items:type_name -> order.RefundItemInfo
-	18, // 10: order.RefundInfo.logs:type_name -> order.RefundLogInfo
-	14, // 11: order.AdminCreateRefundReq.items:type_name -> order.ApplyRefundItem
-	65, // 12: order.ListRefundsReq.pagination:type_name -> common.Pagination
-	17, // 13: order.ListRefundsResp.list:type_name -> order.RefundInfo
-	66, // 14: order.ListRefundsResp.pagination:type_name -> common.PaginationResponse
-	33, // 15: order.ProductRankingsResp.list:type_name -> order.ProductRankingItem
-	36, // 16: order.RevenueReportResp.list:type_name -> order.RevenueReportItem
-	41, // 17: order.GetUserFrequentProductsResp.list:type_name -> order.FrequentProductItem
-	43, // 18: order.CreatePosHeldOrderReq.items:type_name -> order.PosHeldOrderItem
-	43, // 19: order.PosHeldOrderInfo.items:type_name -> order.PosHeldOrderItem
-	45, // 20: order.ListPosHeldOrdersResp.list:type_name -> order.PosHeldOrderInfo
-	65, // 21: order.ListFulfillmentOrdersReq.pagination:type_name -> common.Pagination
-	9,  // 22: order.ListFulfillmentOrdersResp.list:type_name -> order.OrderInfo
-	66, // 23: order.ListFulfillmentOrdersResp.pagination:type_name -> common.PaginationResponse
-	65, // 24: order.ListShiftsReq.pagination:type_name -> common.Pagination
-	58, // 25: order.PosShiftStatistics.income:type_name -> order.PosShiftStatItem
-	58, // 26: order.PosShiftStatistics.refund:type_name -> order.PosShiftStatItem
-	59, // 27: order.PosShiftInfo.statistics:type_name -> order.PosShiftStatistics
-	60, // 28: order.ListShiftsResp.list:type_name -> order.PosShiftInfo
-	66, // 29: order.ListShiftsResp.pagination:type_name -> common.PaginationResponse
-	1,  // 30: order.OrderService.CreateOrder:input_type -> order.CreateOrderReq
-	5,  // 31: order.OrderService.GetOrder:input_type -> order.GetOrderReq
-	6,  // 32: order.OrderService.ListOrders:input_type -> order.ListOrdersReq
-	7,  // 33: order.OrderService.CancelOrder:input_type -> order.CancelOrderReq
-	8,  // 34: order.OrderService.UpdateOrderStatus:input_type -> order.UpdateOrderStatusReq
-	38, // 35: order.OrderService.VerifyPickup:input_type -> order.VerifyPickupReq
-	15, // 36: order.OrderService.ApplyRefund:input_type -> order.ApplyRefundReq
-	19, // 37: order.OrderService.AdminCreateRefund:input_type -> order.AdminCreateRefundReq
-	20, // 38: order.OrderService.ListRefunds:input_type -> order.ListRefundsReq
-	25, // 39: order.OrderService.ApproveRefund:input_type -> order.ApproveRefundReq
-	26, // 40: order.OrderService.RejectRefund:input_type -> order.RejectRefundReq
-	27, // 41: order.OrderService.RetryRefund:input_type -> order.RetryRefundReq
-	21, // 42: order.OrderService.GetRefundConfig:input_type -> order.GetRefundConfigReq
-	23, // 43: order.OrderService.SaveRefundConfig:input_type -> order.SaveRefundConfigReq
-	28, // 44: order.OrderService.GetOrderStatistics:input_type -> order.GetOrderStatisticsReq
-	30, // 45: order.OrderService.GetSalesStatistics:input_type -> order.GetSalesStatisticsReq
-	32, // 46: order.OrderService.GetProductRankings:input_type -> order.GetProductRankingsReq
-	35, // 47: order.OrderService.GetRevenueReport:input_type -> order.GetRevenueReportReq
-	40, // 48: order.OrderService.GetUserFrequentProducts:input_type -> order.GetUserFrequentProductsReq
-	3,  // 49: order.OrderService.PreviewFreeShipping:input_type -> order.PreviewFreeShippingReq
-	44, // 50: order.OrderService.CreatePosHeldOrder:input_type -> order.CreatePosHeldOrderReq
-	46, // 51: order.OrderService.ListPosHeldOrders:input_type -> order.ListPosHeldOrdersReq
-	48, // 52: order.OrderService.DeletePosHeldOrder:input_type -> order.DeletePosHeldOrderReq
-	54, // 53: order.OrderService.StartShift:input_type -> order.StartShiftReq
-	55, // 54: order.OrderService.GetCurrentShift:input_type -> order.GetCurrentShiftReq
-	56, // 55: order.OrderService.EndShift:input_type -> order.EndShiftReq
-	57, // 56: order.OrderService.ListShifts:input_type -> order.ListShiftsReq
-	62, // 57: order.OrderService.GetAppPreferences:input_type -> order.GetAppPreferencesReq
-	64, // 58: order.OrderService.SaveAppPreferences:input_type -> order.SaveAppPreferencesReq
-	49, // 59: order.OrderService.AssignDelivery:input_type -> order.AssignDeliveryReq
-	50, // 60: order.OrderService.ListFulfillmentOrders:input_type -> order.ListFulfillmentOrdersReq
-	52, // 61: order.OrderService.StartDelivery:input_type -> order.StartDeliveryReq
-	53, // 62: order.OrderService.CompleteDelivery:input_type -> order.CompleteDeliveryReq
-	9,  // 63: order.OrderService.CreateOrder:output_type -> order.OrderInfo
-	12, // 64: order.OrderService.GetOrder:output_type -> order.OrderDetail
-	13, // 65: order.OrderService.ListOrders:output_type -> order.ListOrdersResp
-	67, // 66: order.OrderService.CancelOrder:output_type -> common.CommonResponse
-	67, // 67: order.OrderService.UpdateOrderStatus:output_type -> common.CommonResponse
-	39, // 68: order.OrderService.VerifyPickup:output_type -> order.VerifyPickupResp
-	17, // 69: order.OrderService.ApplyRefund:output_type -> order.RefundInfo
-	17, // 70: order.OrderService.AdminCreateRefund:output_type -> order.RefundInfo
-	24, // 71: order.OrderService.ListRefunds:output_type -> order.ListRefundsResp
-	67, // 72: order.OrderService.ApproveRefund:output_type -> common.CommonResponse
-	67, // 73: order.OrderService.RejectRefund:output_type -> common.CommonResponse
-	67, // 74: order.OrderService.RetryRefund:output_type -> common.CommonResponse
-	22, // 75: order.OrderService.GetRefundConfig:output_type -> order.RefundConfig
-	67, // 76: order.OrderService.SaveRefundConfig:output_type -> common.CommonResponse
-	29, // 77: order.OrderService.GetOrderStatistics:output_type -> order.OrderStatisticsResp
-	31, // 78: order.OrderService.GetSalesStatistics:output_type -> order.SalesStatisticsResp
-	34, // 79: order.OrderService.GetProductRankings:output_type -> order.ProductRankingsResp
-	37, // 80: order.OrderService.GetRevenueReport:output_type -> order.RevenueReportResp
-	42, // 81: order.OrderService.GetUserFrequentProducts:output_type -> order.GetUserFrequentProductsResp
-	4,  // 82: order.OrderService.PreviewFreeShipping:output_type -> order.PreviewFreeShippingResp
-	45, // 83: order.OrderService.CreatePosHeldOrder:output_type -> order.PosHeldOrderInfo
-	47, // 84: order.OrderService.ListPosHeldOrders:output_type -> order.ListPosHeldOrdersResp
-	67, // 85: order.OrderService.DeletePosHeldOrder:output_type -> common.CommonResponse
-	60, // 86: order.OrderService.StartShift:output_type -> order.PosShiftInfo
-	60, // 87: order.OrderService.GetCurrentShift:output_type -> order.PosShiftInfo
-	60, // 88: order.OrderService.EndShift:output_type -> order.PosShiftInfo
-	61, // 89: order.OrderService.ListShifts:output_type -> order.ListShiftsResp
-	63, // 90: order.OrderService.GetAppPreferences:output_type -> order.AppPreferencesInfo
-	67, // 91: order.OrderService.SaveAppPreferences:output_type -> common.CommonResponse
-	67, // 92: order.OrderService.AssignDelivery:output_type -> common.CommonResponse
-	51, // 93: order.OrderService.ListFulfillmentOrders:output_type -> order.ListFulfillmentOrdersResp
-	67, // 94: order.OrderService.StartDelivery:output_type -> common.CommonResponse
-	67, // 95: order.OrderService.CompleteDelivery:output_type -> common.CommonResponse
-	63, // [63:96] is the sub-list for method output_type
-	30, // [30:63] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	17, // 6: order.OrderDetail.refunds:type_name -> order.RefundInfo
+	9,  // 7: order.ListOrdersResp.list:type_name -> order.OrderInfo
+	66, // 8: order.ListOrdersResp.pagination:type_name -> common.PaginationResponse
+	14, // 9: order.ApplyRefundReq.items:type_name -> order.ApplyRefundItem
+	16, // 10: order.RefundInfo.items:type_name -> order.RefundItemInfo
+	18, // 11: order.RefundInfo.logs:type_name -> order.RefundLogInfo
+	14, // 12: order.AdminCreateRefundReq.items:type_name -> order.ApplyRefundItem
+	65, // 13: order.ListRefundsReq.pagination:type_name -> common.Pagination
+	17, // 14: order.ListRefundsResp.list:type_name -> order.RefundInfo
+	66, // 15: order.ListRefundsResp.pagination:type_name -> common.PaginationResponse
+	33, // 16: order.ProductRankingsResp.list:type_name -> order.ProductRankingItem
+	36, // 17: order.RevenueReportResp.list:type_name -> order.RevenueReportItem
+	41, // 18: order.GetUserFrequentProductsResp.list:type_name -> order.FrequentProductItem
+	43, // 19: order.CreatePosHeldOrderReq.items:type_name -> order.PosHeldOrderItem
+	43, // 20: order.PosHeldOrderInfo.items:type_name -> order.PosHeldOrderItem
+	45, // 21: order.ListPosHeldOrdersResp.list:type_name -> order.PosHeldOrderInfo
+	65, // 22: order.ListFulfillmentOrdersReq.pagination:type_name -> common.Pagination
+	9,  // 23: order.ListFulfillmentOrdersResp.list:type_name -> order.OrderInfo
+	66, // 24: order.ListFulfillmentOrdersResp.pagination:type_name -> common.PaginationResponse
+	65, // 25: order.ListShiftsReq.pagination:type_name -> common.Pagination
+	58, // 26: order.PosShiftStatistics.income:type_name -> order.PosShiftStatItem
+	58, // 27: order.PosShiftStatistics.refund:type_name -> order.PosShiftStatItem
+	59, // 28: order.PosShiftInfo.statistics:type_name -> order.PosShiftStatistics
+	60, // 29: order.ListShiftsResp.list:type_name -> order.PosShiftInfo
+	66, // 30: order.ListShiftsResp.pagination:type_name -> common.PaginationResponse
+	1,  // 31: order.OrderService.CreateOrder:input_type -> order.CreateOrderReq
+	5,  // 32: order.OrderService.GetOrder:input_type -> order.GetOrderReq
+	6,  // 33: order.OrderService.ListOrders:input_type -> order.ListOrdersReq
+	7,  // 34: order.OrderService.CancelOrder:input_type -> order.CancelOrderReq
+	8,  // 35: order.OrderService.UpdateOrderStatus:input_type -> order.UpdateOrderStatusReq
+	38, // 36: order.OrderService.VerifyPickup:input_type -> order.VerifyPickupReq
+	15, // 37: order.OrderService.ApplyRefund:input_type -> order.ApplyRefundReq
+	19, // 38: order.OrderService.AdminCreateRefund:input_type -> order.AdminCreateRefundReq
+	20, // 39: order.OrderService.ListRefunds:input_type -> order.ListRefundsReq
+	25, // 40: order.OrderService.ApproveRefund:input_type -> order.ApproveRefundReq
+	26, // 41: order.OrderService.RejectRefund:input_type -> order.RejectRefundReq
+	27, // 42: order.OrderService.RetryRefund:input_type -> order.RetryRefundReq
+	21, // 43: order.OrderService.GetRefundConfig:input_type -> order.GetRefundConfigReq
+	23, // 44: order.OrderService.SaveRefundConfig:input_type -> order.SaveRefundConfigReq
+	28, // 45: order.OrderService.GetOrderStatistics:input_type -> order.GetOrderStatisticsReq
+	30, // 46: order.OrderService.GetSalesStatistics:input_type -> order.GetSalesStatisticsReq
+	32, // 47: order.OrderService.GetProductRankings:input_type -> order.GetProductRankingsReq
+	35, // 48: order.OrderService.GetRevenueReport:input_type -> order.GetRevenueReportReq
+	40, // 49: order.OrderService.GetUserFrequentProducts:input_type -> order.GetUserFrequentProductsReq
+	3,  // 50: order.OrderService.PreviewFreeShipping:input_type -> order.PreviewFreeShippingReq
+	44, // 51: order.OrderService.CreatePosHeldOrder:input_type -> order.CreatePosHeldOrderReq
+	46, // 52: order.OrderService.ListPosHeldOrders:input_type -> order.ListPosHeldOrdersReq
+	48, // 53: order.OrderService.DeletePosHeldOrder:input_type -> order.DeletePosHeldOrderReq
+	54, // 54: order.OrderService.StartShift:input_type -> order.StartShiftReq
+	55, // 55: order.OrderService.GetCurrentShift:input_type -> order.GetCurrentShiftReq
+	56, // 56: order.OrderService.EndShift:input_type -> order.EndShiftReq
+	57, // 57: order.OrderService.ListShifts:input_type -> order.ListShiftsReq
+	62, // 58: order.OrderService.GetAppPreferences:input_type -> order.GetAppPreferencesReq
+	64, // 59: order.OrderService.SaveAppPreferences:input_type -> order.SaveAppPreferencesReq
+	49, // 60: order.OrderService.AssignDelivery:input_type -> order.AssignDeliveryReq
+	50, // 61: order.OrderService.ListFulfillmentOrders:input_type -> order.ListFulfillmentOrdersReq
+	52, // 62: order.OrderService.StartDelivery:input_type -> order.StartDeliveryReq
+	53, // 63: order.OrderService.CompleteDelivery:input_type -> order.CompleteDeliveryReq
+	9,  // 64: order.OrderService.CreateOrder:output_type -> order.OrderInfo
+	12, // 65: order.OrderService.GetOrder:output_type -> order.OrderDetail
+	13, // 66: order.OrderService.ListOrders:output_type -> order.ListOrdersResp
+	67, // 67: order.OrderService.CancelOrder:output_type -> common.CommonResponse
+	67, // 68: order.OrderService.UpdateOrderStatus:output_type -> common.CommonResponse
+	39, // 69: order.OrderService.VerifyPickup:output_type -> order.VerifyPickupResp
+	17, // 70: order.OrderService.ApplyRefund:output_type -> order.RefundInfo
+	17, // 71: order.OrderService.AdminCreateRefund:output_type -> order.RefundInfo
+	24, // 72: order.OrderService.ListRefunds:output_type -> order.ListRefundsResp
+	67, // 73: order.OrderService.ApproveRefund:output_type -> common.CommonResponse
+	67, // 74: order.OrderService.RejectRefund:output_type -> common.CommonResponse
+	67, // 75: order.OrderService.RetryRefund:output_type -> common.CommonResponse
+	22, // 76: order.OrderService.GetRefundConfig:output_type -> order.RefundConfig
+	67, // 77: order.OrderService.SaveRefundConfig:output_type -> common.CommonResponse
+	29, // 78: order.OrderService.GetOrderStatistics:output_type -> order.OrderStatisticsResp
+	31, // 79: order.OrderService.GetSalesStatistics:output_type -> order.SalesStatisticsResp
+	34, // 80: order.OrderService.GetProductRankings:output_type -> order.ProductRankingsResp
+	37, // 81: order.OrderService.GetRevenueReport:output_type -> order.RevenueReportResp
+	42, // 82: order.OrderService.GetUserFrequentProducts:output_type -> order.GetUserFrequentProductsResp
+	4,  // 83: order.OrderService.PreviewFreeShipping:output_type -> order.PreviewFreeShippingResp
+	45, // 84: order.OrderService.CreatePosHeldOrder:output_type -> order.PosHeldOrderInfo
+	47, // 85: order.OrderService.ListPosHeldOrders:output_type -> order.ListPosHeldOrdersResp
+	67, // 86: order.OrderService.DeletePosHeldOrder:output_type -> common.CommonResponse
+	60, // 87: order.OrderService.StartShift:output_type -> order.PosShiftInfo
+	60, // 88: order.OrderService.GetCurrentShift:output_type -> order.PosShiftInfo
+	60, // 89: order.OrderService.EndShift:output_type -> order.PosShiftInfo
+	61, // 90: order.OrderService.ListShifts:output_type -> order.ListShiftsResp
+	63, // 91: order.OrderService.GetAppPreferences:output_type -> order.AppPreferencesInfo
+	67, // 92: order.OrderService.SaveAppPreferences:output_type -> common.CommonResponse
+	67, // 93: order.OrderService.AssignDelivery:output_type -> common.CommonResponse
+	51, // 94: order.OrderService.ListFulfillmentOrders:output_type -> order.ListFulfillmentOrdersResp
+	67, // 95: order.OrderService.StartDelivery:output_type -> common.CommonResponse
+	67, // 96: order.OrderService.CompleteDelivery:output_type -> common.CommonResponse
+	64, // [64:97] is the sub-list for method output_type
+	31, // [31:64] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_order_order_proto_init() }

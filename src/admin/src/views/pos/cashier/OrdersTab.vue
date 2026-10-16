@@ -99,6 +99,20 @@
             <div class="amount-row strong"><span>实付</span><span>￥{{ detail.pay_amount.toFixed(2) }}</span></div>
           </div>
 
+          <!-- 售后记录（每次退款单：类型/金额/状态/时间） -->
+          <template v-if="detail.refunds && detail.refunds.length">
+            <div class="section-title">售后记录</div>
+            <div class="refund-list">
+              <div v-for="refund in detail.refunds" :key="refund.id" class="refund-row">
+                <span class="refund-no">{{ refund.refund_no }}</span>
+                <n-tag size="tiny" :type="refundTypeTagType(refund.type)" :bordered="false">{{ refundTypeText(refund.type) }}</n-tag>
+                <span class="refund-amount">￥{{ refund.amount.toFixed(2) }}</span>
+                <n-tag size="tiny" :type="refundStatusTagType(refund.status)" :bordered="false">{{ refundStatusText(refund.status) }}</n-tag>
+                <span class="refund-time">{{ refund.refund_time || refund.created_at }}</span>
+              </div>
+            </div>
+          </template>
+
           <!-- 处理操作（按状态与权限显示，全部弹窗内完成） -->
           <n-space justify="end" class="detail-actions">
             <n-button
@@ -147,22 +161,8 @@
       <n-input v-model:value="cancelReason" type="textarea" placeholder="取消原因（必填）" :rows="2" />
     </n-modal>
 
-    <!-- 代客退款弹窗 -->
-    <n-modal
-      v-model:show="showRefundModal"
-      preset="dialog"
-      type="warning"
-      title="代客退款"
-      positive-text="确认退款"
-      negative-text="关闭"
-      :loading="refunding"
-      @positive-click="onRefund"
-    >
-      <div class="refund-tip">
-        将对订单 <b>{{ detail?.order_no }}</b> 发起整单退款（金额由服务端汇算，发起即执行）
-      </div>
-      <n-input v-model:value="refundReason" type="textarea" placeholder="退款原因（必填）" :rows="2" />
-    </n-modal>
+    <!-- 代客退款弹窗（与后台订单页共用：整单/部分商品/仅金额退，金额可调低） -->
+    <refund-modal v-model:show="showRefundModal" :order-id="detail?.id ?? null" @success="onRefundSuccess" />
   </div>
 </template>
 
@@ -170,15 +170,17 @@
 import { computed, h, onMounted, ref } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { adminCreateRefund, cancelOrder, getOrderDetail, getOrderList, verifyPickup } from '@/api/order'
+import { cancelOrder, getOrderDetail, getOrderList, verifyPickup } from '@/api/order'
 import type { Order, OrderDetail } from '@/api/types'
-import { ORDER_STATUS, QUERY_STATUS, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText } from '@/constants/order'
+import { ORDER_STATUS, QUERY_STATUS, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
+import RefundModal from '@/views/order/components/RefundModal.vue'
 
 /**
  * 订单查询 Tab（收银台内）
  * 单号精确搜索 + 状态/来源筛选 + 分页；详情弹窗内完成取消/代客退款/自提核销，
- * 处理按钮按状态与权限显示（取消/核销=order:update，退款=refund:update），不打断收银流程跳后台
+ * 处理按钮按状态与权限显示（取消/核销=order:update，退款=refund:update），不打断收银流程跳后台；
+ * 代客退款与后台共用 RefundModal（整单/部分商品/仅金额退，金额可调低），详情弹窗内展示每次售后记录
  */
 
 const message = useMessage()
@@ -259,8 +261,6 @@ const showCancelModal = ref(false)
 const cancelling = ref(false)
 const cancelReason = ref('')
 const showRefundModal = ref(false)
-const refunding = ref(false)
-const refundReason = ref('')
 
 /** 是否持有订单处理权限（取消/核销接口要求 order:update） */
 const hasUpdatePermission = computed(() => authStore.isSuperAdmin || authStore.hasPermission('order:update'))
@@ -347,30 +347,11 @@ async function onCancel() {
 }
 
 /**
- * 代客退款（整单退，发起即执行）
+ * 代客退款成功后的统一刷新（RefundModal 内完成发起，关闭详情弹窗回列表刷新）
  */
-async function onRefund() {
-  if (!detail.value) return false
-  const reason = refundReason.value.trim()
-  if (!reason) {
-    message.warning('请填写退款原因')
-    return false
-  }
-  refunding.value = true
-  try {
-    await adminCreateRefund(detail.value.id, { reason })
-    message.success('退款已发起')
-    showRefundModal.value = false
-    refundReason.value = ''
-    showDetail.value = false
-    void loadOrders()
-    return true
-  } catch {
-    // 错误提示由请求拦截器统一弹出
-    return false
-  } finally {
-    refunding.value = false
-  }
+function onRefundSuccess() {
+  showDetail.value = false
+  void loadOrders()
 }
 
 /** 表格列定义（行点击打开详情） */
@@ -540,9 +521,32 @@ onMounted(loadOrders)
 .detail-actions {
   margin-top: 16px;
 }
-.refund-tip {
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 10px;
+.refund-list {
+  border: 1px solid #efeff5;
+  border-radius: 6px;
+}
+.refund-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid #f3f3f7;
+  &:last-child {
+    border-bottom: none;
+  }
+  .refund-no {
+    color: #666;
+    font-family: monospace;
+  }
+  .refund-amount {
+    color: #d03050;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .refund-time {
+    margin-left: auto;
+    color: #999;
+  }
 }
 </style>

@@ -241,6 +241,8 @@ message OrderDetail {
   OrderInfo order = 1;
   repeated OrderItemInfo items = 2;
   repeated OrderStatusLog status_logs = 3;
+  // 本单全部售后（退款）记录：含每次退款单金额/类型/状态/明细，订单详情展示用
+  repeated RefundInfo refunds = 4;
 }
 
 message ListOrdersResp {
@@ -291,7 +293,7 @@ message RefundInfo {
   string payment_no = 11;
   // 关联订单号
   string order_no = 12;
-  // 退款类型：1整单退 2部分退
+  // 退款类型：1整单退 2部分退 3仅金额退（不退商品；退款完成后订单钱款全额退完时置为 1 整单退展示）
   int32 type = 13;
   // 退款商品明细
   repeated RefundItemInfo items = 14;
@@ -313,18 +315,21 @@ message RefundLogInfo {
 }
 
 // AdminCreateRefundReq 后台代客退款请求（发起即执行，免审核）
-// 金额与运费口径与 C 端申请一致：服务端汇算为准，amount 仅允许调低
+// 金额以实付口径服务端汇算（含手动优惠分摊），amount 仅允许调低；
+// mode=1 整单/部分商品退（items 为空=整单退，金额可调低）；mode=2 仅金额退（不退商品、不回补库存，amount 必填且不超过剩余可退）
 message AdminCreateRefundReq {
   int64 order_id = 1;
   double amount = 2;
   string reason = 3;
-  // 退款商品明细；为空表示整单退
+  // 退款商品明细；mode=1 时为空表示整单退，mode=2 时必须为空
   repeated ApplyRefundItem items = 4;
   // 运费退还策略为 user_decide 时是否退还运费
   bool refund_freight = 5;
   int64 operator_id = 6;
   // 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；内部调用传 0 跳过
   int64 community_id = 7;
+  // 退款模式：0/1=按商品退（空 items 整单退） 2=仅金额退
+  int32 mode = 8;
 }
 
 message ListRefundsReq {

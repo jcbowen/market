@@ -2361,10 +2361,13 @@ func (x *DeductStockResp) GetRemainStock() int32 {
 }
 
 type ReleaseStockReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SkuId         int64                  `protobuf:"varint,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
-	Quantity      int32                  `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
-	OrderId       int64                  `protobuf:"varint,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	SkuId    int64                  `protobuf:"varint,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	Quantity int32                  `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	OrderId  int64                  `protobuf:"varint,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 幂等业务号：同一 biz_no 的重复释放只生效一次；不同业务（多笔部分退款/取消/超时关单）
+	// 各自携带不同 biz_no，避免同一订单同一 SKU 的多次部分释放被幂等约束吞掉
+	BizNo         string `protobuf:"bytes,4,opt,name=biz_no,json=bizNo,proto3" json:"biz_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2418,6 +2421,13 @@ func (x *ReleaseStockReq) GetOrderId() int64 {
 		return x.OrderId
 	}
 	return 0
+}
+
+func (x *ReleaseStockReq) GetBizNo() string {
+	if x != nil {
+		return x.BizNo
+	}
+	return ""
 }
 
 type StockEntryItem struct {
@@ -9445,11 +9455,12 @@ const file_product_product_proto_rawDesc = "" +
 	"\border_id\x18\x03 \x01(\x03R\aorderId\"N\n" +
 	"\x0fDeductStockResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12!\n" +
-	"\fremain_stock\x18\x02 \x01(\x05R\vremainStock\"_\n" +
+	"\fremain_stock\x18\x02 \x01(\x05R\vremainStock\"v\n" +
 	"\x0fReleaseStockReq\x12\x15\n" +
 	"\x06sku_id\x18\x01 \x01(\x03R\x05skuId\x12\x1a\n" +
 	"\bquantity\x18\x02 \x01(\x05R\bquantity\x12\x19\n" +
-	"\border_id\x18\x03 \x01(\x03R\aorderId\"\xa8\x01\n" +
+	"\border_id\x18\x03 \x01(\x03R\aorderId\x12\x15\n" +
+	"\x06biz_no\x18\x04 \x01(\tR\x05bizNo\"\xa8\x01\n" +
 	"\x0eStockEntryItem\x12\x15\n" +
 	"\x06sku_id\x18\x01 \x01(\x03R\x05skuId\x12\x1a\n" +
 	"\bquantity\x18\x02 \x01(\x05R\bquantity\x12\x19\n" +

@@ -364,6 +364,9 @@ message ReleaseStockReq {
   int64 sku_id = 1;
   int32 quantity = 2;
   int64 order_id = 3;
+  // 幂等业务号：同一 biz_no 的重复释放只生效一次；不同业务（多笔部分退款/取消/超时关单）
+  // 各自携带不同 biz_no，避免同一订单同一 SKU 的多次部分释放被幂等约束吞掉
+  string biz_no = 4;
 }
 
 message StockEntryItem {

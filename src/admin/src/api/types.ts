@@ -315,6 +315,8 @@ export interface OrderDetail extends Order {
   items: OrderItem[]
   address: OrderAddress
   status_logs: OrderStatusLog[]
+  /** 本单每次售后（退款）记录，按时间正序 */
+  refunds?: Refund[]
 }
 
 /**

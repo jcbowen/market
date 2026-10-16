@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"google.golang.org/grpc/codes"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
@@ -21,6 +21,18 @@ import (
 
 // refundConfigID 退款配置表固定单行主键
 const refundConfigID = 1
+
+// invalidArg 构造用户输入/业务规则类退款错误（gRPC InvalidArgument），
+// 网关按业务错误码透传原始文案，避免被归类为服务器内部错误吞掉提示
+// 参数：
+//   - format: 格式串
+//   - args: 参数
+//
+// 返回值：
+//   - error: 业务错误
+func invalidArg(format string, args ...interface{}) error {
+	return bizerr.New(codes.InvalidArgument, fmt.Sprintf(format, args...))
+}
 
 // refundFreightPolicies 运费退还策略合法值集合
 var refundFreightPolicies = map[string]bool{"always": true, "never": true, "user_decide": true}
@@ -89,7 +101,7 @@ type refundLine struct {
 //   - error: 错误信息
 func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundReq) (*model.Refund, error) {
 	if req.Reason == "" {
-		return nil, fmt.Errorf("请填写退款原因")
+		return nil, invalidArg("请填写退款原因")
 	}
 
 	// 支付单号在事务外获取（纯读查询，不参与竞态）
@@ -108,14 +120,14 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 			return err
 		}
 		if o.UserID != req.UserId {
-			return fmt.Errorf("无权限申请退款")
+			return invalidArg("无权限申请退款")
 		}
 		// 门店订单（收银台代客 source=2）C 端只读：退款走后台入口（AdminCreateRefund）处理
 		if o.Source == 2 {
 			return bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
 		}
 		if o.Status != 2 && o.Status != 3 && o.Status != 4 {
-			return fmt.Errorf("订单状态不允许申请退款")
+			return invalidArg("订单状态不允许申请退款")
 		}
 
 		// 同一订单存在未完结退款申请时禁止重复申请（持行锁后检查，串行化生效）
@@ -126,10 +138,10 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 			return err
 		}
 		if pending > 0 {
-			return fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
+			return invalidArg("该订单存在未完结的退款申请，请等待处理完成")
 		}
 
-		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
+		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight, false)
 		if err != nil {
 			return err
 		}
@@ -202,7 +214,7 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 //   - error: 错误信息
 func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminCreateRefundReq) (*model.Refund, error) {
 	if req.Reason == "" {
-		return nil, fmt.Errorf("请填写退款原因")
+		return nil, invalidArg("请填写退款原因")
 	}
 
 	// 支付单号在事务外获取（纯读查询，不参与竞态）
@@ -225,7 +237,7 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 			return err
 		}
 		if o.Status != 2 && o.Status != 3 && o.Status != 4 {
-			return fmt.Errorf("订单状态不允许退款")
+			return invalidArg("订单状态不允许退款")
 		}
 
 		// 存在未完结退款申请（待审核/退款中）时禁止重复发起（持行锁后检查，串行化生效）
@@ -236,17 +248,21 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 			return err
 		}
 		if pending > 0 {
-			return fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
+			return invalidArg("该订单存在未完结的退款申请，请等待处理完成")
 		}
 
-		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
+		// mode=2 仅金额退（不退商品、不回补库存）；mode 0/1 按商品退（空 items 整单退）
+		amountOnly := req.Mode == 2
+		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight, amountOnly)
 		if err != nil {
 			return err
 		}
 
 		now := time.Now().Format("2006-01-02 15:04:05")
 		refundType := int32(2)
-		if calc.isFull {
+		if calc.amountOnly {
+			refundType = 3
+		} else if calc.isFull {
 			refundType = 1
 		}
 		refund = &model.Refund{
@@ -302,9 +318,10 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 
 	// 发起即执行：直接发起渠道退款
 	if err := s.processChannelRefund(ctx, refund); err != nil {
-		// 渠道失败：退款单保留在退款中，审批日志留痕，由「重试退款」兜底
+		// 渠道失败：退款单保留在退款中，审批日志留痕，由「重试退款」兜底；
+		// 对外返回业务语义错误（FailedPrecondition 透传文案），不吞成服务器内部错误
 		_ = s.createRefundLog(ctx, refund.ID, "create", "admin", req.OperatorId, "渠道退款调用失败: "+err.Error())
-		return refund, err
+		return refund, bizerr.New(codes.FailedPrecondition, "渠道退款调用失败，售后单已保留在退款中，可在售后管理页重试")
 	}
 
 	if err := s.completeRefundSuccess(ctx, refund, refund.Items, "admin", req.OperatorId); err != nil {
@@ -322,23 +339,62 @@ type refundCalc struct {
 	isFull  bool
 	freight float64
 	amount  float64
+	// amountOnly 仅金额退（不退商品、不回补库存）
+	amountOnly bool
 }
 
 // calcRefundOrder 汇算一笔退款的退款行、运费与最终金额
-// 金额以服务端汇算为准（行小计按比例分摊订单优惠，整单退尾差减法兜底），
+// 金额以实付口径（pay_amount）服务端汇算为准：剩余可退 = pay_amount - 已成功退款合计（含运费），
+// 商品行金额按比例分摊订单优惠（含收银台手动优惠），整单退尾差减法兜底；
 // reqAmount 仅允许调低，调低差额从最后一行明细扣减；
-// 运费仅整单退时按 refund_freight_policy 策略退还（user_decide 时按 refundFreight 勾选）
+// mode=2 仅金额退：不退商品，amount 为必填的自定义金额（不超过剩余可退）；
+// 运费仅整单退按 refund_freight_policy 策略退还（user_decide 时按 refundFreight 勾选），
+// 且不超过剩余可退运费（配送费已含在 pay_amount 内）
 // 参数：
 //   - ctx: 上下文
 //   - o: 订单
-//   - reqItems: 退款商品明细（为空表示整单退）
-//   - reqAmount: 客户端传入金额（仅允许调低）
+//   - reqItems: 退款商品明细（mode=1 时为空表示整单退）
+//   - reqAmount: 客户端传入金额（按商品退时仅允许调低；仅金额退时为必填退款金额）
 //   - refundFreight: user_decide 策略下是否退运费
+//   - amountOnly: 是否仅金额退（mode=2）
 //
 // 返回值：
 //   - *refundCalc: 汇算结果
 //   - error: 校验失败时返回错误
-func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, reqItems []*order.ApplyRefundItem, reqAmount float64, refundFreight bool) (*refundCalc, error) {
+func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, reqItems []*order.ApplyRefundItem, reqAmount float64, refundFreight bool, amountOnly bool) (*refundCalc, error) {
+	// 剩余可退总额（money 口径）：实付 - 已成功退款合计（含运费），任何模式都不允许突破
+	refundedMoney, refundedFreight, err := s.refundedMoneyStat(ctx, o.ID)
+	if err != nil {
+		return nil, err
+	}
+	remaining := round2(o.PayAmount - refundedMoney)
+	if remaining <= 0 {
+		return nil, invalidArg("订单钱款已全部退还")
+	}
+	// 运费与商品部分分开封顶：运费仅在策略允许时退还，避免「不退运费」策略被 money 口径绕过
+	freightRemaining := round2(o.DeliveryFee - refundedFreight)
+	if freightRemaining < 0 {
+		freightRemaining = 0
+	}
+	goodsRemaining := round2(remaining - freightRemaining)
+	if goodsRemaining < 0 {
+		goodsRemaining = 0
+	}
+
+	// 仅金额退：不涉及商品行与运费，金额为自定义值，上限=剩余可退
+	if amountOnly {
+		if len(reqItems) > 0 {
+			return nil, invalidArg("仅金额退不支持指定退款商品")
+		}
+		if reqAmount <= 0 {
+			return nil, invalidArg("请填写退款金额")
+		}
+		if round2(reqAmount) > remaining+1e-6 {
+			return nil, invalidArg("退款金额不能超过剩余可退金额 %.2f 元", remaining)
+		}
+		return &refundCalc{lines: nil, isFull: false, freight: 0, amount: round2(reqAmount), amountOnly: true}, nil
+	}
+
 	var orderItems []*model.OrderItem
 	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", o.ID).Find(&orderItems).Error; err != nil {
 		return nil, err
@@ -348,7 +404,7 @@ func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, req
 		itemMap[item.ID] = item
 	}
 
-	refundedQty, refundedGoods, err := s.refundedStat(ctx, o.ID)
+	refundedQty, _, err := s.refundedStat(ctx, o.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -358,34 +414,70 @@ func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, req
 		return nil, err
 	}
 
-	// 商品部分应退合计：整单退以"商品实付总额 - 已退商品金额"为准（尾差在最后一行兜底）
-	goodsRefund := sumRefundLines(lines)
-	if isFull {
-		goodsRefund = round2(o.TotalAmount - o.DiscountAmount - refundedGoods)
-		fixLastLineTailDiff(lines, goodsRefund)
+	// 运费：仅整单退按策略退还，且不超过剩余可退运费（配送费已含在 pay_amount 内）
+	var freight float64
+	if isFull && freightRemaining > 0 {
+		freight = s.resolveFreight(ctx, o, isFull, refundFreight, freightRemaining)
 	}
 
-	// 运费：仅整单退按策略退还
-	freight := s.resolveFreight(ctx, o, isFull, refundFreight)
-	refundable := round2(goodsRefund + freight)
+	// 商品部分应退金额：整单退以"剩余可退商品金额"为准（尾差在最后一行兜底）；
+	// 部分退为各行比例分摊之和，超过剩余可退商品金额时按比例收敛（防多笔部分退累计突破实付）
+	var goodsRefund float64
+	if isFull {
+		goodsRefund = goodsRemaining
+		fixLastLineTailDiff(lines, goodsRefund)
+	} else {
+		goodsRefund = sumRefundLines(lines)
+		if goodsRefund > goodsRemaining {
+			scaleLinesToTarget(lines, goodsRemaining)
+			goodsRefund = goodsRemaining
+		}
+	}
 
-	// 客户端金额仅允许调低
+	// 客户端金额仅允许调低（按商品退时），调低差额从最后一行明细扣减
+	refundable := round2(goodsRefund + freight)
 	amount := refundable
 	if reqAmount > 0 && reqAmount < refundable {
 		amount = round2(reqAmount)
 	}
 	cut := round2(refundable - amount)
-	if cut > goodsRefund {
-		return nil, fmt.Errorf("退款金额不能低于运费金额")
-	}
 	if cut > 0 {
+		if cut > goodsRefund+1e-6 {
+			return nil, invalidArg("退款金额不能低于运费金额")
+		}
 		last := lines[len(lines)-1]
 		if last.amount < cut {
-			return nil, fmt.Errorf("调整金额过低，最后一行商品应退不足抵扣")
+			return nil, invalidArg("调整金额过低，最后一行商品应退不足抵扣")
 		}
 		last.amount = round2(last.amount - cut)
 	}
 	return &refundCalc{lines: lines, isFull: isFull, freight: freight, amount: amount}, nil
+}
+
+// scaleLinesToTarget 将退款行金额按比例收敛到目标合计（最后一行兜底尾差）
+// 用于部分退累计金额超出剩余可退时，防止突破实付口径
+// 参数：
+//   - lines: 退款行
+//   - target: 目标合计
+func scaleLinesToTarget(lines []*refundLine, target float64) {
+	if len(lines) == 0 {
+		return
+	}
+	sum := sumRefundLines(lines)
+	if sum <= 0 {
+		return
+	}
+	factor := target / sum
+	var front float64
+	for _, line := range lines[:len(lines)-1] {
+		line.amount = round2(line.amount * factor)
+		front += line.amount
+	}
+	last := lines[len(lines)-1]
+	last.amount = round2(target - front)
+	if last.amount < 0 {
+		last.amount = 0
+	}
 }
 
 // buildRefundLines 根据申请参数构造退款行并完成逐行汇算
@@ -418,7 +510,7 @@ func buildRefundLines(o *model.Order, orderItems []*model.OrderItem, itemMap map
 			})
 		}
 		if len(lines) == 0 {
-			return nil, false, fmt.Errorf("订单商品已全部退款")
+			return nil, false, invalidArg("订单商品已全部退款")
 		}
 		return lines, true, nil
 	}
@@ -427,15 +519,15 @@ func buildRefundLines(o *model.Order, orderItems []*model.OrderItem, itemMap map
 	for _, ri := range reqItems {
 		item, ok := itemMap[ri.OrderItemId]
 		if !ok {
-			return nil, false, fmt.Errorf("退款商品不属于该订单")
+			return nil, false, invalidArg("退款商品不属于该订单")
 		}
 		if seen[ri.OrderItemId] {
-			return nil, false, fmt.Errorf("商品 %s 重复提交", item.ProductName)
+			return nil, false, invalidArg("商品 %s 重复提交", item.ProductName)
 		}
 		seen[ri.OrderItemId] = true
 		rem := item.Quantity - refundedQty[item.ID]
 		if ri.Quantity <= 0 || ri.Quantity > rem {
-			return nil, false, fmt.Errorf("商品 %s 可退数量不足（剩余 %d）", item.ProductName, rem)
+			return nil, false, invalidArg("商品 %s 可退数量不足（剩余 %d）", item.ProductName, rem)
 		}
 		lines = append(lines, &refundLine{
 			item:   item,
@@ -462,6 +554,8 @@ func itemRefundAmount(item *model.OrderItem, o *model.Order, qty int32) float64 
 }
 
 // itemFullRefundAmount 计算订单商品行全额应退金额（行小计减去按比例分摊的订单优惠）
+// 优惠分摊口径 = 系统优惠(discount_amount) + 收银台手动优惠(manual_discount 抹零/整单改价)，
+// 保证行金额合计与实付口径一致（收银台改价/抹零订单退款不超出原支付流水）
 // 参数：
 //   - item: 订单商品行
 //   - o: 所属订单
@@ -472,7 +566,8 @@ func itemFullRefundAmount(item *model.OrderItem, o *model.Order) float64 {
 	if o.TotalAmount <= 0 {
 		return round2(item.TotalPrice)
 	}
-	share := round2(o.DiscountAmount * item.TotalPrice / o.TotalAmount)
+	totalDiscount := o.DiscountAmount + o.ManualDiscount
+	share := round2(totalDiscount * item.TotalPrice / o.TotalAmount)
 	if share > item.TotalPrice {
 		share = item.TotalPrice
 	}
@@ -542,26 +637,52 @@ func (s *RefundService) refundedStat(ctx context.Context, orderID int64) (map[in
 	return qty, round2(goods), nil
 }
 
+// refundedMoneyStat 统计订单已完成退款的总金额与运费金额（money 口径，剩余可退计算用）
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - float64: 已成功退款总金额（含运费）
+//   - float64: 已成功退还的运费合计
+//   - error: 查询失败时返回错误
+func (s *RefundService) refundedMoneyStat(ctx context.Context, orderID int64) (float64, float64, error) {
+	var result struct {
+		Total   float64
+		Freight float64
+	}
+	err := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+		Select("COALESCE(SUM(amount), 0) AS total, COALESCE(SUM(freight_amount), 0) AS freight").
+		Where("order_id = ? AND status = ?", orderID, 5).
+		Scan(&result).Error
+	if err != nil {
+		return 0, 0, err
+	}
+	return round2(result.Total), round2(result.Freight), nil
+}
+
 // resolveFreight 按运费退还策略解析本单应退运费
-// 仅整单退涉及运费；user_decide 策略下按用户勾选结果退还
+// 仅整单退涉及运费；user_decide 策略下按用户勾选结果退还；
+// freightAvail 为剩余可退运费上限（配送费已含在 pay_amount，多笔退款不重复退运费）
 // 参数：
 //   - ctx: 上下文
 //   - o: 订单
 //   - isFull: 是否整单退
 //   - userChoosesFreight: user_decide 策略下用户是否选择退运费
+//   - freightAvail: 剩余可退运费上限
 //
 // 返回值：
 //   - float64: 应退运费金额（2位小数）
-func (s *RefundService) resolveFreight(ctx context.Context, o *model.Order, isFull bool, userChoosesFreight bool) float64 {
-	if !isFull || o.DeliveryFee <= 0 {
+func (s *RefundService) resolveFreight(ctx context.Context, o *model.Order, isFull bool, userChoosesFreight bool, freightAvail float64) float64 {
+	if !isFull || o.DeliveryFee <= 0 || freightAvail <= 0 {
 		return 0
 	}
 	switch s.getFreightPolicy(ctx) {
 	case "always":
-		return round2(o.DeliveryFee)
+		return freightAvail
 	case "user_decide":
 		if userChoosesFreight {
-			return round2(o.DeliveryFee)
+			return freightAvail
 		}
 	}
 	return 0
@@ -636,10 +757,10 @@ func (s *RefundService) EnsureDefaultRefundConfig() error {
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")
 	row := &model.RefundConfig{
-		ID:                 refundConfigID,
+		ID:                  refundConfigID,
 		RefundFreightPolicy: "always",
-		CreatedAt:          now,
-		UpdatedAt:          now,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	if err := s.db.GetDb().Create(row).Error; err != nil {
 		return fmt.Errorf("初始化默认退款配置失败: %w", err)
@@ -761,7 +882,7 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 		return err
 	}
 	if refund.Status != 1 {
-		return fmt.Errorf("退款状态不允许审核")
+		return invalidArg("退款状态不允许审核")
 	}
 
 	var refundItems []*model.RefundItem
@@ -782,7 +903,7 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("退款状态不允许审核")
+		return invalidArg("退款状态不允许审核")
 	}
 	refund.Status = 4
 
@@ -818,7 +939,7 @@ func (s *RefundService) RetryRefund(ctx context.Context, req *order.RetryRefundR
 		return err
 	}
 	if refund.Status != 4 {
-		return fmt.Errorf("仅退款中状态的退款单可重试")
+		return invalidArg("仅退款中状态的退款单可重试")
 	}
 
 	var refundItems []*model.RefundItem
@@ -905,29 +1026,36 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 			return err
 		}
 
-		// 按退款明细逐行释放库存
+		// 按退款明细逐行释放库存（仅金额退无商品明细，不回补库存）；
+		// biz_no=退款单号：每笔退款独立幂等槽位，同一订单同一 SKU 多笔部分退款互不吞并
 		for _, item := range items {
 			if _, err := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
 				SkuId:    item.SkuID,
 				Quantity: item.Quantity,
 				OrderId:  o.ID,
+				BizNo:    refundCompleted.RefundNo,
 			}); err != nil {
 				return fmt.Errorf("释放库存失败: %w", err)
 			}
 		}
 
-		// 订单去向：整单退/全部退完 → 8 已退款；部分退款完成 → 回退款前状态
-		nextStatus := int32(8)
-		remark := "退款完成"
-		if refundCompleted.Type == 2 {
-			fully, err := orderFullyRefundedTx(tx, o.ID)
-			if err != nil {
+		// 订单去向与类型升级（money 口径）：累计成功退款（含运费）达到实付 → 订单 8 已退款，
+		// 且本笔退款单类型升级为整单退（部分退/仅金额退补齐全款后同样按整单退展示）；
+		// 未退完 → 回退款前状态
+		fully, err := orderMoneyFullyRefundedTx(tx, o.ID)
+		if err != nil {
+			return err
+		}
+		nextStatus := lastStatusBeforeRefundTx(tx, o.ID)
+		remark := "部分退款完成"
+		if fully {
+			nextStatus = 8
+			remark = "退款完成"
+			if err := tx.Model(&model.Refund{}).Where("id = ? AND type <> 1", refund.ID).
+				Update("type", int32(1)).Error; err != nil {
 				return err
 			}
-			if !fully {
-				nextStatus = lastStatusBeforeRefundTx(tx, o.ID)
-				remark = "部分退款完成"
-			}
+			refundCompleted.Type = 1
 		}
 
 		o.Status = nextStatus
@@ -993,7 +1121,7 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *order.RejectRefun
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("退款状态不允许审核")
+			return invalidArg("退款状态不允许审核")
 		}
 
 		var o model.Order
@@ -1021,7 +1149,8 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *order.RejectRefun
 	})
 }
 
-// orderFullyRefundedTx 判断订单商品是否已全部退完（总数量与已完成退款数量对比）
+// orderMoneyFullyRefundedTx 判断订单钱款是否已全部退完（money 口径）：
+// 累计成功退款金额（含运费）达到实付金额即视为全退，覆盖整单退、多笔部分退与仅金额退混退场景
 // 参数：
 //   - tx: 数据库事务
 //   - orderID: 订单 ID
@@ -1029,22 +1158,22 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *order.RejectRefun
 // 返回值：
 //   - bool: 是否全部退完
 //   - error: 查询失败时返回错误
-func orderFullyRefundedTx(tx *gorm.DB, orderID int64) (bool, error) {
-	var total, refunded int64
-	if err := tx.Model(&model.OrderItem{}).
-		Where("order_id = ?", orderID).
-		Select("COALESCE(SUM(quantity), 0)").
+func orderMoneyFullyRefundedTx(tx *gorm.DB, orderID int64) (bool, error) {
+	var total, refunded float64
+	if err := tx.Model(&model.Order{}).
+		Where("id = ?", orderID).
+		Select("COALESCE(pay_amount, 0)").
 		Scan(&total).Error; err != nil {
 		return false, err
 	}
-	if err := tx.Table("refund_items").
-		Joins("JOIN refunds ON refunds.id = refund_items.refund_id").
-		Where("refunds.order_id = ? AND refunds.status = 5", orderID).
-		Select("COALESCE(SUM(refund_items.quantity), 0)").
+	if err := tx.Model(&model.Refund{}).
+		Where("order_id = ? AND status = ?", orderID, 5).
+		Select("COALESCE(SUM(amount), 0)").
 		Scan(&refunded).Error; err != nil {
 		return false, err
 	}
-	return total > 0 && refunded >= total, nil
+	// 金额为 float64（decimal 化立项前），比较带 1e-6 容差防浮点误差误判
+	return total > 0 && refunded >= total-1e-6, nil
 }
 
 // lastStatusBeforeRefundTx 查询订单最近一次进入退款中(7)之前的来源状态

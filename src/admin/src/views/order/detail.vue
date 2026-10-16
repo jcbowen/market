@@ -49,6 +49,12 @@
           <n-data-table :columns="logColumns" :data="detail.status_logs" size="small" :scroll-x="620" />
         </div>
 
+        <!-- 售后记录：本单每次退款（类型/金额/状态/明细） -->
+        <div v-if="detail.refunds && detail.refunds.length">
+          <div class="section-title">售后记录</div>
+          <n-data-table :columns="refundColumns" :data="detail.refunds" size="small" :scroll-x="620" />
+        </div>
+
         <!-- 操作区：按当前状态渲染与列表一致的操作按钮 -->
         <n-space v-if="actions.length" justify="end">
           <n-button
@@ -99,11 +105,11 @@
 // 页面级组件：订单详情弹窗，供订单列表 / 售后管理复用
 // 底部按当前状态渲染操作按钮（发货/核销/完成/取消），操作后刷新详情并通知父级刷新列表
 defineOptions({ name: 'OrderDetailModal' })
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, NTag, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { completeOrder, getOrderDetail, verifyPickup } from '@/api/order'
-import type { OrderDetail, OrderItem, OrderStatusLog } from '@/api/types'
+import type { OrderDetail, OrderItem, OrderStatusLog, Refund } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import {
   DELIVERY_TYPE,
@@ -115,6 +121,10 @@ import {
   orderStatusTagType,
   orderStatusText,
   payTypeText,
+  refundStatusTagType,
+  refundStatusText,
+  refundTypeTagType,
+  refundTypeText,
 } from '@/constants/order'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
@@ -177,6 +187,43 @@ const logColumns: DataTableColumns<OrderStatusLog> = [
   { title: '操作方', key: 'operator_type', width: 90 },
   { title: '备注', key: 'remark' },
   { title: '时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
+]
+
+/** 售后记录列：每次退款单一行，展开/摘要展示退款原因与商品明细 */
+const refundColumns: DataTableColumns<Refund> = [
+  {
+    title: '类型',
+    key: 'type',
+    width: 80,
+    render: (row) =>
+      h(NTag, { size: 'small', type: refundTypeTagType(row.type), bordered: false }, { default: () => refundTypeText(row.type) }),
+  },
+  {
+    title: '退款金额',
+    key: 'amount',
+    width: 120,
+    render: (row) =>
+      row.freight_amount > 0
+        ? `￥${(row.amount ?? 0).toFixed(2)}（含运费￥${row.freight_amount.toFixed(2)}）`
+        : `￥${(row.amount ?? 0).toFixed(2)}`,
+  },
+  {
+    title: '退款商品',
+    key: 'items',
+    render: (row) =>
+      row.items && row.items.length
+        ? row.items.map((it) => `${it.product_name}${it.spec_name ? `(${it.spec_name})` : ''}×${it.quantity}`).join('、')
+        : '不退商品',
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 80,
+    render: (row) =>
+      h(NTag, { size: 'small', type: refundStatusTagType(row.status), bordered: false }, { default: () => refundStatusText(row.status) }),
+  },
+  { title: '原因', key: 'reason', ellipsis: { tooltip: true } },
+  { title: '时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.refund_time || row.created_at) },
 ]
 
 /**

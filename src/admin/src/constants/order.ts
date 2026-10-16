@@ -170,3 +170,39 @@ export const refundStatusMap: Record<number, { text: string; type: 'default' | '
   [REFUND_STATUS.PROCESSING]: { text: '退款中', type: 'error' },
   [REFUND_STATUS.REFUNDED]: { text: '已退款', type: 'success' },
 }
+
+/**
+ * 退款单状态文案
+ * @param status 退款单状态
+ */
+export function refundStatusText(status: number): string {
+  return refundStatusMap[status]?.text || '未知'
+}
+
+/**
+ * 退款单状态标签颜色类型
+ * @param status 退款单状态
+ */
+export function refundStatusTagType(status: number): 'default' | 'warning' | 'info' | 'success' | 'error' {
+  return refundStatusMap[status]?.type || 'default'
+}
+
+/**
+ * 退款类型文案（1 整单退 2 部分退 3 仅金额退）
+ * @param type 退款类型
+ */
+export function refundTypeText(type: number): string {
+  if (type === 1) return '整单退'
+  if (type === 3) return '金额退'
+  return '部分退'
+}
+
+/**
+ * 退款类型标签颜色类型
+ * @param type 退款类型
+ */
+export function refundTypeTagType(type: number): 'default' | 'warning' | 'info' | 'success' | 'error' {
+  if (type === 1) return 'info'
+  if (type === 3) return 'success'
+  return 'warning'
+}

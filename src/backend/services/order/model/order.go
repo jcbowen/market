@@ -134,7 +134,7 @@ type Refund struct {
 	PaymentNo     string  `gorm:"column:payment_no;type:varchar(50);comment:关联支付单号，申请退款时自动获取" json:"payment_no"`
 	Amount        float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:退款金额（商品应退 + 运费，服务端汇算为准，用户仅可调低）" json:"amount"`
 	FreightAmount float64 `gorm:"column:freight_amount;type:decimal(10,2);not null;default:0.00;comment:本单退还的运费金额" json:"freight_amount"`
-	Type          int32   `gorm:"column:type;type:tinyint;not null;default:1;comment:1整单退 2部分退" json:"type"`
+	Type          int32   `gorm:"column:type;type:tinyint;not null;default:1;comment:1整单退 2部分退 3仅金额退（全额退完时升级为1）" json:"type"`
 	Reason        string  `gorm:"column:reason;type:varchar(255);comment:退款原因" json:"reason"`
 	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
 	RejectReason  string  `gorm:"column:reject_reason;type:varchar(255);comment:拒绝原因" json:"reject_reason"`

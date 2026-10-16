@@ -238,6 +238,8 @@ export function adminCreateRefund(
     items?: Array<{ order_item_id: number; quantity: number }>
     amount?: number
     refund_freight?: boolean
+    /** 退款模式：不传/1=按商品退（items 空=整单退） 2=仅金额退（不退商品不回补库存） */
+    mode?: number
   },
 ) {
   return request<ApiResult<Refund>>({

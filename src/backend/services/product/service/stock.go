@@ -124,12 +124,14 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 //   - error: 错误信息
 func (s *StockService) ReleaseStock(ctx context.Context, req *product.ReleaseStockReq) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 幂等日志先行插入：重复请求在唯一索引上冲突（RowsAffected=0）时直接跳过
+		// 幂等日志先行插入：重复请求（同 order+sku+op+biz_no）在唯一索引上冲突（RowsAffected=0）时直接跳过；
+		// 不同业务号（多笔部分退款/取消/超时关单）各占一行，互不吞并
 		now := time.Now().Format("2006-01-02 15:04:05")
 		opLog := &model.StockOpLog{
 			OrderID:   req.OrderId,
 			SkuID:     req.SkuId,
 			OpType:    stockOpTypeRelease,
+			BizNo:     req.BizNo,
 			Quantity:  req.Quantity,
 			CreatedAt: now,
 		}

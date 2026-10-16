@@ -2002,6 +2002,39 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		})
 	}
 
+	// 售后记录：本单每次退款单（类型/金额/状态/明细），订单详情按次展示
+	refunds := make([]gin.H, 0, len(resp.Refunds))
+	for _, r := range resp.Refunds {
+		refundItems := make([]gin.H, 0, len(r.Items))
+		for _, item := range r.Items {
+			refundItems = append(refundItems, gin.H{
+				"id":            item.Id,
+				"refund_id":     item.RefundId,
+				"order_item_id": item.OrderItemId,
+				"sku_id":        item.SkuId,
+				"product_name":  item.ProductName,
+				"spec_name":     item.SpecName,
+				"quantity":      item.Quantity,
+				"refund_amount": item.RefundAmount,
+			})
+		}
+		refunds = append(refunds, gin.H{
+			"id":             r.Id,
+			"refund_no":      r.RefundNo,
+			"order_id":       r.OrderId,
+			"order_no":       r.OrderNo,
+			"amount":         r.Amount,
+			"freight_amount": r.FreightAmount,
+			"type":           r.Type,
+			"reason":         r.Reason,
+			"status":         r.Status,
+			"reject_reason":  r.RejectReason,
+			"refund_time":    r.RefundTime,
+			"created_at":     r.CreatedAt,
+			"items":          refundItems,
+		})
+	}
+
 	data := gin.H{
 		"id":              o.Id,
 		"order_no":        o.OrderNo,
@@ -2034,6 +2067,7 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"items":           items,
 		"address":         address,
 		"status_logs":     statusLogs,
+		"refunds":         refunds,
 	}
 	response.Success(c, data)
 }
@@ -3990,12 +4024,14 @@ func (h *AdminHandler) UpdateRefundSetting(c *gin.Context) {
 }
 
 // AdminCreateRefundReq 后台代客退款请求
-// items 为空表示整单退；金额由 order-service 服务端汇算，amount 仅允许调低
+// mode=0/1 按商品退（items 为空=整单退）；mode=2 仅金额退（不退商品，amount 必填）；
+// 金额以实付口径服务端汇算，amount 仅允许调低（仅金额退时为自定义金额，不超过剩余可退）
 type AdminCreateRefundReq struct {
 	Amount        float64              `json:"amount"`
 	Reason        string               `json:"reason" binding:"required"`
 	Items         []AdminRefundItemReq `json:"items"`
 	RefundFreight bool                 `json:"refund_freight"`
+	Mode          int32                `json:"mode"`
 }
 
 // AdminRefundItemReq 后台代客退款商品明细项
@@ -4035,6 +4071,7 @@ func (h *AdminHandler) AdminCreateRefund(c *gin.Context) {
 		Amount:        req.Amount,
 		Reason:        req.Reason,
 		RefundFreight: req.RefundFreight,
+		Mode:          req.Mode,
 		OperatorId:    uc.UserID,
 		CommunityId:   h.getAdminCommunityID(c),
 	}
