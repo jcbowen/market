@@ -88,6 +88,13 @@ export const permissionGroups: PermissionGroup[] = [
     ],
   },
   {
+    label: '系统设置（系统级）',
+    options: [
+      { label: '设置查看', value: 'settings:view' },
+      { label: '设置更新', value: 'settings:update' },
+    ],
+  },
+  {
     label: '员工',
     options: [
       { label: '员工查看', value: 'admin:view' },

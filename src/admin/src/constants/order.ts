@@ -34,6 +34,16 @@ export const ORDER_SOURCE = {
   POS: 2,
 } as const
 
+/** 支付方式：1微信 2支付宝 3货到付款 4现金 5/6 付款码预留（与后端 orderPayTypeText 对齐） */
+export const PAY_TYPE = {
+  WECHAT: 1,
+  ALIPAY: 2,
+  CASH_ON_DELIVERY: 3,
+  CASH: 4,
+  WECHAT_CODE: 5,
+  ALIPAY_CODE: 6,
+} as const
+
 /**
  * 支付方式转文案（与后端 orderPayTypeText 对齐）
  * @param payType 支付方式码
@@ -45,28 +55,29 @@ export function payTypeText(payType: number): string {
     2: '支付宝',
     3: '货到付款',
     4: '现金',
-    5: '余额',
+    5: '微信付款码(预留)',
+    6: '支付宝付款码(预留)',
   }
   return map[payType] || `支付方式${payType}`
 }
 
-/** 交班统计固定展示的支付方式顺序（现金优先；余额 pay_type=5 预留，渠道未接入前恒为 0） */
-export const SHIFT_PAY_TYPES: number[] = [4, 1, 2, 5]
+/** 交班统计支付方式展示顺序（现金优先；5/6 为付款码预留位，未在清单中的支付方式排在末尾） */
+export const SHIFT_PAY_TYPES: number[] = [4, 1, 2, 5, 6]
 
 /**
- * 交班统计固定行：按 现金/微信/支付宝/余额 顺序补全分组数据
- * （后端仅返回有数据的支付方式，此处补齐固定四项，缺省数额为 0）
+ * 交班统计行：仅渲染后端实际返回的支付方式，按 SHIFT_PAY_TYPES 顺序排序
+ * （无数据的渠道不显示占位行；未列入顺序清单的支付方式按原顺序排在末尾）
  * @param items 后端按支付方式分组的统计项（收款或退款）
- * @returns 固定四项的统计行
+ * @returns 按展示顺序排列的统计行
  */
 export function payStatRows(
   items: Array<{ pay_type: number; amount: number; order_count: number }> | undefined,
 ): Array<{ pay_type: number; amount: number; order_count: number }> {
-  const map = new Map((items ?? []).map((item) => [item.pay_type, item]))
-  return SHIFT_PAY_TYPES.map((payType) => {
-    const hit = map.get(payType)
-    return { pay_type: payType, amount: hit?.amount ?? 0, order_count: hit?.order_count ?? 0 }
-  })
+  const rank = (payType: number): number => {
+    const idx = SHIFT_PAY_TYPES.indexOf(payType)
+    return idx === -1 ? SHIFT_PAY_TYPES.length : idx
+  }
+  return [...(items ?? [])].sort((a, b) => rank(a.pay_type) - rank(b.pay_type))
 }
 
 /** 来源筛选下拉项（0=全部） */
@@ -147,6 +158,20 @@ export function orderStatusText(status: number): string {
     8: '已退款',
   }
   return map[status] || String(status)
+}
+
+/**
+ * 判断订单是否允许后台取消（与后端 cancelableStatuses 口径一致）
+ * - 待支付（status=1）恒可取消
+ * - 货到付款单未实际收款，未发货（2已支付/3备货中）可直接取消，无需走退款流程
+ * - 门店单（source=2）仅 C 端限制取消，后台取消与普通单同口径，不做额外限制
+ * @param order 订单（需含状态与支付方式）
+ * @returns 是否展示"取消订单"入口
+ */
+export function canCancelOrder(order: { status: number; pay_type?: number }): boolean {
+  if (order.status === ORDER_STATUS.PENDING_PAY) return true
+  const unshipped = order.status === ORDER_STATUS.PAID || order.status === ORDER_STATUS.STOCKING
+  return order.pay_type === PAY_TYPE.CASH_ON_DELIVERY && unshipped
 }
 
 /**

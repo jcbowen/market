@@ -329,7 +329,7 @@ const menuOptions = computed<MenuOption[]>(() => {
       permission: 'order:view',
       children: [
         { label: '订单列表', key: '/orders', permission: 'order:view' },
-        { label: '退款管理', key: '/refunds', permission: 'refund:view' },
+        { label: '售后管理', key: '/refunds', permission: 'refund:view' },
       ],
     },
     {
@@ -348,6 +348,7 @@ const menuOptions = computed<MenuOption[]>(() => {
         { label: '优惠券', key: '/marketing/coupons', permission: 'marketing:view' },
         { label: '秒杀活动', key: '/marketing/flash-sales', permission: 'marketing:view' },
         { label: '满减活动', key: '/marketing/full-reduction', permission: 'marketing:view' },
+        { label: '免配送费活动', key: '/marketing/free-shipping', permission: 'marketing:view' },
         { label: 'Banner管理', key: '/marketing/banners', permission: 'marketing:view' },
       ],
     },
@@ -416,6 +417,7 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
         { label: '全局 Banner', key: '/system/banners', permission: 'marketing:view' },
         { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
+        { label: '售后配置', key: '/system/refund', permission: 'settings:view' },
         { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
       ],
     },
@@ -454,6 +456,7 @@ function systemHomePath(): string {
     { path: '/system/communities', permission: 'community:view' },
     { path: '/system/regions', permission: 'region:view' },
     { path: '/system/payment', permission: 'settings:view' },
+    { path: '/system/refund', permission: 'settings:view' },
     { path: '/system/attachment', permission: 'settings:view' },
   ]
   const hit = candidates.find((c) => authStore.hasPermission(c.permission))

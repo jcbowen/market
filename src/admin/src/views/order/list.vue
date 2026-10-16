@@ -176,6 +176,7 @@ import {
   ORDER_SOURCE,
   ORDER_STATUS,
   QUERY_STATUS,
+  canCancelOrder,
   orderSourceFilterOptions,
   orderSourceTagType,
   orderSourceText,
@@ -378,7 +379,8 @@ const columns: DataTableColumns<Order> = [
           ),
         )
       }
-      if (row.status === ORDER_STATUS.PENDING_PAY) {
+      // 取消订单：待支付恒可取消；货到付款单未发货（已支付/备货中）也可直接取消（与后端口径一致）
+      if (canCancelOrder(row)) {
         buttons.push(
           h(
             NButton,

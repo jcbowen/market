@@ -115,6 +115,7 @@ import {
   DELIVERY_TYPE,
   ORDER_SOURCE,
   ORDER_STATUS,
+  canCancelOrder,
   deliveryTypeText,
   orderSourceTagType,
   orderSourceText,
@@ -233,7 +234,8 @@ const actions = computed(() => {
   const d = detail.value
   if (!d) return []
   const list: Array<{ key: string; label: string; type: 'default' | 'primary' | 'success' | 'error'; run: () => void }> = []
-  if (d.status === ORDER_STATUS.PENDING_PAY) {
+  // 取消订单：待支付恒可取消；货到付款单未发货（已支付/备货中）也可直接取消（与后端口径一致）
+  if (canCancelOrder(d)) {
     list.push({ key: 'cancel', label: '取消订单', type: 'error', run: () => openCancel(d.id) })
   }
   if (d.status === ORDER_STATUS.PAID && d.delivery_type === DELIVERY_TYPE.DELIVERY) {

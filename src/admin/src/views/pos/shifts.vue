@@ -57,7 +57,7 @@
             <div class="receipt-line">交班：{{ activeShift.end_time ? formatDateTime(activeShift.end_time) : '进行中' }}</div>
             <div class="receipt-divider">- - - - - - - - - - - - - - - -</div>
             <div class="receipt-section">收款</div>
-            <!-- 固定展示 现金/微信/支付宝/余额，渠道未接入的支付方式数额为 0 -->
+            <!-- 仅展示实际有数据的支付方式，按 SHIFT_PAY_TYPES 顺序排列 -->
             <div v-for="item in incomeRows" :key="'in' + item.pay_type" class="receipt-row" :class="{ muted: item.amount === 0 }">
               <span>{{ payTypeText(item.pay_type) }}</span>
               <span>￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
@@ -121,9 +121,9 @@ const activeId = ref(0)
 /** 当前选中的班次详情 */
 const activeShift = computed(() => shifts.value.find((shift) => shift.id === activeId.value) ?? null)
 
-/** 详情小票收款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+/** 详情小票收款统计行（仅含有数据的支付方式，按 SHIFT_PAY_TYPES 排序） */
 const incomeRows = computed(() => payStatRows(activeShift.value?.statistics?.income))
-/** 详情小票退款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+/** 详情小票退款统计行（仅含有数据的支付方式，按 SHIFT_PAY_TYPES 排序） */
 const refundRows = computed(() => payStatRows(activeShift.value?.statistics?.refund))
 
 /** 打印时间文本（打开详情时定格，避免小票内容随渲染变化） */

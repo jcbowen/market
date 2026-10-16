@@ -367,6 +367,9 @@ message ReleaseStockReq {
   int64 sku_id = 1;
   int32 quantity = 2;
   int64 order_id = 3;
+  // 幂等业务号：同一 biz_no 的重复释放只生效一次；不同业务（多笔部分退款/取消/超时关单）
+  // 各自携带不同 biz_no，避免同一订单同一 SKU 的多次部分释放被幂等约束吞掉
+  string biz_no = 4;
 }
 
 message StockEntryItem {
@@ -1145,7 +1148,7 @@ message AttachmentMigrateDeleteBatchResp {
 - `DeleteAttachmentLocalVerified`：批量删除所有 verified 条目的本地文件，单个失败跳过不中断，返回实际删除数。
 - `ReleaseCoupon`：订单取消/退款时按 `order_id` 定位已核销的 user_coupon 回补（状态回未使用、UsedCount 原子递减），幂等可重入。
 - `GrantCoupon`：后台手动发放，逐人独立校验限领/总量/发放状态，单人不合格不影响其他人；`ListCouponRecords` 按社区语境过滤领取/发放记录，防跨社区泄露。
-- `DeductStock`/`ReleaseStock` 幂等：以 `stock_op_logs` 表 `uk_stock_op_order_sku(order_id, sku_id, op_type)` 复合唯一索引约束同一业务操作，同一订单同一 SKU 的重复扣减/释放请求（如 gRPC 超时重试）只会生效一次，防止重复扣减或重复回补。
+- `DeductStock`/`ReleaseStock` 幂等：以 `stock_op_logs` 表 `uk_stock_op_order_sku_biz(order_id, sku_id, op_type, biz_no)` 复合唯一索引约束同一业务操作，同一业务号的重复扣减/释放请求（如 gRPC 超时重试）只会生效一次，防止重复扣减或重复回补。`ReleaseStockReq.biz_no` 为幂等业务号，由调用方按业务场景区分：退款释放传退款单号，取消/超时关单传 `cancel:{order_id}`，下单失败补偿传 `comp:{order_id}:{sku_id}`，使同一订单同一 SKU 的多笔部分释放各自独立生效（旧数据 `biz_no` 为空串，与 `DeductStock` 的缺省口径一致）。
 - 免配送费四 RPC（List/Create/Update/GetActive）：活动按社区隔离，门槛与排除范围全量提交；`GetActiveFreeShipping` 供 C 端确认页与 order 服务 `PreviewFreeShipping` 试算共用。
 
 对应网关路由（admin，需 JWT）：

@@ -48,7 +48,7 @@
           <div class="shift-stats">
             <div class="stats-block">
               <div class="info-title">收款</div>
-              <!-- 固定展示 现金/微信/支付宝/余额，渠道未接入的支付方式数额为 0 -->
+              <!-- 仅展示实际有数据的支付方式，按 SHIFT_PAY_TYPES 顺序排列 -->
               <div v-for="item in incomeRows" :key="'in' + item.pay_type" class="stat-row" :class="{ muted: item.amount === 0 }">
                 <span>{{ payTypeText(item.pay_type) }}</span>
                 <span class="amount">￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
@@ -115,9 +115,9 @@ const operatorName = computed(() => authStore.admin?.nickname || authStore.admin
 const shiftForConfirm = computed(() => posStore.currentShift)
 const stats = computed<Partial<PosShiftStatistics>>(() => posStore.currentShift?.statistics ?? {})
 
-/** 收款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+/** 收款统计行（仅含有数据的支付方式，按 SHIFT_PAY_TYPES 排序） */
 const incomeRows = computed(() => payStatRows(stats.value.income))
-/** 退款固定四行（现金/微信/支付宝/余额，缺省补 0） */
+/** 退款统计行（仅含有数据的支付方式，按 SHIFT_PAY_TYPES 排序） */
 const refundRows = computed(() => payStatRows(stats.value.refund))
 
 /**

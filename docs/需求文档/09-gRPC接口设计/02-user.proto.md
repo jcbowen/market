@@ -65,8 +65,8 @@ service UserService {
   rpc MarkUserCommunity(MarkUserCommunityReq) returns (common.CommonResponse);
   // SetUserStatus 设置会员状态（拉黑/恢复）
   rpc SetUserStatus(SetUserStatusReq) returns (common.CommonResponse);
-  // CreateMember 后台添加会员（手机号注册到指定社区）
-  rpc CreateMember(CreateMemberReq) returns (UserInfo);
+  // CreateMember 注册会员（手机号幂等注册到指定社区，已注册时复用并关联）
+  rpc CreateMember(CreateMemberReq) returns (CreateMemberResp);
 
   // --- 履约人员（B 社区履约工作台） ---
   // 设置/取消某社区履约人员标记（后台会员管理操作）
@@ -613,15 +613,25 @@ message SetUserStatusReq {
   int32 status = 2;
 }
 
-// CreateMemberReq 后台添加会员请求
+// CreateMemberReq 注册会员请求
 message CreateMemberReq {
-  // 手机号（唯一，已注册时报错）
+  // 手机号（唯一；已注册时不报错，复用既有会员并关联本社区）
   string phone = 1;
   string nickname = 2;
   // 0未知 1男 2女
   int32 gender = 3;
-  // 注册归属社区（后台当前社区语境）
+  // 注册归属社区（网关当前社区语境）
   int64 community_id = 4;
+  // 会员-社区关联来源：admin 后台添加 / pos 收银台（缺省 admin）
+  string source = 5;
+}
+
+// CreateMemberResp 注册会员响应
+message CreateMemberResp {
+  // 注册（或复用）的会员信息
+  UserInfo user = 1;
+  // 是否本次新注册（false=手机号已存在，复用既有会员并关联本社区）
+  bool is_new = 2;
 }
 
 // --- 履约人员（B 社区履约工作台） ---
@@ -665,5 +675,5 @@ message CheckFulfillerResp {
 - `GetAdminContext`：网关在每次管理端请求时实时调用，解析管理员在 `X-Community-Id` 社区的任职与权限并集（含 `*` 通配），供 `RequireCommunityAccess`（越权社区切换拦截）与 `RequirePermission`（权限点校验）中间件使用；`bound=false` 表示在该社区无任职，直接 403。
 - `GetRole` / `ListRoles(ListRolesReq)`：角色详情与分语境列表；`community_id>0` 返回该社区私有角色，`0` 仅返回全局角色，`include_global=true`（超管视角）附带全局角色。
 - `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/backfill，重复记录不报错。
-- `SetUserStatus` / `CreateMember`：会员拉黑/恢复与后台按手机号添加会员（注册归属当前社区语境并建立关联）。
+- `SetUserStatus` / `CreateMember`：会员拉黑/恢复与按手机号幂等注册（收银台与后台均可用）。`CreateMember` 以手机号为唯一键：未注册时新建会员并归属当前社区语境；已注册时不报错，复用既有会员并把 `user_communities` 关联到当前社区，`source` 标记关联来源（`admin` 后台添加 / `pos` 收银台，缺省 `admin`）。响应 `CreateMemberResp` 返回 `user`（注册或复用的会员信息）与 `is_new`（是否本次新注册）。
 - `SetFulfiller` / `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）标记、列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。

@@ -244,6 +244,8 @@ message OrderDetail {
   OrderInfo order = 1;
   repeated OrderItemInfo items = 2;
   repeated OrderStatusLog status_logs = 3;
+  // 本单全部售后（退款）记录：含每次退款单金额/类型/状态/明细，订单详情展示用
+  repeated RefundInfo refunds = 4;
 }
 
 message ListOrdersResp {
@@ -294,7 +296,7 @@ message RefundInfo {
   string payment_no = 11;
   // 关联订单号
   string order_no = 12;
-  // 退款类型：1整单退 2部分退
+  // 退款类型：1整单退 2部分退 3仅金额退（不退商品；退款完成后订单钱款全额退完时置为 1 整单退展示）
   int32 type = 13;
   // 退款商品明细
   repeated RefundItemInfo items = 14;
@@ -316,18 +318,21 @@ message RefundLogInfo {
 }
 
 // AdminCreateRefundReq 后台代客退款请求（发起即执行，免审核）
-// 金额与运费口径与 C 端申请一致：服务端汇算为准，amount 仅允许调低
+// 金额以实付口径服务端汇算（含手动优惠分摊），amount 仅允许调低；
+// mode=1 整单/部分商品退（items 为空=整单退，金额可调低）；mode=2 仅金额退（不退商品、不回补库存，amount 必填且不超过剩余可退）
 message AdminCreateRefundReq {
   int64 order_id = 1;
   double amount = 2;
   string reason = 3;
-  // 退款商品明细；为空表示整单退
+  // 退款商品明细；mode=1 时为空表示整单退，mode=2 时必须为空
   repeated ApplyRefundItem items = 4;
   // 运费退还策略为 user_decide 时是否退还运费
   bool refund_freight = 5;
   int64 operator_id = 6;
   // 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；内部调用传 0 跳过
   int64 community_id = 7;
+  // 退款模式：0/1=按商品退（空 items 整单退） 2=仅金额退
+  int32 mode = 8;
 }
 
 message ListRefundsReq {
@@ -698,6 +703,8 @@ message SaveAppPreferencesReq {
 - 取消/超时关单后同步调用 payment 服务 `ClosePayments` 关闭待支付支付单（`status=5 已关闭`），防迟到回调误置已支付。
 
 **退款社区隔离强校验：** `ApproveRefund`/`RejectRefund`/`RetryRefund`（出款链路）与 `AdminCreateRefund` 的 `community_id` 由网关从当前社区语境注入，order 服务端校验退款单归属订单的社区，跨社区操作直接拒绝；调度器等内部系统调用传 0 跳过校验。退款申请在事务内先锁订单行（FOR UPDATE）再查 pending，串行化同订单重复申请。
+
+**后台代客退款模式与金额口径：** `AdminCreateRefund` 的 `mode` 区分两种退款：`0/1` 按商品退（`items` 为空即整单退，退款完成后调用 `ReleaseStock` 回补库存）；`2` 仅金额退（不退商品、不回补库存，`items` 必须为空，`amount` 必填且不超过订单剩余可退，落地为 `RefundInfo.type=3`，钱款全额退完时展示为 `1` 整单退）。金额一律以实付口径服务端汇算（含收银台手动优惠分摊），`amount` 仅允许在汇算值基础上调低；库存释放按 `refund_no` 作为幂等业务号，支持同一订单多笔部分退款各自独立生效。订单详情 `OrderDetail.refunds` 返回本单全部售后记录（金额/类型/状态/明细）供后台与 C 端展示。
 
 **收银台（POS）语义：** `CreateOrder` 支持收银台代客下单（`source=2`，`delivery_type=3` 到店即买即走）：单品改价走 `items[].price`（服务端快照原价到 `order_items.original_price/price_modified`）；整单优惠走 `manual_discount`（实付 = max(0, 应付 − manual_discount)，超应付拒绝）；收银单必须携带进行中班次 `shift_id`。挂单三 RPC（创建/列表/删除）仅暂存草稿，不生成订单、不占库存，删除按社区隔离。交班四 RPC（开工/当前/交班/记录）围绕 pos_shifts 表：同操作员同社区同时仅一条进行中班次；交班时冻结统计快照（收款 JOIN payments 限 `status=2`、退款按订单归属班次、现金合计仅取 pay_type=4）。
 
