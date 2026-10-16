@@ -1435,14 +1435,15 @@ type SpecReqItem struct {
 
 // SkuItemReqItem SKU 保存项（spec_value_ids 为规格值 ID 列表，真实数字 ID 或临时 ID）
 type SkuItemReqItem struct {
-	ID           int64    `json:"id"`
-	SpecValueIDs []string `json:"spec_value_ids"`
-	SkuCode      string   `json:"sku_code"`
-	Price        float64  `json:"price"`
-	CostPrice    float64  `json:"cost_price"`
-	Stock        int32    `json:"stock"`
-	SafetyStock  int32    `json:"safety_stock"`
-	Image        string   `json:"image"`
+	ID            int64    `json:"id"`
+	SpecValueIDs  []string `json:"spec_value_ids"`
+	SkuCode       string   `json:"sku_code"`
+	Price         float64  `json:"price"`
+	CostPrice     float64  `json:"cost_price"`
+	Stock         int32    `json:"stock"`
+	SafetyStock   int32    `json:"safety_stock"`
+	Image         string   `json:"image"`
+	OriginalPrice float64  `json:"original_price"`
 }
 
 // CreateProductReq 创建商品请求
@@ -1505,14 +1506,15 @@ func toProtoSkuItems(items []*SkuItemReqItem) []*product.SkuItemReq {
 	list := make([]*product.SkuItemReq, 0, len(items))
 	for _, it := range items {
 		list = append(list, &product.SkuItemReq{
-			Id:           it.ID,
-			SpecValueIds: it.SpecValueIDs,
-			SkuCode:      it.SkuCode,
-			Price:        it.Price,
-			CostPrice:    it.CostPrice,
-			Stock:        it.Stock,
-			SafetyStock:  it.SafetyStock,
-			Image:        it.Image,
+			Id:            it.ID,
+			SpecValueIds:  it.SpecValueIDs,
+			SkuCode:       it.SkuCode,
+			Price:         it.Price,
+			CostPrice:     it.CostPrice,
+			Stock:         it.Stock,
+			SafetyStock:   it.SafetyStock,
+			Image:         it.Image,
+			OriginalPrice: it.OriginalPrice,
 		})
 	}
 	return list

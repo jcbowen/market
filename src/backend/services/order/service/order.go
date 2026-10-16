@@ -1045,14 +1045,18 @@ func (s *OrderService) calculateFullReduction(ctx context.Context, communityID i
 	return best
 }
 
-// parseTime 解析时间字符串
+// parseTime 解析时间字符串（兼容两种格式：空格分隔为前端/写入格式，
+// RFC3339 为 GORM 从 DATETIME 列读出 string 时的格式，解析失败返回零值）
 // 参数：
-//   - s: 时间字符串，格式 2006-01-02 15:04:05
+//   - s: 时间字符串，格式 2006-01-02 15:04:05 或 RFC3339（如 2026-10-16T00:00:00+08:00）
 //
 // 返回值：
-//   - time.Time: 时间对象
+//   - time.Time: 时间对象（无法解析时为零值）
 func parseTime(s string) time.Time {
-	t, _ := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local)
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local); err == nil {
+		return t
+	}
+	t, _ := time.ParseInLocation(time.RFC3339, s, time.Local)
 	return t
 }
 

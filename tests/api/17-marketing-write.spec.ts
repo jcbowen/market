@@ -111,9 +111,37 @@ test.describe.serial('优惠券写操作', () => {
     expect(body.code).not.toBe(0);
   });
 
-  test('删除优惠券成功', async () => {
+  test('已领取的券不可删除（业务保护）', async () => {
     if (!couponId) test.skip(true, '优惠券未创建');
+    // 前序用例已将该券发放给 buyer，删除应被业务保护拦截（code 10004）
     const resp = await api.delete(`/api/v1/admin/coupons/${couponId}`);
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, `已领取的券删除应被拒: ${body.message}`).not.toBe(0);
+  });
+
+  test('删除未领取的优惠券成功', async () => {
+    // 业务规则：已领取的券不可删除，故创建一张未发放的专用于删除验证
+    const w = timeWindow();
+    const createResp = await api.post('/api/v1/admin/coupons', {
+      data: {
+        name: `AUTO-TEST 待删券 ${Date.now()}`,
+        type: 1,
+        threshold: 50,
+        discount_value: 10,
+        total_count: 100,
+        per_user_limit: 1,
+        start_time: w.start_time,
+        end_time: w.end_time,
+        valid_days: 7,
+        publish_status: 1,
+      },
+    });
+    const createBody = (await createResp.json()) as ApiResponse<{ id: number }>;
+    expect(createBody.code, `创建待删券失败: ${createBody.message}`).toBe(0);
+    const id = createBody.data?.id ?? 0;
+    expect(id).toBeGreaterThan(0);
+
+    const resp = await api.delete(`/api/v1/admin/coupons/${id}`);
     const body = (await resp.json()) as ApiResponse;
     expect(body.code, `删除失败: ${body.message}`).toBe(0);
   });
