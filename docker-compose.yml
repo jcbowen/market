@@ -206,8 +206,12 @@ services:
       # 开发阶段挂载宿主机前端编译产物，避免每次修改都重新构建 gateway 镜像
       - ./bin/static/admin:/app/static/admin:ro
       - ./bin/static/h5:/app/static/h5:ro
+    # runtime/config.yaml 为 bind mount：Windows Docker Desktop 9p 会把上次会话遗留的
+    # 宿主文件映射为 0755 root:root，appuser(10001) 不可覆写（框架每次启动都会回写配置，
+    # 权限不足会直接启动失败）。目录本身 0777 可写，故启动前检测：不可写则删除后从模板重建。
+    # Linux 宿主已 chown 10001:10001，-w 恒为真，不影响生产。
     command: >
-      sh -c "[ -f /app/runtime/config.yaml ] || cp -f /app/config.yaml /app/runtime/config.yaml; CONFIG_FILE=/app/runtime/config.yaml ./gateway"
+      sh -c "[ -w /app/runtime/config.yaml ] || rm -f /app/runtime/config.yaml; [ -f /app/runtime/config.yaml ] || cp -f /app/config.yaml /app/runtime/config.yaml; CONFIG_FILE=/app/runtime/config.yaml ./gateway"
 
 volumes:
   mysql_data:
