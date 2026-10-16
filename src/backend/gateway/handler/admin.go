@@ -1457,6 +1457,8 @@ type CreateProductReq struct {
 	IsMultiSpec bool              `json:"is_multi_spec"`
 	MinBuy      int32             `json:"min_buy"`
 	Sort        int32             `json:"sort"`
+	ShowSales   *bool             `json:"show_sales"`
+	VirtualSales int32            `json:"virtual_sales"`
 	Specs       []*SpecReqItem    `json:"specs"`
 	SkuItems    []*SkuItemReqItem `json:"sku_items"`
 }
@@ -1531,18 +1533,20 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 	}
 
 	resp, err := h.productClient.CreateProduct(c.Request.Context(), &product.CreateProductReq{
-		CommunityId: h.getAdminCommunityID(c),
-		CategoryId:  req.CategoryID,
-		Name:        req.Name,
-		Description: req.Description,
-		CoverImage:  req.CoverImage,
-		Images:      req.Images,
-		Unit:        req.Unit,
-		IsMultiSpec: req.IsMultiSpec,
-		MinBuy:      req.MinBuy,
-		Sort:        req.Sort,
-		Specs:       toProtoSpecs(req.Specs),
-		SkuItems:    toProtoSkuItems(req.SkuItems),
+		CommunityId:  h.getAdminCommunityID(c),
+		CategoryId:   req.CategoryID,
+		Name:         req.Name,
+		Description:  req.Description,
+		CoverImage:   req.CoverImage,
+		Images:       req.Images,
+		Unit:         req.Unit,
+		IsMultiSpec:  req.IsMultiSpec,
+		MinBuy:       req.MinBuy,
+		Sort:         req.Sort,
+		ShowSales:    req.ShowSales != nil && *req.ShowSales,
+		VirtualSales: req.VirtualSales,
+		Specs:        toProtoSpecs(req.Specs),
+		SkuItems:     toProtoSkuItems(req.SkuItems),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -1553,18 +1557,20 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 
 // UpdateProductReq 更新商品请求
 type UpdateProductReq struct {
-	CategoryID  int64             `json:"category_id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	CoverImage  string            `json:"cover_image"`
-	Images      []string          `json:"images"`
-	Unit        string            `json:"unit"`
-	Sort        int32             `json:"sort"`
-	Status      int32             `json:"status"`
-	MinBuy      int32             `json:"min_buy"`
-	IsMultiSpec bool              `json:"is_multi_spec"`
-	Specs       []*SpecReqItem    `json:"specs"`
-	SkuItems    []*SkuItemReqItem `json:"sku_items"`
+	CategoryID   int64             `json:"category_id"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description"`
+	CoverImage   string            `json:"cover_image"`
+	Images       []string          `json:"images"`
+	Unit         string            `json:"unit"`
+	Sort         int32             `json:"sort"`
+	Status       int32             `json:"status"`
+	MinBuy       int32             `json:"min_buy"`
+	IsMultiSpec  bool              `json:"is_multi_spec"`
+	ShowSales    *bool             `json:"show_sales"`
+	VirtualSales int32             `json:"virtual_sales"`
+	Specs        []*SpecReqItem    `json:"specs"`
+	SkuItems     []*SkuItemReqItem `json:"sku_items"`
 }
 
 // UpdateProduct 更新商品
@@ -1584,19 +1590,21 @@ func (h *AdminHandler) UpdateProduct(c *gin.Context) {
 	}
 
 	resp, err := h.productClient.UpdateProduct(c.Request.Context(), &product.UpdateProductReq{
-		Id:          id,
-		CategoryId:  req.CategoryID,
-		Name:        req.Name,
-		Description: req.Description,
-		CoverImage:  req.CoverImage,
-		Images:      req.Images,
-		Unit:        req.Unit,
-		Sort:        req.Sort,
-		Status:      req.Status,
-		MinBuy:      req.MinBuy,
-		IsMultiSpec: req.IsMultiSpec,
-		Specs:       toProtoSpecs(req.Specs),
-		SkuItems:    toProtoSkuItems(req.SkuItems),
+		Id:           id,
+		CategoryId:   req.CategoryID,
+		Name:         req.Name,
+		Description:  req.Description,
+		CoverImage:   req.CoverImage,
+		Images:       req.Images,
+		Unit:         req.Unit,
+		Sort:         req.Sort,
+		Status:       req.Status,
+		MinBuy:       req.MinBuy,
+		IsMultiSpec:  req.IsMultiSpec,
+		ShowSales:    req.ShowSales != nil && *req.ShowSales,
+		VirtualSales: req.VirtualSales,
+		Specs:        toProtoSpecs(req.Specs),
+		SkuItems:     toProtoSkuItems(req.SkuItems),
 	})
 	if err != nil {
 		response.GRPCError(c, err)

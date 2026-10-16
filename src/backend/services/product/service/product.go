@@ -73,7 +73,20 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 
 	offset := (page - 1) * pageSize
 	var list []*model.Product
-	err := db.Order("sort desc, id desc").Offset(offset).Limit(pageSize).Find(&list).Error
+	// 排序口径（docs/需求文档/06-接口设计/02-C端接口.md）：
+	// sales=销量降序（真实+虚拟）、price_asc/price_desc=价格升/降序（按 SKU 汇总下限价），
+	// 缺省按后台 sort 值降序，同值按 id 降序兜底
+	switch req.Sort {
+	case "sales":
+		db = db.Order("sales_count + virtual_sales desc, id desc")
+	case "price_asc":
+		db = db.Order("min_price asc, id desc")
+	case "price_desc":
+		db = db.Order("min_price desc, id desc")
+	default:
+		db = db.Order("sort desc, id desc")
+	}
+	err := db.Offset(offset).Limit(pageSize).Find(&list).Error
 	return list, int(total), err
 }
 
