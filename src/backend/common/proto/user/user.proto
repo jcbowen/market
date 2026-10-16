@@ -62,8 +62,8 @@ service UserService {
   rpc MarkUserCommunity(MarkUserCommunityReq) returns (common.CommonResponse);
   // SetUserStatus 设置会员状态（拉黑/恢复）
   rpc SetUserStatus(SetUserStatusReq) returns (common.CommonResponse);
-  // CreateMember 后台添加会员（手机号注册到指定社区）
-  rpc CreateMember(CreateMemberReq) returns (UserInfo);
+  // CreateMember 注册会员（手机号幂等注册到指定社区，已注册时复用并关联）
+  rpc CreateMember(CreateMemberReq) returns (CreateMemberResp);
 
   // --- 履约人员（B 社区履约工作台） ---
   // 设置/取消某社区履约人员标记（后台会员管理操作）
@@ -610,15 +610,25 @@ message SetUserStatusReq {
   int32 status = 2;
 }
 
-// CreateMemberReq 后台添加会员请求
+// CreateMemberReq 注册会员请求
 message CreateMemberReq {
-  // 手机号（唯一，已注册时报错）
+  // 手机号（唯一；已注册时不报错，复用既有会员并关联本社区）
   string phone = 1;
   string nickname = 2;
   // 0未知 1男 2女
   int32 gender = 3;
-  // 注册归属社区（后台当前社区语境）
+  // 注册归属社区（网关当前社区语境）
   int64 community_id = 4;
+  // 会员-社区关联来源：admin 后台添加 / pos 收银台（缺省 admin）
+  string source = 5;
+}
+
+// CreateMemberResp 注册会员响应
+message CreateMemberResp {
+  // 注册（或复用）的会员信息
+  UserInfo user = 1;
+  // 是否本次新注册（false=手机号已存在，复用既有会员并关联本社区）
+  bool is_new = 2;
 }
 
 // --- 履约人员（B 社区履约工作台） ---

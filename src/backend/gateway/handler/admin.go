@@ -3543,16 +3543,19 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
 }
 
-// CreateUserReq 后台添加会员请求
+// CreateUserReq 后台/收银台添加会员请求
 type CreateUserReq struct {
 	// 手机号（唯一）
 	Phone    string `json:"phone" binding:"required"`
 	Nickname string `json:"nickname"`
 	Gender   int32  `json:"gender"`
+	// 注册场景：admin 后台会员管理 / pos 收银台（仅影响会员-社区关联来源标记，非白名单值按 admin 处理）
+	Scene string `json:"scene"`
 }
 
-// CreateUser 添加会员（注册到当前社区）
-// 手机号已注册时报错；注册成功即建立会员-当前社区关联
+// CreateUser 注册会员（幂等，归属当前社区）
+// 手机号已注册（含其他社区老会员）时不报错：复用既有会员并自动关联当前社区；
+// 响应 is_new 区分「新注册」与「复用」，新用户活动等扩展只对 is_new=true 生效
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) CreateUser(c *gin.Context) {
@@ -3565,17 +3568,23 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		response.Error(c, errcode.ParamError, "手机号格式错误")
 		return
 	}
+	source := "admin"
+	if req.Scene == "pos" {
+		source = "pos"
+	}
 
-	u, err := h.userClient.CreateMember(c.Request.Context(), &user.CreateMemberReq{
+	resp, err := h.userClient.CreateMember(c.Request.Context(), &user.CreateMemberReq{
 		Phone:       req.Phone,
 		Nickname:    req.Nickname,
 		Gender:      req.Gender,
 		CommunityId: h.getAdminCommunityID(c),
+		Source:      source,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
+	u := resp.User
 	response.Success(c, gin.H{
 		"id":         u.Id,
 		"phone":      u.Phone,
@@ -3583,6 +3592,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		"gender":     u.Gender,
 		"status":     u.Status,
 		"created_at": u.CreatedAt,
+		"is_new":     resp.IsNew,
 	})
 }
 

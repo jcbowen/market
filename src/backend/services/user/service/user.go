@@ -296,22 +296,56 @@ func (s *UserService) SetUserStatus(ctx context.Context, id int64, status int32)
 	return nil
 }
 
-// CreateMember 后台添加会员
-// 手机号唯一，已注册时报错；openid 沿用手机号登录的 phone_<手机号> 占位约定；
-// 会员注册归属指定社区，并写入会员-社区关联（来源 admin）
+// afterRegisterHooks 新会员注册后钩子列表（新用户活动等扩展点，如新人券/首单礼）
+// 注册核心只负责建人与关联社区，活动发放通过挂载钩子实现，避免每加活动都改注册逻辑
+var afterRegisterHooks []func(ctx context.Context, u *model.User)
+
+// RegisterAfterRegisterHook 挂载新会员注册后钩子（进程启动时注册；钩子异常不影响注册结果）
+// 参数：
+//   - fn: 钩子函数
+func RegisterAfterRegisterHook(fn func(ctx context.Context, u *model.User)) {
+	afterRegisterHooks = append(afterRegisterHooks, fn)
+}
+
+// runAfterRegisterHooks 触发全部注册后钩子（recover 兜底，钩子失败仅跳过不回滚注册）
+func runAfterRegisterHooks(ctx context.Context, u *model.User) {
+	for _, fn := range afterRegisterHooks {
+		func() {
+			defer func() { _ = recover() }()
+			fn(ctx, u)
+		}()
+	}
+}
+
+// CreateMember 注册会员（幂等）
+// 手机号未注册：新建会员（openid 沿用手机号登录的 phone_<手机号> 占位约定），
+// 事务写入会员-社区关联（来源 req.Source，缺省 admin），并触发注册后钩子；
+// 已注册（含其他社区老会员）：复用既有会员，幂等补写本社区关联，不报错；
+// 返回 is_new 供调用方区分「新注册」与「复用」（新用户活动只对 is_new=true 生效）
 // 参数：
 //   - ctx: 上下文
-//   - req: 添加会员请求
+//   - req: 注册请求
 // 返回：
-//   - *model.User: 新建会员
+//   - *model.User: 注册（或复用）的会员
+//   - bool: 是否本次新注册
 //   - error: 错误信息
-func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberReq) (*model.User, error) {
+func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberReq) (*model.User, bool, error) {
 	if req.Phone == "" || req.CommunityId <= 0 {
-		return nil, fmt.Errorf("参数错误")
+		return nil, false, fmt.Errorf("参数错误")
 	}
-	if _, err := s.GetUserByPhone(ctx, req.Phone); err == nil {
-		return nil, fmt.Errorf("该手机号已注册")
+	source := req.Source
+	if source == "" {
+		source = "admin"
 	}
+
+	// 已注册：复用既有会员，幂等补写本社区关联
+	if u, err := s.GetUserByPhone(ctx, req.Phone); err == nil {
+		if err := s.MarkUserCommunity(ctx, u.ID, req.CommunityId, source); err != nil {
+			return nil, false, err
+		}
+		return u, false, nil
+	}
+
 	now := time.Now().Format("2006-01-02 15:04:05")
 	u := &model.User{
 		Openid:      phoneOpenidPrefix(req.Phone),
@@ -328,15 +362,18 @@ func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberRe
 		row := &model.UserCommunity{
 			UserID:      u.ID,
 			CommunityID: req.CommunityId,
-			Source:      "admin",
+			Source:      source,
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		}
 		return tx.Create(row).Error
 	}); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return u, nil
+
+	// 新注册成功，触发扩展钩子（新用户活动预留；钩子内部失败不影响注册结果）
+	runAfterRegisterHooks(ctx, u)
+	return u, true, nil
 }
 
 // SetFulfiller 设置/取消某社区的履约人员标记（B 履约工作台）

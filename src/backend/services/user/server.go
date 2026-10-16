@@ -157,12 +157,12 @@ func (s *server) SetUserStatus(ctx stdctx.Context, req *user.SetUserStatusReq) (
 }
 
 // CreateMember 后台添加会员（手机号注册到指定社区）
-func (s *server) CreateMember(ctx stdctx.Context, req *user.CreateMemberReq) (*user.UserInfo, error) {
-	u, err := s.userService.CreateMember(ctx, req)
+func (s *server) CreateMember(ctx stdctx.Context, req *user.CreateMemberReq) (*user.CreateMemberResp, error) {
+	u, isNew, err := s.userService.CreateMember(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToUserInfo(u), nil
+	return &user.CreateMemberResp{User: service.ToUserInfo(u), IsNew: isNew}, nil
 }
 
 // ListAddresses 获取地址列表（附带社区名称，供 C 端按社区分组）

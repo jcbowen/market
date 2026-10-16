@@ -17,6 +17,10 @@
           <n-icon><SearchOutline /></n-icon>
         </template>
       </n-input>
+      <n-button v-if="registerable" size="small" @click="showRegister = true">
+        <template #icon><n-icon><PersonAddOutline /></n-icon></template>
+        新增会员
+      </n-button>
     </div>
 
     <!-- 多选模式：已选标签回显 -->
@@ -72,13 +76,44 @@
         确认选择
       </n-button>
     </div>
+
+    <!-- 快速注册会员弹窗（registerable 开启时可用；后端幂等，已注册手机号自动复用并关联本社区） -->
+    <n-modal
+      :show="showRegister"
+      preset="card"
+      title="新增会员"
+      style="width: 400px; max-width: 92vw"
+      @update:show="(v: boolean) => (showRegister = v)"
+    >
+      <n-form label-placement="left" label-width="64">
+        <n-form-item-row label="手机号" required>
+          <n-input
+            v-model:value="regPhone"
+            placeholder="11 位手机号"
+            maxlength="11"
+            :input-props="{ inputmode: 'numeric' }"
+            @keydown.enter="submitRegister"
+          />
+        </n-form-item-row>
+        <n-form-item-row label="昵称">
+          <n-input v-model:value="regNickname" placeholder="选填，缺省为「会员+尾号4位」" maxlength="30" />
+        </n-form-item-row>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showRegister = false">取消</n-button>
+          <n-button type="primary" :loading="registering" @click="submitRegister">注册</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </n-modal>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { SearchOutline } from '@vicons/ionicons5'
-import { getUserList } from '@/api/user'
+import { useMessage } from 'naive-ui'
+import { PersonAddOutline, SearchOutline } from '@vicons/ionicons5'
+import { createUser, getUserList } from '@/api/user'
 import type { User } from '@/api/types'
 
 /**
@@ -87,6 +122,8 @@ import type { User } from '@/api/types'
  * 支持昵称/手机号模糊搜索（300ms 防抖）。
  * 选择交互：单选模式点击行即回传并关闭；多选模式点选/取消（跨页保留），底部确认批量回传。
  * 已拉黑会员置灰且不可选。
+ * 开启 registerable 时提供「新增会员」快速注册（手机号幂等：已注册自动复用并关联本社区），
+ * 注册成功单选模式直接选中回传，多选模式加入已选列表。
  */
 
 const props = withDefaults(
@@ -95,6 +132,10 @@ const props = withDefaults(
     show: boolean
     /** 是否多选模式 */
     multiple?: boolean
+    /** 是否提供「新增会员」快速注册入口 */
+    registerable?: boolean
+    /** 注册场景（仅影响后端会员-社区关联来源标记）：admin 后台 / pos 收银台 */
+    registerScene?: 'admin' | 'pos'
     /** 弹窗标题 */
     title?: string
     /** 多选模式打开时的已选会员列表，用于标记选中态 */
@@ -104,6 +145,8 @@ const props = withDefaults(
   }>(),
   {
     multiple: false,
+    registerable: false,
+    registerScene: 'admin',
     title: '选择会员',
     selected: () => [],
     disabledIds: () => [],
@@ -245,6 +288,54 @@ function removePicked(u: User) {
 function onConfirm() {
   emit('confirm', [...selectedUsers.value])
   emit('update:show', false)
+}
+
+// --- 快速注册会员 ---
+const message = useMessage()
+const showRegister = ref(false)
+const regPhone = ref('')
+const regNickname = ref('')
+const registering = ref(false)
+
+watch(showRegister, (v) => {
+  if (v) {
+    regPhone.value = ''
+    regNickname.value = ''
+  }
+})
+
+/**
+ * 提交注册：手机号格式校验后调用幂等注册接口。
+ * 新注册 → 提示成功；复用既有会员 → 提示已自动关联本社区。
+ * 单选模式注册后直接选中回传并关闭；多选模式加入已选列表并刷新列表页。
+ */
+async function submitRegister() {
+  const phone = regPhone.value.trim()
+  if (!/^1\d{10}$/.test(phone)) {
+    message.warning('请输入正确的 11 位手机号')
+    return
+  }
+  registering.value = true
+  try {
+    const res = await createUser({ phone, nickname: regNickname.value.trim() || undefined, scene: props.registerScene })
+    if (res.data.code !== 0 || !res.data.data) return
+    const user = res.data.data
+    message.success(user.is_new ? `已注册会员 ${phone}` : `该手机号已是会员，已自动关联本社区`)
+    showRegister.value = false
+    if (props.multiple) {
+      if (!pickedIds.value.has(user.id)) {
+        selectedUsers.value = [...selectedUsers.value, user]
+      }
+      void loadList()
+    } else {
+      emit('select', user)
+      emit('update:show', false)
+    }
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    registering.value = false
+  }
 }
 </script>
 

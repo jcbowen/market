@@ -111,12 +111,14 @@ export function getUserList(params: PageParams & { keyword?: string; status_filt
 }
 
 /**
- * 添加会员（注册到当前社区）
+ * 注册会员（幂等，归属当前社区）
+ * 手机号已注册（含其他社区老会员）时不报错：服务端复用既有会员并自动关联当前社区
  * @param data 会员基础信息（手机号必填）
- * @returns 新建会员信息
+ * @param data.scene 注册场景：admin 后台会员管理 / pos 收银台（仅影响关联来源标记）
+ * @returns 会员信息（is_new=true 表示本次新注册，false 表示复用既有会员）
  */
-export function createUser(data: { phone: string; nickname?: string; gender?: number }) {
-  return request<ApiResult<User>>({
+export function createUser(data: { phone: string; nickname?: string; gender?: number; scene?: 'admin' | 'pos' }) {
+  return request<ApiResult<User & { is_new?: boolean }>>({
     url: '/api/v1/admin/users',
     method: 'POST',
     data,

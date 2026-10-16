@@ -323,8 +323,8 @@
     />
   </n-modal>
 
-  <!-- 会员选择（单选） -->
-  <user-picker v-model:show="showUserPicker" title="选择会员" @select="onSelectMember" />
+  <!-- 会员选择（单选，支持现场注册新会员） -->
+  <user-picker v-model:show="showUserPicker" title="选择会员" registerable register-scene="pos" @select="onSelectMember" />
 </template>
 
 <script setup lang="ts">
@@ -342,7 +342,7 @@ import { DELIVERY_TYPE } from '@/constants/order'
 
 /**
  * 商品下单 Tab（收银台核心，点单收银机风格）
- * 选会员（可散客）→ 分类/首字母定位商品 → 卡片选商品 → 支持单品改价/整单备注/抹零/整单改价
+ * 选会员（可散客，支持现场注册新会员）→ 分类/首字母定位商品 → 卡片选商品 → 支持单品改价/整单备注/抹零/整单改价
  * （均仅对本次订单生效，不改商品档案价）→ 券优惠预估与明细 → 挂单暂存/恢复/删除
  * → 按支付方式结账 → 结账成功可打印 58mm 热敏小票。最终金额以服务端结算为准。
  */
