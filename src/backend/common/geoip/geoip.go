@@ -11,7 +11,7 @@
 package geoip
 
 import (
-	"fmt"
+	"log"
 	"net/netip"
 	"os"
 	"sync"
@@ -138,7 +138,7 @@ func acquireReader(dbPath string) *geoip2.Reader {
 			_ = mgr.reader.Close()
 			mgr.reader = nil
 		}
-		fmt.Printf("[geoip] 加载数据库失败 %s: %v\n", dbPath, err)
+		log.Printf("[geoip] 加载数据库失败 %s: %v", dbPath, err)
 		return nil
 	}
 

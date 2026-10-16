@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -148,7 +148,7 @@ func ToPosHeldOrderInfo(m *model.PosHeldOrder) *order.PosHeldOrderInfo {
 	var items []*order.PosHeldOrderItem
 	if m.ItemsJSON != "" {
 		if err := json.Unmarshal([]byte(m.ItemsJSON), &items); err != nil {
-			fmt.Printf("挂单 %d 明细反序列化失败: %v\n", m.ID, err)
+			log.Printf("挂单 %d 明细反序列化失败: %v", m.ID, err)
 			items = nil
 		}
 	}

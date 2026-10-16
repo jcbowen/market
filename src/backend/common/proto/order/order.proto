@@ -165,6 +165,9 @@ message UpdateOrderStatusReq {
   // 发货（status=4）时写入的物流信息；其余状态流转忽略
   string express_company = 6;
   string express_no = 7;
+  // 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；
+  // 内部系统调用（支付回调等）传 0 跳过校验
+  int64 community_id = 8;
 }
 
 message OrderInfo {
@@ -320,6 +323,8 @@ message AdminCreateRefundReq {
   // 运费退还策略为 user_decide 时是否退还运费
   bool refund_freight = 5;
   int64 operator_id = 6;
+  // 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；内部调用传 0 跳过
+  int64 community_id = 7;
 }
 
 message ListRefundsReq {
@@ -352,18 +357,25 @@ message ApproveRefundReq {
   int64 operator_id = 2;
   // 已废弃：支付单号一律以退款单服务端记录为准，请求传入值将被忽略（防越权）
   string payment_no = 3;
+  // 社区隔离强校验：管理端操作必传，服务端校验退款单归属订单的社区；
+  // 内部系统调用（调度器）传 0 跳过校验
+  int64 community_id = 4;
 }
 
 message RejectRefundReq {
   int64 id = 1;
   int64 operator_id = 2;
   string reject_reason = 3;
+  // 社区隔离强校验：同 ApproveRefundReq.community_id
+  int64 community_id = 4;
 }
 
 // RetryRefundReq 重试退款请求（针对卡在退款中 status=4 的退款单）
 message RetryRefundReq {
   int64 id = 1;
   int64 operator_id = 2;
+  // 社区隔离强校验：同 ApproveRefundReq.community_id
+  int64 community_id = 3;
 }
 
 message GetOrderStatisticsReq {

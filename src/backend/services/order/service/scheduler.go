@@ -106,10 +106,11 @@ func (s *Scheduler) retryStuckRefunds(ctx context.Context) {
 		return
 	}
 	lockKey := "scheduler:order:refund:retry:lock"
-	if !s.acquireLock(ctx, lockKey, 5*time.Minute) {
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
 		return
 	}
-	defer s.releaseLock(ctx, lockKey)
+	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	// 仅重试停留超过 stuckRecoverAfter 的退款单，避免与刚发起的退款竞态
 	deadline := time.Now().Add(-stuckRecoverAfter).Format("2006-01-02 15:04:05")
@@ -162,10 +163,11 @@ func (s *Scheduler) recoverStuckOrders(ctx context.Context) {
 //   - orderTimeout: 超时时间（秒）
 func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 	lockKey := "scheduler:order:timeout:cancel:lock"
-	if !s.acquireLock(ctx, lockKey, 5*time.Minute) {
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
 		return
 	}
-	defer s.releaseLock(ctx, lockKey)
+	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	// 1. 优先处理历史失败记录
 	s.retryFailures(ctx, "timeout_cancel", 0)
@@ -184,6 +186,8 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 			s.recordFailure(ctx, o.ID, "timeout_cancel", err.Error())
 			continue
 		}
+		// 取消成功后关闭待支付支付单，防迟到回调误置已支付
+		closePendingPayments(ctx, o.ID)
 		log.Printf("[order-scheduler] 订单 %d 超时未支付，已自动取消", o.ID)
 	}
 }
@@ -195,10 +199,11 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 //   - autoCompleteDays: 自动完成天数
 func (s *Scheduler) autoCompleteOrders(ctx context.Context, autoCompleteDays int) {
 	lockKey := "scheduler:order:auto:complete:lock"
-	if !s.acquireLock(ctx, lockKey, 5*time.Minute) {
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
 		return
 	}
-	defer s.releaseLock(ctx, lockKey)
+	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	// 1. 优先处理历史失败记录
 	s.retryFailures(ctx, "auto_complete", autoCompleteDays)
@@ -488,6 +493,15 @@ func (s *Scheduler) incrementFailureRetry(ctx context.Context, id int64, errMsg 
 	}
 }
 
+// releaseLockScript 分布式锁原子释放脚本：仅当锁值与持有者写入的值一致时才删除，
+// 防止任务执行超过 TTL、锁已被其他实例重新获取时误删他人锁
+var releaseLockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
+
 // acquireLock 获取 Redis 分布式锁
 //
 // 参数：
@@ -496,24 +510,28 @@ func (s *Scheduler) incrementFailureRetry(ctx context.Context, id int64, errMsg 
 //   - ttl: 锁过期时间
 //
 // 返回值：
-//   - bool: 获取成功返回 true
-func (s *Scheduler) acquireLock(ctx context.Context, key string, ttl time.Duration) bool {
+//   - string: 获取成功返回锁持有者标识（写入的随机值），失败返回空串
+func (s *Scheduler) acquireLock(ctx context.Context, key string, ttl time.Duration) string {
 	value := strconv.FormatInt(time.Now().UnixNano(), 10)
 	ok, err := s.redisClient.SetNX(ctx, key, value, ttl).Result()
 	if err != nil {
 		log.Printf("[order-scheduler] 获取锁 %s 失败: %v", key, err)
-		return false
+		return ""
 	}
-	return ok
+	if !ok {
+		return ""
+	}
+	return value
 }
 
-// releaseLock 释放 Redis 分布式锁
+// releaseLock 释放 Redis 分布式锁（Lua 原子比较锁值后删除，见 releaseLockScript）
 //
 // 参数：
 //   - ctx: 上下文
 //   - key: 锁键
-func (s *Scheduler) releaseLock(ctx context.Context, key string) {
-	if err := s.redisClient.Del(ctx, key).Err(); err != nil {
+//   - value: acquireLock 返回的持有者标识
+func (s *Scheduler) releaseLock(ctx context.Context, key, value string) {
+	if err := releaseLockScript.Run(ctx, s.redisClient, []string{key}, value).Err(); err != nil {
 		log.Printf("[order-scheduler] 释放锁 %s 失败: %v", key, err)
 	}
 }

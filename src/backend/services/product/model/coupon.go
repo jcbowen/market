@@ -22,8 +22,8 @@ type Coupon struct {
 	CommunityID   int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
 	Name          string  `gorm:"column:name;type:varchar(100);not null;comment:优惠券名称" json:"name"`
 	Type          int32   `gorm:"column:type;type:tinyint;not null;comment:1满减券 2折扣券" json:"type"`
-	Threshold     float64 `gorm:"column:threshold;type:decimal(10,2);default:0;comment:使用门槛金额" json:"threshold"`
-	DiscountValue float64 `gorm:"column:discount_value;type:decimal(10,2);default:0;comment:优惠值（满减金额 / 折扣率如 0.85）" json:"discount_value"`
+	Threshold     float64 `gorm:"column:threshold;type:decimal(10,2);default:0.00;comment:使用门槛金额" json:"threshold"`
+	DiscountValue float64 `gorm:"column:discount_value;type:decimal(10,2);default:0.00;comment:优惠值（满减金额 / 折扣率如 0.85）" json:"discount_value"`
 	TotalCount    int32   `gorm:"column:total_count;type:int;default:0;comment:发放总量" json:"total_count"`
 	ReceivedCount int32   `gorm:"column:received_count;type:int;default:0;comment:已领取量，默认0" json:"received_count"`
 	UsedCount     int32   `gorm:"column:used_count;type:int;default:0;comment:已使用量，默认0" json:"used_count"`
@@ -67,8 +67,8 @@ type UserCoupon struct {
 	CouponID   int64   `gorm:"column:coupon_id;type:bigint;not null;index;comment:优惠券 ID" json:"coupon_id"`
 	Name       string  `gorm:"column:name;type:varchar(100);not null;comment:优惠券名称" json:"name"`
 	Type       int32   `gorm:"column:type;type:tinyint;not null;comment:1满减券 2折扣券" json:"type"`
-	Threshold     float64 `gorm:"column:threshold;type:decimal(10,2);default:0;comment:使用门槛金额" json:"threshold"`
-	DiscountValue float64 `gorm:"column:discount_value;type:decimal(10,2);default:0;comment:优惠值（满减金额 / 折扣率如 0.85）" json:"discount_value"`
+	Threshold     float64 `gorm:"column:threshold;type:decimal(10,2);default:0.00;comment:使用门槛金额" json:"threshold"`
+	DiscountValue float64 `gorm:"column:discount_value;type:decimal(10,2);default:0.00;comment:优惠值（满减金额 / 折扣率如 0.85）" json:"discount_value"`
 	Status     int32   `gorm:"column:status;type:tinyint;default:1;comment:1未使用 2已使用 3已过期" json:"status"`
 	OrderID    int64   `gorm:"column:order_id;type:bigint;default:0;comment:关联订单 ID" json:"order_id"`
 	Source       int32  `gorm:"column:source;type:tinyint;default:1;comment:来源 1用户自领 2后台发放" json:"source"`

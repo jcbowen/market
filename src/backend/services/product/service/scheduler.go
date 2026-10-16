@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -67,10 +68,11 @@ func (s *CouponScheduler) Start(ctx context.Context) {
 
 // runOnce 单次执行：过期未使用的用户券批量置为已过期
 func (s *CouponScheduler) runOnce(ctx context.Context) {
-	if !s.acquireLock(ctx) {
+	lockValue := s.acquireLock(ctx)
+	if lockValue == "" {
 		return
 	}
-	defer s.releaseLock(ctx)
+	defer s.releaseLock(ctx, lockValue)
 
 	res := s.db.GetDb().WithContext(ctx).Exec(
 		"UPDATE user_coupons SET status = ?, updated_at = NOW() WHERE status = ? AND expire_at IS NOT NULL AND expire_at < NOW()",
@@ -85,19 +87,42 @@ func (s *CouponScheduler) runOnce(ctx context.Context) {
 	}
 }
 
+// releaseLockScript 分布式锁原子释放脚本：仅当锁值与持有者写入的值一致时才删除，
+// 防止任务执行超过 TTL、锁已被其他实例重新获取时误删他人锁
+var releaseLockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
+
 // acquireLock 获取分布式锁（TTL 5 分钟，长于单轮执行耗时即可）
-func (s *CouponScheduler) acquireLock(ctx context.Context) bool {
-	ok, err := s.redisClient.SetNX(ctx, couponExpireLockKey, time.Now().UnixNano(), 5*time.Minute).Result()
+//
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - string: 获取成功返回锁持有者标识（写入的随机值），失败返回空串
+func (s *CouponScheduler) acquireLock(ctx context.Context) string {
+	value := strconv.FormatInt(time.Now().UnixNano(), 10)
+	ok, err := s.redisClient.SetNX(ctx, couponExpireLockKey, value, 5*time.Minute).Result()
 	if err != nil {
 		log.Printf("[coupon-scheduler] 获取锁失败: %v", err)
-		return false
+		return ""
 	}
-	return ok
+	if !ok {
+		return ""
+	}
+	return value
 }
 
-// releaseLock 释放分布式锁
-func (s *CouponScheduler) releaseLock(ctx context.Context) {
-	if err := s.redisClient.Del(ctx, couponExpireLockKey).Err(); err != nil {
+// releaseLock 释放分布式锁（Lua 原子比较锁值后删除，见 releaseLockScript）
+//
+// 参数：
+//   - ctx: 上下文
+//   - value: acquireLock 返回的持有者标识
+func (s *CouponScheduler) releaseLock(ctx context.Context, value string) {
+	if err := releaseLockScript.Run(ctx, s.redisClient, []string{couponExpireLockKey}, value).Err(); err != nil {
 		log.Printf("[coupon-scheduler] 释放锁失败: %v", err)
 	}
 }

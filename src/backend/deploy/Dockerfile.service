@@ -4,13 +4,32 @@ FROM alpine:3.19
 
 RUN apk add --no-cache ca-certificates tzdata
 
+# 非 root 运行：容器内以固定 UID 10001 运行服务进程，
+# 即使服务被攻破也难以逃逸获得容器 root 权限
+RUN adduser -D -u 10001 appuser
+
 WORKDIR /app
 
 # 通过构建参数指定服务名，从宿主机 bin/linux 目录复制预编译二进制
 ARG SERVICE_NAME
 COPY bin/linux/${SERVICE_NAME}-service ./service
 
+# 服务 gRPC 监听端口：5 个微服务共用本 Dockerfile，但各自监听 50051~50055
+# （与 bin/config.docker.yaml 的 *_service.grpc_port 同源），端口由
+# docker-compose.yml build.args 逐服务传入，确保健康检查探测端口与实际一致
+ARG SERVICE_PORT=50051
+ENV SERVICE_PORT=${SERVICE_PORT}
+
+RUN chmod +x ./service && chown -R appuser:appuser /app
+
+USER appuser
+
 # 配置文件通过运行时 volume 挂载，不打包进镜像
-EXPOSE 50051
+EXPOSE ${SERVICE_PORT}
+
+# 健康检查：gRPC 端口 TCP 探活（busybox nc）；
+# shell 形式在容器运行时展开 ENV SERVICE_PORT，与镜像内服务实际监听端口一致
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 --start-period=15s \
+    CMD nc -z 127.0.0.1 ${SERVICE_PORT} || exit 1
 
 CMD ["./service"]

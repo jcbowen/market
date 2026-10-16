@@ -20,6 +20,8 @@ import (
 )
 
 // LoadConfig 加载全局配置
+// 加载后应用环境变量覆盖（MYSQL_PASSWORD/REDIS_PASSWORD/JWT_SECRET），
+// 并在生产环境对默认 JWT 密钥 fail-fast
 // 返回：
 //   - *config.Config: 全局配置指针
 func LoadConfig() *config.Config {
@@ -28,7 +30,12 @@ func LoadConfig() *config.Config {
 		ConfigSource: getConfigPath(),
 		ConfigData:   &config.Config{},
 	})
-	return (*opt.GetConfig()).(*config.Config)
+	cfg := (*opt.GetConfig()).(*config.Config)
+	config.ApplyEnvOverrides(cfg)
+	if err := config.EnsureSecureJWT(cfg); err != nil {
+		log.Fatalf("配置安全校验失败: %v", err)
+	}
+	return cfg
 }
 
 // InitMySQL 根据全局配置初始化 MySQL 连接

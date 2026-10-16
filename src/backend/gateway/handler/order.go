@@ -69,6 +69,11 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	}
 
 	uc := appcontext.GetUserContext(c)
+	// 纵深防御：C 端一律服务端取价，清空客户端传入的价格字段，
+	// 防止注入 price 以任意低价成交（服务端另有 Source==2 改价来源校验）
+	for _, item := range req.Items {
+		item.Price = 0
+	}
 	// 订单归属社区实时查用户当前归属：token 中的 community_id 是登录快照，
 	// 切换社区不重签 token，用快照会把新社区的订单挂到旧社区
 	userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
@@ -280,6 +285,12 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	})
 	if err != nil {
 		response.GRPCError(c, err)
+		return
+	}
+
+	// 服务端异常兜底：订单为空时直接返回未找到，避免下方解引用空指针
+	if resp.Order == nil {
+		response.Error(c, errcode.NotFound)
 		return
 	}
 

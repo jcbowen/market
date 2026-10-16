@@ -164,14 +164,11 @@ function locateAndLoad(manual = false) {
   // #ifndef H5
   const locationType: 'wgs84' | 'gcj02' = 'gcj02'
   // #endif
-  // TODO 调试日志：定位链路排查，问题定位后移除
-  console.log('[社区定位] 开始系统定位, type:', locationType)
   locating.value = true
   uni.getLocation({
     type: locationType,
     success: (res) => {
       locating.value = false
-      console.log('[社区定位] 系统定位成功:', res.longitude, res.latitude, res)
       page.value = 1
       communities.value = []
       loadCommunitiesWithLocation(res.longitude, res.latitude, true)
@@ -180,7 +177,6 @@ function locateAndLoad(manual = false) {
       console.warn('[社区定位] 系统定位失败:', err)
       const ipLoc = await locateByIp()
       locating.value = false
-      console.log('[社区定位] IP 定位兜底结果:', ipLoc)
       if (ipLoc) {
         page.value = 1
         communities.value = []
@@ -192,7 +188,6 @@ function locateAndLoad(manual = false) {
         return
       }
       // 自动定位全失败：静默回退默认列表，不打断浏览
-      console.log('[社区定位] 全部定位失败，回退默认列表（不展示距离）')
       loadCommunities()
     },
   })
@@ -240,12 +235,6 @@ async function loadCommunitiesWithLocation(longitude: number, latitude: number, 
       latitude,
     })
     communities.value = res.data?.list || []
-    // TODO 调试日志：确认社区数据是否带经纬度，问题定位后移除
-    console.log(
-      '[社区定位] 展示距离:', withDistance,
-      '定位原点:', origin.value,
-      '社区坐标:', communities.value.map((c) => ({ id: c.id, name: c.name, longitude: c.longitude, latitude: c.latitude })),
-    )
     loadStatus.value = 'nomore'
   } catch {
     loadStatus.value = 'loadmore'

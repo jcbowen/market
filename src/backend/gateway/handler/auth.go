@@ -209,7 +209,8 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		response.Error(c, errcode.InvalidToken)
 		return
 	}
-	if claims.Type != jwt.TokenTypeUser {
+	// 强校验 token 用途：仅 refresh token 可刷新，access token 不得用于换取新令牌
+	if claims.Type != jwt.TokenTypeUser || claims.TokenUse != jwt.TokenUseRefresh {
 		response.Error(c, errcode.NoPermission)
 		return
 	}

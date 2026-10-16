@@ -27,9 +27,22 @@ var grpcCodeMap = map[codes.Code]int{
 // 服务层以 %w 包装依赖错误时该前缀会残留在消息中，对外展示前需剥除
 var rpcWrapperPattern = regexp.MustCompile(`rpc error: code = \w+ desc = `)
 
+// infraCodes 基础设施类 gRPC 状态码：消息可能包含连接串、SQL 报错等内部细节，
+// 一律不透传原始消息，统一返回对应业务错误码的通用文案
+var infraCodes = map[codes.Code]bool{
+	codes.Internal:         true,
+	codes.Unavailable:      true,
+	codes.DeadlineExceeded: true,
+	codes.Canceled:         true,
+	codes.DataLoss:         true,
+	codes.Unimplemented:    true,
+	codes.Unauthenticated:  true,
+}
+
 // TranslateGRPCError 将 gRPC 错误翻译为业务错误码与对外提示
-// 剥离 "rpc error: code = xxx desc = ..." 包装，只暴露服务返回的业务文案，
-// 避免内部实现细节泄露给客户端；同时按状态码归类，不再一律返回 10002。
+// 剥离 "rpc error: code = xxx desc = ..." 包装，只暴露服务返回的业务文案；
+// 按状态码归类（不再一律返回 10002）；基础设施类状态码（服务不可用/超时/内部错误等）
+// 统一返回通用文案，防止内部实现细节泄露给客户端
 // 参数：
 //   - err: gRPC 调用返回的错误
 //
@@ -48,8 +61,9 @@ func TranslateGRPCError(err error) (int, string) {
 	}
 
 	msg := rpcWrapperPattern.ReplaceAllString(st.Message(), "")
-	if msg == "" {
-		msg = errcode.GetMessage(code)
+	// 基础设施类错误与非业务语义状态码不透传服务端原始消息
+	if msg == "" || !mapped || infraCodes[st.Code()] {
+		return code, errcode.GetMessage(code)
 	}
 	return code, msg
 }

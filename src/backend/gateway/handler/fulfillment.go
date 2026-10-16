@@ -286,9 +286,10 @@ func NewFulfillmentUploadHandler(productClient product.ProductServiceClient) *Fu
 func (h *FulfillmentUploadHandler) UploadImage(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
 
+	limitUploadBody(c)
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.Error(c, errcode.ParamError, "缺少文件字段 file")
+		response.Error(c, errcode.ParamError, "缺少文件字段 file 或文件超过 12MB 上限")
 		return
 	}
 	file, err := fileHeader.Open()

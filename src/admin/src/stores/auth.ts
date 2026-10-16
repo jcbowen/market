@@ -132,8 +132,10 @@ export const useAuthStore = defineStore('auth', () => {
    */
   function setTokens(token: string, refresh: string, expiresIn: number) {
     const expiresDay = expiresIn / 86400
-    Cookies.set('access_token', token, { expires: expiresDay, path: '/' })
-    Cookies.set('refresh_token', refresh, { expires: expiresDay * 2, path: '/' })
+    // sameSite 显式声明为 lax：网关 CORS 为全开放（jcbaseGo Cors 回显 Origin），
+    // 显式 Lax 确保跨站请求不携带 token cookie，不依赖浏览器默认行为
+    Cookies.set('access_token', token, { expires: expiresDay, path: '/', sameSite: 'lax' })
+    Cookies.set('refresh_token', refresh, { expires: expiresDay * 2, path: '/', sameSite: 'lax' })
     accessToken.value = token
     refreshTokenValue.value = refresh
   }

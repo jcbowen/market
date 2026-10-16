@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"strconv"
@@ -266,6 +267,30 @@ func (h *AdminHandler) getAdminCommunityID(c *gin.Context) int64 {
 		}
 	}
 	return uc.CommunityID
+}
+
+// ensureOrderInCommunity 管理端订单操作前的社区归属校验（多社区隔离）
+// 超管跨社区操作不受限；普通管理员仅可操作自身社区订单。
+// 网关层第一道防线，order 服务端对出款链路另有强校验（纵深防御）
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - error: 订单不存在或跨社区时返回错误
+func (h *AdminHandler) ensureOrderInCommunity(c *gin.Context, orderID int64) error {
+	uc := appcontext.GetUserContext(c)
+	if uc.Role == "super_admin" {
+		return nil
+	}
+	resp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: orderID})
+	if err != nil || resp == nil || resp.Order == nil {
+		return errors.New("订单不存在")
+	}
+	if resp.Order.CommunityId != h.getAdminCommunityID(c) {
+		return errors.New("无权操作其他社区的订单")
+	}
+	return nil
 }
 
 // containsInt64 判断 int64 切片是否包含指定元素
@@ -1221,7 +1246,8 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	}
 
 	claims, err := h.jwtManager.ParseToken(token)
-	if err != nil || claims.Type != jwt.TokenTypeAdmin {
+	// 强校验 token 用途：仅 refresh token 可刷新，access token 不得用于换取新令牌
+	if err != nil || claims.Type != jwt.TokenTypeAdmin || claims.TokenUse != jwt.TokenUseRefresh {
 		response.Error(c, errcode.InvalidToken)
 		return
 	}
@@ -1912,6 +1938,12 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		return
 	}
 
+	// 社区隔离：仅可查看自身社区订单（超管不受限）
+	if err := h.ensureOrderInCommunity(c, id); err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+
 	resp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: id})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2034,6 +2066,12 @@ func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
 		return
 	}
 
+	// 社区隔离：仅可操作自身社区订单（超管不受限），并透传社区 ID 供服务端强校验
+	if err := h.ensureOrderInCommunity(c, id); err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.UpdateOrderStatus(c.Request.Context(), &order.UpdateOrderStatusReq{
 		Id:           id,
@@ -2041,6 +2079,7 @@ func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
 		OperatorType: "admin",
 		OperatorId:   uc.UserID,
 		Remark:       req.Remark,
+		CommunityId:  h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2074,6 +2113,12 @@ func (h *AdminHandler) AdminCancelOrder(c *gin.Context) {
 		return
 	}
 
+	// 社区隔离：仅可操作自身社区订单（超管不受限），并透传社区 ID 供服务端强校验
+	if err := h.ensureOrderInCommunity(c, id); err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.UpdateOrderStatus(c.Request.Context(), &order.UpdateOrderStatusReq{
 		Id:           id,
@@ -2081,6 +2126,7 @@ func (h *AdminHandler) AdminCancelOrder(c *gin.Context) {
 		OperatorType: "admin",
 		OperatorId:   uc.UserID,
 		Remark:       req.Reason,
+		CommunityId:  h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2114,6 +2160,12 @@ func (h *AdminHandler) ShipOrder(c *gin.Context) {
 		return
 	}
 
+	// 社区隔离：仅可操作自身社区订单（超管不受限），并透传社区 ID 供服务端强校验
+	if err := h.ensureOrderInCommunity(c, id); err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+
 	orderResp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: id})
 	if err != nil || orderResp.Order == nil {
 		response.Error(c, errcode.NotFound, "订单不存在")
@@ -2144,6 +2196,7 @@ func (h *AdminHandler) ShipOrder(c *gin.Context) {
 		Remark:         req.Remark,
 		ExpressCompany: expressCompany,
 		ExpressNo:      expressNo,
+		CommunityId:    h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2161,6 +2214,12 @@ func (h *AdminHandler) CompleteOrder(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	// 社区隔离：仅可操作自身社区订单（超管不受限），并透传社区 ID 供服务端强校验
+	if err := h.ensureOrderInCommunity(c, id); err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
 		return
 	}
 
@@ -2182,6 +2241,7 @@ func (h *AdminHandler) CompleteOrder(c *gin.Context) {
 		OperatorType: "admin",
 		OperatorId:   uc.UserID,
 		Remark:       "订单完成",
+		CommunityId:  h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -3953,6 +4013,12 @@ func (h *AdminHandler) AdminCreateRefund(c *gin.Context) {
 		return
 	}
 
+	// 社区隔离：代客退款发起即出款，仅可操作自身社区订单（超管不受限），透传社区 ID 供服务端强校验
+	if err := h.ensureOrderInCommunity(c, id); err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+
 	uc := appcontext.GetUserContext(c)
 	pbReq := &order.AdminCreateRefundReq{
 		OrderId:       id,
@@ -3960,6 +4026,7 @@ func (h *AdminHandler) AdminCreateRefund(c *gin.Context) {
 		Reason:        req.Reason,
 		RefundFreight: req.RefundFreight,
 		OperatorId:    uc.UserID,
+		CommunityId:   h.getAdminCommunityID(c),
 	}
 	for _, item := range req.Items {
 		pbReq.Items = append(pbReq.Items, &order.ApplyRefundItem{
@@ -4010,10 +4077,13 @@ func (h *AdminHandler) ApproveRefund(c *gin.Context) {
 		return
 	}
 
+	// 社区隔离：审批即触发渠道出款，透传社区 ID 由 order 服务端强校验退款单归属
+	// （退款单无单查 RPC，网关不做预查，服务端校验为权威防线）
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.ApproveRefund(c.Request.Context(), &order.ApproveRefundReq{
-		Id:         id,
-		OperatorId: uc.UserID,
+		Id:          id,
+		OperatorId:  uc.UserID,
+		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -4036,10 +4106,12 @@ func (h *AdminHandler) RetryRefund(c *gin.Context) {
 		return
 	}
 
+	// 社区隔离：重试即再次触发渠道出款，透传社区 ID 由 order 服务端强校验退款单归属
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.RetryRefund(c.Request.Context(), &order.RetryRefundReq{
-		Id:         id,
-		OperatorId: uc.UserID,
+		Id:          id,
+		OperatorId:  uc.UserID,
+		CommunityId: h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -4074,6 +4146,7 @@ func (h *AdminHandler) RejectRefund(c *gin.Context) {
 		Id:           id,
 		OperatorId:   uc.UserID,
 		RejectReason: req.RejectReason,
+		CommunityId:  h.getAdminCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -4273,9 +4346,10 @@ func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
 		certType = "private_key"
 	}
 
+	limitUploadBody(c)
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.Error(c, errcode.ParamError, "请选择要上传的证书文件")
+		response.Error(c, errcode.ParamError, "请选择要上传的证书文件（不超过 12MB）")
 		return
 	}
 

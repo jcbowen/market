@@ -3,6 +3,7 @@ package handler
 import (
 	"io"
 	"log"
+	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -69,6 +70,17 @@ func (h *AttachmentHandler) UpdateAttachmentSetting(c *gin.Context) {
 	response.Success(c, gin.H{"success": true})
 }
 
+// maxUploadBytes 上传请求体大小上限（12MB）
+const maxUploadBytes = 12 << 20
+
+// limitUploadBody 限制上传请求体大小，防止超大 multipart 撑爆网关内存
+// 超限时后续 FormFile/PostForm 解析返回错误，由调用方统一按参数错误响应
+// 参数：
+//   - c: gin 上下文
+func limitUploadBody(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
+}
+
 // UploadImage 本地模式图片上传
 // 接收 multipart 文件后转发给 product 服务落盘并写附件记录；
 // 本地模式访问 URL 由本方法按请求域名动态拼接（<scheme>://<host>/uploads/<path>）
@@ -80,9 +92,10 @@ func (h *AttachmentHandler) UpdateAttachmentSetting(c *gin.Context) {
 func (h *AttachmentHandler) UploadImage(c *gin.Context) {
 	adminID := appcontext.GetUserContext(c).UserID
 
+	limitUploadBody(c)
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.Error(c, errcode.ParamError, "缺少文件字段 file")
+		response.Error(c, errcode.ParamError, "缺少文件字段 file 或文件超过 12MB 上限")
 		return
 	}
 

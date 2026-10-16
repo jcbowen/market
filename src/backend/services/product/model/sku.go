@@ -16,8 +16,8 @@ type Sku struct {
 	SpecName      string  `gorm:"column:spec_name;type:varchar(100);comment:规格名称（如 ”红色 / 大号”）" json:"spec_name"`
 	SpecJSON      string  `gorm:"column:spec_json;type:json;comment:规格 JSON（如 {”颜色”:”红色”,”尺寸”:”大号”}，展示与下单快照冗余）" json:"spec_json"`
 	Price         float64 `gorm:"column:price;type:decimal(10,2);not null;comment:售价" json:"price"`
-	OriginalPrice float64 `gorm:"column:original_price;type:decimal(10,2);default:0;comment:划线价（原价，0 表示不展示）" json:"original_price"`
-	CostPrice     float64 `gorm:"column:cost_price;type:decimal(10,2);default:0;comment:成本价" json:"cost_price"`
+	OriginalPrice float64 `gorm:"column:original_price;type:decimal(10,2);default:0.00;comment:划线价（原价，0 表示不展示）" json:"original_price"`
+	CostPrice     float64 `gorm:"column:cost_price;type:decimal(10,2);default:0.00;comment:成本价" json:"cost_price"`
 	Stock         int32   `gorm:"column:stock;type:int;default:0;comment:当前库存，默认0" json:"stock"`
 	SafetyStock   int32   `gorm:"column:safety_stock;type:int;default:0;comment:安全库存阈值，默认0" json:"safety_stock"`
 	Image         string  `gorm:"column:image;type:varchar(255);comment:规格图片 URL" json:"image"`

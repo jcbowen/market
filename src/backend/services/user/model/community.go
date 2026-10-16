@@ -11,15 +11,15 @@ type Community struct {
 	ID              int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	Name            string  `gorm:"column:name;type:varchar(100);not null;comment:社区名称" json:"name"`
 	Address         string  `gorm:"column:address;type:varchar(255);comment:地址" json:"address"`
-	Longitude       float64 `gorm:"column:longitude;type:decimal(10,7);default:0;comment:经度" json:"longitude"`
-	Latitude        float64 `gorm:"column:latitude;type:decimal(10,7);default:0;comment:纬度" json:"latitude"`
+	Longitude       float64 `gorm:"column:longitude;type:decimal(10,7);default:0.0000000;comment:经度" json:"longitude"`
+	Latitude        float64 `gorm:"column:latitude;type:decimal(10,7);default:0.0000000;comment:纬度" json:"latitude"`
 	ContactPhone    string  `gorm:"column:contact_phone;type:varchar(20);comment:联系电话" json:"contact_phone"`
 	ManagerName     string  `gorm:"column:manager_name;type:varchar(50);comment:负责人姓名" json:"manager_name"`
 	ManagerPhone    string  `gorm:"column:manager_phone;type:varchar(20);comment:负责人电话" json:"manager_phone"`
 	PickupAddress   string  `gorm:"column:pickup_address;type:varchar(255);comment:自提点地址" json:"pickup_address"`
-	DeliveryFee     float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0;comment:配送费，默认0" json:"delivery_fee"`
-	MinOrderAmount  float64 `gorm:"column:min_order_amount;type:decimal(10,2);default:0;comment:起送金额，默认0" json:"min_order_amount"`
-	DeliveryRangeKm float64 `gorm:"column:delivery_range_km;type:decimal(6,2);default:0;comment:配送范围（公里）" json:"delivery_range_km"`
+	DeliveryFee     float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0.00;comment:配送费，默认0" json:"delivery_fee"`
+	MinOrderAmount  float64 `gorm:"column:min_order_amount;type:decimal(10,2);default:0.00;comment:起送金额，默认0" json:"min_order_amount"`
+	DeliveryRangeKm float64 `gorm:"column:delivery_range_km;type:decimal(6,2);default:0.00;comment:配送范围（公里）" json:"delivery_range_km"`
 	// 营业时间：管理端支持一天内多个运营时间段，序列化为 JSON 存储（如
 	// [{"start":"08:00","end":"12:00"},{"start":"14:00","end":"22:00"}]）；
 	// 兼容存量 "HH:mm-HH:mm" 单段文本，由展示端解析

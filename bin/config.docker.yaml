@@ -10,7 +10,8 @@ db:
     port: "3306"
     dbname: market
     username: root
-    password: market123
+    # 密码不入库：由 MYSQL_PASSWORD 环境变量注入（docker-compose.yml / .env）
+    password: ""
     charset: utf8mb4
     tableprefix: ""
     parsetime: "True"
@@ -20,6 +21,7 @@ db:
 redis:
     host: redis
     port: "6379"
+    # 密码不入库：由 REDIS_PASSWORD 环境变量注入（docker-compose.yml / .env）
     password: ""
     db: "0"
 project:

@@ -1,0 +1,26 @@
+# golangci-lint 配置（v2 格式，CI 固定 v2.14，与 workflow 保持一致）
+# 策略：最小集起步，随项目成熟逐步收紧（如开启 errcheck）。
+# 运行方式：在 src/backend 目录执行 `golangci-lint run`（配置沿父目录自动发现）。
+# 注意：v2 要求使用 go >= 项目 go.mod 声明版本构建的 golangci-lint（v1.64 无法分析 go 1.26 代码）。
+version: "2"
+
+linters:
+  # 从最小集起步（disable-all 等价写法），逐步收紧
+  default: none
+  enable:
+    - govet        # go vet 同源静态检查
+    - ineffassign  # 无效赋值
+    - unused       # 未使用的变量/函数/类型
+    - staticcheck  # 常见错误模式与 deprecated API
+  exclusions:
+    # 等价 v1 的 issues.exclude-use-default: true，过滤常见误报噪音
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+
+issues:
+  # 0 = 不限制：完整暴露问题清单，收紧 linter 时再一并调整
+  max-issues-per-linter: 0
+  max-same-issues: 0

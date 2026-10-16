@@ -50,12 +50,31 @@ service UserService {
   rpc UpdateAdmin(UpdateAdminReq) returns (AdminInfo);
   rpc DeleteAdmin(DeleteAdminReq) returns (common.CommonResponse);
   rpc ChangeAdminPassword(ChangeAdminPasswordReq) returns (common.CommonResponse);
+  // GetAdminContext 实时解析管理员在指定社区的权限上下文（任职角色权限并集）
+  rpc GetAdminContext(GetAdminContextReq) returns (AdminContextInfo);
 
   // 角色
-  rpc ListRoles(common.Empty) returns (ListRolesResp);
+  rpc ListRoles(ListRolesReq) returns (ListRolesResp);
+  rpc GetRole(GetRoleReq) returns (RoleInfo);
   rpc CreateRole(CreateRoleReq) returns (RoleInfo);
   rpc UpdateRole(UpdateRoleReq) returns (RoleInfo);
   rpc DeleteRole(DeleteRoleReq) returns (common.CommonResponse);
+
+  // 会员-社区关联与状态
+  // MarkUserCommunity 幂等记录会员与社区的关联（收货地址/下单/后台添加会员时调用）
+  rpc MarkUserCommunity(MarkUserCommunityReq) returns (common.CommonResponse);
+  // SetUserStatus 设置会员状态（拉黑/恢复）
+  rpc SetUserStatus(SetUserStatusReq) returns (common.CommonResponse);
+  // CreateMember 后台添加会员（手机号注册到指定社区）
+  rpc CreateMember(CreateMemberReq) returns (UserInfo);
+
+  // --- 履约人员（B 社区履约工作台） ---
+  // 设置/取消某社区履约人员标记（后台会员管理操作）
+  rpc SetFulfiller(SetFulfillerReq) returns (common.CommonResponse);
+  // 列出某社区全部履约人员（后台订单指派弹窗数据源）
+  rpc ListFulfillers(ListFulfillersReq) returns (ListFulfillersResp);
+  // 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
+  rpc CheckFulfiller(CheckFulfillerReq) returns (CheckFulfillerResp);
 }
 
 message GetUserByIdReq {
@@ -95,6 +114,10 @@ message UserInfo {
   int32 status = 10;
   string last_login_at = 11;
   string created_at = 12;
+  // 当前过滤语境下的社区名称（ListUsers 按社区过滤时由服务端填充）
+  string community_name = 13;
+  // 是否当前语境社区的履约人员（B 履约工作台，ListUsers 按社区过滤时填充）
+  bool is_fulfiller = 14;
 }
 
 message UpdateUserProfileReq {
@@ -108,6 +131,8 @@ message ListUsersReq {
   int64 community_id = 1;
   string keyword = 2;
   int32 status = 3;
+  // 状态筛选：-1 全部，0 拉黑，1 正常（提供时优先于 status 字段）
+  int32 status_filter = 5;
   common.Pagination pagination = 4;
 }
 
@@ -322,19 +347,28 @@ message AdminInfo {
   string password = 3;
   string real_name = 4;
   string phone = 5;
+  // 以下 role_id / role_code / role_name / community_id 为旧单角色模型遗留字段，仅做兼容填充
   int64 role_id = 6;
   string role_code = 7;
   string role_name = 8;
   int64 community_id = 9;
+  // 任职的全部社区 ID 列表（超管为空，表示不限制社区）
   repeated int64 community_ids = 10;
   int32 status = 11;
   string last_login_at = 12;
   string last_login_ip = 13;
+  // 是否超级管理员（新模型：超管标记在账号上，不再依赖全局角色）
+  bool is_super = 14;
+  // 在查询语境社区内担任的角色列表（ListAdmins 按社区语境填充）
+  repeated RoleInfo roles = 15;
 }
 
 message ListAdminsReq {
+  // 任职社区过滤：>0 只列出在该社区任职的员工；0 列出全部账号
   int64 community_id = 1;
   common.Pagination pagination = 2;
+  // 关键词：用户名/姓名/手机号模糊匹配
+  string keyword = 3;
 }
 
 message ListAdminsResp {
@@ -344,34 +378,75 @@ message ListAdminsResp {
 
 message CreateAdminReq {
   string username = 1;
+  // 新建账号时的初始密码；username 已存在（复用账号）时忽略
   string password = 2;
   string real_name = 3;
   string phone = 4;
+  // 旧单角色字段，已废弃不用
   int64 role_id = 5;
+  // 任职社区（员工管理语境下由网关注入当前社区）
   int64 community_id = 6;
-  // 绑定的全部社区 ID 列表（写入 admin_communities 关联表）
+  // 旧多社区全量绑定字段，已废弃（任职关系改为按社区 + 角色列表）
   repeated int64 community_ids = 7;
+  // 在 community_id 社区内担任的角色 ID 列表（须为该社区的角色）
+  repeated int64 role_ids = 8;
+  // 仅创建账号不在任何社区任职（超管全局账号管理用，community_id 传 0）
+  bool account_only = 10;
+  // 指定为目标社区的内置社区管理员（服务端自动解析/创建内置角色，忽略 role_ids）
+  bool assign_community_admin = 11;
+  // 操作者是否超管（网关注入；决定能否分配内置社区管理员角色）
+  bool operator_is_super = 9;
 }
 
 message UpdateAdminReq {
   int64 id = 1;
   string real_name = 2;
   string phone = 3;
+  // 旧单角色字段，已废弃不用
   int64 role_id = 4;
+  // 任职社区语境（>0 时按该社区全量覆盖角色任职）
   int64 community_id = 5;
   int32 status = 6;
-  // 重新绑定的全部社区 ID 列表（全量覆盖 admin_communities 关联表）
+  // 旧多社区全量绑定字段，已废弃
   repeated int64 community_ids = 7;
+  // 在 community_id 社区内担任的角色 ID 列表（全量覆盖该社区任职）
+  repeated int64 role_ids = 8;
+  // 操作者是否超管（网关注入）
+  bool operator_is_super = 9;
+  // 仅更新状态（超管账号管理：停用/启用，不触碰姓名/手机号/角色任职）
+  bool update_status_only = 10;
 }
 
 message DeleteAdminReq {
   int64 id = 1;
+  // 任职社区语境：>0 仅移除该社区任职（账号保留）；0 移除全部任职
+  int64 community_id = 2;
 }
 
 message ChangeAdminPasswordReq {
   int64 id = 1;
   string old_password = 2;
   string new_password = 3;
+  // 超管重置密码：跳过旧密码校验（由网关校验操作者身份后注入）
+  bool force = 4;
+}
+
+// GetAdminContextReq 实时权限上下文查询
+message GetAdminContextReq {
+  int64 admin_id = 1;
+  // 当前社区语境（X-Community-Id）
+  int64 community_id = 2;
+}
+
+// AdminContextInfo 管理员在指定社区的权限上下文
+message AdminContextInfo {
+  bool is_super = 1;
+  // 在该社区担任的角色 ID 列表
+  repeated int64 role_ids = 2;
+  // 任职角色权限并集；含 "*" 通配
+  repeated string permissions = 3;
+  // 是否在该社区有任职（用于越权社区切换判定）
+  bool bound = 4;
 }
 
 message RoleInfo {
@@ -380,10 +455,23 @@ message RoleInfo {
   string code = 3;
   repeated string permissions = 4;
   string description = 5;
+  // 所属社区：0=全局角色（仅超管相关），>0=社区私有角色
+  int64 community_id = 6;
+}
+
+message ListRolesReq {
+  // 社区语境：>0 返回该社区角色；0 仅返回全局角色
+  int64 community_id = 1;
+  // 是否附带全局角色（超管视角）
+  bool include_global = 2;
 }
 
 message ListRolesResp {
   repeated RoleInfo list = 1;
+}
+
+message GetRoleReq {
+  int64 id = 1;
 }
 
 message CreateRoleReq {
@@ -391,6 +479,8 @@ message CreateRoleReq {
   string code = 2;
   repeated string permissions = 3;
   string description = 4;
+  // 所属社区：0=全局（仅超管可建），>0=社区私有角色
+  int64 community_id = 5;
 }
 
 message UpdateRoleReq {
@@ -505,4 +595,75 @@ message CreateRegionUpdateTaskReq {
 message ApplyRegionUpdateTaskReq {
   int64 id = 1;
 }
+
+// --- 会员-社区关联与会员管理 ---
+
+// MarkUserCommunityReq 会员-社区关联记录请求（幂等，重复记录不报错）
+message MarkUserCommunityReq {
+  int64 user_id = 1;
+  int64 community_id = 2;
+  // 记录来源：address 收货地址 / order 下单 / admin 后台添加 / backfill 存量回填
+  string source = 3;
+}
+
+// SetUserStatusReq 设置会员状态请求
+message SetUserStatusReq {
+  int64 id = 1;
+  // 0 拉黑 1 正常
+  int32 status = 2;
+}
+
+// CreateMemberReq 后台添加会员请求
+message CreateMemberReq {
+  // 手机号（唯一，已注册时报错）
+  string phone = 1;
+  string nickname = 2;
+  // 0未知 1男 2女
+  int32 gender = 3;
+  // 注册归属社区（后台当前社区语境）
+  int64 community_id = 4;
+}
+
+// --- 履约人员（B 社区履约工作台） ---
+
+// SetFulfillerReq 设置/取消履约人员请求
+message SetFulfillerReq {
+  int64 user_id = 1;
+  int64 community_id = 2;
+  // true=设为履约人员（送货上门 + 自提核销） false=取消
+  bool is_fulfiller = 3;
+}
+
+// FulfillerInfo 履约人员信息（指派弹窗展示）
+message FulfillerInfo {
+  int64 user_id = 1;
+  string nickname = 2;
+  string phone = 3;
+}
+
+message ListFulfillersReq {
+  int64 community_id = 1;
+}
+
+message ListFulfillersResp {
+  repeated FulfillerInfo list = 1;
+}
+
+// CheckFulfillerReq 校验履约人员请求
+message CheckFulfillerReq {
+  int64 user_id = 1;
+  int64 community_id = 2;
+}
+
+message CheckFulfillerResp {
+  bool is_fulfiller = 1;
+}
 ```
+
+接口语义说明（补充相对旧版文档的新增 RPC）：
+
+- `GetAdminContext`：网关在每次管理端请求时实时调用，解析管理员在 `X-Community-Id` 社区的任职与权限并集（含 `*` 通配），供 `RequireCommunityAccess`（越权社区切换拦截）与 `RequirePermission`（权限点校验）中间件使用；`bound=false` 表示在该社区无任职，直接 403。
+- `GetRole` / `ListRoles(ListRolesReq)`：角色详情与分语境列表；`community_id>0` 返回该社区私有角色，`0` 仅返回全局角色，`include_global=true`（超管视角）附带全局角色。
+- `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/backfill，重复记录不报错。
+- `SetUserStatus` / `CreateMember`：会员拉黑/恢复与后台按手机号添加会员（注册归属当前社区语境并建立关联）。
+- `SetFulfiller` / `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）标记、列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。

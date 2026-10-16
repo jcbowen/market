@@ -61,6 +61,12 @@ service ProductService {
   rpc ReceiveCoupon(ReceiveCouponReq) returns (common.CommonResponse);
   rpc ListUserCoupons(ListUserCouponsReq) returns (ListUserCouponsResp);
   rpc UseCoupon(UseCouponReq) returns (common.CommonResponse);
+  // 取消/退款时回补用户券（按订单 ID 找到已核销的 user_coupon，幂等）
+  rpc ReleaseCoupon(ReleaseCouponReq) returns (common.CommonResponse);
+  // 后台手动发放优惠券给指定会员（批量，逐人校验限领/总量/发放状态）
+  rpc GrantCoupon(GrantCouponReq) returns (GrantCouponResp);
+  // 后台领取/发放记录查询（user_coupons 按社区语境过滤）
+  rpc ListCouponRecords(ListCouponRecordsReq) returns (ListCouponRecordsResp);
 
   rpc ListFlashSales(ListFlashSalesReq) returns (ListFlashSalesResp);
   rpc GetFlashSale(GetFlashSaleReq) returns (FlashSaleDetail);
@@ -70,6 +76,12 @@ service ProductService {
   rpc ListFullReductions(ListFullReductionsReq) returns (ListFullReductionsResp);
   rpc CreateFullReduction(CreateFullReductionReq) returns (FullReductionInfo);
   rpc UpdateFullReduction(UpdateFullReductionReq) returns (FullReductionInfo);
+
+  // 满额免配送费活动
+  rpc ListFreeShippings(ListFreeShippingsReq) returns (ListFreeShippingsResp);
+  rpc CreateFreeShipping(CreateFreeShippingReq) returns (FreeShippingInfo);
+  rpc UpdateFreeShipping(UpdateFreeShippingReq) returns (FreeShippingInfo);
+  rpc GetActiveFreeShipping(GetActiveFreeShippingReq) returns (GetActiveFreeShippingResp);
 
   // Banner
   rpc ListBanners(ListBannersReq) returns (ListBannersResp);
@@ -545,10 +557,21 @@ message GetReferencePricingReq {
 message ListCouponsReq {
   int64 community_id = 1;
   int32 status = 2;
+  // 仅领券中心可见（is_center_visible=1 且 publish_status=1），C 端领券中心使用
+  bool center_visible_only = 3;
 }
 
 message GetCouponReq {
   int64 id = 1;
+}
+
+// 优惠券商品范围项
+// scope_type：1全场 2指定分类 3指定商品 4排除分类 5排除商品；
+// 无范围行=全场通用；指定与排除可组合（先取指定集合再剔除排除项）
+message CouponScopeReq {
+  int32 scope_type = 1;
+  int64 category_id = 2;
+  int64 product_id = 3;
 }
 
 message CreateCouponReq {
@@ -562,16 +585,55 @@ message CreateCouponReq {
   string start_time = 8;
   string end_time = 9;
   int32 valid_days = 10;
+  int32 publish_status = 11;      // 0草稿 1已发布 2已下架，创建默认草稿
+  optional bool is_center_visible = 12; // 是否进入领券中心；缺省=进领券中心
+  int32 expire_type = 13;         // 1领取后N天 2指定可用范围
+  string use_start_time = 14;     // expire_type=2 的可用范围起点
+  string use_end_time = 15;       // expire_type=2 的可用范围终点
+  string rule_text = 16;          // 规则文案
+  repeated CouponScopeReq scopes = 17; // 商品范围，全量提交
 }
 
 message UpdateCouponReq {
   int64 id = 1;
   string name = 2;
-  int32 status = 3;
+  optional int32 status = 3; // 0禁用 1启用；缺省=不修改（int32 零值歧义规避）
+  double threshold = 4;
+  double discount_value = 5;
+  int32 total_count = 6;
+  int32 per_user_limit = 7;
+  string start_time = 8;
+  string end_time = 9;
+  int32 valid_days = 10;
+  int32 type = 11;
+  int32 publish_status = 12;    // 发布/下架状态机
+  optional int32 grant_status = 13; // 0停止发放 1发放中；缺省=不修改
+  optional bool is_center_visible = 14; // 缺省=不修改该字段
+  int32 expire_type = 15;
+  string use_start_time = 16;
+  string use_end_time = 17;
+  string rule_text = 18;
+  repeated CouponScopeReq scopes = 19; // 全量替换；nil=不修改
 }
 
 message DeleteCouponReq {
   int64 id = 1;
+  // 操作者社区语境（>0 时校验券归属社区，跨社区删除直接拒绝）
+  int64 community_id = 2;
+}
+
+// ReleaseCouponReq 取消订单时回补用户券
+message ReleaseCouponReq {
+  int64 order_id = 1; // 订单 ID（按 order_id 定位已核销的 user_coupon）
+}
+
+message CouponScopeInfo {
+  int64 id = 1;
+  int32 scope_type = 2;
+  int64 category_id = 3;
+  string category_name = 4;
+  int64 product_id = 5;
+  string product_name = 6;
 }
 
 message CouponInfo {
@@ -589,6 +651,14 @@ message CouponInfo {
   string end_time = 12;
   int32 valid_days = 13;
   int32 status = 14;
+  int32 publish_status = 15;    // 0草稿 1已发布 2已下架
+  int32 grant_status = 16;      // 0停止发放 1发放中
+  bool is_center_visible = 17;
+  int32 expire_type = 18;       // 1领取后N天 2指定可用范围
+  string use_start_time = 19;
+  string use_end_time = 20;
+  string rule_text = 21;
+  repeated CouponScopeInfo scopes = 22;
 }
 
 message ListCouponsResp {
@@ -623,6 +693,71 @@ message ListUserCouponsResp {
 message UseCouponReq {
   int64 user_coupon_id = 1;
   int64 order_id = 2;
+}
+
+// GrantCouponReq 后台手动发放优惠券
+message GrantCouponReq {
+  int64 coupon_id = 1;
+  // 发放目标会员（批量；逐人独立校验，单人不合格不影响其他人）
+  repeated int64 user_ids = 2;
+  // 发放操作者（管理员）ID 与用户名快照
+  int64 operator_id = 3;
+  string operator_name = 4;
+  // 操作者社区语境（>0 时校验券归属社区，跨社区发放直接拒绝）
+  int64 community_id = 5;
+}
+
+// CouponGrantFailure 单个会员发放失败原因
+message CouponGrantFailure {
+  int64 user_id = 1;
+  string reason = 2;
+}
+
+message GrantCouponResp {
+  // 实际成功发放人数
+  int32 granted_count = 1;
+  // 发放失败的会员及原因（超限/停发/下架等）
+  repeated CouponGrantFailure failures = 2;
+}
+
+// ListCouponRecordsReq 后台领取/发放记录查询
+message ListCouponRecordsReq {
+  // 按券筛选（0=该社区全部券的记录）
+  int64 coupon_id = 1;
+  // 按会员筛选（0=全部）
+  int64 user_id = 2;
+  // 状态筛选：1未使用 2已使用 3已过期（0=全部）
+  int32 status = 3;
+  // 来源筛选：1用户自领 2后台发放（0=全部）
+  int32 source = 4;
+  // 社区语境（用于把记录范围限定在本社区发放的券，防跨社区泄露）
+  int64 community_id = 5;
+  common.Pagination pagination = 6;
+}
+
+message CouponRecordInfo {
+  int64 id = 1;
+  int64 coupon_id = 2;
+  string coupon_name = 3;
+  int32 type = 4;
+  double threshold = 5;
+  double discount_value = 6;
+  int64 user_id = 7;
+  // 会员昵称/手机号由 gateway 按 user_id 批量回填
+  string user_nickname = 8;
+  string user_phone = 9;
+  int32 status = 10;        // 1未使用 2已使用 3已过期
+  int64 order_id = 11;
+  int32 source = 12;        // 1用户自领 2后台发放
+  int64 operator_id = 13;
+  string operator_name = 14;
+  string expire_at = 15;
+  string created_at = 16;   // 领取/发放时间
+}
+
+message ListCouponRecordsResp {
+  repeated CouponRecordInfo list = 1;
+  common.PaginationResponse pagination = 2;
 }
 
 message ListFlashSalesReq {
@@ -707,6 +842,8 @@ message UpdateFullReductionReq {
   string start_time = 5;
   string end_time = 6;
   int32 status = 7;
+  // 操作者社区语境（>0 时校验活动归属社区，跨社区修改直接拒绝）
+  int64 community_id = 8;
 }
 
 message FullReductionInfo {
@@ -724,13 +861,79 @@ message ListFullReductionsResp {
   repeated FullReductionInfo list = 1;
 }
 
+// --- 满额免配送费（FreeShipping）---
+// 活动语义：配送订单中「参与免配送费的商品金额合计 >= threshold」则免配送费；
+// 排除范围（scope）按分类/商品指定，被排除商品的金额不计入门槛。
+// scope_type 复用优惠券范围枚举：4=排除分类 5=排除商品（当前仅排除语义，保留扩展）。
+message FreeShippingScopeReq {
+  int32 scope_type = 1; // 4=排除分类 5=排除商品
+  int64 category_id = 2; // scope_type=4 时有效
+  int64 product_id = 3;  // scope_type=5 时有效
+}
+
+message CreateFreeShippingReq {
+  int64 community_id = 1;
+  string name = 2;
+  double threshold = 3;   // 免配送费门槛（参与商品额）
+  string start_time = 4;
+  string end_time = 5;
+  repeated FreeShippingScopeReq scopes = 6; // 排除范围，全量提交
+}
+
+message UpdateFreeShippingReq {
+  int64 id = 1;
+  string name = 2;
+  double threshold = 3;
+  string start_time = 4;
+  string end_time = 5;
+  int32 status = 6;
+  repeated FreeShippingScopeReq scopes = 7; // 排除范围，全量替换
+  // 操作者社区语境（>0 时校验活动归属社区，跨社区修改直接拒绝）
+  int64 community_id = 8;
+}
+
+message FreeShippingScopeInfo {
+  int64 id = 1;
+  int32 scope_type = 2;
+  int64 category_id = 3;
+  string category_name = 4;
+  int64 product_id = 5;
+  string product_name = 6;
+}
+
+message FreeShippingInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string name = 3;
+  double threshold = 4;
+  string start_time = 5;
+  string end_time = 6;
+  int32 status = 7;
+  repeated FreeShippingScopeInfo scopes = 8;
+}
+
+message ListFreeShippingsReq {
+  int64 community_id = 1;
+}
+
+message ListFreeShippingsResp {
+  repeated FreeShippingInfo list = 1;
+}
+
+// 查询当前社区「正在生效」的免配送费活动（启用 + 时效内，门槛最优优先）；
+// 无生效活动时 activity 为空
+message GetActiveFreeShippingReq {
+  int64 community_id = 1;
+}
+
+message GetActiveFreeShippingResp {
+  FreeShippingInfo activity = 1;
+}
+
 // --- Banner ---
 message ListBannersReq {
-  // 社区 ID；C 端与管理态均带全局兜底（community_id=0 的全平台通用记录始终一并返回）；
-  // 管理态传 0 即仅查全局 banner（系统管理语境使用）
   int64 community_id = 1;
   int32 position = 2;
-  // 管理态：不过滤状态/有效期，返回全量
   bool is_admin = 3;
 }
 
@@ -772,6 +975,8 @@ message UpdateBannerReq {
   int32 status = 7;
   string start_time = 8;
   string end_time = 9;
+  // 适用社区（optional 显式传参才更新；0=全部社区通用）
+  optional int64 community_id = 10;
 }
 
 message DeleteBannerReq {
@@ -938,6 +1143,10 @@ message AttachmentMigrateDeleteBatchResp {
 - `VerifyAttachmentItem`：对 migrated/verify_failed 条目重新验证。
 - `DeleteAttachmentLocal`：仅 verified 条目可删本地文件（OSS 保留副本），删除后置 local_deleted。
 - `DeleteAttachmentLocalVerified`：批量删除所有 verified 条目的本地文件，单个失败跳过不中断，返回实际删除数。
+- `ReleaseCoupon`：订单取消/退款时按 `order_id` 定位已核销的 user_coupon 回补（状态回未使用、UsedCount 原子递减），幂等可重入。
+- `GrantCoupon`：后台手动发放，逐人独立校验限领/总量/发放状态，单人不合格不影响其他人；`ListCouponRecords` 按社区语境过滤领取/发放记录，防跨社区泄露。
+- `DeductStock`/`ReleaseStock` 幂等：以 `stock_op_logs` 表 `uk_stock_op_order_sku(order_id, sku_id, op_type)` 复合唯一索引约束同一业务操作，同一订单同一 SKU 的重复扣减/释放请求（如 gRPC 超时重试）只会生效一次，防止重复扣减或重复回补。
+- 免配送费四 RPC（List/Create/Update/GetActive）：活动按社区隔离，门槛与排除范围全量提交；`GetActiveFreeShipping` 供 C 端确认页与 order 服务 `PreviewFreeShipping` 试算共用。
 
 对应网关路由（admin，需 JWT）：
 

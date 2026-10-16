@@ -18,12 +18,14 @@ service PaymentService {
   rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
   rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
   rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
+  // 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
+  rpc ClosePayments(ClosePaymentsReq) returns (common.CommonResponse);
 }
 
 message CreatePaymentReq {
   int64 order_id = 1;
   int64 user_id = 2;
-  int32 pay_type = 3;       // 1微信 2支付宝 3货到付款 4现金（收银台，含 0 元单；后续付款码渠道预留 5/6）
+  int32 pay_type = 3;       // 1微信 2支付宝 3现金
   double amount = 4;
   string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
 }
@@ -66,6 +68,10 @@ message ProcessRefundReq {
   string refund_no = 2;
   double amount = 3;
   string payment_no = 4;
+}
+
+message ClosePaymentsReq {
+  int64 order_id = 1;
 }
 
 message GetPayConfigReq {}
@@ -115,3 +121,10 @@ message UploadPayCertResp {
 支付配置存储于数据库 pay_config 表（单行），由 payment 服务统一管理，gateway 通过 `GetPayConfig/SavePayConfig/UploadPayCert` 三个 RPC 读写，不直接访问数据库。
 
 热更新机制：payment 服务进程内缓存配置副本，每次支付链路调用时对比数据库 `updated_at` 版本号——版本一致时直接复用已构建的微信支付客户端（零重建开销），版本变更时才刷新缓存并重建客户端。后台保存配置后即时生效，无需重启。
+
+### 支付回调与关单语义
+
+- **回调金额强校验**：`HandleWechatCallback` 落账前将回调报文中的金额与支付单 `amount` 强制比对（注意微信侧单位为分、支付单为元），不一致直接拒绝并返回失败，防止篡改金额或串单；`HandleAlipayCallback` 同口径。支付宝回调路由当前已在网关下线（渠道未接入、回调无 RSA2 验签，公开暴露可被伪造支付成功），接入官方 SDK 完成验签后再开放。
+- **回调幂等**：置支付成功采用条件更新 `WHERE payment_no=? AND status=1`，重复回调与并发回调只生效一次；支付单/订单已处于终态时走终态兜底，不再重复推进订单状态。
+- **ClosePayments**：订单取消（用户取消/后台取消）或调度器超时关单后，由 order 服务调用本 RPC，将该订单下全部 `status=1`（待支付）支付单条件更新为 `status=5 已关闭`；此后到达的迟到回调因状态不匹配被幂等拦截，防止"已关单却回调成功"造成资损。`ClosePaymentsReq` 按订单维度（`order_id`）批量关闭，无需逐单枚举支付单号。
+- **支付单状态**：1待支付 2支付成功 3支付失败 4已退款 5已关闭（`5` 为本次新增，不复用 `3 支付失败`——后者语义为渠道侧确认失败）。

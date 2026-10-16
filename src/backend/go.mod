@@ -16,7 +16,7 @@ require (
 	github.com/oschwald/geoip2-golang/v2 v2.5.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
-	google.golang.org/grpc v1.86.0-dev
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	gorm.io/gorm v1.31.2
 )

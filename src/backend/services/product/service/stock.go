@@ -15,6 +15,12 @@ import (
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
 
+// stockOpTypeDeduct/stockOpTypeRelease 幂等日志操作类型
+const (
+	stockOpTypeDeduct int8 = 1 // 扣减
+	stockOpTypeRelease int8 = 2 // 释放
+)
+
 // StockService 库存业务服务
 type StockService struct {
 	db                *mysql.Instance
@@ -35,7 +41,10 @@ func NewStockService(db *mysql.Instance, expireWarningDays int) *StockService {
 	return &StockService{db: db, expireWarningDays: expireWarningDays}
 }
 
-// DeductStock 扣减库存
+// DeductStock 扣减库存（幂等）
+// 以 order_id + sku_id + 操作类型 唯一约束实现幂等：同一订单对同一 SKU 的重复
+// 扣减请求（如 gRPC 超时重试）直接返回当前库存，不重复扣减。
+// 幂等日志与扣减在同一事务内写入，扣减失败时日志一并回滚。
 // 参数：
 //   - ctx: 上下文
 //   - req: 扣减请求
@@ -48,6 +57,30 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 	var success bool
 	var remain int32
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 幂等日志先行插入：重复请求在唯一索引上冲突（RowsAffected=0）时短路返回
+		now := time.Now().Format("2006-01-02 15:04:05")
+		opLog := &model.StockOpLog{
+			OrderID:   req.OrderId,
+			SkuID:     req.SkuId,
+			OpType:    stockOpTypeDeduct,
+			Quantity:  req.Quantity,
+			CreatedAt: now,
+		}
+		res := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(opLog)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// 已执行过同一扣减：返回当前库存视为成功
+			var sku model.Sku
+			if err := tx.First(&sku, req.SkuId).Error; err != nil {
+				return err
+			}
+			success = true
+			remain = sku.Stock
+			return nil
+		}
+
 		var sku model.Sku
 		if err := tx.Clauses(lockClause()).First(&sku, req.SkuId).Error; err != nil {
 			return err
@@ -68,7 +101,7 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 			BeforeStock:    before,
 			AfterStock:     sku.Stock,
 			RelatedOrderID: req.OrderId,
-			CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
+			CreatedAt:      now,
 		}
 		if err := tx.Create(record).Error; err != nil {
 			return err
@@ -80,7 +113,9 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 	return success, remain, err
 }
 
-// ReleaseStock 释放库存
+// ReleaseStock 释放库存（幂等）
+// 以 order_id + sku_id + 操作类型 唯一约束实现幂等：取消/退款/超时关单等
+// 多条链路对同一订单同一 SKU 的重复释放请求只会生效一次，防止超量回补。
 // 参数：
 //   - ctx: 上下文
 //   - req: 释放请求
@@ -89,6 +124,23 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 //   - error: 错误信息
 func (s *StockService) ReleaseStock(ctx context.Context, req *product.ReleaseStockReq) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 幂等日志先行插入：重复请求在唯一索引上冲突（RowsAffected=0）时直接跳过
+		now := time.Now().Format("2006-01-02 15:04:05")
+		opLog := &model.StockOpLog{
+			OrderID:   req.OrderId,
+			SkuID:     req.SkuId,
+			OpType:    stockOpTypeRelease,
+			Quantity:  req.Quantity,
+			CreatedAt: now,
+		}
+		res := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(opLog)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
+		}
+
 		var sku model.Sku
 		if err := tx.Clauses(lockClause()).First(&sku, req.SkuId).Error; err != nil {
 			return err
@@ -106,7 +158,7 @@ func (s *StockService) ReleaseStock(ctx context.Context, req *product.ReleaseSto
 			BeforeStock:    before,
 			AfterStock:     sku.Stock,
 			RelatedOrderID: req.OrderId,
-			CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
+			CreatedAt:      now,
 		}
 		return tx.Create(record).Error
 	})

@@ -3,7 +3,11 @@ node_modules/
 .pnpm-store/
 
 # === 编译产物 ===
-bin/
+# bin/ 整目录忽略会让父目录排除语义吞掉所有子路径（否定规则失效），
+# 改用 bin/* 逐项忽略，保留配置模板入库
+bin/*
+!bin/config.docker.yaml
+!bin/config.yaml
 *.exe
 *.dll
 *.so

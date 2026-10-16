@@ -7,7 +7,7 @@ import (
 // Payment 支付记录模型
 // 对应支付记录表
 // 支付类型：1微信支付 2支付宝支付
-// 状态：1待支付 2支付成功 3支付失败 4已退款
+// 状态：1待支付 2支付成功 3支付失败 4已退款 5已关闭（订单取消/超时后关闭，迟到回调由终态兜底忽略）
 //
 //nolint:lll
 //go:generate go tool gormgen -struct Payment
@@ -19,7 +19,7 @@ type Payment struct {
 	UserID        int64   `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
 	PayType       int32   `gorm:"column:pay_type;type:tinyint;not null;comment:1微信支付 2支付宝支付 3货到付款 4现金（收银台）" json:"pay_type"`
 	Amount        float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:支付金额" json:"amount"`
-	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待支付 2支付成功 3支付失败 4已退款" json:"status"`
+	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待支付 2支付成功 3支付失败 4已退款 5已关闭" json:"status"`
 	TransactionID string   `gorm:"column:transaction_id;type:varchar(100);comment:第三方交易号" json:"transaction_id"`
 	PayParams     string   `gorm:"column:pay_params;type:text;comment:第三方支付调起参数 JSON" json:"pay_params"`
 	PayTime       *string  `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`

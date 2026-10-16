@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,27 +74,21 @@ func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment
 }
 
 // alipayRefund 调用支付宝退款接口
-// 当前为模拟实现，生产环境应使用支付宝官方 SDK 发起退款请求
+// 渠道未真实接入前显式报错，禁止静默成功——假成功会让上层记录「已退款」并回补库存，
+// 造成资金未实际退出而账面已退的账实不符
 // 参数：
 //   - ctx: 上下文
 //   - p: 原支付记录
 //   - refund: 退款记录
 //
 // 返回值：
-//   - error: 错误信息
+//   - error: 恒返回「渠道未接入」错误
 func (s *PaymentService) alipayRefund(ctx context.Context, p *model.Payment, refund *model.RefundPayment) error {
-	s.getPayConfigCached(ctx)
-	cfg := s.getAlipayPayConfig()
-	if cfg.AppID == "" || cfg.PrivateKey == "" {
-		return fmt.Errorf("支付宝支付配置缺失")
-	}
-	// 模拟调用成功，实际应发起 SDK 调用并校验返回
-	refund.TransactionID = "ALI_REFUND_" + refund.RefundNo
-	return nil
+	return fmt.Errorf("支付宝渠道退款未接入，请通过其他渠道处理退款")
 }
 
 // parseAlipayCallback 解析支付宝支付回调参数
-// 当前为模拟实现，生产环境应做 RSA2 验签
+// 当前为模拟实现，生产环境应做 RSA2 验签；交易状态与金额校验对真实渠道同样必要
 // 参数：
 //   - params: 支付宝回调参数映射
 //
@@ -111,9 +106,22 @@ func parseAlipayCallback(params map[string]string) (*payCallbackParams, error) {
 		return nil, fmt.Errorf("支付宝回调参数缺失")
 	}
 
+	// 交易状态校验：仅 TRADE_SUCCESS / TRADE_FINISHED 视为支付成功，
+	// 其余（WAIT_BUYER_PAY / TRADE_CLOSED 等）一律拒绝，防非成功通知误置已支付
+	if ts := params["trade_status"]; ts != "TRADE_SUCCESS" && ts != "TRADE_FINISHED" {
+		return nil, fmt.Errorf("支付宝交易状态非成功: %s", ts)
+	}
+
+	// 回调金额（元），供 handlePaySuccess 与应付金额强制比对，缺失或非法直接拒绝
+	amount, err := strconv.ParseFloat(params["total_amount"], 64)
+	if err != nil || amount <= 0 {
+		return nil, fmt.Errorf("支付宝回调金额缺失或非法")
+	}
+
 	return &payCallbackParams{
 		PaymentNo:     paymentNo,
 		TransactionID: transactionID,
+		Amount:        amount,
 	}, nil
 }
 

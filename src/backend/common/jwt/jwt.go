@@ -15,6 +15,14 @@ const (
 	TokenTypeAdmin = "admin"
 )
 
+// token 用途常量：区分同一用户体系下的两种令牌，防止 refresh token 被直接当作 access token 调接口
+const (
+	// TokenUseAccess 接口访问令牌
+	TokenUseAccess = "access"
+	// TokenUseRefresh 刷新令牌（仅可用于换取新 access token）
+	TokenUseRefresh = "refresh"
+)
+
 // Claims 自定义 JWT 声明
 type Claims struct {
 	UserID      int64    `json:"sub,string"`
@@ -28,6 +36,9 @@ type Claims struct {
 	Permissions  []string `json:"permissions,omitempty"`
 	Username     string   `json:"username,omitempty"`
 	RealName     string   `json:"real_name,omitempty"`
+	// TokenUse token 用途：access=接口访问，refresh=刷新令牌；
+	// 接口鉴权中间件与刷新端点分别强校验，杜绝 refresh token 提权
+	TokenUse string `json:"token_use,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -70,7 +81,7 @@ func NewManager(cfg Config) *Manager {
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateAccessToken(userID int64, tokenType, phone, role string, communityID int64, permissions []string) (string, time.Time, error) {
-	return m.generateToken(userID, tokenType, phone, role, communityID, nil, permissions, "", "", m.config.AccessTokenTTL)
+	return m.generateToken(userID, tokenType, TokenUseAccess, phone, role, communityID, nil, permissions, "", "", m.config.AccessTokenTTL)
 }
 
 // GenerateAdminAccessToken 生成管理员 access token
@@ -90,7 +101,7 @@ func (m *Manager) GenerateAccessToken(userID int64, tokenType, phone, role strin
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateAdminAccessToken(userID int64, phone, role string, communityID int64, communityIDs []int64, permissions []string, username, realName string) (string, time.Time, error) {
-	return m.generateToken(userID, TokenTypeAdmin, phone, role, communityID, communityIDs, permissions, username, realName, m.config.AccessTokenTTL)
+	return m.generateToken(userID, TokenTypeAdmin, TokenUseAccess, phone, role, communityID, communityIDs, permissions, username, realName, m.config.AccessTokenTTL)
 }
 
 // GenerateRefreshToken 生成 refresh token
@@ -102,17 +113,34 @@ func (m *Manager) GenerateAdminAccessToken(userID int64, phone, role string, com
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateRefreshToken(userID int64, tokenType string) (string, time.Time, error) {
-	return m.generateToken(userID, tokenType, "", "", 0, nil, nil, "", "", m.config.RefreshTokenTTL)
+	return m.generateToken(userID, tokenType, TokenUseRefresh, "", "", 0, nil, nil, "", "", m.config.RefreshTokenTTL)
 }
 
 // generateToken 统一生成 token
-func (m *Manager) generateToken(userID int64, tokenType, phone, role string, communityID int64, communityIDs []int64, permissions []string, username, realName string, ttl time.Duration) (string, time.Time, error) {
+// 参数：
+//   - userID: 用户/管理员 ID
+//   - tokenType: token 类型，user 或 admin
+//   - tokenUse: token 用途，access 或 refresh
+//   - phone: 手机号（可选）
+//   - role: 角色编码（管理员可选）
+//   - communityID: 社区 ID（可选）
+//   - communityIDs: 绑定社区 ID 列表（管理员可选）
+//   - permissions: 权限列表（可选）
+//   - username: 登录用户名（管理员可选）
+//   - realName: 真实姓名（管理员可选）
+//   - ttl: 有效期
+// 返回：
+//   - token 字符串
+//   - 过期时间
+//   - 错误
+func (m *Manager) generateToken(userID int64, tokenType, tokenUse, phone, role string, communityID int64, communityIDs []int64, permissions []string, username, realName string, ttl time.Duration) (string, time.Time, error) {
 	now := time.Now()
 	expireAt := now.Add(ttl)
 
 	claims := Claims{
 		UserID:       userID,
 		Type:         tokenType,
+		TokenUse:     tokenUse,
 		Phone:        phone,
 		Role:         role,
 		CommunityID:  communityID,

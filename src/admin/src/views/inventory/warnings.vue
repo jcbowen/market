@@ -59,10 +59,14 @@ const columns: DataTableColumns<Record<string, unknown>> = [
 
 async function loadData() {
   loading.value = true
-  const res = await getStockWarnings()
-  loading.value = false
-  if (res.data.code === 0) {
-    list.value = res.data.data
+  try {
+    const res = await getStockWarnings()
+    if (res.data.code === 0) {
+      list.value = res.data.data
+    }
+  } finally {
+    // 请求异常时也必须关闭 loading，避免页面永久转圈
+    loading.value = false
   }
 }
 

@@ -4,6 +4,11 @@ FROM alpine:3.19
 
 RUN apk add --no-cache ca-certificates tzdata
 
+# 非 root 运行：容器内以固定 UID 10001 运行网关进程；
+# 挂载的宿主写目录（bin/runtime、bin/attachment）在 Linux 部署时需执行
+# chown -R 10001:10001 bin/runtime bin/attachment（Docker Desktop/VirtioFS 无需处理）
+RUN adduser -D -u 10001 appuser
+
 WORKDIR /app
 
 # 复制预编译的 gateway 二进制（Linux 交叉编译产物）
@@ -12,7 +17,15 @@ COPY bin/linux/gateway ./gateway
 # 复制前端编译产物（非源码）
 COPY bin/static ./static
 
+RUN chmod +x ./gateway && chown -R appuser:appuser /app
+
+USER appuser
+
 # 配置文件通过运行时 volume 挂载，不打包进镜像
 EXPOSE 18080
+
+# 健康检查：网关 HTTP 端口 TCP 探活（busybox nc）
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 --start-period=15s \
+    CMD nc -z 127.0.0.1 18080 || exit 1
 
 CMD ["./gateway"]

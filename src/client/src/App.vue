@@ -111,12 +111,9 @@ function locateCoords(): Promise<{ longitude: number; latitude: number } | null>
   const locationType: 'wgs84' | 'gcj02' = 'gcj02'
   // #endif
   return new Promise((resolve) => {
-    // TODO 调试日志：定位链路排查，问题定位后移除
-    console.log('[社区定位] 首页自动选社区，开始系统定位, type:', locationType)
     uni.getLocation({
       type: locationType,
       success: (res) => {
-        console.log('[社区定位] 首页系统定位成功:', res.longitude, res.latitude, res)
         resolve({ longitude: res.longitude, latitude: res.latitude })
       },
       fail: async (err) => {
@@ -124,7 +121,6 @@ function locateCoords(): Promise<{ longitude: number; latitude: number } | null>
         try {
           const res = await getIpLocation()
           const data = res.data
-          console.log('[社区定位] 首页 IP 定位兜底结果:', data)
           if (data?.longitude && data?.latitude) {
             resolve({ longitude: data.longitude, latitude: data.latitude })
             return

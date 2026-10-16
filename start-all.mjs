@@ -153,6 +153,49 @@ function dockerExec(args) {
   return { ok: r.status === 0, stdout: r.stdout || '' };
 }
 
+// 从项目根目录 .env 读取 KEY=VALUE（compose 同源口令：MySQL root 密码等）
+// 返回：
+//   - Map<string, string>: 解析出的键值对（忽略空行与 # 注释）
+function loadDotEnv() {
+  const envFile = path.join(ROOT_DIR, '.env');
+  const map = new Map();
+  if (!fs.existsSync(envFile)) return map;
+  for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (m && !line.trim().startsWith('#')) map.set(m[1], m[2].replace(/^["']|["']$/g, ''));
+  }
+  return map;
+}
+
+const dotenv = loadDotEnv();
+
+// 从 bin/config.docker.yaml 解析网关对外端口（web_server.port）。
+// compose 中 gateway 的宿主/容器为同端口映射，配置文件是唯一事实来源，
+// 避免启动成功提示中的 URL 与实际端口脱节。
+// 返回：
+//   - string: 网关端口（解析失败时回退默认值 18080）
+function loadGatewayPort() {
+  const configFile = path.join(ROOT_DIR, 'bin', 'config.docker.yaml');
+  try {
+    const m = fs.readFileSync(configFile, 'utf8').match(/^web_server:\s*$(?:\s*\n)?\s*port:\s*(\d+)/m);
+    if (m) return m[1];
+  } catch { /* 配置缺失或读取失败时使用默认端口 */ }
+  return '18080';
+}
+
+// 开发测试账号（与 deploy/init.dev.sql 头注释同步维护；库内密码为 bcrypt 哈希，
+// 明文仅存在于 SQL 注释与文档，此处常量化集中管理，修改测试数据时两处同步）
+const DEV_ADMIN_ACCOUNT = 'admin / admin123';
+const DEV_USER_ACCOUNT = '13800138000 / 验证码 123456';
+
+// MySQL root 密码与 docker-compose.yml 同源（.env 注入），缺失时提前报错，
+// 避免 mysql 客户端拿空密码反复失败或误用历史弱口令
+const MYSQL_ROOT_PASSWORD = dotenv.get('MYSQL_ROOT_PASSWORD') || process.env.MYSQL_ROOT_PASSWORD || '';
+if (!MYSQL_ROOT_PASSWORD) {
+  console.error('错误: 未在项目根目录 .env 中配置 MYSQL_ROOT_PASSWORD（docker-compose.yml 同源要求）');
+  process.exit(1);
+}
+
 // 本地附件共享目录（Docker bind mount 挂载点）：
 // product-service 落盘与 gateway /uploads 静态服务共用，宿主目录不存在时先创建，
 // 避免首次部署或目录被清理后挂载异常
@@ -205,7 +248,7 @@ if (FRONTEND_REBUILT) {
 // 等待 MySQL 健康
 console.log('==> 等待 MySQL 就绪...');
 for (let i = 1; i <= 60; i++) {
-  if (dockerExec(['market-mysql', 'mysqladmin', '-uroot', '-pmarket123', 'ping']).ok) {
+  if (dockerExec(['market-mysql', 'mysqladmin', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'ping']).ok) {
     console.log('    MySQL 已就绪');
     break;
   }
@@ -220,7 +263,7 @@ for (let i = 1; i <= 60; i++) {
 console.log('==> 等待微服务完成自动迁移...');
 for (let i = 1; i <= 60; i++) {
   if (dockerExec([
-    '-i', 'market-mysql', 'mysql', '-uroot', '-pmarket123', 'market',
+    '-i', 'market-mysql', 'mysql', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'market',
     '--default-character-set=utf8mb4', '-e', 'SELECT 1 FROM categories LIMIT 1',
   ]).ok) {
     console.log('    数据库表已就绪');
@@ -232,24 +275,28 @@ for (let i = 1; i <= 60; i++) {
   }
 }
 
-// 初始化测试数据
+// 初始化测试数据（仅开发环境：脚本含弱口令管理员与测试业务数据，生产环境禁止导入）
 console.log('==> 初始化测试数据...');
-const exists = dockerExec([
-  '-i', 'market-mysql', 'mysql', '-uroot', '-pmarket123', 'market',
-  '--default-character-set=utf8mb4', '-N', '-s', '-e', 'SELECT id FROM communities LIMIT 1',
-]);
-if (exists.ok && /^\d+\s*$/m.test(exists.stdout.trim())) {
-  console.log('    测试数据已存在，跳过初始化');
+if (dotenv.get('APP_ENV') === 'production' || process.env.APP_ENV === 'production') {
+  console.log('    已跳过：APP_ENV=production 生产环境禁止导入开发测试数据（deploy/init.dev.sql）');
 } else {
-  const sql = fs.readFileSync(path.join(ROOT_DIR, 'deploy', 'init.sql'), 'utf8');
-  const r = spawnSync('docker', [
-    'exec', '-i', 'market-mysql', 'mysql', '-uroot', '-pmarket123', 'market',
-    '--default-character-set=utf8mb4',
-  ], { input: sql, encoding: 'utf8', shell: process.platform === 'win32' });
-  if (r.status === 0) {
-    console.log('    测试数据初始化完成');
+  const exists = dockerExec([
+    '-i', 'market-mysql', 'mysql', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'market',
+    '--default-character-set=utf8mb4', '-N', '-s', '-e', 'SELECT id FROM communities LIMIT 1',
+  ]);
+  if (exists.ok && /^\d+\s*$/m.test(exists.stdout.trim())) {
+    console.log('    测试数据已存在，跳过初始化');
   } else {
-    console.log('警告: 测试数据初始化失败');
+    const sql = fs.readFileSync(path.join(ROOT_DIR, 'deploy', 'init.dev.sql'), 'utf8');
+    const r = spawnSync('docker', [
+      'exec', '-i', 'market-mysql', 'mysql', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'market',
+      '--default-character-set=utf8mb4',
+    ], { input: sql, encoding: 'utf8', shell: process.platform === 'win32' });
+    if (r.status === 0) {
+      console.log('    测试数据初始化完成');
+    } else {
+      console.log('警告: 测试数据初始化失败');
+    }
   }
 }
 
@@ -273,9 +320,10 @@ for (let i = 1; i <= 60; i++) {
 console.log('');
 console.log('==============================================');
 console.log('项目启动成功！');
-console.log('  管理后台: http://localhost:18080/b/');
-console.log('  C 端 H5:  http://localhost:18080/s/');
-console.log('  健康检查: http://localhost:18080/health');
-console.log('  默认管理员: admin / admin123');
-console.log('  默认用户:   13800138000 / 验证码 123456');
+const gatewayPort = loadGatewayPort();
+console.log(`  管理后台: http://localhost:${gatewayPort}/b/`);
+console.log(`  C 端 H5:  http://localhost:${gatewayPort}/s/`);
+console.log(`  健康检查: http://localhost:${gatewayPort}/health`);
+console.log(`  默认管理员: ${DEV_ADMIN_ACCOUNT}`);
+console.log(`  默认用户:   ${DEV_USER_ACCOUNT}`);
 console.log('==============================================');

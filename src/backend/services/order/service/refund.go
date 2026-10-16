@@ -8,6 +8,7 @@ import (
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"google.golang.org/grpc/codes"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
@@ -23,6 +24,30 @@ const refundConfigID = 1
 
 // refundFreightPolicies 运费退还策略合法值集合
 var refundFreightPolicies = map[string]bool{"always": true, "never": true, "user_decide": true}
+
+// ensureOrderCommunity 订单社区归属校验（多社区隔离强校验）
+// 社区隔离防线：管理端退款链路（创建/审批/重试/拒绝）在服务端校验订单归属社区，
+// 防止 A 社区管理员跨社区操作 B 社区订单；communityId<=0 视为内部系统调用（调度器等），跳过校验
+// 参数：
+//   - tx: 数据库连接（可为事务）
+//   - orderID: 订单 ID
+//   - communityId: 操作者所属社区 ID（>0 时启用校验）
+//
+// 返回值：
+//   - error: 订单不存在或跨社区时返回错误
+func ensureOrderCommunity(tx *gorm.DB, orderID, communityId int64) error {
+	if communityId <= 0 {
+		return nil
+	}
+	var o model.Order
+	if err := tx.Select("id, community_id").First(&o, orderID).Error; err != nil {
+		return err
+	}
+	if o.CommunityID != communityId {
+		return bizerr.New(codes.PermissionDenied, "无权操作其他社区的订单")
+	}
+	return nil
+}
 
 // RefundService 退款业务服务
 type RefundService struct {
@@ -53,7 +78,8 @@ type refundLine struct {
 // 金额以服务端汇算为准（行小计按比例分摊订单优惠，整单退尾差减法兜底），
 // 客户端传入的 req.Amount 仅允许调低，调低差额从最后一行明细扣减；
 // 运费仅整单退时按 refund_freight_policy 策略退还（user_decide 时按 req.RefundFreight 勾选）；
-// 同一订单存在未完结退款申请（待审核/退款中）时禁止重复申请
+// 同一订单存在未完结退款申请（待审核/退款中）时禁止重复申请：
+// 事务内 FOR UPDATE 锁订单行后再查 pending，串行化同一订单的并发申请，杜绝双申请同时通过校验
 // 参数：
 //   - ctx: 上下文
 //   - req: 申请请求
@@ -66,38 +92,7 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		return nil, fmt.Errorf("请填写退款原因")
 	}
 
-	var o model.Order
-	if err := s.db.GetDb().WithContext(ctx).First(&o, req.OrderId).Error; err != nil {
-		return nil, err
-	}
-	if o.UserID != req.UserId {
-		return nil, fmt.Errorf("无权限申请退款")
-	}
-	// 门店订单（收银台代客 source=2）C 端只读：退款走后台入口（AdminCreateRefund）处理
-	if o.Source == 2 {
-		return nil, bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
-	}
-	if o.Status != 2 && o.Status != 3 && o.Status != 4 {
-		return nil, fmt.Errorf("订单状态不允许申请退款")
-	}
-
-	// 同一订单存在未完结退款申请时禁止重复申请
-	var pending int64
-	if err := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
-		Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
-		Count(&pending).Error; err != nil {
-		return nil, err
-	}
-	if pending > 0 {
-		return nil, fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
-	}
-
-	calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
-	if err != nil {
-		return nil, err
-	}
-	lines, isFull, freight, amount := calc.lines, calc.isFull, calc.freight, calc.amount
-
+	// 支付单号在事务外获取（纯读查询，不参与竞态）
 	paymentNo := ""
 	if s.paymentClient != nil {
 		if p, err := s.paymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: req.OrderId}); err == nil && p != nil {
@@ -105,38 +100,72 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		}
 	}
 
-	now := time.Now().Format("2006-01-02 15:04:05")
-	refundType := int32(2)
-	if isFull {
-		refundType = 1
-	}
-	refund := &model.Refund{
-		RefundNo:      generateRefundNo(),
-		OrderID:       o.ID,
-		UserID:        req.UserId,
-		PaymentNo:     paymentNo,
-		Amount:        amount,
-		FreightAmount: freight,
-		Type:          refundType,
-		Reason:        req.Reason,
-		Status:        1,
-		CreatedAt:     now,
-		UpdatedAt:     now,
-	}
-	for _, line := range lines {
-		refund.Items = append(refund.Items, &model.RefundItem{
-			OrderItemID:  line.item.ID,
-			SkuID:        line.item.SkuID,
-			ProductName:  line.item.ProductName,
-			SpecName:     line.item.SpecName,
-			Quantity:     line.qty,
-			RefundAmount: line.amount,
-			CreatedAt:    now,
-		})
-	}
-
-	fromStatus := o.Status
+	var refund *model.Refund
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// FOR UPDATE 锁订单行：并发申请在此排队，避免同时通过状态与 pending 校验
+		var o model.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&o, req.OrderId).Error; err != nil {
+			return err
+		}
+		if o.UserID != req.UserId {
+			return fmt.Errorf("无权限申请退款")
+		}
+		// 门店订单（收银台代客 source=2）C 端只读：退款走后台入口（AdminCreateRefund）处理
+		if o.Source == 2 {
+			return bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
+		}
+		if o.Status != 2 && o.Status != 3 && o.Status != 4 {
+			return fmt.Errorf("订单状态不允许申请退款")
+		}
+
+		// 同一订单存在未完结退款申请时禁止重复申请（持行锁后检查，串行化生效）
+		var pending int64
+		if err := tx.Model(&model.Refund{}).
+			Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
+			Count(&pending).Error; err != nil {
+			return err
+		}
+		if pending > 0 {
+			return fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
+		}
+
+		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
+		if err != nil {
+			return err
+		}
+		lines, isFull, freight, amount := calc.lines, calc.isFull, calc.freight, calc.amount
+
+		now := time.Now().Format("2006-01-02 15:04:05")
+		refundType := int32(2)
+		if isFull {
+			refundType = 1
+		}
+		refund = &model.Refund{
+			RefundNo:      generateRefundNo(),
+			OrderID:       o.ID,
+			UserID:        req.UserId,
+			PaymentNo:     paymentNo,
+			Amount:        amount,
+			FreightAmount: freight,
+			Type:          refundType,
+			Reason:        req.Reason,
+			Status:        1,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		for _, line := range lines {
+			refund.Items = append(refund.Items, &model.RefundItem{
+				OrderItemID:  line.item.ID,
+				SkuID:        line.item.SkuID,
+				ProductName:  line.item.ProductName,
+				SpecName:     line.item.SpecName,
+				Quantity:     line.qty,
+				RefundAmount: line.amount,
+				CreatedAt:    now,
+			})
+		}
+
+		fromStatus := o.Status
 		if err := tx.Create(refund).Error; err != nil {
 			return err
 		}
@@ -151,18 +180,19 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		if err := tx.Save(&o).Error; err != nil {
 			return err
 		}
+		refund.OrderNo = o.OrderNo
 		return createStatusLogTx(tx, o.ID, fromStatus, 7, "user", req.UserId, "申请退款: "+req.Reason)
 	}); err != nil {
 		return nil, err
 	}
-	refund.OrderNo = o.OrderNo
 	return refund, nil
 }
 
 // AdminCreateRefund 后台代客退款（发起即执行，免审核）
 // 整单退/部分退金额口径与 C 端申请一致（calcRefundOrder 服务端汇算）；
 // 创建即置为退款中(4)并直接调用渠道退款，成功后走统一收尾（置已退款、回补库存、更新订单状态）；
-// 渠道调用失败时退款单保留在退款中，由后台「重试退款」或调度器兜底
+// 渠道调用失败时退款单保留在退款中，由后台「重试退款」或调度器兜底；
+// 事务内 FOR UPDATE 锁订单行后再查 pending，串行化同一订单的并发发起
 // 参数：
 //   - ctx: 上下文
 //   - req: 后台代客退款请求
@@ -175,30 +205,7 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 		return nil, fmt.Errorf("请填写退款原因")
 	}
 
-	var o model.Order
-	if err := s.db.GetDb().WithContext(ctx).First(&o, req.OrderId).Error; err != nil {
-		return nil, err
-	}
-	if o.Status != 2 && o.Status != 3 && o.Status != 4 {
-		return nil, fmt.Errorf("订单状态不允许退款")
-	}
-
-	// 存在未完结退款申请（待审核/退款中）时禁止重复发起
-	var pending int64
-	if err := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
-		Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
-		Count(&pending).Error; err != nil {
-		return nil, err
-	}
-	if pending > 0 {
-		return nil, fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
-	}
-
-	calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
-	if err != nil {
-		return nil, err
-	}
-
+	// 支付单号在事务外获取（纯读查询，不参与竞态）
 	paymentNo := ""
 	if s.paymentClient != nil {
 		if p, err := s.paymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: req.OrderId}); err == nil && p != nil {
@@ -206,39 +213,69 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 		}
 	}
 
-	now := time.Now().Format("2006-01-02 15:04:05")
-	refundType := int32(2)
-	if calc.isFull {
-		refundType = 1
-	}
-	refund := &model.Refund{
-		RefundNo:      generateRefundNo(),
-		OrderID:       o.ID,
-		UserID:        o.UserID,
-		PaymentNo:     paymentNo,
-		Amount:        calc.amount,
-		FreightAmount: calc.freight,
-		Type:          refundType,
-		Reason:        req.Reason,
-		// 后台发起即执行：直接进入退款中，无需审核
-		Status:    4,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	for _, line := range calc.lines {
-		refund.Items = append(refund.Items, &model.RefundItem{
-			OrderItemID:  line.item.ID,
-			SkuID:        line.item.SkuID,
-			ProductName:  line.item.ProductName,
-			SpecName:     line.item.SpecName,
-			Quantity:     line.qty,
-			RefundAmount: line.amount,
-			CreatedAt:    now,
-		})
-	}
-
-	fromStatus := o.Status
+	var refund *model.Refund
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// FOR UPDATE 锁订单行：并发发起在此排队，避免同时通过状态与 pending 校验
+		var o model.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&o, req.OrderId).Error; err != nil {
+			return err
+		}
+		// 社区隔离强校验：管理端代客退款发起即执行出款，服务端必须校验订单归属社区
+		if err := ensureOrderCommunity(tx, o.ID, req.CommunityId); err != nil {
+			return err
+		}
+		if o.Status != 2 && o.Status != 3 && o.Status != 4 {
+			return fmt.Errorf("订单状态不允许退款")
+		}
+
+		// 存在未完结退款申请（待审核/退款中）时禁止重复发起（持行锁后检查，串行化生效）
+		var pending int64
+		if err := tx.Model(&model.Refund{}).
+			Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
+			Count(&pending).Error; err != nil {
+			return err
+		}
+		if pending > 0 {
+			return fmt.Errorf("该订单存在未完结的退款申请，请等待处理完成")
+		}
+
+		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight)
+		if err != nil {
+			return err
+		}
+
+		now := time.Now().Format("2006-01-02 15:04:05")
+		refundType := int32(2)
+		if calc.isFull {
+			refundType = 1
+		}
+		refund = &model.Refund{
+			RefundNo:      generateRefundNo(),
+			OrderID:       o.ID,
+			UserID:        o.UserID,
+			PaymentNo:     paymentNo,
+			Amount:        calc.amount,
+			FreightAmount: calc.freight,
+			Type:          refundType,
+			Reason:        req.Reason,
+			// 后台发起即执行：直接进入退款中，无需审核
+			Status:    4,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		for _, line := range calc.lines {
+			refund.Items = append(refund.Items, &model.RefundItem{
+				OrderItemID:  line.item.ID,
+				SkuID:        line.item.SkuID,
+				ProductName:  line.item.ProductName,
+				SpecName:     line.item.SpecName,
+				Quantity:     line.qty,
+				RefundAmount: line.amount,
+				CreatedAt:    now,
+			})
+		}
+
+		fromStatus := o.Status
 		if err := tx.Create(refund).Error; err != nil {
 			return err
 		}
@@ -253,11 +290,11 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 		if err := tx.Save(&o).Error; err != nil {
 			return err
 		}
+		refund.OrderNo = o.OrderNo
 		return createStatusLogTx(tx, o.ID, fromStatus, 7, "admin", req.OperatorId, "后台代客退款: "+req.Reason)
 	}); err != nil {
 		return nil, err
 	}
-	refund.OrderNo = o.OrderNo
 
 	if err := s.createRefundLog(ctx, refund.ID, "create", "admin", req.OperatorId, "后台代客退款: "+req.Reason); err != nil {
 		return refund, err
@@ -719,6 +756,10 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 	if err := s.db.GetDb().WithContext(ctx).First(&refund, req.Id).Error; err != nil {
 		return err
 	}
+	// 社区隔离强校验：审批通过即触发渠道出款，服务端必须校验退款单归属订单的社区
+	if err := ensureOrderCommunity(s.db.GetDb().WithContext(ctx), refund.OrderID, req.CommunityId); err != nil {
+		return err
+	}
 	if refund.Status != 1 {
 		return fmt.Errorf("退款状态不允许审核")
 	}
@@ -770,6 +811,10 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 func (s *RefundService) RetryRefund(ctx context.Context, req *order.RetryRefundReq) error {
 	var refund model.Refund
 	if err := s.db.GetDb().WithContext(ctx).First(&refund, req.Id).Error; err != nil {
+		return err
+	}
+	// 社区隔离强校验：重试即再次触发渠道出款，服务端必须校验退款单归属订单的社区
+	if err := ensureOrderCommunity(s.db.GetDb().WithContext(ctx), refund.OrderID, req.CommunityId); err != nil {
 		return err
 	}
 	if refund.Status != 4 {
@@ -930,17 +975,25 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *order.RejectRefun
 		if err := tx.First(&refund, req.Id).Error; err != nil {
 			return err
 		}
-		if refund.Status != 1 {
-			return fmt.Errorf("退款状态不允许审核")
+
+		// 社区隔离强校验：拒绝操作会回滚订单状态，服务端校验退款单归属订单的社区
+		if err := ensureOrderCommunity(tx, refund.OrderID, req.CommunityId); err != nil {
+			return err
 		}
 
 		now := time.Now().Format("2006-01-02 15:04:05")
-		refund.Status = 3
-		refund.RejectReason = req.RejectReason
-		refund.OperatorID = req.OperatorId
-		refund.UpdatedAt = now
-		if err := tx.Save(&refund).Error; err != nil {
-			return err
+		// 条件更新防并发覆盖：仅待审核(1)状态可拒绝，RowsAffected=0 说明状态已被其他操作变更
+		res := tx.Model(&model.Refund{}).Where("id = ? AND status = 1", refund.ID).Updates(map[string]interface{}{
+			"status":        int32(3),
+			"reject_reason": req.RejectReason,
+			"operator_id":   req.OperatorId,
+			"updated_at":    now,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("退款状态不允许审核")
 		}
 
 		var o model.Order

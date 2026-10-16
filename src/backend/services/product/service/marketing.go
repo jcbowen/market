@@ -534,6 +534,8 @@ func (s *MarketingService) ListCouponRecords(ctx context.Context, req *product.L
 }
 
 // UseCoupon 使用优惠券
+// 条件更新防并发重复核销：仅未使用(1)状态可核销，并发场景只有一个请求生效；
+// UsedCount 采用 gorm.Expr 原子自增，避免读-改-写竞态丢计数
 // 参数：
 //   - ctx: 上下文
 //   - req: 使用请求
@@ -554,20 +556,22 @@ func (s *MarketingService) UseCoupon(ctx context.Context, req *product.UseCoupon
 			return fmt.Errorf("优惠券已过期")
 		}
 
-		uc.Status = 2
-		uc.OrderID = req.OrderId
-		uc.UpdatedAt = now
-		if err := tx.Save(&uc).Error; err != nil {
-			return err
+		// 条件更新：仅未使用状态生效，并发核销时后到者 RowsAffected=0
+		res := tx.Model(&model.UserCoupon{}).Where("id = ? AND status = 1", uc.ID).Updates(map[string]interface{}{
+			"status":     int32(2),
+			"order_id":   req.OrderId,
+			"updated_at": now,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("优惠券状态不可使用")
 		}
 
-		var c model.Coupon
-		if err := tx.First(&c, uc.CouponID).Error; err != nil {
-			return err
-		}
-		c.UsedCount++
-		c.UpdatedAt = now
-		return tx.Save(&c).Error
+		// UsedCount 原子自增，防并发丢失更新
+		return tx.Model(&model.Coupon{}).Where("id = ?", uc.CouponID).
+			Update("used_count", gorm.Expr("used_count + 1")).Error
 	})
 }
 

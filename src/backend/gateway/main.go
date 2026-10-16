@@ -79,7 +79,9 @@ func main() {
 }
 
 // loadConfig 加载全局配置
-// 优先读取 CONFIG_FILE 环境变量指定的配置文件，未设置时使用可执行文件同级目录下的 config.yaml
+// 优先读取 CONFIG_FILE 环境变量指定的配置文件，未设置时使用可执行文件同级目录下的 config.yaml；
+// 加载后应用环境变量覆盖（MYSQL_PASSWORD/REDIS_PASSWORD/JWT_SECRET），
+// 并在生产环境对默认 JWT 密钥 fail-fast
 // 返回：
 //   - *config.Config: 全局配置指针
 func loadConfig() *config.Config {
@@ -90,7 +92,12 @@ func loadConfig() *config.Config {
 		ConfigSource: path,
 		ConfigData:   &config.Config{},
 	})
-	return (*opt.GetConfig()).(*config.Config)
+	cfg := (*opt.GetConfig()).(*config.Config)
+	config.ApplyEnvOverrides(cfg)
+	if err := config.EnsureSecureJWT(cfg); err != nil {
+		log.Fatalf("配置安全校验失败: %v", err)
+	}
+	return cfg
 }
 
 // getConfigPath 获取配置文件路径
@@ -159,7 +166,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.POST("/auth/refresh", authHandler.RefreshToken)
 
 			public.POST("/payments/callback/wechat", paymentHandler.WechatCallback)
-			public.POST("/payments/callback/alipay", paymentHandler.AlipayCallback)
+			// 支付宝回调路由已下线：渠道尚未真实接入（isChannelUsable 对 alipay 恒为 false），
+			// 回调解析无 RSA2 验签，公开暴露可被伪造支付成功；接入官方 SDK 并实现验签后再开放
 			public.GET("/payments/channels", paymentHandler.PaymentChannels)
 		}
 

@@ -37,6 +37,13 @@ func AuthMiddleware(manager *jwt.Manager, allowedTypes ...string) gin.HandlerFun
 			return
 		}
 
+		// 强校验 token 用途：refresh token 不得用于接口访问（防长效令牌提权）
+		if claims.TokenUse != jwt.TokenUseAccess {
+			response.Error(c, errcode.InvalidToken)
+			c.Abort()
+			return
+		}
+
 		if len(allowedTypes) > 0 {
 			if _, ok := allowed[claims.Type]; !ok {
 				response.Error(c, errcode.NoPermission)

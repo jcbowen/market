@@ -4,6 +4,8 @@ import (
 	"context"
 	crand "crypto/rand"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -109,10 +111,12 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		}
 
 		// 收银台单品改价（仅对当前订单生效，不改商品档案价）：
+		// 仅限收银台来源（Source==2）允许改价，C 端用户下单一律服务端取价，
+		// 防止客户端注入 price 字段以任意低价成交
 		// item.Price>0 时以改价成交，original_price 留服务端实时价快照供后台对账
 		originalPrice := price
 		priceModified := int32(0)
-		if item.Price > 0 {
+		if req.Source == 2 && item.Price > 0 {
 			price = item.Price
 			priceModified = 1
 		}
@@ -253,6 +257,56 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		}
 	}
 
+	// 高并发下时间戳订单号可能碰撞（order_no 唯一索引），冲突时换号重试，最多 3 次
+	const maxOrderNoAttempts = 3
+	var createErr error
+	for attempt := 0; attempt < maxOrderNoAttempts; attempt++ {
+		if attempt > 0 {
+			// 换新订单号与主键重试：上一轮远端已提交的库存扣减/优惠券核销已由补偿路径回补
+			orderModel.ID = 0
+			orderModel.OrderNo = generateOrderNo()
+		}
+		createErr = s.createOrderTransaction(ctx, orderModel, orderItems, req, userCouponID, source)
+		if createErr == nil || !isDuplicateOrderNoErr(createErr) {
+			break
+		}
+	}
+	if createErr != nil {
+		return nil, createErr
+	}
+
+	// 记录会员-社区关联：在该社区下过单即视为该社区会员（幂等，尽力而为不阻塞下单结果）；
+	// 收银台散客单（user_id=0）无会员可标记，跳过
+	if req.UserId > 0 {
+		if _, mErr := grpcclient.UserClient.MarkUserCommunity(ctx, &user.MarkUserCommunityReq{
+			UserId:      req.UserId,
+			CommunityId: req.CommunityId,
+			Source:      "order",
+		}); mErr != nil {
+			log.Printf("记录会员-社区关联失败（订单 %d）: %v", orderModel.ID, mErr)
+		}
+	}
+
+	return orderModel, nil
+}
+
+// createOrderTransaction 执行下单事务：落订单与明细、扣减库存、核销优惠券、写状态日志。
+// 任一步失败时回滚本地事务，并补偿释放已提交到商品服务的库存扣减与优惠券核销
+//（库存幂等日志保证重复补偿只生效一次），尽力而为，不掩盖原错误。
+// 参数：
+//   - ctx: 上下文
+//   - orderModel: 订单模型（调用前需已填充 OrderNo 与业务字段）
+//   - orderItems: 订单商品明细（OrderID 在事务内回填）
+//   - req: 下单请求（取商品明细与经手人）
+//   - userCouponID: 使用的用户优惠券 ID，0 表示未用券
+//   - source: 订单来源（1=C 端 2=收银台代客）
+//
+// 返回值：
+//   - error: 事务错误信息
+func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *model.Order, orderItems []*model.OrderItem, req *order.CreateOrderReq, userCouponID int64, source int32) error {
+	// 已成功扣减库存的商品下标：事务失败时逐项补偿释放（扣减在 product 服务已落库，
+	// 本地事务回滚不会同步回滚远端扣减）
+	deductedIdx := make([]int, 0, len(req.Items))
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(orderModel).Error; err != nil {
 			return err
@@ -263,7 +317,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 				return err
 			}
 		}
-		for _, item := range req.Items {
+		for i, item := range req.Items {
 			_, err := grpcclient.ProductClient.DeductStock(ctx, &product.DeductStockReq{
 				SkuId:    item.SkuId,
 				Quantity: item.Quantity,
@@ -272,6 +326,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 			if err != nil {
 				return fmt.Errorf("扣减库存失败: %w", err)
 			}
+			deductedIdx = append(deductedIdx, i)
 		}
 		if userCouponID > 0 {
 			if _, err := grpcclient.ProductClient.UseCoupon(ctx, &product.UseCouponReq{
@@ -288,22 +343,40 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		}
 		return s.createStatusLogTx(tx, orderModel.ID, 0, 1, logType, logOperator, "创建订单")
 	}); err != nil {
-		return nil, err
-	}
-
-	// 记录会员-社区关联：在该社区下过单即视为该社区会员（幂等，尽力而为不阻塞下单结果）；
-	// 收银台散客单（user_id=0）无会员可标记，跳过
-	if req.UserId > 0 {
-		if _, mErr := grpcclient.UserClient.MarkUserCommunity(ctx, &user.MarkUserCommunityReq{
-			UserId:      req.UserId,
-			CommunityId: req.CommunityId,
-			Source:      "order",
-		}); mErr != nil {
-			fmt.Printf("记录会员-社区关联失败（订单 %d）: %v\n", orderModel.ID, mErr)
+		// 补偿路径：释放已扣减的库存，尽力而为不掩盖原错误
+		for _, idx := range deductedIdx {
+			item := req.Items[idx]
+			if _, rErr := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
+				SkuId:    item.SkuId,
+				Quantity: item.Quantity,
+				OrderId:  orderModel.ID,
+			}); rErr != nil {
+				log.Printf("下单失败补偿释放库存失败（订单 %d, SKU %d）: %v", orderModel.ID, item.SkuId, rErr)
+			}
 		}
+		// 优惠券核销同样在远端已提交：一并回补，保证换号重试时同一张券可再次使用
+		if userCouponID > 0 {
+			if _, rErr := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: orderModel.ID}); rErr != nil {
+				log.Printf("下单失败补偿回补优惠券失败（订单 %d）: %v", orderModel.ID, rErr)
+			}
+		}
+		return err
 	}
+	return nil
+}
 
-	return orderModel, nil
+// isDuplicateOrderNoErr 判断错误是否为订单号唯一索引冲突（MySQL 1062 Duplicate entry）
+// 参数：
+//   - err: 下单事务错误
+//
+// 返回值：
+//   - bool: 订单号冲突返回 true
+func isDuplicateOrderNoErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Duplicate entry") && strings.Contains(msg, "order_no")
 }
 
 // GetOrder 获取订单详情
@@ -374,9 +447,10 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	if req.Source > 0 {
 		db = db.Where("source = ?", req.Source)
 	}
-	// 后台管理端搜索条件（订单号模糊、下单时间范围、收货人姓名/电话模糊）
+	// 后台管理端搜索条件（订单号右模糊走 order_no 唯一索引，前置通配符会使索引失效；
+	// 收货人姓名/电话模糊）
 	if req.OrderNo != "" {
-		db = db.Where("order_no LIKE ?", "%"+req.OrderNo+"%")
+		db = db.Where("order_no LIKE ?", req.OrderNo+"%")
 	}
 	if req.StartTime != "" {
 		db = db.Where("created_at >= ?", req.StartTime)
@@ -465,7 +539,23 @@ func (s *OrderService) isCashOnDeliveryOrder(ctx context.Context, orderID int64)
 // 返回值：
 //   - error: 错误信息
 func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderReq) error {
-	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	// 事务外预读订单并判定货到付款口径（内部走支付服务 RPC）：
+	// 避免在事务持锁期间发起 gRPC 拉长锁持有时间；状态竞态由事务内条件更新兜底
+	var pre model.Order
+	if err := s.db.GetDb().WithContext(ctx).First(&pre, req.Id).Error; err != nil {
+		return err
+	}
+	if pre.UserID != req.UserId {
+		return fmt.Errorf("无权限取消该订单")
+	}
+	// 门店订单（收银台代客 source=2）C 端只读：取消走后台处理，
+	// 防止门店已收款的现金单被 C 端按"货到付款"口径直接取消（无退款流水造成资损）
+	if pre.Source == 2 {
+		return bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
+	}
+	allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, pre.ID))
+
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o model.Order
 		if err := tx.First(&o, req.Id).Error; err != nil {
 			return err
@@ -473,12 +563,6 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		if o.UserID != req.UserId {
 			return fmt.Errorf("无权限取消该订单")
 		}
-		// 门店订单（收银台代客 source=2）C 端只读：取消走后台处理，
-		// 防止门店已收款的现金单被 C 端按"货到付款"口径直接取消（无退款流水造成资损）
-		if o.Source == 2 {
-			return bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
-		}
-		allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, o.ID))
 		if !containsInt32(allowed, o.Status) {
 			return fmt.Errorf("订单状态不允许取消")
 		}
@@ -521,6 +605,26 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 
 		return s.createStatusLogTx(tx, o.ID, o.Status, 6, "user", req.UserId, req.Reason)
 	})
+	if err == nil {
+		// 取消成功后关闭待支付支付单，防迟到回调误置已支付
+		closePendingPayments(ctx, req.Id)
+	}
+	return err
+}
+
+// closePendingPayments 关闭订单的待支付支付单（订单取消后的收尾动作）
+// 尽力而为：调用失败仅记日志，不阻断取消流程（迟到回调由 handlePaySuccess 终态兜底拦住，
+// 支付单状态不一致可由下次取消或人工处理）
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+func closePendingPayments(ctx context.Context, orderID int64) {
+	if grpcclient.PaymentClient == nil {
+		return
+	}
+	if _, err := grpcclient.PaymentClient.ClosePayments(ctx, &payment.ClosePaymentsReq{OrderId: orderID}); err != nil {
+		log.Printf("[order] 关闭订单 %d 待支付支付单失败: %v", orderID, err)
+	}
 }
 
 // orderTransitions 订单状态合法流转表
@@ -567,10 +671,16 @@ func isTransitionAllowed(from, to int32) bool {
 // 返回值：
 //   - error: 错误信息
 func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateOrderStatusReq) error {
-	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o model.Order
 		if err := tx.First(&o, req.Id).Error; err != nil {
 			return err
+		}
+
+		// 社区隔离强校验：管理端操作必传 community_id（>0 时校验订单归属社区），
+		// 内部系统调用（支付回调等）传 0 跳过
+		if req.CommunityId > 0 && o.CommunityID != req.CommunityId {
+			return bizerr.New(codes.PermissionDenied, "无权操作其他社区的订单")
 		}
 
 		// 取消订单：不走通用状态机，需回补库存并记录取消原因/时间
@@ -608,6 +718,11 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 		}
 		return s.createStatusLogTx(tx, o.ID, fromStatus, req.Status, req.OperatorType, req.OperatorId, req.Remark)
 	})
+	if err == nil && req.Status == 6 {
+		// 取消成功后关闭待支付支付单，防迟到回调误置已支付
+		closePendingPayments(ctx, req.Id)
+	}
+	return err
 }
 
 // VerifyPickup 自提订单核销：校验取货码后置为已完成

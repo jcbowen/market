@@ -14,9 +14,11 @@ type Order struct {
 	base.MysqlBaseModel
 	ID             int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	OrderNo        string  `gorm:"column:order_no;type:varchar(50);not null;unique;comment:订单号" json:"order_no"`
-	CommunityID    int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
-	UserID         int64   `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
-	Status         int32   `gorm:"column:status;type:tinyint;default:1;comment:1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款" json:"status"`
+	// 社区维度复合索引（community_id,status,created_at）：覆盖社区订单列表、营收报表按状态聚合
+	CommunityID int64 `gorm:"column:community_id;type:bigint;not null;index:idx_orders_community_status_created,priority:1;comment:社区 ID" json:"community_id"`
+	UserID      int64 `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
+	// 状态参与两个复合索引：社区列表/报表（community_status_created）与履约指派查询（delivery_status）
+	Status int32 `gorm:"column:status;type:tinyint;default:1;index:idx_orders_community_status_created,priority:2;index:idx_orders_delivery_status,priority:2;comment:1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款" json:"status"`
 	TotalAmount    float64 `gorm:"column:total_amount;type:decimal(10,2);not null;comment:订单总额" json:"total_amount"`
 	DiscountAmount float64 `gorm:"column:discount_amount;type:decimal(10,2);default:0.00;comment:优惠金额，默认0" json:"discount_amount"`
 	DeliveryFee    float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0.00;comment:配送费，默认0" json:"delivery_fee"`
@@ -41,10 +43,10 @@ type Order struct {
 	// 手动优惠总额（收银台抹零/整单改价折算）：实付 = max(0, 应付 - manual_discount)
 	ManualDiscount float64 `gorm:"column:manual_discount;type:decimal(10,2);default:0.00;comment:手动优惠总额（抹零/整单改价）" json:"manual_discount"`
 	// 收银班次 ID（0=非收银单）：退款/交班统计按订单归属班次口径
-	ShiftID int64 `gorm:"column:shift_id;type:bigint;default:0;index;comment:收银班次 ID 0=非收银单" json:"shift_id"`
+	ShiftID int64 `gorm:"column:shift_id;type:bigint;default:0;index:idx_shift_id;comment:收银班次 ID 0=非收银单" json:"shift_id"`
 	// 履约工作台（B）：配送指派与签收凭证
 	// 指派的履约人员（0=未指派）；姓名快照避免列表页再 RPC 查会员
-	DeliveryUserID      int64   `gorm:"column:delivery_user_id;type:bigint;default:0;comment:指派履约人员 ID 0=未指派" json:"delivery_user_id"`
+	DeliveryUserID      int64   `gorm:"column:delivery_user_id;type:bigint;default:0;index:idx_orders_delivery_status,priority:1;comment:指派履约人员 ID 0=未指派" json:"delivery_user_id"`
 	DeliveryUserName    string  `gorm:"column:delivery_user_name;type:varchar(50);comment:履约人员姓名快照" json:"delivery_user_name"`
 	DeliveryProofImages string  `gorm:"column:delivery_proof_images;type:text;comment:送达签收凭证照片 URL JSON 数组" json:"delivery_proof_images"`
 	PayTime             *string `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`
@@ -52,7 +54,7 @@ type Order struct {
 	CompleteTime        *string `gorm:"column:complete_time;type:datetime;comment:完成时间" json:"complete_time"`
 	CancelTime          *string `gorm:"column:cancel_time;type:datetime;comment:取消时间" json:"cancel_time"`
 	CancelReason        string  `gorm:"column:cancel_reason;type:varchar(255);comment:取消原因" json:"cancel_reason"`
-	CreatedAt           string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	CreatedAt           string  `gorm:"column:created_at;type:datetime;index:idx_orders_community_status_created,priority:3;comment:创建时间" json:"created_at"`
 	UpdatedAt           string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 

@@ -1,14 +1,20 @@
 services:
   # ===== 基础设施 =====
+  # 口令一律经项目根目录 .env 注入（compose 自动读取，.env 不入 git），
+  # 缺失时直接报错拒绝启动，防止弱口令静默上线
+  # 微服务容器以非 root（UID 10001）运行：Linux 部署时宿主写目录需执行
+  # chown -R 10001:10001 bin/runtime bin/attachment（Docker Desktop 无需处理）
   mysql:
     image: mysql:8.0
     container_name: market-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: market123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: market
       TZ: Asia/Shanghai
     ports:
-      - "3306:3306"
+      # 仅绑定回环地址：3306 是数据库端口，暴露到 0.0.0.0 等同数据库对公网开放；
+      # 应用容器经 compose 内部网络访问，无需对外映射
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
@@ -22,26 +28,38 @@ services:
     container_name: market-redis
     environment:
       TZ: Asia/Shanghai
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD}
     ports:
-      - "6379:6379"
+      # 仅绑定回环地址：未授权 Redis 可被任意来源直连写入，属高危暴露
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\""]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # ===== 微服务 =====
+  # 每个微服务容器内置 gRPC 端口 TCP 健康检查（见 Dockerfile HEALTHCHECK），
+  # 下游依赖一律 service_healthy：上游容器等下游真正可服务后再启动
   user-service:
     build:
       context: .
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: user
+        # gRPC 监听端口：与 bin/config.docker.yaml 的 user_service.grpc_port 同源，
+        # 传入镜像供 HEALTHCHECK 探测正确端口
+        SERVICE_PORT: 50051
     container_name: market-user
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -58,9 +76,14 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: product
+        SERVICE_PORT: 50052
     container_name: market-product
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -80,9 +103,14 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: order
+        SERVICE_PORT: 50053
     container_name: market-order
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -99,14 +127,19 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: cart
+        SERVICE_PORT: 50054
     container_name: market-cart
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       redis:
         condition: service_healthy
       product-service:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
     command: >
@@ -118,14 +151,19 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: payment
+        SERVICE_PORT: 50055
     container_name: market-payment
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       mysql:
         condition: service_healthy
       order-service:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
     command: >
@@ -138,17 +176,21 @@ services:
     container_name: market-gateway
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:-}
     depends_on:
       user-service:
-        condition: service_started
+        condition: service_healthy
       product-service:
-        condition: service_started
+        condition: service_healthy
       order-service:
-        condition: service_started
+        condition: service_healthy
       cart-service:
-        condition: service_started
+        condition: service_healthy
       payment-service:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "18080:18080"
     volumes:

@@ -708,8 +708,11 @@ type UpdateOrderStatusReq struct {
 	// 发货（status=4）时写入的物流信息；其余状态流转忽略
 	ExpressCompany string `protobuf:"bytes,6,opt,name=express_company,json=expressCompany,proto3" json:"express_company,omitempty"`
 	ExpressNo      string `protobuf:"bytes,7,opt,name=express_no,json=expressNo,proto3" json:"express_no,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；
+	// 内部系统调用（支付回调等）传 0 跳过校验
+	CommunityId   int64 `protobuf:"varint,8,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateOrderStatusReq) Reset() {
@@ -789,6 +792,13 @@ func (x *UpdateOrderStatusReq) GetExpressNo() string {
 		return x.ExpressNo
 	}
 	return ""
+}
+
+func (x *UpdateOrderStatusReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
 }
 
 type OrderInfo struct {
@@ -1912,6 +1922,8 @@ type AdminCreateRefundReq struct {
 	// 运费退还策略为 user_decide 时是否退还运费
 	RefundFreight bool  `protobuf:"varint,5,opt,name=refund_freight,json=refundFreight,proto3" json:"refund_freight,omitempty"`
 	OperatorId    int64 `protobuf:"varint,6,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	// 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；内部调用传 0 跳过
+	CommunityId   int64 `protobuf:"varint,7,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1984,6 +1996,13 @@ func (x *AdminCreateRefundReq) GetRefundFreight() bool {
 func (x *AdminCreateRefundReq) GetOperatorId() int64 {
 	if x != nil {
 		return x.OperatorId
+	}
+	return 0
+}
+
+func (x *AdminCreateRefundReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
 	}
 	return 0
 }
@@ -2233,7 +2252,10 @@ type ApproveRefundReq struct {
 	Id         int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	OperatorId int64                  `protobuf:"varint,2,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
 	// 已废弃：支付单号一律以退款单服务端记录为准，请求传入值将被忽略（防越权）
-	PaymentNo     string `protobuf:"bytes,3,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
+	PaymentNo string `protobuf:"bytes,3,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
+	// 社区隔离强校验：管理端操作必传，服务端校验退款单归属订单的社区；
+	// 内部系统调用（调度器）传 0 跳过校验
+	CommunityId   int64 `protobuf:"varint,4,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2289,11 +2311,20 @@ func (x *ApproveRefundReq) GetPaymentNo() string {
 	return ""
 }
 
+func (x *ApproveRefundReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
 type RejectRefundReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	OperatorId    int64                  `protobuf:"varint,2,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
-	RejectReason  string                 `protobuf:"bytes,3,opt,name=reject_reason,json=rejectReason,proto3" json:"reject_reason,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Id           int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	OperatorId   int64                  `protobuf:"varint,2,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	RejectReason string                 `protobuf:"bytes,3,opt,name=reject_reason,json=rejectReason,proto3" json:"reject_reason,omitempty"`
+	// 社区隔离强校验：同 ApproveRefundReq.community_id
+	CommunityId   int64 `protobuf:"varint,4,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2349,11 +2380,20 @@ func (x *RejectRefundReq) GetRejectReason() string {
 	return ""
 }
 
+func (x *RejectRefundReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
+}
+
 // RetryRefundReq 重试退款请求（针对卡在退款中 status=4 的退款单）
 type RetryRefundReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	OperatorId    int64                  `protobuf:"varint,2,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Id         int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	OperatorId int64                  `protobuf:"varint,2,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	// 社区隔离强校验：同 ApproveRefundReq.community_id
+	CommunityId   int64 `protobuf:"varint,3,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2398,6 +2438,13 @@ func (x *RetryRefundReq) GetId() int64 {
 func (x *RetryRefundReq) GetOperatorId() int64 {
 	if x != nil {
 		return x.OperatorId
+	}
+	return 0
+}
+
+func (x *RetryRefundReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
 	}
 	return 0
 }
@@ -4978,7 +5025,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\x0eCancelOrderReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xe4\x01\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"\x87\x02\n" +
 	"\x14UpdateOrderStatusReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12#\n" +
@@ -4988,7 +5035,8 @@ const file_order_order_proto_rawDesc = "" +
 	"\x06remark\x18\x05 \x01(\tR\x06remark\x12'\n" +
 	"\x0fexpress_company\x18\x06 \x01(\tR\x0eexpressCompany\x12\x1d\n" +
 	"\n" +
-	"express_no\x18\a \x01(\tR\texpressNo\"\xca\b\n" +
+	"express_no\x18\a \x01(\tR\texpressNo\x12!\n" +
+	"\fcommunity_id\x18\b \x01(\x03R\vcommunityId\"\xca\b\n" +
 	"\tOrderInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x19\n" +
 	"\border_no\x18\x02 \x01(\tR\aorderNo\x12!\n" +
@@ -5111,7 +5159,7 @@ const file_order_order_proto_rawDesc = "" +
 	"operatorId\x12\x16\n" +
 	"\x06remark\x18\x05 \x01(\tR\x06remark\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\tR\tcreatedAt\"\xd7\x01\n" +
+	"created_at\x18\x06 \x01(\tR\tcreatedAt\"\xfa\x01\n" +
 	"\x14AdminCreateRefundReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x16\n" +
 	"\x06amount\x18\x02 \x01(\x01R\x06amount\x12\x16\n" +
@@ -5119,7 +5167,8 @@ const file_order_order_proto_rawDesc = "" +
 	"\x05items\x18\x04 \x03(\v2\x16.order.ApplyRefundItemR\x05items\x12%\n" +
 	"\x0erefund_freight\x18\x05 \x01(\bR\rrefundFreight\x12\x1f\n" +
 	"\voperator_id\x18\x06 \x01(\x03R\n" +
-	"operatorId\"\x7f\n" +
+	"operatorId\x12!\n" +
+	"\fcommunity_id\x18\a \x01(\x03R\vcommunityId\"\x7f\n" +
 	"\x0eListRefundsReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x122\n" +
@@ -5135,22 +5184,25 @@ const file_order_order_proto_rawDesc = "" +
 	"\x04list\x18\x01 \x03(\v2\x11.order.RefundInfoR\x04list\x12:\n" +
 	"\n" +
 	"pagination\x18\x02 \x01(\v2\x1a.common.PaginationResponseR\n" +
-	"pagination\"b\n" +
+	"pagination\"\x85\x01\n" +
 	"\x10ApproveRefundReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\voperator_id\x18\x02 \x01(\x03R\n" +
 	"operatorId\x12\x1d\n" +
 	"\n" +
-	"payment_no\x18\x03 \x01(\tR\tpaymentNo\"g\n" +
+	"payment_no\x18\x03 \x01(\tR\tpaymentNo\x12!\n" +
+	"\fcommunity_id\x18\x04 \x01(\x03R\vcommunityId\"\x8a\x01\n" +
 	"\x0fRejectRefundReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\voperator_id\x18\x02 \x01(\x03R\n" +
 	"operatorId\x12#\n" +
-	"\rreject_reason\x18\x03 \x01(\tR\frejectReason\"A\n" +
+	"\rreject_reason\x18\x03 \x01(\tR\frejectReason\x12!\n" +
+	"\fcommunity_id\x18\x04 \x01(\x03R\vcommunityId\"d\n" +
 	"\x0eRetryRefundReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\voperator_id\x18\x02 \x01(\x03R\n" +
-	"operatorId\"t\n" +
+	"operatorId\x12!\n" +
+	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\"t\n" +
 	"\x15GetOrderStatisticsReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x1d\n" +
 	"\n" +

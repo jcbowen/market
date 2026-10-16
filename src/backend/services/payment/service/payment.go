@@ -14,6 +14,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -250,6 +251,9 @@ func (s *PaymentService) HandleAlipayCallback(ctx context.Context, req *payment.
 // ProcessRefund 处理退款
 // 按 payment_no 找到对应支付单后创建退款记录，支持一笔支付单多次部分退款
 // 通过 refund_no 唯一索引保证幂等，重复提交时直接返回成功
+// 流程分两阶段：先在事务内（FOR UPDATE 锁支付单行）完成幂等判定、累计上限校验并落「待退款」流水，
+// 事务提交后再调用渠道退款，成功后将流水置「退款成功」——渠道调用不占用事务连接，
+// 渠道失败时流水置「退款失败」保留审计，重试由调用方以同一 refund_no 重新发起
 // 参数：
 //   - ctx: 上下文
 //   - req: 退款请求
@@ -261,28 +265,14 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 		return fmt.Errorf("退款参数错误")
 	}
 
-	// 幂等：已存在相同 refund_no 的退款记录则直接返回成功
-	var exists model.RefundPayment
-	if err := s.db.GetDb().WithContext(ctx).Where("refund_no = ?", req.RefundNo).First(&exists).Error; err == nil {
-		return nil
-	}
-
 	p, err := s.findRefundPayment(ctx, req.OrderId, req.PaymentNo)
 	if err != nil {
 		return err
 	}
 
-	// 现金类支付（货到付款=3 / 收银台现金=4）不经过第三方退款，直接记录退款流水
+	// 现金类支付（货到付款=3 / 收银台现金=4）不经过第三方退款，事务内直接落成功流水
 	if p.PayType == 3 || p.PayType == 4 {
 		return s.recordCashRefund(ctx, req, p)
-	}
-
-	refunded, err := s.getRefundedAmount(ctx, p.PaymentNo)
-	if err != nil {
-		return err
-	}
-	if refunded+req.Amount > p.Amount {
-		return fmt.Errorf("退款金额超过剩余可退金额")
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -296,42 +286,131 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 		UpdatedAt: now,
 	}
 
+	// 第一阶段：锁支付单行，完成幂等判定、累计校验并落「待退款」流水
+	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// FOR UPDATE 锁支付单行：串行化同一支付单的并发退款，保证累计校验不被绕过
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(p, "id = ?", p.ID).Error; err != nil {
+			return err
+		}
+
+		// 幂等判定：同 refund_no 已成功直接返回；上次失败允许清理后重新发起；
+		// 处理中(1)视为在途，拒绝重复提交（防渠道调用期间双重出款，需人工核实后在库中清理）
+		var exists model.RefundPayment
+		err := tx.Where("refund_no = ?", req.RefundNo).First(&exists).Error
+		switch {
+		case err == nil:
+			switch exists.Status {
+			case 2:
+				return nil
+			case 3:
+				// 上次渠道失败：清理失败流水后重新发起（审计留痕在调用方 refund_logs）
+				if err := tx.Delete(&exists).Error; err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("退款处理中，请勿重复提交；如长时间未完成请人工核实渠道结果")
+			}
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+
+		// 累计上限校验：含待退款(1)与成功(2)流水（保守口径，失败流水不占用额度）
+		var refunded float64
+		if err := tx.Model(&model.RefundPayment{}).
+			Select("COALESCE(SUM(amount), 0)").
+			Where("payment_no = ? AND status IN ?", p.PaymentNo, []int32{1, 2}).
+			Scan(&refunded).Error; err != nil {
+			return err
+		}
+		// 金额为 float64（decimal 化立项前），累计比较带 1e-6 容差防浮点误差误判
+		if refunded+req.Amount > p.Amount+1e-6 {
+			return fmt.Errorf("退款金额超过剩余可退金额")
+		}
+
+		return tx.Create(refund).Error
+	}); err != nil {
+		return err
+	}
+
+	// 第二阶段：渠道调用移出事务（事务内调外部接口会长时间占用连接，且回滚无法撤回已发出的渠道请求）
+	var refundErr error
+	if p.PayType == 1 {
+		refundErr = s.wechatRefund(ctx, p, refund)
+	} else {
+		refundErr = s.alipayRefund(ctx, p, refund)
+	}
+	if refundErr != nil {
+		// 渠道失败：流水置「退款失败」保留审计，重试时由幂等清理逻辑放行
+		failTime := time.Now().Format("2006-01-02 15:04:05")
+		if uerr := s.db.GetDb().WithContext(ctx).Model(&model.RefundPayment{}).
+			Where("id = ? AND status = 1", refund.ID).
+			Updates(map[string]interface{}{"status": int32(3), "updated_at": failTime}).Error; uerr != nil {
+			log.Printf("[ProcessRefund] 退款流水置失败状态异常 refund_no=%s: %v", refund.RefundNo, uerr)
+		}
+		return refundErr
+	}
+
+	// 第三阶段：渠道成功，锁定支付单行后确认流水成功并按累计判断支付单是否全额退款
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(refund).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(p, "id = ?", p.ID).Error; err != nil {
 			return err
 		}
 
-		var refundErr error
-		if p.PayType == 1 {
-			refundErr = s.wechatRefund(ctx, p, refund)
-		} else {
-			refundErr = s.alipayRefund(ctx, p, refund)
-		}
-		if refundErr != nil {
-			return refundErr
-		}
-
-		refund.Status = 2
 		refundTime := time.Now().Format("2006-01-02 15:04:05")
-		refund.RefundTime = &refundTime
-		refund.UpdatedAt = refundTime
-		if err := tx.Save(refund).Error; err != nil {
-			return err
+		res := tx.Model(&model.RefundPayment{}).Where("id = ? AND status = 1", refund.ID).Updates(map[string]interface{}{
+			"status":         int32(2),
+			"transaction_id": refund.TransactionID,
+			"refund_time":    refundTime,
+			"updated_at":     refundTime,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return fmt.Errorf("退款流水状态异常，请人工核查 refund_no=%s", refund.RefundNo)
 		}
 
 		// 累计退款金额等于支付金额时才标记支付单为已退款
-		if totalRefunded, err := s.getRefundedAmountTx(tx, p.PaymentNo); err != nil {
+		var totalRefunded float64
+		if err := tx.Model(&model.RefundPayment{}).
+			Select("COALESCE(SUM(amount), 0)").
+			Where("payment_no = ? AND status = ?", p.PaymentNo, 2).
+			Scan(&totalRefunded).Error; err != nil {
 			return err
-		} else if totalRefunded >= p.Amount {
-			p.Status = 4
-			p.UpdatedAt = refundTime
-			if err := tx.Save(p).Error; err != nil {
-				return err
-			}
 		}
-
+		if totalRefunded >= p.Amount-1e-6 {
+			// 条件更新：仅支付成功(2)状态可置已退款
+			return tx.Model(&model.Payment{}).Where("id = ? AND status = 2", p.ID).
+				Updates(map[string]interface{}{"status": int32(4), "updated_at": refundTime}).Error
+		}
 		return nil
 	})
+}
+
+// ClosePayments 关闭订单的全部待支付支付单（status 1→5）
+// 订单取消/超时取消后由 order 服务调用：支付单置已关闭后，迟到的支付回调
+// 会被 handlePaySuccess 的终态兜底忽略，避免已取消订单被误置为已支付
+// 参数：
+//   - ctx: 上下文
+//   - req: 关闭请求（order_id）
+//
+// 返回值：
+//   - error: 错误信息
+func (s *PaymentService) ClosePayments(ctx context.Context, req *payment.ClosePaymentsReq) error {
+	if req.OrderId <= 0 {
+		return fmt.Errorf("参数错误")
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	res := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
+		Where("order_id = ? AND status = 1", req.OrderId).
+		Updates(map[string]interface{}{"status": int32(5), "updated_at": now})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("[ClosePayments] 订单 %d 已关闭 %d 笔待支付支付单", req.OrderId, res.RowsAffected)
+	}
+	return nil
 }
 
 // findRefundPayment 查找退款对应的原支付单
@@ -360,7 +439,7 @@ func (s *PaymentService) findRefundPayment(ctx context.Context, orderID int64, p
 }
 
 // recordCashRefund 记录货到付款退款
-// 现金/货到付款不调用第三方支付，仅记录退款流水
+// 现金/货到付款不调用第三方支付，事务内锁支付单行后完成幂等判定与累计上限校验，直接落成功流水
 // 参数：
 //   - ctx: 上下文
 //   - req: 退款请求
@@ -381,44 +460,43 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
-	return s.db.GetDb().WithContext(ctx).Create(refund).Error
-}
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// FOR UPDATE 锁支付单行：串行化同一支付单的并发现金退款，保证累计校验不被绕过
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(p, "id = ?", p.ID).Error; err != nil {
+			return err
+		}
 
-// getRefundedAmount 统计支付单已成功退款的累计金额
-// 参数：
-//   - ctx: 上下文
-//   - paymentNo: 支付单号
-//
-// 返回值：
-//   - float64: 累计退款金额
-//   - error: 错误信息
-func (s *PaymentService) getRefundedAmount(ctx context.Context, paymentNo string) (float64, error) {
-	var total float64
-	err := s.db.GetDb().WithContext(ctx).Model(&model.RefundPayment{}).
-		Select("COALESCE(SUM(amount), 0)").
-		Where("payment_no = ? AND status = ?", paymentNo, 2).
-		Scan(&total).Error
-	return total, err
-}
+		// 幂等：同 refund_no 已存在（现金退款直接成功）时直接返回成功
+		var exists model.RefundPayment
+		err := tx.Where("refund_no = ?", req.RefundNo).First(&exists).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 
-// getRefundedAmountTx 在事务中统计支付单已成功退款的累计金额
-// 参数：
-//   - tx: 数据库事务
-//   - paymentNo: 支付单号
-//
-// 返回值：
-//   - float64: 累计退款金额
-//   - error: 错误信息
-func (s *PaymentService) getRefundedAmountTx(tx *gorm.DB, paymentNo string) (float64, error) {
-	var total float64
-	err := tx.Model(&model.RefundPayment{}).
-		Select("COALESCE(SUM(amount), 0)").
-		Where("payment_no = ? AND status = ?", paymentNo, 2).
-		Scan(&total).Error
-	return total, err
+		// 累计上限校验：含待退款(1)与成功(2)流水，比较带 1e-6 容差防浮点误差
+		var refunded float64
+		if err := tx.Model(&model.RefundPayment{}).
+			Select("COALESCE(SUM(amount), 0)").
+			Where("payment_no = ? AND status IN ?", p.PaymentNo, []int32{1, 2}).
+			Scan(&refunded).Error; err != nil {
+			return err
+		}
+		if refunded+req.Amount > p.Amount+1e-6 {
+			return fmt.Errorf("退款金额超过剩余可退金额")
+		}
+		return tx.Create(refund).Error
+	})
 }
 
 // handlePaySuccess 统一处理支付成功逻辑
+// 三重防护（微信/支付宝回调通用）：
+//  1. 金额强制比对：回调金额与应付金额统一换算为分后比对，不一致拒绝确认（防伪造回调少付）
+//  2. 条件更新幂等：仅 status=1（待支付）可流转为已支付，重复/并发回调安全
+//  3. 终态兜底：非待支付状态的回调直接忽略并记日志
+//
 // 参数：
 //   - ctx: 上下文
 //   - params: 解析后的回调参数
@@ -429,6 +507,10 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 	if params.PaymentNo == "" || params.TransactionID == "" {
 		return fmt.Errorf("回调参数缺失")
 	}
+	// 渠道成功回调必带金额；缺失视为解析异常，拒绝确认
+	if params.Amount <= 0 {
+		return fmt.Errorf("回调金额缺失或非法，拒绝确认支付")
+	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -436,16 +518,32 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 		if err := tx.Where("payment_no = ?", params.PaymentNo).First(&p).Error; err != nil {
 			return err
 		}
+		// 终态兜底：已支付/已关闭等状态的回调直接忽略
 		if p.Status != 1 {
+			log.Printf("支付回调忽略非待支付单: payment_no=%s status=%d", p.PaymentNo, p.Status)
 			return nil
 		}
-
-		p.Status = 2
-		p.TransactionID = params.TransactionID
-		p.PayTime = &now
-		p.UpdatedAt = now
-		if err := tx.Save(&p).Error; err != nil {
-			return err
+		// 金额强制比对（统一换算为分，规避浮点精度误差）
+		if yuanToFen(params.Amount) != yuanToFen(p.Amount) {
+			log.Printf("支付回调金额不一致，拒绝确认: payment_no=%s 应付=%.2f 回调=%.2f",
+				p.PaymentNo, p.Amount, params.Amount)
+			return fmt.Errorf("回调金额与应付金额不一致")
+		}
+		// 条件更新保证幂等：仅 status=1 时流转成功，并发回调只有一笔生效
+		result := tx.Model(&model.Payment{}).
+			Where("payment_no = ? AND status = ?", p.PaymentNo, 1).
+			Updates(map[string]interface{}{
+				"status":         2,
+				"transaction_id": params.TransactionID,
+				"pay_time":       now,
+				"updated_at":     now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			// 并发下另一笔回调已完成流转，幂等返回
+			return nil
 		}
 
 		_, err := grpcclient.OrderClient.UpdateOrderStatus(ctx, &order.UpdateOrderStatusReq{

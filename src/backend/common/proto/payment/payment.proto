@@ -15,6 +15,8 @@ service PaymentService {
   rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
   rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
   rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
+  // 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
+  rpc ClosePayments(ClosePaymentsReq) returns (common.CommonResponse);
 }
 
 message CreatePaymentReq {
@@ -63,6 +65,10 @@ message ProcessRefundReq {
   string refund_no = 2;
   double amount = 3;
   string payment_no = 4;
+}
+
+message ClosePaymentsReq {
+  int64 order_id = 1;
 }
 
 message GetPayConfigReq {}

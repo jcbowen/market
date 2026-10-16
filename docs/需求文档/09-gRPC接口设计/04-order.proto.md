@@ -15,9 +15,13 @@ service OrderService {
   rpc ListOrders(ListOrdersReq) returns (ListOrdersResp);
   rpc CancelOrder(CancelOrderReq) returns (common.CommonResponse);
   rpc UpdateOrderStatus(UpdateOrderStatusReq) returns (common.CommonResponse);
+  // 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
+  rpc VerifyPickup(VerifyPickupReq) returns (VerifyPickupResp);
 
   // 退款
   rpc ApplyRefund(ApplyRefundReq) returns (RefundInfo);
+  // 后台代客退款：发起即执行（免审核），items 为空表示整单退
+  rpc AdminCreateRefund(AdminCreateRefundReq) returns (RefundInfo);
   rpc ListRefunds(ListRefundsReq) returns (ListRefundsResp);
   rpc ApproveRefund(ApproveRefundReq) returns (common.CommonResponse);
   rpc RejectRefund(RejectRefundReq) returns (common.CommonResponse);
@@ -31,11 +35,45 @@ service OrderService {
   rpc GetSalesStatistics(GetSalesStatisticsReq) returns (SalesStatisticsResp);
   rpc GetProductRankings(GetProductRankingsReq) returns (ProductRankingsResp);
   rpc GetRevenueReport(GetRevenueReportReq) returns (RevenueReportResp);
+  // 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
+  rpc GetUserFrequentProducts(GetUserFrequentProductsReq) returns (GetUserFrequentProductsResp);
+  // 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
+  rpc PreviewFreeShipping(PreviewFreeShippingReq) returns (PreviewFreeShippingResp);
+  // 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
+  rpc CreatePosHeldOrder(CreatePosHeldOrderReq) returns (PosHeldOrderInfo);
+  rpc ListPosHeldOrders(ListPosHeldOrdersReq) returns (ListPosHeldOrdersResp);
+  rpc DeletePosHeldOrder(DeletePosHeldOrderReq) returns (common.CommonResponse);
+
+  // --- 收银台交班体系 ---
+  // 开工：创建进行中班次（同操作员同社区已有进行中班次时报错）
+  rpc StartShift(StartShiftReq) returns (PosShiftInfo);
+  // 当前进行中班次（无则返回 statistics 为空的 PosShiftInfo，id=0 表示无进行中班次），含实时统计
+  rpc GetCurrentShift(GetCurrentShiftReq) returns (PosShiftInfo);
+  // 交班：生成统计快照 → 置已结束 → 返回快照
+  rpc EndShift(EndShiftReq) returns (PosShiftInfo);
+  // 交班记录分页（operator_id=0 本店全部班次，>0 仅该操作员）
+  rpc ListShifts(ListShiftsReq) returns (ListShiftsResp);
+
+  // --- 应用偏好（应用页「常用」，社区级单行） ---
+  rpc GetAppPreferences(GetAppPreferencesReq) returns (AppPreferencesInfo);
+  rpc SaveAppPreferences(SaveAppPreferencesReq) returns (common.CommonResponse);
+
+  // --- 履约工作台（B） ---
+  // 后台指派配送员（delivery_user_id=0 表示取消指派）
+  rpc AssignDelivery(AssignDeliveryReq) returns (common.CommonResponse);
+  // 工作台查单：送货单按指派人过滤，自提单为本社区全部待核销/已核销
+  rpc ListFulfillmentOrders(ListFulfillmentOrdersReq) returns (ListFulfillmentOrdersResp);
+  // 开始配送：status 2/3 → 4（履约人员操作，不经后台 ShipOrder 的物流单号校验）
+  rpc StartDelivery(StartDeliveryReq) returns (common.CommonResponse);
+  // 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
+  rpc CompleteDelivery(CompleteDeliveryReq) returns (common.CommonResponse);
 }
 
 message OrderItem {
   int64 sku_id = 1;
   int32 quantity = 2;
+  // 收银台单品改价：>0 时以该价成交（仅对当前订单生效，不改商品档案价）；0=按服务端实时价
+  double price = 3;
 }
 
 message CreateOrderReq {
@@ -48,6 +86,45 @@ message CreateOrderReq {
   string remark = 6;
   int64 coupon_id = 7;
   repeated OrderItem items = 8;
+  // 订单来源：0/1=C端用户 2=后台收银台代客（决策点⑨）
+  int32 source = 9;
+  // 经手人（收银员/管理员），source=2 时由网关填写
+  int64 operator_id = 10;
+  string operator_name = 11;
+  // 直填联系人信息：收银台代客下单无 address_id 时使用（address_id>0 仍以地址簿为准）
+  string contact_name = 12;
+  string contact_phone = 13;
+  string contact_address = 14;
+  // 手动优惠总额（收银台抹零/整单改价折算），实付 = max(0, 应付 - manual_discount)；超应付拒绝
+  double manual_discount = 15;
+  // 收银班次 ID（source=2 收银单必填，下单时由网关校验进行中班次后传入；0=非收银单）
+  int64 shift_id = 16;
+}
+
+// --- 免配送费试算 ---
+message PreviewFreeShippingItem {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+}
+
+message PreviewFreeShippingReq {
+  int64 community_id = 1;
+  repeated PreviewFreeShippingItem items = 2;
+}
+
+message PreviewFreeShippingResp {
+  // 是否已满足免配送费（参与商品额 >= 门槛）
+  bool free_shipping = 1;
+  string activity_name = 2;
+  double threshold = 3;
+  // 参与免配送费的商品金额合计
+  double eligible_amount = 4;
+  // 距门槛差额（已满足时为 0）
+  double remain_amount = 5;
+  // 被排除商品/分类的展示名清单（点击展开提示用）
+  repeated string excluded_names = 6;
+  // 基础配送费（社区配置值；free_shipping=true 时订单实际配送费为 0）
+  double delivery_fee = 7;
 }
 
 message GetOrderReq {
@@ -70,6 +147,10 @@ message ListOrdersReq {
   string receiver_name = 8;
   // 收货人电话模糊匹配
   string receiver_phone = 9;
+  // 订单来源筛选：1=C端 2=收银台（0=全部）
+  int32 source = 10;
+  // 取货码精确查询（收银台核销 Tab 扫码/输码查单）
+  string pickup_code = 11;
 }
 
 message CancelOrderReq {
@@ -87,6 +168,9 @@ message UpdateOrderStatusReq {
   // 发货（status=4）时写入的物流信息；其余状态流转忽略
   string express_company = 6;
   string express_no = 7;
+  // 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；
+  // 内部系统调用（支付回调等）传 0 跳过校验
+  int64 community_id = 8;
 }
 
 message OrderInfo {
@@ -114,6 +198,23 @@ message OrderInfo {
   // 物流信息（发货时写入，独立字段，不再拼接进 remark）
   string express_company = 22;
   string express_no = 23;
+  // 自提核销码（仅自提单生成，配送单为空）
+  string pickup_code = 24;
+  // 订单来源：1=C端用户自下单 2=后台收银台代客下单（决策点⑨）
+  int32 source = 25;
+  // 经手人（收银员/管理员）ID 与姓名快照；C 端订单为 0/空
+  int64 operator_id = 26;
+  string operator_name = 27;
+  // --- 履约工作台（B） ---
+  // 指派的履约人员（0=未指派）与姓名快照
+  int64 delivery_user_id = 28;
+  string delivery_user_name = 29;
+  // 送达签收凭证照片 URL（决策点②拍照留证）
+  repeated string delivery_proof_images = 30;
+  // 手动优惠总额（收银台抹零/整单改价折算痕迹）
+  double manual_discount = 31;
+  // 收银班次 ID（0=非收银单）
+  int64 shift_id = 32;
 }
 
 message OrderItemInfo {
@@ -126,6 +227,9 @@ message OrderItemInfo {
   double price = 7;
   int32 quantity = 8;
   double total_price = 9;
+  // 收银台改价痕迹：original_price=服务端实时单价快照；price_modified=true 表示行单价被手动修改
+  double original_price = 10;
+  bool price_modified = 11;
 }
 
 message OrderStatusLog {
@@ -211,6 +315,21 @@ message RefundLogInfo {
   string created_at = 6;
 }
 
+// AdminCreateRefundReq 后台代客退款请求（发起即执行，免审核）
+// 金额与运费口径与 C 端申请一致：服务端汇算为准，amount 仅允许调低
+message AdminCreateRefundReq {
+  int64 order_id = 1;
+  double amount = 2;
+  string reason = 3;
+  // 退款商品明细；为空表示整单退
+  repeated ApplyRefundItem items = 4;
+  // 运费退还策略为 user_decide 时是否退还运费
+  bool refund_freight = 5;
+  int64 operator_id = 6;
+  // 社区隔离强校验：管理端操作必传，服务端校验订单归属社区；内部调用传 0 跳过
+  int64 community_id = 7;
+}
+
 message ListRefundsReq {
   int64 community_id = 1;
   int32 status = 2;
@@ -241,18 +360,25 @@ message ApproveRefundReq {
   int64 operator_id = 2;
   // 已废弃：支付单号一律以退款单服务端记录为准，请求传入值将被忽略（防越权）
   string payment_no = 3;
+  // 社区隔离强校验：管理端操作必传，服务端校验退款单归属订单的社区；
+  // 内部系统调用（调度器）传 0 跳过校验
+  int64 community_id = 4;
 }
 
 message RejectRefundReq {
   int64 id = 1;
   int64 operator_id = 2;
   string reject_reason = 3;
+  // 社区隔离强校验：同 ApproveRefundReq.community_id
+  int64 community_id = 4;
 }
 
 // RetryRefundReq 重试退款请求（针对卡在退款中 status=4 的退款单）
 message RetryRefundReq {
   int64 id = 1;
   int64 operator_id = 2;
+  // 社区隔离强校验：同 ApproveRefundReq.community_id
+  int64 community_id = 3;
 }
 
 message GetOrderStatisticsReq {
@@ -318,9 +444,261 @@ message RevenueReportItem {
 message RevenueReportResp {
   repeated RevenueReportItem list = 1;
 }
+
+// --- 自提核销 ---
+message VerifyPickupReq {
+  int64 order_id = 1;
+  // 顾客出示的取货码（数字码）
+  string pickup_code = 2;
+  // 操作者类型：admin（后台兜底）/ staff（履约人员，B 工作台）
+  string operator_type = 3;
+  int64 operator_id = 4;
+  // 操作者社区语境（>0 时校验订单归属社区，跨社区核销直接拒绝；0=跳过校验）
+  int64 community_id = 5;
+}
+
+message VerifyPickupResp {
+  int64 order_id = 1;
+  int32 status = 2;
+}
+
+// --- 用户常买商品 ---
+message GetUserFrequentProductsReq {
+  int64 user_id = 1;
+  // 返回条数，默认 10
+  int32 limit = 2;
+}
+
+message FrequentProductItem {
+  int64 product_id = 1;
+  string product_name = 2;
+  // 商品图片快照（order_items.product_image，取该用户购买记录中的一张）
+  string product_image = 3;
+  // 该用户买该商品最常买的 SKU（用于一键加购）
+  int64 sku_id = 4;
+  // 购买次数（有效订单数，口径=已支付及之后，排除待支付/取消/退款）
+  int32 purchase_count = 5;
+  // 累计购买件数
+  int32 total_quantity = 6;
+}
+
+message GetUserFrequentProductsResp {
+  repeated FrequentProductItem list = 1;
+}
+
+// --- 收银台挂单（未成单草稿，后端暂存；结账成功或放弃后删除） ---
+message PosHeldOrderItem {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  // 商品/规格快照（恢复挂单时回填收银台展示；结账时以服务端实时价格为准）
+  string product_name = 3;
+  string spec_name = 4;
+  string product_image = 5;
+  double price = 6;
+}
+
+message CreatePosHeldOrderReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+  string operator_name = 3;
+  // 挂单时选定的会员（0=散客）
+  int64 user_id = 4;
+  string user_name = 5;
+  repeated PosHeldOrderItem items = 6;
+  string remark = 7;
+}
+
+message PosHeldOrderInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 operator_id = 3;
+  string operator_name = 4;
+  int64 user_id = 5;
+  string user_name = 6;
+  repeated PosHeldOrderItem items = 7;
+  int32 item_count = 8;
+  double total_amount = 9;
+  string remark = 10;
+  string created_at = 11;
+}
+
+message ListPosHeldOrdersReq {
+  int64 community_id = 1;
+  // 0=本社区全部挂单；>0=仅该收银员的挂单
+  int64 operator_id = 2;
+}
+
+message ListPosHeldOrdersResp {
+  repeated PosHeldOrderInfo list = 1;
+}
+
+message DeletePosHeldOrderReq {
+  int64 id = 1;
+  // 社区语境（>0 时校验挂单归属，防跨社区删除）
+  int64 community_id = 2;
+}
+
+// --- 履约工作台（B） ---
+
+// AssignDeliveryReq 后台指派配送请求
+message AssignDeliveryReq {
+  int64 order_id = 1;
+  // 指派的履约人员 user_id；0=取消指派
+  int64 delivery_user_id = 2;
+  // 履约人员姓名快照（列表/详情回显，gateway 填写）
+  string delivery_user_name = 3;
+  // 操作者社区语境（>0 时校验订单归属社区）
+  int64 community_id = 4;
+  string operator_type = 5;
+  int64 operator_id = 6;
+}
+
+// ListFulfillmentOrdersReq 工作台查单请求
+message ListFulfillmentOrdersReq {
+  // 单类型：1=自提核销 2=送货上门
+  int32 order_type = 1;
+  int64 community_id = 2;
+  // 送货单按指派履约人员过滤（自提单忽略此字段，本社区全部可见可核销）
+  int64 delivery_user_id = 3;
+  // 状态组：0=进行中（待处理 2/3 + 配送中 4） 5=已完成/已核销（status=5）
+  int32 status_group = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListFulfillmentOrdersResp {
+  repeated OrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// StartDeliveryReq 开始配送请求（status 2/3 → 4）
+message StartDeliveryReq {
+  int64 order_id = 1;
+  // 操作的履约人员（须与订单指派人一致）
+  int64 delivery_user_id = 2;
+  int64 community_id = 3;
+  string operator_type = 4;
+  int64 operator_id = 5;
+}
+
+// CompleteDeliveryReq 送达完成请求（status 4 → 5，强制拍照留证）
+message CompleteDeliveryReq {
+  int64 order_id = 1;
+  int64 delivery_user_id = 2;
+  int64 community_id = 3;
+  string operator_type = 4;
+  int64 operator_id = 5;
+  // 签收凭证照片 URL（1~N 张，服务端强制非空，决策点②）
+  repeated string proof_images = 6;
+}
+
+// --- 收银台交班体系 ---
+
+// StartShiftReq 开工请求：创建进行中班次
+message StartShiftReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+  string operator_name = 3;
+  string note = 4;
+}
+
+// GetCurrentShiftReq 当前进行中班次查询（operator_id>0 限定该操作员）
+message GetCurrentShiftReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+}
+
+// EndShiftReq 交班请求：生成统计快照 → 置已结束
+message EndShiftReq {
+  int64 community_id = 1;
+  int64 operator_id = 2;
+  string note = 3;
+}
+
+// ListShiftsReq 交班记录分页
+message ListShiftsReq {
+  int64 community_id = 1;
+  // 0=本店全部班次（有 order:view 权限时）；>0=仅该操作员
+  int64 operator_id = 2;
+  common.Pagination pagination = 3;
+  // 开班时间下限（YYYY-MM-DD HH:MM:SS，空=不过滤），交班记录近7天/近30天筛选
+  string start_time = 4;
+}
+
+// PosShiftStatItem 班次统计分组项（按支付方式）
+message PosShiftStatItem {
+  // 支付方式（1微信 2支付宝 4现金，后续付款码 5/6 自动纳入）
+  int32 pay_type = 1;
+  double amount = 2;
+  int32 order_count = 3;
+}
+
+// PosShiftStatistics 班次统计（收款/退款按支付方式分组）
+// 进行中班次为实时计算，已结束班次为交班时的快照
+message PosShiftStatistics {
+  // 收款金额按支付方式分组
+  repeated PosShiftStatItem income = 1;
+  // 退款金额按支付方式分组（按订单归属班次口径，关联订单支付方式）
+  repeated PosShiftStatItem refund = 2;
+  // 收款合计
+  double total_income = 3;
+  // 退款合计
+  double total_refund = 4;
+  // 现金合计（现金收款 - 现金退款，钱箱应交金额）
+  double cash_total = 5;
+  // 班内有效订单数（排除待支付/已取消）
+  int32 order_count = 6;
+}
+
+// PosShiftInfo 班次信息
+message PosShiftInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 operator_id = 3;
+  string operator_name = 4;
+  string start_time = 5;
+  // 进行中为空
+  string end_time = 6;
+  // 1进行中 2已结束
+  int32 status = 7;
+  string note = 8;
+  // 统计（无班次时整体缺省）
+  PosShiftStatistics statistics = 9;
+  string created_at = 10;
+}
+
+// ListShiftsResp 交班记录分页响应
+message ListShiftsResp {
+  repeated PosShiftInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// --- 应用偏好（应用页「常用」，社区级单行） ---
+
+message GetAppPreferencesReq {
+  int64 community_id = 1;
+}
+
+message AppPreferencesInfo {
+  // 常用应用 key 列表（有序，前端按此置顶）
+  repeated string app_keys = 1;
+}
+
+message SaveAppPreferencesReq {
+  int64 community_id = 1;
+  // 全量保存（覆盖式）
+  repeated string app_keys = 2;
+}
 ```
 
 **取消语义与并发约束（重要）：**
 - 目标状态 `6`（取消）不走通用状态机：`UpdateOrderStatus` 收到 `status=6` 时进入独立取消分支——校验当前状态为 1（待支付）、条件更新状态、写 `cancel_reason/cancel_time` 并逐行调用 product-service `ReleaseStock` 回补库存。后台取消复用该分支（`operator_type=admin`），C 端 `CancelOrder` 有额外归属校验。
 - `UpdateOrderStatus` 全部状态更新均按 `WHERE status = fromStatus` 条件执行，`RowsAffected==0` 时返回 `FailedPrecondition`（订单状态已变更），避免多端并发后写覆盖前写。
 - 发货（`status=4`）时将 `express_company/express_no` 写入独立字段。
+- 订单号冲突重试：`CreateOrder` 生成订单号遇唯一约束冲突时自动换号重试，避免极小概率的号段碰撞导致下单失败。
+- 取消/超时关单后同步调用 payment 服务 `ClosePayments` 关闭待支付支付单（`status=5 已关闭`），防迟到回调误置已支付。
+
+**退款社区隔离强校验：** `ApproveRefund`/`RejectRefund`/`RetryRefund`（出款链路）与 `AdminCreateRefund` 的 `community_id` 由网关从当前社区语境注入，order 服务端校验退款单归属订单的社区，跨社区操作直接拒绝；调度器等内部系统调用传 0 跳过校验。退款申请在事务内先锁订单行（FOR UPDATE）再查 pending，串行化同订单重复申请。
+
+**收银台（POS）语义：** `CreateOrder` 支持收银台代客下单（`source=2`，`delivery_type=3` 到店即买即走）：单品改价走 `items[].price`（服务端快照原价到 `order_items.original_price/price_modified`）；整单优惠走 `manual_discount`（实付 = max(0, 应付 − manual_discount)，超应付拒绝）；收银单必须携带进行中班次 `shift_id`。挂单三 RPC（创建/列表/删除）仅暂存草稿，不生成订单、不占库存，删除按社区隔离。交班四 RPC（开工/当前/交班/记录）围绕 pos_shifts 表：同操作员同社区同时仅一条进行中班次；交班时冻结统计快照（收款 JOIN payments 限 `status=2`、退款按订单归属班次、现金合计仅取 pay_type=4）。
+
+**履约工作台语义：** `AssignDelivery` 仅配送单 status 2/3 可指派（0=取消指派，服务端校验目标用户履约身份与社区归属）；`StartDelivery`/`CompleteDelivery` 由履约人员操作，须与订单指派人一致；`CompleteDelivery` 强制携带签收照片（1~N 张）；`VerifyPickup` 后台兜底核销与履约核销共用同一校验（取货码匹配 + 社区归属 + 状态检查，重复核销拒绝）。

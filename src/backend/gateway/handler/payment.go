@@ -247,12 +247,28 @@ func (h *PaymentHandler) PaymentChannels(c *gin.Context) {
 }
 
 // GetPayment 根据订单 ID 查询支付单
+// 先校验订单归属当前用户，防止越权查询他人支付单（含金额、状态等敏感信息）
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) GetPayment(c *gin.Context) {
 	orderID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || orderID <= 0 {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	// 订单归属校验：GetOrderReq 携带 UserId 由服务端过滤，非本人订单视为不存在
+	uc := appcontext.GetUserContext(c)
+	orderResp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{
+		Id:     orderID,
+		UserId: uc.UserID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	if orderResp.Order == nil || orderResp.Order.Id == 0 {
+		response.Error(c, errcode.NotFound, "订单不存在")
 		return
 	}
 
@@ -293,31 +309,4 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 		return
 	}
 	c.String(http.StatusOK, "<xml><return_code><![CDATA[SUCCESS]]></return_code></xml>")
-}
-
-// AlipayCallback 支付宝支付回调
-// 读取 form/map 调用 payment.HandleAlipayCallback
-// 参数：
-//   - c: gin 上下文
-func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
-	if err := c.Request.ParseForm(); err != nil {
-		response.Error(c, errcode.ParamError)
-		return
-	}
-
-	params := make(map[string]string, len(c.Request.PostForm))
-	for k, v := range c.Request.PostForm {
-		if len(v) > 0 {
-			params[k] = v[0]
-		}
-	}
-
-	_, err := h.paymentClient.HandleAlipayCallback(c.Request.Context(), &payment.AlipayCallbackReq{
-		Params: params,
-	})
-	if err != nil {
-		response.Error(c, errcode.InternalServerError)
-		return
-	}
-	response.Success(c, gin.H{"result": "success"})
 }

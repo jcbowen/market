@@ -17,9 +17,9 @@ type Product struct {
 	Images           string  `gorm:"column:images;type:json;comment:商品图片 JSON 数组" json:"images"`
 	Unit             string  `gorm:"column:unit;type:varchar(20);comment:单位（件/斤/瓶/箱）" json:"unit"`
 	IsMultiSpec      bool    `gorm:"column:is_multi_spec;type:tinyint(1);default:0;comment:是否多规格，默认0" json:"is_multi_spec"`
-	MinPrice         float64 `gorm:"column:min_price;type:decimal(10,2);default:0;comment:价格区间下限(汇总)" json:"min_price"`
-	MaxPrice         float64 `gorm:"column:max_price;type:decimal(10,2);default:0;comment:价格区间上限(汇总)" json:"max_price"`
-	MinOriginalPrice float64 `gorm:"column:min_original_price;type:decimal(10,2);default:0;comment:划线价(汇总，最低价SKU的划线价，0 不展示)" json:"min_original_price"`
+	MinPrice         float64 `gorm:"column:min_price;type:decimal(10,2);default:0.00;comment:价格区间下限(汇总)" json:"min_price"`
+	MaxPrice         float64 `gorm:"column:max_price;type:decimal(10,2);default:0.00;comment:价格区间上限(汇总)" json:"max_price"`
+	MinOriginalPrice float64 `gorm:"column:min_original_price;type:decimal(10,2);default:0.00;comment:划线价(汇总，最低价SKU的划线价，0 不展示)" json:"min_original_price"`
 	ShowSales        bool    `gorm:"column:show_sales;type:tinyint(1);comment:C端是否显示销量" json:"show_sales"`
 	VirtualSales     int32   `gorm:"column:virtual_sales;type:int;default:0;comment:虚拟销量（展示口径=真实销量+虚拟销量）" json:"virtual_sales"`
 	Stock            int32   `gorm:"column:stock;type:int;default:0;comment:汇总库存(所有SKU之和)" json:"stock"`

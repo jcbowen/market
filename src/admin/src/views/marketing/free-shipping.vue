@@ -83,11 +83,15 @@ const columns: DataTableColumns<FreeShipping> = [
 
 async function loadData() {
   loading.value = true
-  const res = await getFreeShippingList({ page: pagination.value.page, page_size: pagination.value.pageSize })
-  loading.value = false
-  if (res.data.code === 0) {
-    list.value = res.data.data.list
-    pagination.value.itemCount = res.data.data.total
+  try {
+    const res = await getFreeShippingList({ page: pagination.value.page, page_size: pagination.value.pageSize })
+    if (res.data.code === 0) {
+      list.value = res.data.data.list
+      pagination.value.itemCount = res.data.data.total
+    }
+  } finally {
+    // 请求异常时也必须关闭 loading，避免页面永久转圈
+    loading.value = false
   }
 }
 
