@@ -176,9 +176,9 @@ test.describe.serial('员工管理', () => {
 });
 
 test.describe.serial('越权与 403', () => {
-  // 已探针确认（2026-10-16）：低权员工（仅 product:view）可访问任意管理端接口且 HTTP 200，
-  // RequirePermission 接口级拦截对非超管未生效 —— 后端待修复，修复后改回 expect 403
-  test.fixme('低权限员工访问无权限接口返回 403（后端 RBAC 接口拦截待修复）', async ({ request }) => {
+  // 网关 response.Error 恒返回 HTTP 200 + 业务码，权限拒绝表达为 code=11005（NoPermission）
+  // 缺陷②已复验（2026-10-16）：RequirePermission 按（管理员, 当前社区）实时解析权限并拦截
+  test('低权限员工访问无权限接口返回 11005（RBAC 接口拦截）', async ({ playwright, request }) => {
     const role = assertOk(
       (await (
         await api.post('/api/v1/admin/roles', {
@@ -204,8 +204,11 @@ test.describe.serial('越权与 403', () => {
 
     const empApi = await newAuthedRequest(playwright, login.data!.access_token);
     try {
+      // 仅 product:view 的员工访问角色管理（需 role:view）必须被拦截
       const resp = await empApi.get('/api/v1/admin/roles');
-      expect(resp.status()).toBe(403);
+      const body = (await resp.json()) as ApiResponse;
+      expect(resp.status()).toBe(200);
+      expect(body.code).toBe(11005);
     } finally {
       await empApi.dispose();
       await api.delete(`/api/v1/admin/admins/${emp.id}`);

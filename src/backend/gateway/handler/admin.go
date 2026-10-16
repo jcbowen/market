@@ -1622,8 +1622,10 @@ func (h *AdminHandler) DeleteProduct(c *gin.Context) {
 }
 
 // UpdateProductStatusReq 更新商品状态请求
+// Status 使用指针：gin binding:"required" 对非指针零值会误拒 status=0（下架），
+// 指针 required 仅校验字段已提供，0/1 均有效
 type UpdateProductStatusReq struct {
-	Status int32 `json:"status" binding:"required"`
+	Status *int32 `json:"status" binding:"required"`
 }
 
 // UpdateProductStatus 更新商品状态
@@ -1644,13 +1646,13 @@ func (h *AdminHandler) UpdateProductStatus(c *gin.Context) {
 
 	_, err = h.productClient.UpdateProductStatus(c.Request.Context(), &product.UpdateProductStatusReq{
 		Id:     id,
-		Status: req.Status,
+		Status: *req.Status,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
-	response.Success(c, gin.H{"id": id, "status": req.Status})
+	response.Success(c, gin.H{"id": id, "status": *req.Status})
 }
 
 // --- 订单管理 ---

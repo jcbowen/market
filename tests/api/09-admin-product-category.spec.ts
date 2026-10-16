@@ -131,16 +131,15 @@ test.describe.serial('商品管理', () => {
     expect(detail.data?.product?.name ?? detail.data?.name).toBe(newName);
   });
 
-  test('商品上架状态设置成功（下架 status=0 受后端 binding 零值限制，见 TEST-PLAN 已知问题）', async () => {
-    // UpdateProductStatusReq.status binding:required 会误拒 0 值（gin 零值坑），此处仅验证上架流转
+  test('商品上架状态设置成功', async () => {
     const on = (await (
       await api.post(`/api/v1/admin/products/${productId}/status`, { data: { status: 1 } })
     ).json()) as ApiResponse;
     expect(on.code).toBe(0);
   });
 
-  test('缺 category_id 的商品创建被拒绝', async () => {
-    const resp = await api.post('/api/v1/admin/products', { data: { name: autoName('坏商品') } });
+  test('缺 status 的状态更新被拒绝', async () => {
+    const resp = await api.post(`/api/v1/admin/products/${productId}/status`, { data: {} });
     const body = (await resp.json()) as ApiResponse;
     expect(body.code).not.toBe(0);
   });
@@ -150,5 +149,27 @@ test.describe.serial('商品管理', () => {
     const body = (await resp.json()) as ApiResponse<PageData<Product>>;
     expect(body.code).toBe(0);
     expect(body.data?.list.some((p) => p.id === productId)).toBe(true);
+  });
+
+  // 缺陷③已修复（2026-10-16）：UpdateProductStatusReq.Status 改为 *int32 指针校验，
+  // 零值 0（下架）不再被 binding:"required" 误拒
+  test('商品下架 status=0 设置成功', async () => {
+    const off = (await (
+      await api.post(`/api/v1/admin/products/${productId}/status`, { data: { status: 0 } })
+    ).json()) as ApiResponse;
+    expect(off.code, `下架失败: ${off.message}`).toBe(0);
+
+    // 下架后 C 端列表不可见（缺陷④已修复：网关 ListProducts 透传 status 参数）
+    const list = (await (
+      await api.get('/api/v1/products', { params: { page: 1, page_size: 50, status: 1 } })
+    ).json()) as ApiResponse<PageData<Product>>;
+    expect(list.code).toBe(0);
+    expect(list.data?.list.some((p) => p.id === productId)).toBe(false);
+  });
+
+  test('缺 category_id 的商品创建被拒绝', async () => {
+    const resp = await api.post('/api/v1/admin/products', { data: { name: autoName('坏商品') } });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code).not.toBe(0);
   });
 });

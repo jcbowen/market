@@ -36,12 +36,15 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 	communityID, _ := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64)
 	categoryID, _ := strconv.ParseInt(c.DefaultQuery("category_id", "0"), 10, 64)
+	// status 透传：C 端传 status=1 只看上架商品；缺省 0 时服务端仅排除删除态
+	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 	keyword := c.Query("keyword")
 	sort := c.Query("sort")
 
 	resp, err := h.productClient.ListProducts(c.Request.Context(), &product.ListProductsReq{
 		CommunityId: communityID,
 		CategoryId:  categoryID,
+		Status:      int32(status),
 		Keyword:     keyword,
 		Sort:        sort,
 		Pagination: &common.Pagination{

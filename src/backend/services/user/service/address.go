@@ -248,17 +248,27 @@ func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddr
 }
 
 // DeleteAddress 删除地址
+// 语义：SQL 带 user_id 条件保证越权行不会被真删；删除 0 行
+// （地址不存在或非本人地址）时返回 NotFound 业务错误，
+// 避免越权删除静默成功造成"删除他人地址返回 code=0"的安全误导
 // 参数：
 //   - ctx: 上下文
 //   - id: 地址 ID
 //   - userID: 用户 ID
 //
 // 返回：
-//   - error: 错误信息
+//   - error: 错误信息（地址不存在或无权操作时返回 NotFound）
 func (s *AddressService) DeleteAddress(ctx context.Context, id, userID int64) error {
-	return s.db.GetDb().WithContext(ctx).
+	res := s.db.GetDb().WithContext(ctx).
 		Where("id = ? AND user_id = ?", id, userID).
-		Delete(&model.Address{}).Error
+		Delete(&model.Address{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return bizerr.New(codes.NotFound, "地址不存在或无权操作")
+	}
+	return nil
 }
 
 // SetDefaultAddress 设置默认地址

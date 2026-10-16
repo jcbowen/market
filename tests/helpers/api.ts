@@ -254,3 +254,20 @@ export async function pickSku(api: APIRequestContext, keywords?: string): Promis
   }
   throw new Error('环境商品均无有库存的 SKU');
 }
+
+/**
+ * 确保 SKU 库存充足（管理端入库补足）
+ * 多轮测试会持续扣减环境库存，下单类用例前置调用避免"库存不足"误报
+ * - 函数名: ensureStock
+ * - 参数: api — 管理端已认证请求上下文；skuId — SKU ID；qty — 入库数量
+ * - 返回: Promise<void>
+ * - 异常: 入库接口业务失败时抛 Error
+ * - 使用示例: await ensureStock(adminApi, sku.id, 100);
+ */
+export async function ensureStock(api: APIRequestContext, skuId: number, qty: number): Promise<void> {
+  const resp = await api.post('/api/v1/admin/inventory/entries', {
+    data: { type: 1, items: [{ sku_id: skuId, quantity: qty }], remark: 'AUTO-TEST 补库存' },
+  });
+  const body = (await resp.json()) as ApiResponse;
+  if (body.code !== 0) throw new Error(`补库存失败 code=${body.code} message=${body.message}`);
+}

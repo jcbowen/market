@@ -124,9 +124,9 @@ test.describe.serial('用户资料与地址', () => {
     expect(asList<Address>(list.data).some((a) => a.id === id)).toBe(false);
   });
 
-  // 已实测（2026-10-16）：用户 B 删除用户 A 的地址返回 code=0 —— 地址删除无归属校验，
-  // 后端待修复；修复后改回 expect(body.code).not.toBe(0)
-  test.fixme('删除他人地址被拒绝（越权防护）——后端归属校验待修复', async ({ playwright }) => {
+  // 缺陷①已修复（2026-10-16）：DeleteAddress 删除 0 行时返回 NotFound 业务错误，
+  // 越权删除不再静默返回 code=0；SQL 带 user_id 条件保证越权行不会被真删
+  test('删除他人地址被拒绝且原地址不受影响（越权防护）', async ({ playwright }) => {
     // 前置用例可能已清空地址，先确保有一条
     let mine = (await (await api.get('/api/v1/user/addresses')).json()) as ApiResponse<Address[] | { list: Address[] }>;
     let addresses = asList<Address>(mine.data);
@@ -145,6 +145,10 @@ test.describe.serial('用户资料与地址', () => {
       const resp = await otherApi.delete(`/api/v1/user/addresses/${anyId}`);
       const body = (await resp.json()) as ApiResponse;
       expect(body.code).not.toBe(0);
+
+      // 越权删除不得影响原地址
+      const after = (await (await api.get('/api/v1/user/addresses')).json()) as ApiResponse<Address[] | { list: Address[] }>;
+      expect(asList<Address>(after.data).some((a) => a.id === anyId)).toBe(true);
     } finally {
       await otherApi.dispose();
     }
