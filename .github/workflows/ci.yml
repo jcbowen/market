@@ -14,6 +14,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# runner 部署在国内服务器，proxy.golang.org 与 registry.npmjs.org 直连不可达，
+# 顶层 env 对所有 job 生效：Go 走七牛镜像，npm 走淘宝镜像，末尾 direct 兜底直连
+env:
+  GOPROXY: https://goproxy.cn,direct
+  NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
+
 jobs:
   backend:
     name: 后端 go vet/test/build
