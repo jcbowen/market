@@ -1,0 +1,18 @@
+{
+  "name": "market-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "market 全功能自动化测试（后端 API + 管理端/C 端浏览器 E2E）",
+  "scripts": {
+    "test": "playwright test",
+    "test:api": "playwright test api/",
+    "test:e2e": "playwright test e2e/",
+    "test:fullflow": "playwright test e2e/fullflow.spec.ts",
+    "test:admin": "playwright test e2e/admin/",
+    "test:client": "playwright test e2e/client/",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}
