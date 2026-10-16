@@ -2,9 +2,11 @@ import {
   BASE_URL,
   REQUEST_TIMEOUT,
   TOKEN_KEY,
+  REFRESH_TOKEN_KEY,
   SUCCESS_CODE,
   UNAUTHORIZED_CODES,
 } from './config'
+import type { LoginResult } from './auth'
 
 /**
  * 统一响应结构
@@ -44,6 +46,25 @@ interface RequestOptions {
 }
 
 /**
+ * 401 未授权错误
+ * 仅作为内部信号：标识当前请求因登录态失效被拒，
+ * 由上层 request/upload 捕获后触发静默续期并重放，不外泄给业务调用方
+ */
+class UnauthorizedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UnauthorizedError'
+  }
+}
+
+/**
+ * 进行中的静默刷新 Promise
+ * 模块级单例：并发触发的多个 401 共享同一次刷新请求（互斥），
+ * 刷新结束后置回 null，允许下次过期再刷新
+ */
+let refreshingPromise: Promise<boolean> | null = null
+
+/**
  * 从本地存储读取 token
  * @returns token 字符串，不存在返回空字符串
  */
@@ -56,10 +77,24 @@ function getToken(): string {
 }
 
 /**
- * 处理 401 未登录，跳转登录页
+ * 从本地存储读取刷新令牌
+ * @returns refresh_token 字符串，不存在返回空字符串
+ */
+function getRefreshToken(): string {
+  try {
+    return uni.getStorageSync(REFRESH_TOKEN_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 处理未登录：清空本地令牌并跳转登录页
+ * 用于静默续期不可用（无 refresh_token / refresh_token 已失效）时的兜底
  */
 function handleUnauthorized(): void {
   uni.removeStorageSync(TOKEN_KEY)
+  uni.removeStorageSync(REFRESH_TOKEN_KEY)
   // 避免登录页重复跳转
   const pages = getCurrentPages()
   const current = pages[pages.length - 1]
@@ -78,12 +113,6 @@ function showError(message: string): void {
 }
 
 /**
- * 发送 HTTP 请求并返回 Promise
- * @param options 请求配置
- * @returns Promise<ApiResponse<T>>
- * @throws 业务错误时返回 rejected Promise
- */
-/**
  * 将对象序列化为 URL 查询字符串
  * @param params 查询参数对象
  * @returns 编码后的查询字符串，不含前导 ?
@@ -98,7 +127,80 @@ function buildQueryString(params?: Record<string, unknown>): string {
   return parts.join('&')
 }
 
-export function request<T = unknown>(
+/**
+ * 调用 /auth/refresh 换取新令牌并持久化（滑动续期：响应含新 refresh_token）
+ * 刷新请求为裸 uni.request 直调，不经过 requestOnce/静默续期逻辑，天然防递归死循环
+ *
+ * 失败语义：
+ * - refresh_token 缺失或被服务端判定无效：清空登录态并跳转登录页
+ * - 网络异常：保留本地令牌，下次请求再触发重试（不误杀登录态）
+ *
+ * @returns 刷新成功返回 true；失败返回 false
+ */
+async function doRefresh(): Promise<boolean> {
+  const refreshToken = getRefreshToken()
+  if (!refreshToken) {
+    handleUnauthorized()
+    return false
+  }
+  const resp = await new Promise<{
+    statusCode: number
+    data: ApiResponse<LoginResult>
+  } | null>((resolve) => {
+    uni.request({
+      url: `${BASE_URL}/auth/refresh`,
+      method: 'POST',
+      data: { refresh_token: refreshToken },
+      timeout: REQUEST_TIMEOUT,
+      success: (res) => resolve(res as unknown as { statusCode: number; data: ApiResponse<LoginResult> }),
+      fail: () => resolve(null),
+    })
+  })
+  // 网络异常：保留令牌，静默失败，后续请求可再触发
+  if (!resp) return false
+  const body = resp.data
+  if (
+    resp.statusCode === 401 ||
+    !body ||
+    body.code !== SUCCESS_CODE ||
+    !body.data
+  ) {
+    handleUnauthorized()
+    return false
+  }
+  uni.setStorageSync(TOKEN_KEY, body.data.access_token)
+  uni.setStorageSync(REFRESH_TOKEN_KEY, body.data.refresh_token)
+  return true
+}
+
+/**
+ * 静默刷新令牌（进程内互斥）
+ * 并发 401 复用同一次刷新：首个请求发起刷新，其余等待同一 Promise，
+ * 避免并发重复刷新导致 refresh_token 被轮换后旧值失效的竞态
+ *
+ * 使用示例：
+ *   const ok = await silentRefresh()
+ *   if (ok) return requestOnce(options) // 用新令牌重放
+ *
+ * @returns 刷新成功返回 true；失败返回 false（无效令牌场景已跳转登录页）
+ */
+function silentRefresh(): Promise<boolean> {
+  if (!refreshingPromise) {
+    refreshingPromise = doRefresh().finally(() => {
+      refreshingPromise = null
+    })
+  }
+  return refreshingPromise
+}
+
+/**
+ * 单次请求：发送 HTTP 请求并返回 Promise，不做静默续期与重放
+ * 401（HTTP 状态码或业务码）时 reject UnauthorizedError，由 request 层处理
+ * @param options 请求配置
+ * @returns Promise<ApiResponse<T>>
+ * @throws UnauthorizedError 登录态失效；Error 网络异常或业务失败
+ */
+function requestOnce<T = unknown>(
   options: RequestOptions,
 ): Promise<ApiResponse<T>> {
   const { url, method = 'GET', data, header = {}, hideLoading = false } = options
@@ -141,13 +243,11 @@ export function request<T = unknown>(
       success: (res) => {
         const resp = res.data as ApiResponse<T>
         if (res.statusCode === 401) {
-          handleUnauthorized()
-          reject(new Error('登录已过期'))
+          reject(new UnauthorizedError('登录已过期'))
           return
         }
         if (resp && UNAUTHORIZED_CODES.includes(resp.code)) {
-          handleUnauthorized()
-          reject(new Error(resp.message || '登录已过期'))
+          reject(new UnauthorizedError(resp.message || '登录已过期'))
           return
         }
         if (resp && resp.code !== SUCCESS_CODE) {
@@ -179,6 +279,31 @@ export function request<T = unknown>(
       }
     }, REQUEST_TIMEOUT + 2000)
   })
+}
+
+/**
+ * 统一请求入口：401 时静默续期并重放原请求（仅重放 1 次）
+ * 续期失败（refresh_token 缺失/已过 7 天有效期）时清空登录态跳转登录页
+ *
+ * 使用示例：
+ *   const res = await get<UserInfo>('/user/info') // 过期时自动续期，业务无感
+ *
+ * @param options 请求配置
+ * @returns Promise<ApiResponse<T>>
+ * @throws Error 静默续期失败、网络异常或业务失败
+ */
+export async function request<T = unknown>(
+  options: RequestOptions,
+): Promise<ApiResponse<T>> {
+  try {
+    return await requestOnce<T>(options)
+  } catch (err) {
+    if (!(err instanceof UnauthorizedError)) throw err
+    const ok = await silentRefresh()
+    if (!ok) throw new Error('登录已过期')
+    // requestOnce 每次调用重新读取本地 token，重放自然携带新令牌
+    return requestOnce<T>(options)
+  }
 }
 
 /**
@@ -238,14 +363,15 @@ export function del<T = unknown>(
 }
 
 /**
- * 上传文件（multipart/form-data，uni.uploadFile）
- * token 注入与 401 处理与 request 一致；响应体为 JSON 字符串需手动解析
+ * 单次上传（multipart/form-data，uni.uploadFile），不做静默续期与重放
+ * token 注入与 401 处理与 requestOnce 一致；响应体为 JSON 字符串需手动解析
  * @param url 接口地址（如 /upload/image）
  * @param filePath 本地文件路径（uni.chooseImage 返回）
  * @param name 文件字段名，默认 file
  * @returns Promise<ApiResponse<T>>
+ * @throws UnauthorizedError 登录态失效；Error 网络异常或业务失败
  */
-export function upload<T = unknown>(
+function uploadOnce<T = unknown>(
   url: string,
   filePath: string,
   name = 'file',
@@ -261,8 +387,7 @@ export function upload<T = unknown>(
       timeout: REQUEST_TIMEOUT,
       success: (res) => {
         if (res.statusCode === 401) {
-          handleUnauthorized()
-          reject(new Error('登录已过期'))
+          reject(new UnauthorizedError('登录已过期'))
           return
         }
         let resp: ApiResponse<T> | null = null
@@ -273,8 +398,7 @@ export function upload<T = unknown>(
           return
         }
         if (resp && UNAUTHORIZED_CODES.includes(resp.code)) {
-          handleUnauthorized()
-          reject(new Error(resp.message || '登录已过期'))
+          reject(new UnauthorizedError(resp.message || '登录已过期'))
           return
         }
         if (resp && resp.code !== SUCCESS_CODE) {
@@ -290,4 +414,27 @@ export function upload<T = unknown>(
       },
     })
   })
+}
+
+/**
+ * 统一上传入口：401 时静默续期并重放上传（仅重放 1 次）
+ * @param url 接口地址
+ * @param filePath 本地文件路径
+ * @param name 文件字段名，默认 file
+ * @returns Promise<ApiResponse<T>>
+ * @throws Error 静默续期失败、网络异常或业务失败
+ */
+export async function upload<T = unknown>(
+  url: string,
+  filePath: string,
+  name = 'file',
+): Promise<ApiResponse<T>> {
+  try {
+    return await uploadOnce<T>(url, filePath, name)
+  } catch (err) {
+    if (!(err instanceof UnauthorizedError)) throw err
+    const ok = await silentRefresh()
+    if (!ok) throw new Error('登录已过期')
+    return uploadOnce<T>(url, filePath, name)
+  }
 }

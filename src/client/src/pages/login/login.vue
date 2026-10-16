@@ -100,6 +100,7 @@ function onBack() {
  */
 async function handleLoginSuccess(data?: {
   access_token: string
+  refresh_token?: string
   user: {
     id: number
     nickname: string
@@ -110,7 +111,7 @@ async function handleLoginSuccess(data?: {
   }
 }) {
   if (!data) return
-  const { access_token, user } = data
+  const { access_token, refresh_token, user } = data
   userStore.login(access_token, {
     id: user.id,
     nickname: user.nickname,
@@ -118,7 +119,7 @@ async function handleLoginSuccess(data?: {
     phone: user.phone,
     community_id: user.community_id,
     community_name: user.community_name,
-  })
+  }, refresh_token)
 
   // 拉取用户绑定社区的完整信息（含 delivery_fee/min_order_amount），
   // 无条件执行：登录响应里的 community_name 只够展示，缺运费与起送门槛字段

@@ -9,6 +9,7 @@ import { getUserInfo, updateCommunity, getCommunityById } from '@/api/user'
 import type { UserInfo, Community, Address } from '@/api/types'
 
 const TOKEN_KEY = 'access_token'
+const REFRESH_TOKEN_KEY = 'refresh_token'
 const USER_KEY = 'user_info'
 // v2：旧版本曾把只含 id/name/address/longitude/latitude 的残缺社区对象写进缓存，
 // 而 Community 全字段均为 proto omitempty，无法靠字段存在性判断完整性，
@@ -19,6 +20,8 @@ const ADDRESS_KEY = 'address_info'
 export const useUserStore = defineStore('user', () => {
   /** 访问令牌 */
   const token = ref<string>(uni.getStorageSync(TOKEN_KEY) || '')
+  /** 刷新令牌，401 时用于静默续期 */
+  const refreshToken = ref<string>(uni.getStorageSync(REFRESH_TOKEN_KEY) || '')
   /** 用户信息 */
   const userInfo = ref<UserInfo | null>(
     uni.getStorageSync(USER_KEY) ? (uni.getStorageSync(USER_KEY) as UserInfo) : null,
@@ -46,6 +49,19 @@ export const useUserStore = defineStore('user', () => {
   function setToken(value: string) {
     token.value = value
     uni.setStorageSync(TOKEN_KEY, value)
+  }
+
+  /**
+   * 设置刷新令牌并持久化
+   * @param value 刷新令牌字符串，空值时清除本地缓存
+   */
+  function setRefreshToken(value: string) {
+    refreshToken.value = value
+    if (value) {
+      uni.setStorageSync(REFRESH_TOKEN_KEY, value)
+    } else {
+      uni.removeStorageSync(REFRESH_TOKEN_KEY)
+    }
   }
 
   /**
@@ -94,9 +110,13 @@ export const useUserStore = defineStore('user', () => {
    * 社区信息由调用方随后 await syncBoundCommunity() 拉取完整对象写入
    * @param accessToken 访问令牌
    * @param info 用户信息
+   * @param refreshTokenValue 刷新令牌，用于 401 静默续期；缺省时保留原值
    */
-  function login(accessToken: string, info: UserInfo) {
+  function login(accessToken: string, info: UserInfo, refreshTokenValue?: string) {
     setToken(accessToken)
+    if (refreshTokenValue) {
+      setRefreshToken(refreshTokenValue)
+    }
     setUserInfo(info)
   }
 
@@ -119,10 +139,12 @@ export const useUserStore = defineStore('user', () => {
    */
   function logout() {
     token.value = ''
+    refreshToken.value = ''
     userInfo.value = null
     communityInfo.value = null
     addressInfo.value = null
     uni.removeStorageSync(TOKEN_KEY)
+    uni.removeStorageSync(REFRESH_TOKEN_KEY)
     uni.removeStorageSync(USER_KEY)
     uni.removeStorageSync(COMMUNITY_KEY)
     uni.removeStorageSync(ADDRESS_KEY)
@@ -162,11 +184,13 @@ export const useUserStore = defineStore('user', () => {
 
   return {
     token,
+    refreshToken,
     userInfo,
     communityInfo,
     addressInfo,
     isLogin,
     setToken,
+    setRefreshToken,
     setUserInfo,
     setCommunity,
     setAddress,

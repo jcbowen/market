@@ -24,6 +24,9 @@ export const REQUEST_TIMEOUT = 15000
 /** 本地存储 token 的 key */
 export const TOKEN_KEY = 'access_token'
 
+/** 本地存储刷新令牌的 key，401 时用于静默续期 */
+export const REFRESH_TOKEN_KEY = 'refresh_token'
+
 /** 业务响应成功码 */
 export const SUCCESS_CODE = 0
 
