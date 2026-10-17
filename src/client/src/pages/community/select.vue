@@ -156,13 +156,11 @@ function loadMore() {
  * @param manual 是否用户手动触发「附近社区」（全部失败时给出 toast 反馈）
  */
 function locateAndLoad(manual = false) {
-  // 坐标系：H5 端用浏览器原生 wgs84（gcj02 转换需在 manifest 配置地图厂商 key，
-  // H5 未配置），其他端用 gcj02；wgs84 偏差对距离展示与就近排序可接受
+  // 坐标系按端裁剪：H5 用 wgs84，其他端用 gcj02。
+  // 写成 let 默认值 + 条件编译覆盖，避免双分支声明被 tsc 判为重复声明
+  let locationType: 'wgs84' | 'gcj02' = 'gcj02'
   // #ifdef H5
-  const locationType: 'wgs84' | 'gcj02' = 'wgs84'
-  // #endif
-  // #ifndef H5
-  const locationType: 'wgs84' | 'gcj02' = 'gcj02'
+  locationType = 'wgs84'
   // #endif
   locating.value = true
   uni.getLocation({

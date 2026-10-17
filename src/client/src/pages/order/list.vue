@@ -15,7 +15,11 @@
         <view class="order-header">
           <view class="order-no-wrap">
             <text v-if="isStoreOrder(order)" class="store-tag">门店</text>
-            <text class="order-no">订单号: {{ order.order_no }}</text>
+            <!-- 订单号在详情页可查，列表展示所属社区更利于跨社区辨识 -->
+            <view class="community-wrap">
+              <u-icon name="map-fill" size="13" color="#07c160" />
+              <text class="community-name">{{ order.community_name || '未知社区' }}</text>
+            </view>
           </view>
           <text class="order-status">{{ order.status_text }}</text>
         </view>
@@ -362,9 +366,20 @@ function refreshList() {
   padding: 4rpx 8rpx;
 }
 
-.order-no {
+/* 订单所属社区标签（列表页替代订单号展示） */
+.community-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  min-width: 0;
+}
+
+.community-name {
   font-size: 24rpx;
-  color: #999999;
+  color: #666666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .order-status {

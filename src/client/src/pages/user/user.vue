@@ -9,7 +9,7 @@
           <text class="phone">{{ maskPhone(userStore.userInfo?.phone || '') }}</text>
         </view>
       </view>
-      <view v-else class="user-info" @click="goLogin">
+      <view v-else class="user-info" @click="goLogin()">
         <image class="avatar" src="/static/default-avatar.png" mode="aspectFill" />
         <view class="info">
           <text class="nickname">点击登录</text>

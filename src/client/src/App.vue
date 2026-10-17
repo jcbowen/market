@@ -136,11 +136,11 @@ async function autoPickCommunity(): Promise<Community | null> {
  * @returns 经纬度，两种定位均失败时返回 null
  */
 function locateCoords(): Promise<{ longitude: number; latitude: number } | null> {
+  // 坐标系按端裁剪：H5 用 wgs84，其他端用 gcj02。
+  // 写成 let 默认值 + 条件编译覆盖，避免双分支声明被 tsc 判为重复声明
+  let locationType: 'wgs84' | 'gcj02' = 'gcj02'
   // #ifdef H5
-  const locationType: 'wgs84' | 'gcj02' = 'wgs84'
-  // #endif
-  // #ifndef H5
-  const locationType: 'wgs84' | 'gcj02' = 'gcj02'
+  locationType = 'wgs84'
   // #endif
   return new Promise((resolve) => {
     uni.getLocation({

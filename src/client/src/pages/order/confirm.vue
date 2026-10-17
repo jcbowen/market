@@ -24,14 +24,14 @@
       </view>
     </view>
 
-    <!-- 自提点信息（社区自提时展示，替代收货地址卡） -->
+    <!-- 自提点信息（社区自提时展示，替代收货地址卡；跨社区结算展示结算社区自提点） -->
     <view v-if="deliveryType === DELIVERY_TYPE_PICKUP" class="address-card">
       <view class="address-info">
         <view class="address-top">
-          <text class="name">{{ userStore.communityInfo?.name || '当前社区' }}</text>
+          <text class="name">{{ communityCtx?.name || '当前社区' }}</text>
         </view>
         <!-- 自提卡优先展示自提点地址，未配置时回退社区地址 -->
-        <text class="address-text">{{ userStore.communityInfo?.pickup_address || userStore.communityInfo?.address || '社区地址暂未配置' }}</text>
+        <text class="address-text">{{ communityCtx?.pickup_address || communityCtx?.address || '社区地址暂未配置' }}</text>
         <text class="address-tip">商品备好后凭取货信息到点自提</text>
       </view>
     </view>
@@ -144,23 +144,34 @@
         <scroll-view scroll-y class="coupon-popup-body">
           <view class="coupon-option" @click="onPickCoupon(null)">
             <text class="coupon-option-name">暂不使用</text>
-          </view>
-          <view
-            v-for="coupon in validCoupons"
-            :key="coupon.id"
-            class="coupon-option"
-            @click="onPickCoupon(coupon)"
-          >
-            <view class="coupon-option-main">
-              <text class="coupon-option-name">{{ coupon.name }}</text>
-              <text class="coupon-option-desc">{{ couponTitle(coupon) }}，有效期至 {{ formatDate(coupon.end_time) }}</text>
-            </view>
             <u-icon
-              v-if="selectedCoupon?.id === coupon.id"
+              v-if="!selectedCoupon"
               name="checkmark"
               size="18"
               color="#07c160"
             />
+          </view>
+          <!-- 全量展示：不可用券置灰并展示原因（过期/未达门槛） -->
+          <view
+            v-for="option in couponOptions"
+            :key="option.coupon.id"
+            :class="['coupon-option', { 'coupon-option-disabled': !option.available }]"
+            @click="option.available && onPickCoupon(option.coupon)"
+          >
+            <view class="coupon-option-main">
+              <text class="coupon-option-name">{{ option.coupon.name }}</text>
+              <text class="coupon-option-desc">{{ couponTitle(option.coupon) }}，有效期至 {{ formatDate(option.coupon.end_time) }}</text>
+              <text v-if="!option.available" class="coupon-option-reason">{{ option.reason }}</text>
+            </view>
+            <u-icon
+              v-if="selectedCoupon?.id === option.coupon.id"
+              name="checkmark"
+              size="18"
+              color="#07c160"
+            />
+          </view>
+          <view v-if="!couponOptions.length" class="coupon-option-empty">
+            <text>暂无可用优惠券</text>
           </view>
         </scroll-view>
       </view>
@@ -173,7 +184,7 @@ import { ref, computed, watch } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
-import { getAddressList } from '@/api/user'
+import { getAddressList, getCommunityById } from '@/api/user'
 import { getCart, removeCartItem } from '@/api/cart'
 import { getFullReductions, getProductDetail, getSkuById } from '@/api/product'
 import { createOrder, previewFreeShipping, type FreeShippingPreview } from '@/api/order'
@@ -186,7 +197,7 @@ import { joinRegionAddress } from '@/utils/region'
 import { removeLocalCartItem } from '@/utils/localCart'
 import { calcCouponDiscount, couponTitle, isCouponExpired } from '@/utils/coupon'
 import { DELIVERY_TYPE_PICKUP, DELIVERY_TYPE_DELIVERY } from '@/utils/order'
-import type { Address, FullReduction, PaymentChannel, UserCoupon } from '@/api/types'
+import type { Address, Community, FullReduction, PaymentChannel, UserCoupon } from '@/api/types'
 
 /** 结算页商品展示结构（购物车/直购中间态，无订单侧 id/total_price 字段） */
 interface SettleItem {
@@ -213,9 +224,29 @@ const quantity = ref(1)
 /** 配送方式：1 社区自提 2 送货上门，默认自提（无运费、无起送门槛） */
 const deliveryType = ref<1 | 2>(DELIVERY_TYPE_PICKUP)
 
-// 社区渠道开关（proto omitempty：false 时字段缺省，?? true 兼容旧缓存）
-const enableSelfPickup = computed(() => userStore.communityInfo?.enable_self_pickup ?? true)
-const enableDelivery = computed(() => userStore.communityInfo?.enable_delivery ?? true)
+// --- 结算社区上下文 ---
+// 购物车跨社区结算时由 URL 指定结算社区；不传时按用户当前社区
+const settleCommunityId = ref(0)
+/** 结算社区完整信息（跨社区结算时异步加载，覆盖自提点/运费/满减等展示） */
+const settleCommunity = ref<Community | null>(null)
+
+/** 生效社区 ID：显式指定 > 当前社区 */
+const effectiveCommunityId = computed(() => {
+  return settleCommunityId.value || userStore.communityInfo?.id || 0
+})
+
+/**
+ * 生效社区信息：跨社区结算时用结算社区，
+ * 直接购买/本社区结算用用户当前社区
+ */
+const communityCtx = computed<Community | null>(() => {
+  if (settleCommunityId.value > 0) return settleCommunity.value || userStore.communityInfo
+  return userStore.communityInfo
+})
+
+// 社区渠道开关（proto omitempty：false 时字段缺省，?? true 兼容旧缓存；按结算社区口径）
+const enableSelfPickup = computed(() => communityCtx.value?.enable_self_pickup ?? true)
+const enableDelivery = computed(() => communityCtx.value?.enable_delivery ?? true)
 
 // 默认渠道自适应：默认渠道被关闭时切换到可用渠道（都关闭时保持自提，页面展示联系门店提示且由提交拦截）
 watch(
@@ -237,12 +268,12 @@ const totalAmount = computed(() => {
   return orderItems.value.reduce((sum, item) => sum + item.price * item.quantity, 0)
 })
 
-// 社区配送费/起送金额：proto 为 omitempty，值为 0 时字段缺省，必须 ?? 0
+// 社区配送费/起送金额：proto 为 omitempty，值为 0 时字段缺省，必须 ?? 0（按结算社区口径）
 const deliveryFee = computed(() => {
   if (deliveryType.value !== DELIVERY_TYPE_DELIVERY) return 0
   // 满额免配送费活动命中时实际配送费为 0（与后端 CreateOrder 口径一致）
   if (fsPreview.value?.free_shipping) return 0
-  return userStore.communityInfo?.delivery_fee ?? 0
+  return communityCtx.value?.delivery_fee ?? 0
 })
 
 // --- 免配送费试算（配送单展示） ---
@@ -279,15 +310,16 @@ async function loadFsPreview() {
     fsPreview.value = null
     return
   }
-  // 未选社区（服务端 community_id 为空）时不发起试算：
+  // 未确定结算社区（服务端 community_id 为空）时不发起试算：
   // 服务端会直接拒绝并弹"缺少社区信息"，这里静默跳过，由提交时统一引导
-  if (!userStore.communityInfo?.id) {
+  if (!effectiveCommunityId.value) {
     fsPreview.value = null
     return
   }
   try {
     const res = await previewFreeShipping(
-      orderItems.value.map((it) => ({ sku_id: it.sku_id, quantity: it.quantity }))
+      orderItems.value.map((it) => ({ sku_id: it.sku_id, quantity: it.quantity })),
+      effectiveCommunityId.value,
     )
     fsPreview.value = res.data || null
   } catch {
@@ -301,7 +333,7 @@ watch([deliveryType, orderItems], () => {
 
 const minOrderAmount = computed(() => {
   if (deliveryType.value !== DELIVERY_TYPE_DELIVERY) return 0
-  return userStore.communityInfo?.min_order_amount ?? 0
+  return communityCtx.value?.min_order_amount ?? 0
 })
 
 /** 配送单未达起送门槛的差额，> 0 时禁用提交（校验前置，替代后端报错） */
@@ -315,11 +347,88 @@ const selectedChannel = ref<PaymentChannel | null>(null)
 const selectedCoupon = ref<UserCoupon | null>(null)
 const fullReductions = ref<FullReduction[]>([])
 const couponPopupVisible = ref(false)
-const validCoupons = ref<UserCoupon[]>([])
+
+/** 弹窗券选项：券 + 可用性判定（不可用置灰并展示原因） */
+interface CouponOption {
+  coupon: UserCoupon
+  available: boolean
+  /** 不可用原因（可用时为空） */
+  reason: string
+}
+const couponOptions = ref<CouponOption[]>([])
+/** 用户是否手动操作过券选择：操作后不再自动改选 */
+let couponTouched = false
 
 const couponText = computed(() => {
   if (!selectedCoupon.value) return '暂不使用'
   return couponTitle(selectedCoupon.value)
+})
+
+/**
+ * 按当前商品总额构建券选项可用性：
+ * 过期券与未达门槛券均展示但置灰，并给出原因文案
+ */
+function buildCouponOptions(list: UserCoupon[]): CouponOption[] {
+  const total = totalAmount.value
+  return list.map((coupon) => {
+    if (isCouponExpired(coupon)) {
+      return { coupon, available: false, reason: '已过期' }
+    }
+    if (total < coupon.threshold) {
+      const lack = formatPrice(coupon.threshold - total)
+      return { coupon, available: false, reason: `满${formatPrice(coupon.threshold)}可用，还差 ${lack}` }
+    }
+    return { coupon, available: true, reason: '' }
+  })
+}
+
+/**
+ * 加载用户全部未使用券并构建弹窗选项
+ * 进入页面即调用一次，供默认选中最优券使用
+ */
+async function loadCouponOptions() {
+  try {
+    const res = await getUserCoupons({ status: 1, page_size: 100 })
+    couponOptions.value = buildCouponOptions(res.data?.list || [])
+    autoSelectCoupon()
+  } catch {
+    couponOptions.value = []
+  }
+}
+
+/**
+ * 自动选中最优可用券（抵扣金额最大）
+ * 用户手动选择过（含"暂不使用"）后不再自动改选，
+ * 仅在已选券变为不可用时清空，避免实付金额与展示不符
+ */
+function autoSelectCoupon() {
+  if (couponTouched) {
+    if (selectedCoupon.value) {
+      const current = couponOptions.value.find((o) => o.coupon.id === selectedCoupon.value?.id)
+      if (!current || !current.available) {
+        selectedCoupon.value = null
+      }
+    }
+    return
+  }
+  let best: UserCoupon | null = null
+  let bestDiscount = 0
+  for (const option of couponOptions.value) {
+    if (!option.available) continue
+    const discount = calcCouponDiscount(totalAmount.value, option.coupon)
+    if (discount > bestDiscount) {
+      bestDiscount = discount
+      best = option.coupon
+    }
+  }
+  selectedCoupon.value = best
+}
+
+// 商品总额变化（商品清单加载完成等）后按新总额刷新券可用性并重选最优
+watch(totalAmount, () => {
+  if (!couponOptions.value.length) return
+  couponOptions.value = buildCouponOptions(couponOptions.value.map((o) => o.coupon))
+  autoSelectCoupon()
 })
 
 /**
@@ -328,7 +437,7 @@ const couponText = computed(() => {
  * 在生效且满足门槛的满减活动中取减免金额最大的一项，不超过商品总额
  */
 const fullReductionDiscount = computed(() => {
-  const communityId = userStore.communityInfo?.id
+  const communityId = effectiveCommunityId.value
   if (!communityId || !fullReductions.value.length) return 0
   const now = new Date()
   let best = 0
@@ -380,6 +489,8 @@ onLoad((query) => {
   if (ids) {
     cartItemIds.value = String(ids).split(',').map(Number)
   }
+  // 购物车跨社区结算：显式指定结算社区（商品/履约/活动均按该社区口径）
+  settleCommunityId.value = Number(query?.communityId) || 0
 })
 
 /** 进入页面时记录的社区 ID，用于识别结算中途切换社区 */
@@ -392,10 +503,12 @@ onShow(() => {
     return
   }
   const currentCommunityId = userStore.communityInfo?.id || 0
-  // 结算中途切换社区：购物车按社区隔离，原购物车商品在新社区查不到，商品信息会丢失。
-  // 购物车结算场景（含默认选中路径）提示后退出确认页重新选购；
+  // 结算中途切换社区：仅本社区结算场景需要打断——购物车按社区隔离，
+  // 原购物车商品在新社区查不到，商品信息会丢失；
+  // 跨社区结算（URL 指定 communityId）以结算社区为准，不受当前社区切换影响；
   // 直接购买（skuId）不依赖社区购物车，仅刷新社区运费等信息，不打断
   if (
+    settleCommunityId.value <= 0 &&
     communityInitialized &&
     enteredCommunityId.value > 0 &&
     currentCommunityId !== enteredCommunityId.value &&
@@ -414,11 +527,31 @@ onShow(() => {
   }
   enteredCommunityId.value = currentCommunityId
   communityInitialized = true
+  if (settleCommunityId.value > 0 && settleCommunityId.value !== currentCommunityId) {
+    loadSettleCommunity()
+  } else {
+    // 本社区结算：清除可能残留的跨社区上下文（如上次结算遗留）
+    settleCommunity.value = null
+  }
   loadAddresses()
   loadPaymentChannels()
   loadFullReductions()
   loadItems()
+  // 券选项进入页面即加载：默认选中最优可用券（不依赖用户点开弹窗）
+  loadCouponOptions()
 })
+
+/**
+ * 加载结算社区完整信息（跨社区结算场景）
+ * 自提点、配送费、起送金额、满减与免配送费试算均按该社区展示与计算
+ */
+async function loadSettleCommunity() {
+  const community = await getCommunityById(settleCommunityId.value)
+  settleCommunity.value = community
+  if (!community) {
+    uni.showToast({ title: '结算社区信息加载失败', icon: 'none' })
+  }
+}
 
 /**
  * 加载收货地址列表
@@ -449,12 +582,16 @@ async function loadItems() {
 /**
  * 从购物车加载全部选中商品（未携带 cartItemIds 的结算入口兜底路径）
  * 选中项的 id 回填到 cartItemIds，保证下单成功后能清理购物车
+ * 仅取结算社区（URL 指定或当前社区）的选中商品，避免跨社区混单
  */
 async function loadSelectedCartItems() {
   try {
-    const res = await getCart(userStore.communityInfo?.id)
+    const res = await getCart()
+    const targetCid = effectiveCommunityId.value
     const cartItems = res.data?.items || []
-    const selected = cartItems.filter((item) => item.selected)
+    const selected = cartItems.filter(
+      (item) => item.selected && (!targetCid || (item.community_id || 0) === targetCid),
+    )
     cartItemIds.value = selected.map((item) => item.id).filter((id) => id > 0)
     orderItems.value = selected.map((item) => ({
       product_id: item.product_id,
@@ -472,10 +609,11 @@ async function loadSelectedCartItems() {
 
 /**
  * 从购物车按 URL 参数加载选中商品
+ * 不按社区过滤购物车（跨社区结算时目标商品不在当前社区购物车范围内）
  */
 async function loadCartItems() {
   try {
-    const res = await getCart(userStore.communityInfo?.id)
+    const res = await getCart()
     const cartItems = res.data?.items || []
     const selected = cartItems.filter((item) => cartItemIds.value.includes(item.id))
     orderItems.value = selected.map((item) => ({
@@ -546,11 +684,11 @@ async function loadPaymentChannels() {
 }
 
 /**
- * 加载当前社区生效的满减活动
+ * 加载结算社区生效的满减活动
  */
 async function loadFullReductions() {
   try {
-    const res = await getFullReductions({ community_id: userStore.communityInfo?.id })
+    const res = await getFullReductions({ community_id: effectiveCommunityId.value || undefined })
     fullReductions.value = res.data || []
   } catch {
     fullReductions.value = []
@@ -559,26 +697,21 @@ async function loadFullReductions() {
 
 /**
  * 打开优惠券选择弹窗
- * 仅加载未使用且未过期、满足门槛的优惠券
+ * 展示全部未使用券：可用的正常选择，不可用的置灰并展示原因
  */
 async function onSelectCoupon() {
-  try {
-    const res = await getUserCoupons({ status: 1 })
-    const list = res.data?.list || []
-    validCoupons.value = list.filter(
-      (c) => totalAmount.value >= c.threshold && !isCouponExpired(c),
-    )
-    couponPopupVisible.value = true
-  } catch {
-    uni.showToast({ title: '加载优惠券失败', icon: 'none' })
-  }
+  // 重新拉取一次，保证总额/时效变化后可用性最新
+  await loadCouponOptions()
+  couponPopupVisible.value = true
 }
 
 /**
- * 弹窗内选择优惠券
+ * 弹窗内选择优惠券（含"暂不使用"）
+ * 手动选择后标记 touched，后续总额变化不再自动改选
  * @param coupon 优惠券，null 表示不使用
  */
 function onPickCoupon(coupon: UserCoupon | null) {
+  couponTouched = true
   selectedCoupon.value = coupon
   couponPopupVisible.value = false
 }
@@ -606,9 +739,10 @@ function onSelectChannel() {
 /**
  * 下单成功后清理购物车：
  * 删除本次结算对应的服务端购物车项，并同步清理本地购物车与角标
+ * 本地购物车按结算社区清理（跨社区结算时非当前社区）
  */
 async function clearSettledCart() {
-  const communityId = userStore.communityInfo?.id
+  const communityId = effectiveCommunityId.value
   for (const id of cartItemIds.value) {
     try {
       await removeCartItem(id)
@@ -633,9 +767,9 @@ async function onSubmit() {
     uni.showToast({ title: '当前社区暂未开启取货渠道', icon: 'none' })
     return
   }
-  // 社区兜底：服务端按实时归属社区下单，本地无社区信息时提前拦截并引导，
+  // 社区兜底：服务端按结算社区下单，本地无法确定社区时提前拦截并引导，
   // 避免提交后才收到服务端报错
-  if (!userStore.communityInfo?.id) {
+  if (!effectiveCommunityId.value) {
     uni.showToast({ title: '请先选择社区', icon: 'none' })
     return
   }
@@ -658,6 +792,8 @@ async function onSubmit() {
       delivery_type: deliveryType.value,
       // 自提单地址传 0，后端对 AddressId > 0 才查询地址
       address_id: deliveryType.value === DELIVERY_TYPE_DELIVERY ? selectedAddress.value!.id : 0,
+      // 结算社区：跨社区结算时按结算社区下单（订单归属/履约/活动均按该社区），不传按用户当前社区
+      community_id: effectiveCommunityId.value || undefined,
       items: orderItems.value.map((item) => ({
         product_id: item.product_id,
         sku_id: item.sku_id,
@@ -1006,6 +1142,27 @@ async function onSubmit() {
   display: block;
   margin-top: 6rpx;
   font-size: 22rpx;
+  color: #999999;
+}
+
+/* 不可用券置灰展示 */
+.coupon-option-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.coupon-option-reason {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #ff4d4f;
+}
+
+/* 券为空时的占位提示 */
+.coupon-option-empty {
+  padding: 40rpx 0;
+  text-align: center;
+  font-size: 26rpx;
   color: #999999;
 }
 </style>

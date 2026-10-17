@@ -55,6 +55,9 @@ type CreateOrderReq struct {
 	Remark       string             `json:"remark"`
 	CouponID     int64              `json:"coupon_id"`
 	Items        []*order.OrderItem `json:"items" binding:"required"`
+	// 下单社区：购物车跨社区结算场景由前端按结算商品所属社区显式传入；
+	// 不传时按用户实时归属社区下单（与原行为一致）
+	CommunityID int64 `json:"community_id"`
 }
 
 // CreateOrder 创建订单
@@ -74,21 +77,27 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	for _, item := range req.Items {
 		item.Price = 0
 	}
-	// 订单归属社区实时查用户当前归属：token 中的 community_id 是登录快照，
+	// 下单社区：显式传入（购物车跨社区结算）时直接使用，
+	// 订单归属、自提点/配送履约、社区满减与秒杀价均按该社区计算；
+	// 未传时按用户实时归属社区：token 中的 community_id 是登录快照，
 	// 切换社区不重签 token，用快照会把新社区的订单挂到旧社区
-	userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
-	if err != nil {
-		log.Printf("查询用户归属社区失败: %v", err)
-		response.GRPCError(c, err)
-		return
-	}
-	if userResp == nil {
-		response.Error(c, errcode.NotFound, "用户不存在")
-		return
+	communityID := req.CommunityID
+	if communityID <= 0 {
+		userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
+		if err != nil {
+			log.Printf("查询用户归属社区失败: %v", err)
+			response.GRPCError(c, err)
+			return
+		}
+		if userResp == nil {
+			response.Error(c, errcode.NotFound, "用户不存在")
+			return
+		}
+		communityID = userResp.CommunityId
 	}
 	resp, err := h.orderClient.CreateOrder(c.Request.Context(), &order.CreateOrderReq{
 		UserId:       uc.UserID,
-		CommunityId:  userResp.CommunityId,
+		CommunityId:  communityID,
 		DeliveryType: req.DeliveryType,
 		AddressId:    req.AddressID,
 		DeliveryTime: req.DeliveryTime,
@@ -135,6 +144,20 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		return
 	}
 
+	// 批量补社区名称（按社区 ID 去重后逐个查询，列表页展示订单所属社区）
+	communityNames := make(map[int64]string)
+	for _, o := range resp.List {
+		if o.CommunityId <= 0 {
+			continue
+		}
+		if _, ok := communityNames[o.CommunityId]; ok {
+			continue
+		}
+		if community, cErr := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: o.CommunityId}); cErr == nil && community != nil {
+			communityNames[o.CommunityId] = community.Name
+		}
+	}
+
 	list := make([]gin.H, 0, len(resp.List))
 	for _, o := range resp.List {
 		detail, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{
@@ -159,13 +182,16 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 			}
 		}
 		list = append(list, gin.H{
-			"id":            o.Id,
-			"order_no":      o.OrderNo,
-			"status":        o.Status,
-			"status_text":   clientOrderStatusText(o.Status, o.DeliveryType),
-			"delivery_type": o.DeliveryType,
-			"total_amount":  o.TotalAmount,
-			"pay_amount":    o.PayAmount,
+			"id":             o.Id,
+			"order_no":       o.OrderNo,
+			"status":         o.Status,
+			"status_text":    clientOrderStatusText(o.Status, o.DeliveryType),
+			"delivery_type":  o.DeliveryType,
+			"total_amount":   o.TotalAmount,
+			"pay_amount":     o.PayAmount,
+			// 订单所属社区（列表页展示社区标签）
+			"community_id":   o.CommunityId,
+			"community_name": communityNames[o.CommunityId],
 			// 支付类型（1微信 2支付宝 3货到付款 4现金；0=未支付/未知），
 			// 供前端区分货到付款单的"取消订单/申请退款"按钮显示
 			"pay_type": h.orderPayType(c, o.Id),
@@ -237,6 +263,9 @@ type PreviewFreeShippingReq struct {
 		SkuID    int64 `json:"sku_id" binding:"required"`
 		Quantity int32 `json:"quantity" binding:"required,min=1"`
 	} `json:"items" binding:"required,min=1"`
+	// 试算社区：购物车跨社区结算时前端按结算社区传入；
+	// 不传时按用户实时归属社区试算（与原行为一致）
+	CommunityID int64 `json:"community_id"`
 }
 
 // PreviewFreeShipping 免配送费试算（C 端确认页展示：
@@ -249,20 +278,23 @@ func (h *OrderHandler) PreviewFreeShipping(c *gin.Context) {
 		response.Error(c, errcode.ParamError)
 		return
 	}
-	uc := appcontext.GetUserContext(c)
-	// 实时查用户当前归属社区（与 CreateOrder 同口径）：
-	// token 中的 community_id 是登录快照，切换社区不重签 token，用快照会按旧社区试算；
-	// 也不信任客户端可伪造的 X-Community-Id，防止登录用户试算任意社区的活动与配送费配置
-	userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
-	if err != nil {
-		response.GRPCError(c, err)
-		return
+	communityID := req.CommunityID
+	if communityID <= 0 {
+		// 实时查用户当前归属社区（与 CreateOrder 同口径）：
+		// token 中的 community_id 是登录快照，切换社区不重签 token，用快照会按旧社区试算；
+		// 也不信任客户端可伪造的 X-Community-Id，防止登录用户试算任意社区的活动与配送费配置
+		uc := appcontext.GetUserContext(c)
+		userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		if userResp == nil || userResp.CommunityId <= 0 {
+			response.Error(c, errcode.ParamError, "缺少社区信息")
+			return
+		}
+		communityID = userResp.CommunityId
 	}
-	if userResp == nil || userResp.CommunityId <= 0 {
-		response.Error(c, errcode.ParamError, "缺少社区信息")
-		return
-	}
-	communityID := userResp.CommunityId
 
 	items := make([]*order.PreviewFreeShippingItem, 0, len(req.Items))
 	for _, item := range req.Items {

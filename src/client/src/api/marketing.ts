@@ -157,7 +157,7 @@ function toPageResponse<T, R>(
  * @param params 分页、社区等参数
  */
 export function getCoupons(params?: { page?: number; page_size?: number; community_id?: number }) {
-  return get<ApiResponse<BackendCoupon[]>>('/coupons', params as Record<string, unknown>).then((res) =>
+  return get<BackendCoupon[]>('/coupons', params as Record<string, unknown>).then((res) =>
     toPageResponse(res, toCoupon, params?.page, params?.page_size),
   )
 }
@@ -179,7 +179,7 @@ export function getUserCoupons(params?: {
   page?: number
   page_size?: number
 }) {
-  return get<ApiResponse<BackendUserCoupon[]>>('/user/coupons', params as Record<string, unknown>).then((res) =>
+  return get<BackendUserCoupon[]>('/user/coupons', params as Record<string, unknown>).then((res) =>
     toPageResponse(res, toUserCoupon, params?.page, params?.page_size),
   )
 }
@@ -189,8 +189,8 @@ export function getUserCoupons(params?: {
  * @param params 分页、社区等参数
  */
 export function getFlashSales(params?: { page?: number; page_size?: number; community_id?: number }) {
-  return get<ApiResponse<BackendFlashSale[]>>('/flash-sales', params as Record<string, unknown>).then((res) => {
-    const rawList = Array.isArray(res.data) ? res.data : res.data?.list || []
+  return get<BackendFlashSale[]>('/flash-sales', params as Record<string, unknown>).then((res) => {
+    const rawList = Array.isArray(res.data) ? res.data : []
     const list = flattenFlashSales(rawList)
     return {
       ...res,

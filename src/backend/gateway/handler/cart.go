@@ -41,13 +41,19 @@ func getCartCommunityID(c *gin.Context) int64 {
 
 // GetCart 获取当前用户购物车
 // 在返回购物车项的同时汇总总金额、总件数与已选件数
+// 仅显式传 community_id > 0 时按社区过滤；不传时返回全部社区的购物车项
+// （C 端购物车页需跨社区渲染全部商品，不再回退 JWT 快照社区）
 // 参数：
 //   - c: gin 上下文
 func (h *CartHandler) GetCart(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
+	communityID := int64(0)
+	if id, err := strconv.ParseInt(c.Query("community_id"), 10, 64); err == nil && id > 0 {
+		communityID = id
+	}
 	resp, err := h.cartClient.GetCart(c.Request.Context(), &cart.GetCartReq{
 		UserId:      uc.UserID,
-		CommunityId: getCartCommunityID(c),
+		CommunityId: communityID,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

@@ -451,7 +451,8 @@ function scrollRightToCategory(id: number) {
     const query = uni.createSelectorQuery().in(instance.proxy)
     query.select(`#category-${id}`).boundingClientRect()
     query.select('.right-list').boundingClientRect()
-    query.select('.right-list').scrollOffset()
+    // 结果统一从 exec 回调取（res[2]），此处空回调仅为满足类型签名（callback 必填）
+    query.select('.right-list').scrollOffset(() => {})
     query.exec((res) => {
       const sectionRect = res[0] as { top: number } | null
       const listRect = res[1] as { top: number } | null

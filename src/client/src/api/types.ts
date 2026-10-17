@@ -169,6 +169,9 @@ export interface Order {
   order_no: string
   status: number
   status_text: string
+  /** 订单所属社区（列表页展示社区标签，详情接口未返回） */
+  community_id?: number
+  community_name?: string
   total_amount: number
   discount_amount: number
   delivery_fee: number

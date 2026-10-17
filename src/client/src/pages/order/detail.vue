@@ -34,6 +34,7 @@
         v-for="item in order.items"
         :key="`${item.product_id}-${item.sku_id}`"
         class="goods-item"
+        @click="goProductDetail(item.product_id)"
       >
         <image class="goods-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" />
         <view class="goods-info">
@@ -119,7 +120,7 @@ import { getOrderDetail, confirmReceive } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
-import { goOrderList } from '@/utils/navigate'
+import { goOrderList, goProductDetail } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { canReceive, receiveButtonText, canCancel, canRefund, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
@@ -153,6 +154,8 @@ const order = ref<Order>({
     district: '',
     detail: '',
     tag: '',
+    community_id: 0,
+    community_name: '',
     is_default: false,
   },
   remark: '',

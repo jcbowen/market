@@ -7,6 +7,7 @@ import {
   UNAUTHORIZED_CODES,
 } from './config'
 import type { LoginResult } from './auth'
+import { isH5 } from '@/utils/platform'
 
 /**
  * 统一响应结构
@@ -31,8 +32,9 @@ export interface PageData<T> {
 
 /**
  * 请求方法类型
+ * 不含 PATCH：uni.request 类型不接受，且当前无调用方
  */
-type Method = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
 /**
  * 通用请求选项
@@ -40,7 +42,7 @@ type Method = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
 interface RequestOptions {
   url: string
   method?: Method
-  data?: Record<string, unknown> | unknown
+  data?: Record<string, unknown>
   header?: Record<string, string>
   hideLoading?: boolean
 }
@@ -217,6 +219,10 @@ function requestOnce<T = unknown>(
   }
   // #endif
 
+  // 请求体统一预计算（避免条件编译下对象字面量出现同名 data 属性触发 TS1117）：
+  // H5 的 GET 已手动拼接 query，不再传 data；其他端 GET 由 uni.request 转换为 query
+  const requestData = method === 'GET' && isH5() ? undefined : data
+
   if (token) {
     header.Authorization = `Bearer ${token}`
   }
@@ -228,16 +234,11 @@ function requestOnce<T = unknown>(
   // #endif
 
   return new Promise((resolve, reject) => {
+    // uni.promisify.adaptor 下类型推断可能落到 Promise 分支，运行时回调形式返回 RequestTask
     const task = uni.request({
       url: fullUrl,
       method,
-      // H5 下 GET 请求已手动拼接 query string，不再传递 data，避免重复或 body 序列化问题
-      // #ifdef H5
-      data: method === 'GET' ? undefined : data,
-      // #endif
-      // #ifndef H5
-      data,
-      // #endif
+      data: requestData,
       header,
       timeout: REQUEST_TIMEOUT,
       success: (res) => {
@@ -268,7 +269,7 @@ function requestOnce<T = unknown>(
         }
         // #endif
       },
-    })
+    }) as unknown as { abort?: () => void }
 
     // 超时兜底
     setTimeout(() => {

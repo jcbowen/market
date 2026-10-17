@@ -100,13 +100,15 @@ export function goProductDetail(id: number) {
 
 /**
  * 跳转确认订单页
- * @param query 订单参数，商品直接购买时传入 productId/skuId/quantity
+ * @param query 订单参数，商品直接购买时传入 productId/skuId/quantity；
+ *              购物车跨社区结算时传 communityId 指定结算社区（不传按用户当前社区）
  */
 export function goOrderConfirm(query?: {
   productId?: number
   skuId?: number
   quantity?: number
   cartItemIds?: number[]
+  communityId?: number
 }) {
   const params = new URLSearchParams()
   if (query?.productId) params.append('productId', String(query.productId))
@@ -115,6 +117,7 @@ export function goOrderConfirm(query?: {
   if (query?.cartItemIds?.length) {
     params.append('cartItemIds', query.cartItemIds.join(','))
   }
+  if (query?.communityId) params.append('communityId', String(query.communityId))
   const qs = params.toString()
   goPage(`/pages/order/confirm${qs ? '?' + qs : ''}`)
 }

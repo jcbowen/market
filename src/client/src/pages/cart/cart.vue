@@ -75,7 +75,7 @@
 
       <!-- 底部结算栏 -->
       <view class="footer-bar">
-        <view class="select-all" @click="toggleSelectAll">
+        <view class="select-all" @click="toggleSelectAll()">
           <u-checkbox v-model="isAllSelected" shape="circle" />
           <text>全选</text>
         </view>
@@ -127,6 +127,31 @@
         </view>
       </view>
     </view>
+
+    <!-- 跨社区结算：选择本次结算的社区（一次只结算一个社区） -->
+    <u-popup :show="communityPickerVisible" mode="bottom" :round="16" @close="communityPickerVisible = false">
+      <view class="community-picker">
+        <view class="community-picker-header">
+          <text class="community-picker-title">选择本次结算的社区</text>
+          <u-icon name="close" size="20" color="#999999" @click="communityPickerVisible = false" />
+        </view>
+        <text class="community-picker-tip">一次只能结算一个社区的商品，其余商品保持选中</text>
+        <scroll-view scroll-y class="community-picker-body">
+          <view
+            v-for="group in pendingGroups"
+            :key="group.id"
+            class="community-picker-option"
+            @click="settleCommunity(group.id, pendingSelectedItems)"
+          >
+            <view class="community-picker-main">
+              <text class="community-picker-name">{{ group.name }}</text>
+              <text class="community-picker-desc">{{ group.count }} 件 · 小计 {{ formatPrice(group.amount) }}</text>
+            </view>
+            <u-icon name="arrow-right" size="16" color="#999999" />
+          </view>
+        </scroll-view>
+      </view>
+    </u-popup>
   </view>
 </template>
 
@@ -452,7 +477,8 @@ async function toggleSelectAll(selected?: boolean) {
 
 /**
  * 去结算
- * 只能结算当前选中社区的商品，其他社区商品会被过滤并提示
+ * 一次只结算一个社区的商品：单社区选中时直接结算；
+ * 跨社区选中时弹窗让用户选择本次结算的社区，无需切换社区
  */
 function onSettlement() {
   if (!selectedIds.value.length) return
@@ -461,29 +487,49 @@ function onSettlement() {
     return
   }
 
-  const currentCommunityId = userStore.communityInfo?.id || 0
   const selectedItems = validItems.value.filter((item) => item.selected)
-  const currentCommunityItems = selectedItems.filter(
-    (item) => item.community_id === currentCommunityId,
-  )
-
-  if (!currentCommunityItems.length) {
-    uni.showToast({ title: '当前社区没有选中商品，请切换社区', icon: 'none' })
+  // 按社区聚合选中的商品（件数/小计供选择弹窗展示）
+  const groups = new Map<number, CartItem[]>()
+  for (const item of selectedItems) {
+    const cid = item.community_id || 0
+    const list = groups.get(cid) || []
+    list.push(item)
+    groups.set(cid, list)
+  }
+  if (groups.size === 1) {
+    settleCommunity(groups.keys().next().value as number, selectedItems)
     return
   }
 
-  const otherCommunityItems = selectedItems.filter(
-    (item) => item.community_id !== currentCommunityId,
-  )
-  if (otherCommunityItems.length) {
-    uni.showToast({
-      title: '已自动过滤非当前社区商品',
-      icon: 'none',
-      duration: 2000,
-    })
-  }
+  // 弹窗列出有选中商品的社区（不受 ActionSheet 6 项上限约束）
+  pendingSelectedItems.value = selectedItems
+  pendingGroups.value = [...groups.entries()].map(([id, list]) => ({
+    id,
+    name: communityMap.value[id] || `社区 ${id}`,
+    count: list.reduce((sum, item) => sum + item.quantity, 0),
+    amount: list.reduce((sum, item) => sum + item.price * item.quantity, 0),
+  }))
+  communityPickerVisible.value = true
+}
 
-  goOrderConfirm({ cartItemIds: currentCommunityItems.map((item) => item.id) })
+/** 跨社区结算的社区选择弹窗状态 */
+const communityPickerVisible = ref(false)
+const pendingGroups = ref<{ id: number; name: string; count: number; amount: number }[]>([])
+const pendingSelectedItems = ref<CartItem[]>([])
+
+/**
+ * 按社区结算：携带该社区选中的购物车项与社区 ID 跳确认订单页
+ * @param communityId 结算社区 ID
+ * @param selectedItems 全部选中商品（按社区过滤）
+ */
+function settleCommunity(communityId: number, selectedItems: CartItem[]) {
+  communityPickerVisible.value = false
+  const items = selectedItems.filter((item) => (item.community_id || 0) === communityId)
+  if (!items.length) return
+  goOrderConfirm({
+    cartItemIds: items.map((item) => item.id),
+    communityId: communityId || undefined,
+  })
 }
 </script>
 
@@ -753,5 +799,64 @@ function onSettlement() {
 .frequent-add {
   flex-shrink: 0;
   padding: 10rpx;
+}
+
+/* 跨社区结算社区选择弹窗 */
+.community-picker {
+  padding: 30rpx 30rpx calc(30rpx + env(safe-area-inset-bottom));
+}
+
+.community-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12rpx;
+}
+
+.community-picker-title {
+  font-size: 32rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
+.community-picker-tip {
+  display: block;
+  margin-bottom: 16rpx;
+  font-size: 22rpx;
+  color: #999999;
+}
+
+.community-picker-body {
+  max-height: 50vh;
+}
+
+.community-picker-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 8rpx;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+
+.community-picker-option:last-child {
+  border-bottom: none;
+}
+
+.community-picker-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.community-picker-name {
+  display: block;
+  font-size: 28rpx;
+  color: #333333;
+}
+
+.community-picker-desc {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #999999;
 }
 </style>

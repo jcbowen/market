@@ -15,6 +15,8 @@ export interface CreateOrderParams {
   address_id: number
   /** 期望配送时间（可选） */
   delivery_time?: string
+  /** 下单社区：购物车跨社区结算时传结算社区，不传按用户当前社区 */
+  community_id?: number
   items: { product_id: number; sku_id: number; quantity: number }[]
   coupon_id?: number
   remark?: string
@@ -27,7 +29,7 @@ export interface CreateOrderParams {
  * @param data 订单参数
  */
 export function createOrder(data: CreateOrderParams) {
-  return post<Order>('/orders', data as Record<string, unknown>)
+  return post<Order>('/orders', data as unknown as Record<string, unknown>)
 }
 
 /**
@@ -158,9 +160,13 @@ export interface FreeShippingPreview {
 
 /**
  * 免配送费试算（订单确认页展示）
- * 按结算商品清单计算当前社区免配送费活动命中情况
+ * 按结算商品清单计算免配送费活动命中情况
  * @param items 结算商品（sku_id + quantity）
+ * @param communityId 试算社区（购物车跨社区结算时传结算社区，不传按用户当前社区）
  */
-export function previewFreeShipping(items: { sku_id: number; quantity: number }[]) {
-  return post<FreeShippingPreview>('/orders/free-shipping/preview', { items })
+export function previewFreeShipping(
+  items: { sku_id: number; quantity: number }[],
+  communityId?: number,
+) {
+  return post<FreeShippingPreview>('/orders/free-shipping/preview', { items, community_id: communityId })
 }
