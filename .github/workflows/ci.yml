@@ -14,15 +14,6 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# runner 部署在国内服务器，proxy.golang.org 与 registry.npmjs.org 直连不可达，
-# 顶层 env 对所有 job 生效：Go 走七牛镜像、阿里云镜像兜底，npm 走淘宝镜像，
-# 末尾 direct 兜底直连。goproxy.cn 对新发布 tag 存在回源失败且缓存错误状态的情况
-# （如 wego v0.1.0，.info 可用但 .zip 超时），故增加阿里云镜像第二跳；
-# goproxy.io 对该模块返回 403，实测不可用，不加入链路。
-env:
-  GOPROXY: https://goproxy.cn,https://mirrors.aliyun.com/goproxy/,direct
-  NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
-
 jobs:
   backend:
     name: 后端 go vet/test/build
@@ -76,6 +67,14 @@ jobs:
         with:
           go-version: '1.26'
           cache-dependency-path: src/backend/go.sum
+
+      # 与 backend job 一致：drop 本地 replace 后从公共 Go proxy 拉取已发布版本，
+      # 否则 CI 上不存在 ../../../jcbaseGo 本地目录，typecheck 直接报错
+      - name: 移除本地 replace 指令
+        working-directory: src/backend
+        run: |
+          go mod edit -dropreplace github.com/jcbowen/jcbaseGo
+          go mod edit -dropreplace github.com/jcbowen/wego
 
       # 配置文件位于仓库根目录 .golangci.yml（v2 格式），golangci-lint 会自
       # working-directory 逐级向上查找配置
