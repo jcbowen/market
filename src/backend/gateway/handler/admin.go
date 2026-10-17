@@ -1444,6 +1444,7 @@ type SkuItemReqItem struct {
 	SafetyStock   int32    `json:"safety_stock"`
 	Image         string   `json:"image"`
 	OriginalPrice float64  `json:"original_price"`
+	Barcode       string   `json:"barcode"`
 }
 
 // CreateProductReq 创建商品请求
@@ -1517,6 +1518,7 @@ func toProtoSkuItems(items []*SkuItemReqItem) []*product.SkuItemReq {
 			SafetyStock:   it.SafetyStock,
 			Image:         it.Image,
 			OriginalPrice: it.OriginalPrice,
+			Barcode:       it.Barcode,
 		})
 	}
 	return list

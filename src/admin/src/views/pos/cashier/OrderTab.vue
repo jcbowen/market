@@ -3,7 +3,14 @@
     <!-- 左：分类导航 + 商品卡片网格 -->
     <div class="pane-left">
       <div class="search-bar">
-        <n-input v-model:value="keyword" placeholder="搜索商品名 / 拼音首字母" clearable size="large" class="search">
+        <n-input
+          v-model:value="keyword"
+          placeholder="搜索商品名 / 拼音首字母 / 扫条码"
+          clearable
+          size="large"
+          class="search"
+          @keyup.enter="onSearchEnter"
+        >
           <template #prefix>
             <n-icon><SearchOutline /></n-icon>
           </template>
@@ -334,7 +341,7 @@ import { CreateOutline, CubeOutline, SearchOutline } from '@vicons/ionicons5'
 import { pinyin } from 'pinyin-pro'
 import { createPosHeldOrder, createPosOrder, deletePosHeldOrder, getPosHeldOrders } from '@/api/order'
 import { getCouponRecords } from '@/api/marketing'
-import { getProductDetail, getProductList } from '@/api/product'
+import { getProductByBarcode, getProductDetail, getProductList } from '@/api/product'
 import { getCommunityProfile } from '@/api/user'
 import type { PosHeldOrder, Product, Sku, User } from '@/api/types'
 import UserPicker from '@/components/UserPicker.vue'
@@ -384,6 +391,40 @@ async function searchProducts() {
     products.value = list
   } finally {
     productLoading.value = false
+  }
+}
+
+/** 纯数字条形码关键词（6-20 位，与后端条码口径一致） */
+const barcodeKeyword = computed(() => (/^\d{6,20}$/.test(keyword.value.trim()) ? keyword.value.trim() : ''))
+
+/** 条码查询进行中标记（防扫码枪连发重复请求） */
+let barcodeLooking = false
+
+/**
+ * 搜索框回车：纯数字条形码优先走条码查询，命中直接加购；
+ * 未命中提示后保留关键词走本地商品名过滤
+ * 扫码枪等价于键盘输入 + 回车，无需额外驱动
+ */
+async function onSearchEnter() {
+  const code = barcodeKeyword.value
+  if (!code || barcodeLooking) return
+  barcodeLooking = true
+  try {
+    const res = await getProductByBarcode(code)
+    if (res.data.code === 0 && res.data.data?.sku) {
+      const { product, sku } = res.data.data
+      if (sku.stock <= 0) {
+        message.warning(`「${product.name}」库存不足`)
+        return
+      }
+      addSkuToCart(sku, product.name)
+      keyword.value = ''
+    }
+  } catch {
+    // 未命中：request 拦截器已弹出后端文案（"未找到该条码对应的商品"），
+    // 这里静默保留关键词，回落到本地商品名过滤
+  } finally {
+    barcodeLooking = false
   }
 }
 

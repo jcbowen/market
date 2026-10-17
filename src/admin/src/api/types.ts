@@ -160,6 +160,8 @@ export interface Sku {
   safety_stock: number
   image: string
   status: number
+  /** 商品条形码（EAN-13 等，社区内唯一，空表示未设置） */
+  barcode: string
 }
 
 /**
@@ -197,6 +199,8 @@ export interface SkuSaveItem {
   stock: number
   safety_stock: number
   image: string
+  /** 商品条形码（EAN-13 等，社区内唯一，空表示未设置） */
+  barcode: string
 }
 
 /**

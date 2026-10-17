@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
@@ -86,6 +87,7 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 		Stock:       req.Stock,
 		SafetyStock: req.SafetyStock,
 		Image:       req.Image,
+		Barcode:     strings.TrimSpace(req.Barcode),
 		Status:      1,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(sku).Error; err != nil {
@@ -129,6 +131,9 @@ func (s *SkuService) UpdateSku(ctx context.Context, req *product.UpdateSkuReq) (
 	if req.Status != 0 {
 		sku.Status = req.Status
 	}
+	if req.Barcode != "" {
+		sku.Barcode = strings.TrimSpace(req.Barcode)
+	}
 
 	if err := s.db.GetDb().WithContext(ctx).Save(sku).Error; err != nil {
 		return nil, err
@@ -161,5 +166,6 @@ func ToSkuInfo(sku *model.Sku) *product.SkuInfo {
 		Image:         sku.Image,
 		Status:        sku.Status,
 		SpecValueIds:  sku.SpecValueIDs,
+		Barcode:       sku.Barcode,
 	}
 }

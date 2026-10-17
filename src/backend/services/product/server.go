@@ -3,6 +3,7 @@ package main
 import (
 	stdctx "context"
 	"log"
+	"strings"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
@@ -194,6 +195,26 @@ func (s *server) SearchProducts(ctx stdctx.Context, req *product.SearchProductsR
 		Pagination:  req.Pagination,
 	}
 	return s.ListProducts(ctx, listReq)
+}
+
+// LookupBarcode 按条形码精确查询商品与命中的 SKU（扫码直达）
+// 未命中返回 NotFound 业务错误（文案"未找到该条码对应的商品"）
+func (s *server) LookupBarcode(ctx stdctx.Context, req *product.LookupBarcodeReq) (*product.LookupBarcodeResp, error) {
+	barcode := strings.TrimSpace(req.Barcode)
+	if barcode == "" || req.CommunityId <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "参数错误")
+	}
+	p, sku, err := s.productService.GetByBarcode(ctx, req.CommunityId, barcode)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+
+	info := service.ToProductInfo(p, "", nil)
+	// 出库统一拼接完整访问 URL（封面相对路径）
+	info.CoverImage = s.attachmentService.ToMediaURL(ctx, p.CoverImage)
+	skuInfo := service.ToSkuInfo(sku)
+	skuInfo.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+	return &product.LookupBarcodeResp{Product: info, Sku: skuInfo}, nil
 }
 
 // CreateProduct 创建商品

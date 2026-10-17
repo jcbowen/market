@@ -147,6 +147,18 @@ export function updateProductStatus(id: number, status: number) {
 }
 
 /**
+ * 条形码精确查询（收银台扫码直达）
+ * @param code 条形码
+ * @returns 命中的商品与 SKU；未命中返回 404 业务错误
+ */
+export function getProductByBarcode(code: string) {
+  return request<ApiResult<{ product: Product; sku: Sku }>>({
+    url: `/api/v1/admin/products/barcode/${encodeURIComponent(code)}`,
+    method: 'GET',
+  })
+}
+
+/**
  * 获取商品 SKU 列表
  * @param productId 商品 ID
  * @returns SKU 列表

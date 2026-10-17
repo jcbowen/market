@@ -21,6 +21,7 @@ service ProductService {
   rpc ListProducts(ListProductsReq) returns (ListProductsResp);
   rpc GetProduct(GetProductReq) returns (ProductDetail);
   rpc SearchProducts(SearchProductsReq) returns (ListProductsResp);
+  rpc LookupBarcode(LookupBarcodeReq) returns (LookupBarcodeResp);
   rpc CreateProduct(CreateProductReq) returns (ProductDetail);
   rpc UpdateProduct(UpdateProductReq) returns (ProductDetail);
   rpc DeleteProduct(DeleteProductReq) returns (common.CommonResponse);
@@ -280,6 +281,20 @@ message SkuItemReq {
   int32 safety_stock = 7;
   string image = 8;
   double original_price = 9; // 划线价（原价，0 表示不展示）
+  string barcode = 10;      // 商品条形码（纯数字 6-20 位，社区内在售 SKU 间唯一，空表示未设置；商品软删后自动回收）
+}
+
+// LookupBarcodeReq 条形码精确查询（扫码直达：返回命中的商品与具体 SKU）
+message LookupBarcodeReq {
+  int64 community_id = 1;
+  string barcode = 2;
+}
+
+// LookupBarcodeResp 条形码查询结果
+// 未命中时 product / sku 均为空；多规格商品命中时 sku 为具体规格
+message LookupBarcodeResp {
+  ProductInfo product = 1;
+  SkuInfo sku = 2;
 }
 
 // SpecValueInfo 规格值信息（详情返回）
@@ -317,6 +332,7 @@ message CreateSkuReq {
   int32 stock = 8;
   int32 safety_stock = 9;
   string image = 10;
+  string barcode = 11; // 商品条形码
 }
 
 message UpdateSkuReq {
@@ -328,6 +344,7 @@ message UpdateSkuReq {
   int32 safety_stock = 6;
   string image = 7;
   int32 status = 8;
+  string barcode = 9; // 商品条形码
 }
 
 message SkuInfo {
@@ -345,6 +362,7 @@ message SkuInfo {
   int32 status = 12;
   string spec_value_ids = 13; // 逗号分隔的规格值 ID（多规格组合键，单规格为空）
   double original_price = 14; // 划线价（原价，0 表示不展示）
+  string barcode = 15;       // 商品条形码（纯数字 6-20 位，社区内在售 SKU 间唯一，空表示未设置）
 }
 
 message ListSkusResp {

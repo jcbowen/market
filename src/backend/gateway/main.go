@@ -146,6 +146,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.GET("/communities", userHandler.ListCommunities)
 			public.GET("/communities/:id", userHandler.GetCommunity)
 			public.GET("/products", productHandler.ListProducts)
+			// 条形码精确查询：静态段路由需注册在 /products/:id 之前（gin 静态优先，防吞参数）
+			public.GET("/products/barcode/:code", productHandler.GetProductByBarcode)
 			public.GET("/products/:id", productHandler.GetProduct)
 			public.GET("/skus", productHandler.ListSkus)
 			public.GET("/skus/:id", productHandler.GetSkuById)
@@ -257,6 +259,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.DELETE("/categories/:id", gwMiddleware.RequirePermission("product:delete"), adminHandler.DeleteCategory)
 
 			authAdmin.GET("/products", gwMiddleware.RequirePermission("product:view"), adminHandler.ListAdminProducts)
+			// 收银台扫码直达：条形码查询随下单链路走 order:create（收银员可能无 product:view）
+			authAdmin.GET("/products/barcode/:code", gwMiddleware.RequirePermission("order:create"), productHandler.GetProductByBarcode)
 			authAdmin.GET("/products/:id", gwMiddleware.RequirePermission("product:view"), adminHandler.GetAdminProduct)
 			authAdmin.POST("/products", gwMiddleware.RequirePermission("product:create"), adminHandler.CreateProduct)
 			authAdmin.PUT("/products/:id", gwMiddleware.RequirePermission("product:update"), adminHandler.UpdateProduct)

@@ -52,6 +52,15 @@
         <n-form-item label="安全库存">
           <n-input-number v-model:value="singleSku.safety_stock" :min="0" />
         </n-form-item>
+        <n-form-item label="条形码">
+          <n-input
+            v-model:value="singleSku.barcode"
+            placeholder="支持扫码枪直接录入"
+            style="width: 220px"
+            :maxlength="20"
+          />
+          <span class="field-hint">EAN/UPC 数字码，6-20 位，社区内不可重复，留空表示不设置</span>
+        </n-form-item>
       </template>
 
       <!-- 多规格：规格编辑器 + SKU 笛卡尔积表格 -->
@@ -91,6 +100,7 @@
                 <th>成本价（元）</th>
                 <th>库存</th>
                 <th>安全库存</th>
+                <th>条形码</th>
               </tr>
             </thead>
             <tbody>
@@ -156,6 +166,15 @@
                     :min="0"
                     size="small"
                     placeholder="安全库存"
+                  />
+                </td>
+                <td>
+                  <n-input
+                    v-model:value="row.barcode"
+                    size="small"
+                    placeholder="扫码录入"
+                    style="width: 130px"
+                    :maxlength="20"
                   />
                 </td>
               </tr>
@@ -233,6 +252,7 @@ interface SkuRow {
   stock: number | null
   safety_stock: number | null
   image: string
+  barcode: string
 }
 
 const route = useRoute()
@@ -265,6 +285,7 @@ const singleSku = reactive({
   cost_price: null as number | null,
   stock: null as number | null,
   safety_stock: 0,
+  barcode: '',
 })
 
 const specs = ref<SpecEditor[]>([])
@@ -358,6 +379,7 @@ function rebuildSkuRows(): void {
       stock: old?.stock ?? null,
       safety_stock: old?.safety_stock ?? null,
       image: old?.image ?? '',
+      barcode: old?.barcode ?? '',
     }
   })
 }
@@ -455,6 +477,7 @@ async function loadDetail(): Promise<void> {
         stock: sku.stock,
         safety_stock: sku.safety_stock,
         image: sku.image ?? '',
+        barcode: sku.barcode ?? '',
       }
     })
   } else {
@@ -467,8 +490,21 @@ async function loadDetail(): Promise<void> {
       singleSku.cost_price = sku.cost_price
       singleSku.stock = sku.stock
       singleSku.safety_stock = sku.safety_stock
+      singleSku.barcode = sku.barcode ?? ''
     }
   }
+}
+
+/**
+ * 条形码格式校验（与后端口径一致：纯数字、6-20 位，留空合法）
+ * @param barcode 已去空格的条形码
+ * @returns 不合法时返回错误文案，合法返回空串
+ */
+function barcodeError(barcode: string): string {
+  if (!barcode) return ''
+  if (!/^\d+$/.test(barcode)) return '条形码仅支持数字（EAN/UPC 码制）'
+  if (barcode.length < 6 || barcode.length > 20) return '条形码长度需在 6-20 位之间'
+  return ''
 }
 
 /**
@@ -510,6 +546,12 @@ function buildPayload(): ProductSavePayload | null {
       message.error('请填写库存')
       return null
     }
+    const barcode = singleSku.barcode.trim()
+    const barcodeErr = barcodeError(barcode)
+    if (barcodeErr) {
+      message.error(barcodeErr)
+      return null
+    }
     payload.sku_items = [
       {
         id: singleSku.id,
@@ -521,6 +563,7 @@ function buildPayload(): ProductSavePayload | null {
         stock: singleSku.stock,
         safety_stock: singleSku.safety_stock ?? 0,
         image: '',
+        barcode,
       },
     ]
     return payload
@@ -545,6 +588,7 @@ function buildPayload(): ProductSavePayload | null {
     message.error('请为规格添加规格值以生成 SKU')
     return null
   }
+  const seenBarcodes = new Map<string, string>()
   for (const row of skuRows.value) {
     if (!row.price || row.price <= 0) {
       message.error(`SKU「${row.values.map((v) => v.name).join(' / ')}」的售价必须大于 0`)
@@ -553,6 +597,20 @@ function buildPayload(): ProductSavePayload | null {
     if (row.stock === null || row.stock < 0) {
       message.error(`SKU「${row.values.map((v) => v.name).join(' / ')}」请填写库存`)
       return null
+    }
+    const barcode = (row.barcode || '').trim()
+    const barcodeErr = barcodeError(barcode)
+    if (barcodeErr) {
+      message.error(`SKU「${row.values.map((v) => v.name).join(' / ')}」${barcodeErr}`)
+      return null
+    }
+    if (barcode) {
+      const owner = seenBarcodes.get(barcode)
+      if (owner) {
+        message.error(`条形码 ${barcode} 在「${owner}」与「${row.values.map((v) => v.name).join(' / ')}」中重复`)
+        return null
+      }
+      seenBarcodes.set(barcode, row.values.map((v) => v.name).join(' / '))
     }
   }
 
@@ -579,6 +637,7 @@ function buildPayload(): ProductSavePayload | null {
     stock: row.stock ?? 0,
     safety_stock: row.safety_stock ?? 0,
     image: row.image ?? '',
+    barcode: (row.barcode || '').trim(),
   }))
   return payload
 }

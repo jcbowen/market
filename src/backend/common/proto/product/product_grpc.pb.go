@@ -28,6 +28,7 @@ const (
 	ProductService_ListProducts_FullMethodName                  = "/product.ProductService/ListProducts"
 	ProductService_GetProduct_FullMethodName                    = "/product.ProductService/GetProduct"
 	ProductService_SearchProducts_FullMethodName                = "/product.ProductService/SearchProducts"
+	ProductService_LookupBarcode_FullMethodName                 = "/product.ProductService/LookupBarcode"
 	ProductService_CreateProduct_FullMethodName                 = "/product.ProductService/CreateProduct"
 	ProductService_UpdateProduct_FullMethodName                 = "/product.ProductService/UpdateProduct"
 	ProductService_DeleteProduct_FullMethodName                 = "/product.ProductService/DeleteProduct"
@@ -104,6 +105,7 @@ type ProductServiceClient interface {
 	ListProducts(ctx context.Context, in *ListProductsReq, opts ...grpc.CallOption) (*ListProductsResp, error)
 	GetProduct(ctx context.Context, in *GetProductReq, opts ...grpc.CallOption) (*ProductDetail, error)
 	SearchProducts(ctx context.Context, in *SearchProductsReq, opts ...grpc.CallOption) (*ListProductsResp, error)
+	LookupBarcode(ctx context.Context, in *LookupBarcodeReq, opts ...grpc.CallOption) (*LookupBarcodeResp, error)
 	CreateProduct(ctx context.Context, in *CreateProductReq, opts ...grpc.CallOption) (*ProductDetail, error)
 	UpdateProduct(ctx context.Context, in *UpdateProductReq, opts ...grpc.CallOption) (*ProductDetail, error)
 	DeleteProduct(ctx context.Context, in *DeleteProductReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
@@ -260,6 +262,16 @@ func (c *productServiceClient) SearchProducts(ctx context.Context, in *SearchPro
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListProductsResp)
 	err := c.cc.Invoke(ctx, ProductService_SearchProducts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) LookupBarcode(ctx context.Context, in *LookupBarcodeReq, opts ...grpc.CallOption) (*LookupBarcodeResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LookupBarcodeResp)
+	err := c.cc.Invoke(ctx, ProductService_LookupBarcode_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -880,6 +892,7 @@ type ProductServiceServer interface {
 	ListProducts(context.Context, *ListProductsReq) (*ListProductsResp, error)
 	GetProduct(context.Context, *GetProductReq) (*ProductDetail, error)
 	SearchProducts(context.Context, *SearchProductsReq) (*ListProductsResp, error)
+	LookupBarcode(context.Context, *LookupBarcodeReq) (*LookupBarcodeResp, error)
 	CreateProduct(context.Context, *CreateProductReq) (*ProductDetail, error)
 	UpdateProduct(context.Context, *UpdateProductReq) (*ProductDetail, error)
 	DeleteProduct(context.Context, *DeleteProductReq) (*common.CommonResponse, error)
@@ -985,6 +998,9 @@ func (UnimplementedProductServiceServer) GetProduct(context.Context, *GetProduct
 }
 func (UnimplementedProductServiceServer) SearchProducts(context.Context, *SearchProductsReq) (*ListProductsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method SearchProducts not implemented")
+}
+func (UnimplementedProductServiceServer) LookupBarcode(context.Context, *LookupBarcodeReq) (*LookupBarcodeResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method LookupBarcode not implemented")
 }
 func (UnimplementedProductServiceServer) CreateProduct(context.Context, *CreateProductReq) (*ProductDetail, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateProduct not implemented")
@@ -1327,6 +1343,24 @@ func _ProductService_SearchProducts_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ProductServiceServer).SearchProducts(ctx, req.(*SearchProductsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_LookupBarcode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupBarcodeReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).LookupBarcode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_LookupBarcode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).LookupBarcode(ctx, req.(*LookupBarcodeReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2449,6 +2483,10 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SearchProducts",
 			Handler:    _ProductService_SearchProducts_Handler,
+		},
+		{
+			MethodName: "LookupBarcode",
+			Handler:    _ProductService_LookupBarcode_Handler,
 		},
 		{
 			MethodName: "CreateProduct",

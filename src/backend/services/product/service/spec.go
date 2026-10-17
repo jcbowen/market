@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -10,8 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -19,6 +22,9 @@ import (
 // specAliveCond 规格表存活记录过滤条件（deleted_at 为 NULL 视为存活）
 // 注意：不能用 `deleted_at = ”` 比较 —— datetime 列与空串比较在 strict 模式下报 Error 1292
 const specAliveCond = "deleted_at IS NULL"
+
+// ErrBarcodeNotFound 条形码未命中业务错误（对扫码方等价于"未找到商品"）
+var ErrBarcodeNotFound = bizerr.New(codes.NotFound, "未找到该条码对应的商品")
 
 // saveSpecsAndSkus 在事务内保存商品的规格树与 SKU 组合，并回写商品汇总字段
 // 多规格：先落规格名/规格值（前端临时 ID 映射为真实 ID），再落 SKU 组合，
@@ -219,6 +225,7 @@ func (s *ProductService) saveSkus(
 		minOriginalPrice = 0.0
 		totalStock       = int32(0)
 		seenCombo        = make(map[string]bool)
+		seenBarcode      = make(map[string]bool)
 		defaultSkuID     = int64(0)
 	)
 
@@ -261,6 +268,24 @@ func (s *ProductService) saveSkus(
 			seenCombo[comboKey] = true
 		}
 
+		// 条形码：归一化 + 格式校验 + 本次提交内去重 + 社区内跨商品唯一校验
+		// 条码类业务校验统一走 bizerr（InvalidArgument），包装用 %w 保留错误链——
+		// 纯 fmt.Errorf 会被 ToStatus 归为 Internal，网关侧吞成"服务器内部错误"
+		barcode := strings.TrimSpace(item.Barcode)
+		if barcode != "" {
+			if err := validateBarcode(barcode); err != nil {
+				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
+			}
+			if seenBarcode[barcode] {
+				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1,
+					bizerr.New(codes.InvalidArgument, fmt.Sprintf("条形码 %s 在本商品内重复", barcode)))
+			}
+			seenBarcode[barcode] = true
+			if err := s.ensureBarcodeAvailable(tx, p.CommunityID, p.ID, barcode); err != nil {
+				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
+			}
+		}
+
 		// 规格展示信息
 		specName, specJSON := buildSkuSpecInfo(resolved, specNameMap, valueNameMap, valueSpecMap)
 
@@ -288,6 +313,7 @@ func (s *ProductService) saveSkus(
 			"stock":          item.Stock,
 			"safety_stock":   item.SafetyStock,
 			"image":          item.Image,
+			"barcode":        barcode,
 			"status":         1,
 		}
 		if skuCode != "" {
@@ -324,6 +350,7 @@ func (s *ProductService) saveSkus(
 				Stock:         item.Stock,
 				SafetyStock:   item.SafetyStock,
 				Image:         item.Image,
+				Barcode:       barcode,
 				Status:        1,
 			}
 			if err := tx.Create(row).Error; err != nil {
@@ -471,6 +498,96 @@ func buildSkuSpecInfo(ids []int64, specNameMap, valueNameMap map[int64]string, v
 	}
 	specJSON, _ := json.Marshal(pairs)
 	return strings.Join(parts, " / "), string(specJSON)
+}
+
+// validateBarcode 条形码宽松格式校验：仅允许纯数字，长度 6-20 位
+// 覆盖 EAN-8 / UPC-E(8) / UPC-A(12) / EAN-13(13) / ITF-14(14) 等常见码制；
+// 不做校验位强校验，避免临期称重码等特殊码被误拦
+//
+// 参数：
+//   - barcode: 已去空格的条形码
+//
+// 返回值：
+//   - error: 格式不合法时的错误信息
+func validateBarcode(barcode string) error {
+	if len(barcode) < 6 || len(barcode) > 20 {
+		return bizerr.New(codes.InvalidArgument, "条形码长度需在 6-20 位之间")
+	}
+	for _, r := range barcode {
+		if r < '0' || r > '9' {
+			return bizerr.New(codes.InvalidArgument, "条形码仅支持数字（EAN/UPC 码制）")
+		}
+	}
+	return nil
+}
+
+// ensureBarcodeAvailable 校验条形码在本社区内未被其他在售商品的 SKU 占用
+// 仅校验启用（status=1）的 SKU：被移除规格的条码可回收复用；
+// 排除本商品自身（本商品内重复已在提交循环内校验，且本商品其他 SKU 若未保留将在同事务内被禁用）
+//
+// 参数：
+//   - tx: GORM 事务对象
+//   - communityID: 社区 ID
+//   - excludeProductID: 排除的商品 ID（当前保存的商品）
+//   - barcode: 已归一化的条形码
+//
+// 返回值：
+//   - error: 条码被占用时的错误信息（含占用商品名）
+func (s *ProductService) ensureBarcodeAvailable(tx *gorm.DB, communityID, excludeProductID int64, barcode string) error {
+	var sku model.Sku
+	// 仅统计未删除商品（status != 2）的 SKU：商品软删后其条码自动释放可复用
+	err := tx.Where("community_id = ? AND barcode = ? AND status = 1 AND product_id != ?"+
+		" AND product_id IN (?)", communityID, barcode, excludeProductID,
+		tx.Model(&model.Product{}).Select("id").Where("status != ?", 2)).
+		Order("id asc").First(&sku).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	var p model.Product
+	if err := tx.Select("name").Where("id = ?", sku.ProductID).First(&p).Error; err != nil {
+		return fmt.Errorf("条形码 %s 已被其他商品占用", barcode)
+	}
+	return bizerr.New(codes.InvalidArgument, fmt.Sprintf("条形码 %s 已被商品「%s」使用", barcode, p.Name))
+}
+
+// GetByBarcode 按条形码精确查询商品与命中的 SKU（社区隔离，仅上架商品与启用 SKU）
+//
+// 参数：
+//   - ctx: 上下文
+//   - communityID: 社区 ID
+//   - barcode: 条形码（调用方需已去空格）
+//
+// 返回值：
+//   - *model.Product: 命中的商品；未命中返回 ErrBarcodeNotFound
+//   - *model.Sku: 命中的 SKU（多规格商品为具体规格）
+//   - error: 未命中或查询错误
+func (s *ProductService) GetByBarcode(ctx context.Context, communityID int64, barcode string) (*model.Product, *model.Sku, error) {
+	var sku model.Sku
+	err := s.db.GetDb().WithContext(ctx).
+		Where("community_id = ? AND barcode = ? AND status = 1", communityID, barcode).
+		Order("id asc").First(&sku).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, ErrBarcodeNotFound
+		}
+		return nil, nil, err
+	}
+
+	var p model.Product
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("id = ? AND status = 1", sku.ProductID).
+		First(&p).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// SKU 存在但商品已下架/删除：对扫码方等价于未命中
+			return nil, nil, ErrBarcodeNotFound
+		}
+		return nil, nil, err
+	}
+	return &p, &sku, nil
 }
 
 // skuDisplayName 将规格值 ID 列表转为可读名称（用于错误提示）

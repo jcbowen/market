@@ -14,13 +14,18 @@
           ref="searchInputRef"
           v-model="keyword"
           class="search-input native-input"
-          placeholder="请输入商品名称"
+          placeholder="请输入商品名称或条形码"
           type="search"
           focus
           confirm-type="search"
           @confirm="onSearchConfirm"
           @blur="onSearchBlur"
         />
+        <!-- #ifdef MP-WEIXIN || APP-PLUS -->
+        <view class="scan-btn" @click.stop="onScanCode">
+          <u-icon name="scan" size="20" color="#333333" />
+        </view>
+        <!-- #endif -->
         <text v-show="isSearching" class="search-cancel" @click="cancelSearch">取消</text>
         <view v-show="!isSearching" class="search-text" @click="startSearch">搜索商品</view>
       </view>
@@ -212,7 +217,7 @@ import type { Ref } from 'vue'
 import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
-import { getBanners, getCategories, getProducts, getProductDetail, searchProducts } from '@/api/product'
+import { getBanners, getCategories, getProducts, getProductByBarcode, getProductDetail, searchProducts } from '@/api/product'
 import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart'
 import { getCommunityList } from '@/api/user'
 import { formatPrice } from '@/utils/format'
@@ -656,6 +661,53 @@ async function doSearch() {
 }
 
 /**
+ * 扫码识别（仅小程序/App 展示入口，H5 无统一扫码 API 故隐藏）
+ * 识别结果交给统一处理：条码直达，其余内容当关键词搜索
+ */
+function onScanCode() {
+  uni.scanCode({
+    scanType: ['barCode', 'qrCode'],
+    success: (res) => {
+      const code = (res.result || '').trim()
+      if (code) void handleScanResult(code)
+    },
+  })
+}
+
+/**
+ * 处理扫码结果：
+ * 纯数字条码（6-20 位）走条码精确查询——命中单规格直接加购，多规格弹规格选择窗；
+ * 未命中回落为关键词搜索（请求层已提示"未找到该条码对应的商品"）；
+ * 非条码内容（如二维码文本）直接当关键词搜索
+ * @param code 扫码内容
+ */
+async function handleScanResult(code: string) {
+  if (!/^\d{6,20}$/.test(code)) {
+    isSearching.value = true
+    keyword.value = code
+    doSearch()
+    return
+  }
+  try {
+    const res = await getProductByBarcode(code, userStore.communityInfo?.id)
+    const { product, sku } = res.data
+    if (!product.id) return
+    if (product.is_multi_spec) {
+      isSearching.value = false
+      openSkuPopup(product)
+    } else if (sku.stock > 0) {
+      await addSingleSpecToCart(product)
+    } else {
+      uni.showToast({ title: '该商品暂无库存', icon: 'none' })
+    }
+  } catch {
+    // 未命中：请求层已统一提示，回填关键词保留扫码上下文供手动搜索
+    isSearching.value = true
+    keyword.value = code
+  }
+}
+
+/**
  * 点击商品卡片
  * 单规格直接加购，多规格弹出选择窗
  * @param product 商品对象
@@ -964,6 +1016,13 @@ function onSettlement() {
   flex-shrink: 0;
   font-size: 26rpx;
   color: #666666;
+}
+
+.scan-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 8rpx 0 16rpx;
 }
 
 .content,

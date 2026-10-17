@@ -198,6 +198,30 @@ export function searchProducts(params: {
 }
 
 /**
+ * 条形码精确查询（扫码直达）
+ * @param code 条形码
+ * @param communityId 社区 ID
+ * @returns 命中的商品与 SKU（未命中时请求层抛出业务错误）
+ */
+export function getProductByBarcode(code: string, communityId?: number) {
+  return get<{ product: RawProduct; sku?: RawSku }>(`/products/barcode/${encodeURIComponent(code)}`, {
+    community_id: communityId,
+  }).then((res) => {
+    const product = res.data?.product || {}
+    const skuRaw = res.data?.sku || {}
+    product.skus = skuRaw.id ? [skuRaw] : []
+    return {
+      code: res.code,
+      message: res.message,
+      data: {
+        product: normalizeProduct(product),
+        sku: normalizeSku(skuRaw),
+      },
+    }
+  })
+}
+
+/**
  * 获取 Banner 列表
  * @param params 社区 ID、展示位置等参数
  */

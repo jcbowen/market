@@ -59,6 +59,34 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
 }
 
+// GetProductByBarcode 条形码精确查询（扫码直达）
+// C 端：community_id 走 query 参数；后台/收银台：community_id 走 X-Community-Id 请求头
+// 参数：
+//   - c: gin 上下文
+func (h *ProductHandler) GetProductByBarcode(c *gin.Context) {
+	code := c.Param("code")
+	communityID, _ := strconv.ParseInt(c.Query("community_id"), 10, 64)
+	if communityID <= 0 {
+		if header := c.GetHeader("X-Community-Id"); header != "" {
+			communityID, _ = strconv.ParseInt(header, 10, 64)
+		}
+	}
+	if code == "" || communityID <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	resp, err := h.productClient.LookupBarcode(c.Request.Context(), &product.LookupBarcodeReq{
+		CommunityId: communityID,
+		Barcode:     code,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
 // GetProduct 商品详情
 // 参数：
 //   - c: gin 上下文

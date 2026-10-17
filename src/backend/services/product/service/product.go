@@ -63,7 +63,19 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 		db = db.Where("category_id = ?", req.CategoryId)
 	}
 	if req.Keyword != "" {
-		db = db.Where("name like ?", "%"+req.Keyword+"%")
+		// 关键字双通道匹配：商品名模糊匹配 OR SKU 条形码精确命中
+		// 条码为纯数字时才走子查询，避免无谓的 IN 查询
+		if isDigits(req.Keyword) {
+			sub := s.db.GetDb().WithContext(ctx).Model(&model.Sku{}).
+				Select("product_id").
+				Where("barcode = ? AND status = 1", req.Keyword)
+			if req.CommunityId > 0 {
+				sub = sub.Where("community_id = ?", req.CommunityId)
+			}
+			db = db.Where("name like ? OR id IN (?)", "%"+req.Keyword+"%", sub)
+		} else {
+			db = db.Where("name like ?", "%"+req.Keyword+"%")
+		}
 	}
 
 	var total int64
@@ -88,6 +100,25 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 	}
 	err := db.Offset(offset).Limit(pageSize).Find(&list).Error
 	return list, int(total), err
+}
+
+// isDigits 判断字符串是否全部为数字字符（非空）
+//
+// 参数：
+//   - s: 待判断字符串
+//
+// 返回值：
+//   - bool: 非空且全为数字时为 true
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // BuildCategoryNames 批量查询商品列表的分类名称
