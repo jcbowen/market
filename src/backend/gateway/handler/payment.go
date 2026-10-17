@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,6 +31,9 @@ var (
 	errWechatClientChannelNotReady = errors.New("微信小程序渠道未启用或未配置")
 	errWechatGzhNotOpen            = errors.New("公众号内微信支付暂未开放")
 	errWechatAppNotOpen            = errors.New("App 微信支付暂未开放")
+	// errWechatOpenidUnavailable 渠道身份缺失/查询异常：拒绝支付而非静默降级——
+	// 空 openid 会被支付服务误判为 H5 通道下单，小程序内无法调起 h5_url，表现为支付必失败
+	errWechatOpenidUnavailable = errors.New("微信支付身份缺失，请重新登录小程序后重试")
 )
 
 // PaymentHandler 支付接口处理器
@@ -338,15 +342,16 @@ func (h *PaymentHandler) resolveWechatPayIdentity(ctx context.Context, userID in
 			UserId:      userID,
 			ChannelCode: channel.MP,
 		})
+		// 查询异常/身份缺失时拒绝支付而非静默降级：
+		// 空 openid 会被支付服务按 H5 通道下单，小程序内无法调起，表现为支付必失败
 		if err != nil {
-			// 身份查询异常时回落存量口径，支付流程不被阻断
-			openidResp = nil
+			log.Printf("查询用户微信支付身份失败 user_id=%d: %v", userID, err)
+			return "", "", errWechatOpenidUnavailable
 		}
-		openid := ""
-		if openidResp != nil {
-			openid = openidResp.Openid
+		if openidResp == nil || openidResp.Openid == "" {
+			return "", "", errWechatOpenidUnavailable
 		}
-		return openid, chResp.AppId, nil
+		return openidResp.Openid, chResp.AppId, nil
 	case channel.H5:
 		// H5 支付无 openid；统一下单 AppID 取 mp 渠道 AppID（任一与商户绑定的 AppID 均可）
 		if chResp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.MP}); err == nil &&

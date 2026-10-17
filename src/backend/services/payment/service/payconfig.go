@@ -97,7 +97,11 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 	row.WechatClientChannels = string(wechatChannels)
 	row.AlipayClientChannels = string(alipayChannels)
 	row.WechatAppID = cfg.WechatAppId
-	row.WechatAppSecret = cfg.WechatAppSecret
+	// AppSecret 为支付链路无关的历史字段，且网关 GET 已脱敏不回传明文：
+	// 空值保留原值，避免前端回传空串时误清空
+	if cfg.WechatAppSecret != "" {
+		row.WechatAppSecret = cfg.WechatAppSecret
+	}
 	row.WechatMchID = cfg.WechatMchId
 	row.WechatAPIV3Key = cfg.WechatApiV3Key
 	row.WechatCertSerialNo = cfg.WechatCertSerialNo

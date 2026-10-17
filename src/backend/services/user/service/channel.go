@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -127,7 +129,7 @@ func (s *ChannelService) ListClientChannels(ctx context.Context, onlyEnabled boo
 //   - error: 查询异常（非记录不存在）时返回错误
 func (s *ChannelService) GetClientChannel(ctx context.Context, code string) (*model.ClientChannel, error) {
 	if !channel.IsValid(code) {
-		return nil, fmt.Errorf("未知客户端渠道: %s", code)
+		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("未知客户端渠道: %s", code))
 	}
 	var row model.ClientChannel
 	err := s.db.GetDb().WithContext(ctx).Where("code = ?", code).First(&row).Error
@@ -152,21 +154,24 @@ func (s *ChannelService) GetClientChannel(ctx context.Context, code string) (*mo
 //   - error: 校验或保存失败时返回错误
 func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveClientChannelReq) (*model.ClientChannel, error) {
 	if req.Id <= 0 {
-		return nil, fmt.Errorf("参数错误")
+		return nil, bizerr.New(codes.InvalidArgument, "参数错误")
 	}
 	if !channel.IsValid(req.Code) {
-		return nil, fmt.Errorf("未知客户端渠道: %s", req.Code)
+		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("未知客户端渠道: %s", req.Code))
 	}
 	if req.Name == "" {
-		return nil, fmt.Errorf("渠道名称不能为空")
+		return nil, bizerr.New(codes.InvalidArgument, "渠道名称不能为空")
 	}
 
 	var row model.ClientChannel
 	if err := s.db.GetDb().WithContext(ctx).First(&row, req.Id).Error; err != nil {
-		return nil, fmt.Errorf("客户端渠道不存在: %w", err)
+		if err == gorm.ErrRecordNotFound {
+			return nil, bizerr.New(codes.NotFound, "客户端渠道不存在")
+		}
+		return nil, fmt.Errorf("查询客户端渠道失败: %w", err)
 	}
 	if row.Code != req.Code {
-		return nil, fmt.Errorf("渠道标识不可变更")
+		return nil, bizerr.New(codes.InvalidArgument, "渠道标识不可变更")
 	}
 
 	row.Name = req.Name
@@ -177,6 +182,13 @@ func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveCl
 	row.Enabled = req.Enabled
 	row.Sort = req.Sort
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+
+	// 启用状态与凭证完整性一致性校验：防止凭证被清空/不全的渠道被置为启用
+	// （登录与支付链路按渠道现取凭证，启用但凭证不完整会直接报"未配置"）
+	// 注意：业务校验错误必须 bizerr（纯 fmt.Errorf 会被 ToStatus 归为 Internal，网关吞成 10002）
+	if row.Enabled && !row.IsConfigured() {
+		return nil, bizerr.New(codes.FailedPrecondition, "渠道凭证不完整（AppID/AppSecret），无法启用")
+	}
 
 	if err := s.db.GetDb().WithContext(ctx).Save(&row).Error; err != nil {
 		return nil, fmt.Errorf("保存客户端渠道失败: %w", err)
@@ -243,7 +255,7 @@ func (s *ChannelService) GetUserChannelOpenid(ctx context.Context, userID int64,
 //   - error: 校验或写入失败时返回错误
 func (s *ChannelService) UpsertUserChannelIdentity(ctx context.Context, userID int64, channelCode, openid, unionid string) error {
 	if userID <= 0 || !channel.IsValid(channelCode) || openid == "" {
-		return fmt.Errorf("参数错误")
+		return bizerr.New(codes.InvalidArgument, "参数错误")
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")

@@ -18,9 +18,9 @@
               <n-icon size="22" color="#07c160">
                 <storefront-outline />
               </n-icon>
-              <span class="community-card-name">{{ cm.name }}</span>
+              <span class="community-card-name" :title="cm.name">{{ cm.name }}</span>
             </div>
-            <n-tag v-if="cm.status !== 1" type="warning" size="small">停业中</n-tag>
+            <n-tag v-if="cm.status !== 1" type="warning" size="small" class="community-card-tag">停业中</n-tag>
           </div>
         </div>
         <n-empty v-if="!loading && communities.length === 0" description="暂无可进入的社区，请联系管理员分配任职" />
@@ -127,7 +127,8 @@ onMounted(() => {
 }
 .community-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  /* minmax(0, 1fr)：1fr 默认下限是 auto，长社区名会把轨道撑出卡片导致溢出 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 .community-card {
@@ -140,6 +141,7 @@ onMounted(() => {
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
+  min-width: 0;
   &:hover {
     border-color: #07c160;
     background: #f2f9f4;
@@ -148,14 +150,20 @@ onMounted(() => {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex: 1;
     min-width: 0;
   }
   &-name {
     font-size: 14px;
     color: #333;
+    min-width: 0;
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  &-tag {
+    flex-shrink: 0;
   }
 }
 .select-footer {

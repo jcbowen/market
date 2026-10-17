@@ -430,6 +430,7 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
       icon: renderIcon(SettingsOutline),
       children: [
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
+        { label: '渠道管理', key: '/system/channels', permission: 'settings:view' },
         { label: '售后配置', key: '/system/refund', permission: 'settings:view' },
         { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
         { label: '全局 Banner', key: '/system/banners', permission: 'marketing:view' },

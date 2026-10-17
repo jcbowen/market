@@ -215,6 +215,7 @@ export interface ClientChannel {
   code: string
   name: string
   app_id: string
+  /** 服务端不回传明文，恒为空串；存量凭证以 configured 标志判断，保存空值时服务端保留原值 */
   app_secret: string
   enabled: boolean
   sort: number

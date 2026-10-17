@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
+	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
@@ -4336,8 +4337,28 @@ type PaymentSuggestedURLs struct {
 	AlipayNotifyURL string `json:"alipay_notify_url"`
 }
 
+// wechatPayAppIDFromChannel 获取微信支付默认 AppID（渠道管理 mp 渠道为唯一来源）
+// AppID 属客户端身份凭证，统一在「渠道管理」维护；pay_config 仅保存派生值供
+// wego 客户端构建与存量口径（未携带 X-Channel-Code 的旧客户端）兜底
+//
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - string: mp 渠道 AppID，渠道未配置或查询失败时为空串
+//   - bool: 渠道 AppID 是否可用
+func (h *AdminHandler) wechatPayAppIDFromChannel(ctx context.Context) (string, bool) {
+	chResp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.MP})
+	if err != nil || chResp == nil || chResp.AppId == "" {
+		return "", false
+	}
+	return chResp.AppId, true
+}
+
 // GetPaymentSetting 获取支付配置
 // 从数据库读取支付渠道开关与微信/支付宝配置，并返回根据当前请求域名生成的回调 URL 建议
+// 微信 AppID 以渠道管理 mp 渠道实时值为准，就绪状态按「支付凭证齐全 + AppID 可用」重算
+//
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
@@ -4347,12 +4368,49 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 		return
 	}
 
-	// 私钥不回传明文，仅通过 cert_uploaded 标志告知前端上传状态
+	wechatAppID := resp.WechatAppId
+	if appID, ok := h.wechatPayAppIDFromChannel(c.Request.Context()); ok {
+		wechatAppID = appID
+	}
+	// 渠道 AppID 与 pay_config 派生值不一致（渠道侧更新过）时回写同步，
+	// 保证 payment 服务按最新 AppID 构建微信支付客户端；同步失败不阻断读取
+	if wechatAppID != resp.WechatAppId {
+		if _, serr := h.paymentClient.SavePayConfig(c.Request.Context(), &payment.PayConfig{
+			EnabledChannels:      resp.EnabledChannels,
+			WechatAppId:          wechatAppID,
+			WechatAppSecret:      resp.WechatAppSecret,
+			WechatMchId:          resp.WechatMchId,
+			WechatApiV3Key:       resp.WechatApiV3Key,
+			WechatCertSerialNo:   resp.WechatCertSerialNo,
+			// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
+			WechatPrivateKey:     "",
+			WechatNotifyUrl:      resp.WechatNotifyUrl,
+			AlipayAppId:          resp.AlipayAppId,
+			AlipayPrivateKey:     "",
+			AlipayPublicKey:      resp.AlipayPublicKey,
+			AlipayNotifyUrl:      resp.AlipayNotifyUrl,
+			AlipayReturnUrl:      resp.AlipayReturnUrl,
+			WechatClientChannels: resp.WechatClientChannels,
+			AlipayClientChannels: resp.AlipayClientChannels,
+		}); serr != nil {
+			log.Printf("同步渠道 AppID 到支付配置失败: %v", serr)
+		}
+	}
+	// AppID 来源改为渠道管理后，就绪判定在网关重算，不再依赖 payment 服务基于 pay_config.AppID 的口径
+	wechatReady := wechatAppID != "" &&
+		resp.WechatMchId != "" &&
+		resp.WechatApiV3Key != "" &&
+		resp.WechatCertSerialNo != "" &&
+		resp.WechatPrivateKey != "" &&
+		resp.WechatNotifyUrl != ""
+
+	// 私钥与 AppSecret 不回传明文：私钥通过 cert_uploaded 标志、AppSecret 通过渠道管理侧
+	// 的 configured 标志告知前端状态；保存时空值由 payment 侧保留原值，不会误清空
 	setting := PaymentSetting{
 		EnabledChannels: resp.EnabledChannels,
 		Wechat: config.WechatConfig{
-			AppID:        resp.WechatAppId,
-			AppSecret:    resp.WechatAppSecret,
+			AppID:        wechatAppID,
+			AppSecret:    "",
 			MchID:        resp.WechatMchId,
 			APIV3Key:     resp.WechatApiV3Key,
 			CertSerialNo: resp.WechatCertSerialNo,
@@ -4364,7 +4422,7 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 			NotifyURL:       resp.AlipayNotifyUrl,
 			ReturnURL:       resp.AlipayReturnUrl,
 		},
-		WechatPaymentReady: resp.WechatPaymentReady,
+		WechatPaymentReady: wechatReady,
 		AlipayReady:        resp.AlipayReady,
 		WechatCertUploaded: resp.WechatCertUploaded,
 		AlipayCertUploaded: resp.AlipayCertUploaded,
@@ -4397,9 +4455,16 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 		}
 	}
 
+	// 微信 AppID 单一来源为渠道管理 mp 渠道：保存时强制以渠道实时值覆盖（未配置则清空），
+	// 前端不再提供 AppID/AppSecret 输入入口；AppSecret 为支付链路无关的历史字段，空值透传保留原值
+	wechatAppID := ""
+	if appID, ok := h.wechatPayAppIDFromChannel(c.Request.Context()); ok {
+		wechatAppID = appID
+	}
+
 	_, err := h.paymentClient.SavePayConfig(c.Request.Context(), &payment.PayConfig{
 		EnabledChannels:    filtered,
-		WechatAppId:        req.Wechat.AppID,
+		WechatAppId:        wechatAppID,
 		WechatAppSecret:    req.Wechat.AppSecret,
 		WechatMchId:        req.Wechat.MchID,
 		WechatApiV3Key:     req.Wechat.APIV3Key,

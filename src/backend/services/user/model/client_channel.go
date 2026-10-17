@@ -13,8 +13,12 @@ import (
 //go:generate go tool gormgen -struct ClientChannel
 type ClientChannel struct {
 	base.MysqlBaseModel
-	ID        int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	Code      string `gorm:"column:code;type:varchar(32);uniqueIndex:uk_channel_code;comment:渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5" json:"code"`
+	ID int64 `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	// 唯一性用列级 unique tag 声明（项目约定，见 attachment_migrate_item.go / order main.go）：
+	// 单列唯一若用 uniqueIndex tag 会命中 gorm v1.31 的 MigrateColumnUnique 怪癖——
+	// 列已存在 UNI 索引但字段无 unique tag 时，每次 AutoMigrate 都尝试 DROP uni_ 前缀约束，
+	// MySQL 无此外键报 1091，服务启动失败（存量库必现）
+	Code      string `gorm:"column:code;type:varchar(32);not null;default:'';unique;comment:渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5" json:"code"`
 	Name      string `gorm:"column:name;type:varchar(64);comment:显示名称" json:"name"`
 	AppID     string `gorm:"column:app_id;type:varchar(64);comment:渠道 AppID" json:"app_id"`
 	AppSecret string `gorm:"column:app_secret;type:varchar(128);comment:渠道 AppSecret" json:"app_secret"`

@@ -63,14 +63,15 @@
           </div>
 
           <n-grid cols="1 m:2" :x-gap="16" responsive="screen" style="margin-top: 8px;">
-            <n-grid-item>
-              <n-form-item label="AppID">
-                <n-input v-model:value="paymentForm.wechat.app_id" placeholder="小程序/公众号 AppID" />
-              </n-form-item>
-            </n-grid-item>
-            <n-grid-item>
-              <n-form-item label="AppSecret">
-                <n-input v-model:value="paymentForm.wechat.app_secret" type="password" placeholder="小程序/公众号 AppSecret" />
+            <n-grid-item :span="2">
+              <n-form-item label="微信 AppID">
+                <div class="appid-readonly-row">
+                  <n-text v-if="paymentForm.wechat.app_id" code>{{ paymentForm.wechat.app_id }}</n-text>
+                  <n-text v-else depth="3">未配置，请先在「渠道管理」完成小程序凭证配置</n-text>
+                  <n-text depth="3" class="appid-hint">
+                    AppID/AppSecret 统一在「渠道管理」维护，此处自动同步，无需重复填写
+                  </n-text>
+                </div>
               </n-form-item>
             </n-grid-item>
             <n-grid-item>
@@ -147,7 +148,7 @@
               v-if="modalChannel === 'wechat'"
               type="primary"
               :loading="paymentSaving"
-              :disabled="!authStore.hasPermission('system:update')"
+              :disabled="!authStore.isSuperAdmin && !authStore.hasPermission('settings:update')"
               @click="saveWechatConfig"
             >
               保存配置
@@ -564,6 +565,17 @@ onMounted(() => {
     flex: 1;
     word-break: break-all;
   }
+}
+
+.appid-readonly-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.appid-hint {
+  font-size: 12px;
 }
 
 .cert-upload-row {

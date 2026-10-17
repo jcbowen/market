@@ -54,6 +54,9 @@ func (s *UserService) GetUserById(ctx context.Context, id int64) (*model.User, e
 //   - *model.User: 用户模型
 //   - error: 错误信息
 func (s *UserService) GetUserByPhone(ctx context.Context, phone string) (*model.User, error) {
+	if phone == "" {
+		return nil, fmt.Errorf("手机号为空")
+	}
 	var u model.User
 	if err := s.db.GetDb().WithContext(ctx).Where("phone = ?", phone).First(&u).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -64,7 +67,31 @@ func (s *UserService) GetUserByPhone(ctx context.Context, phone string) (*model.
 	return &u, nil
 }
 
-// CreateOrUpdateUser 根据手机号创建或更新用户
+// GetUserByOpenid 根据微信 openid 查询用户
+// 参数：
+//   - ctx: 上下文
+//   - openid: 微信 openid
+// 返回：
+//   - *model.User: 用户模型
+//   - error: 错误信息
+func (s *UserService) GetUserByOpenid(ctx context.Context, openid string) (*model.User, error) {
+	if openid == "" {
+		return nil, fmt.Errorf("openid 为空")
+	}
+	var u model.User
+	if err := s.db.GetDb().WithContext(ctx).Where("openid = ?", openid).First(&u).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("用户不存在")
+		}
+		return nil, err
+	}
+	return &u, nil
+}
+
+// CreateOrUpdateUser 创建或更新用户（登录链路共用）
+// 查找策略：有手机号按手机号查找（手机号登录/绑定场景）；
+// 无手机号按 openid 查找（微信登录场景）——禁止按 phone='' 兜底匹配，
+// 否则第二个微信登录用户会命中首个未绑手机的存量用户并覆盖其 openid，造成账号串号
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建用户请求
@@ -72,8 +99,17 @@ func (s *UserService) GetUserByPhone(ctx context.Context, phone string) (*model.
 //   - *model.User: 用户模型
 //   - error: 错误信息
 func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUserReq) (*model.User, error) {
-	u, err := s.GetUserByPhone(ctx, req.Phone)
-	if err != nil {
+	var u *model.User
+	if req.Phone != "" {
+		if found, err := s.GetUserByPhone(ctx, req.Phone); err == nil {
+			u = found
+		}
+	} else if req.Openid != "" {
+		if found, err := s.GetUserByOpenid(ctx, req.Openid); err == nil {
+			u = found
+		}
+	}
+	if u == nil {
 		u = &model.User{}
 	}
 

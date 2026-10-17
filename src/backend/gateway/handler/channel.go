@@ -96,6 +96,7 @@ func (h *AdminHandler) UpdateClientChannel(c *gin.Context) {
 }
 
 // toClientChannelView 将 proto 渠道信息转换为后台视图对象
+// AppSecret 不回传明文：前端以 configured 标志判断存量凭证，保存时空值由服务端保留原值
 //
 // 参数：
 //   - ch: proto 渠道信息，可为 nil
@@ -111,7 +112,7 @@ func toClientChannelView(ch *user.ClientChannelInfo) ClientChannelView {
 		Code:       ch.Code,
 		Name:       ch.Name,
 		AppID:      ch.AppId,
-		AppSecret:  ch.AppSecret,
+		AppSecret:  "",
 		Enabled:    ch.Enabled,
 		Sort:       ch.Sort,
 		Configured: ch.Configured,

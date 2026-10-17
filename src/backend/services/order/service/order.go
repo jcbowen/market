@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	crand "crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -617,7 +618,12 @@ func containsInt32(list []int32, item int32) bool {
 //   - bool: 是否货到付款
 func (s *OrderService) isCashOnDeliveryOrder(ctx context.Context, orderID int64) bool {
 	resp, err := grpcclient.PaymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: orderID})
-	if err != nil || resp == nil {
+	if err != nil {
+		// 查询失败按在线支付口径处理（fail-safe：已收款单不会被误判为可无责取消），但需留痕排查
+		log.Printf("查询订单 %d 支付单失败，货到付款判定按在线支付处理: %v", orderID, err)
+		return false
+	}
+	if resp == nil {
 		return false
 	}
 	return resp.PayType == 3
@@ -725,9 +731,11 @@ func closePendingPayments(ctx context.Context, orderID int64) {
 // orderTransitions 订单状态合法流转表
 // key 为目标状态，value 为允许的来源状态集合
 // 1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款
-// 注意：目标状态 6（取消）不走本表，由 UpdateOrderStatus 的取消分支单独处理（需回补库存）
+// 注意：目标状态 6（取消）不走本表，由 UpdateOrderStatus 的取消分支单独处理（需回补库存）；
+// 100 为调度器「超时取消处理中」抢占态（见 scheduler.go）：支付回调二阶段/调度器补同步
+// 与抢占并发时订单处于 100，需允许 100→2 补同步，否则已收款订单会卡在处理中态反复重试
 var orderTransitions = map[int32][]int32{
-	2: {1},       // 待支付 -> 已支付（支付成功）
+	2: {1, 100},  // 待支付/取消处理中 -> 已支付（支付成功，含调度器反查补同步）
 	3: {2},       // 已支付 -> 备货中
 	4: {2, 3},    // 已支付/备货中 -> 配送中（发货）
 	5: {2, 4},    // 已支付(自提)/配送中 -> 已完成（确认收货）
@@ -827,6 +835,9 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 	return err
 }
 
+// errPickupCodeMismatch 取货码不匹配（哨兵错误：防爆破计数依赖它判定，避免字符串匹配错误文案）
+var errPickupCodeMismatch = bizerr.New(codes.FailedPrecondition, "取货码不正确，请核对后重试")
+
 // VerifyPickup 自提订单核销：校验取货码后置为已完成
 // 校验：自提单、核销码匹配、状态为已支付(2)/备货中(3)；核销成功写完成时间与状态日志（核销人/时间可追溯）。
 // 供后台兜底核销与履约工作台核销（B）共用；核销即完成，不涉及库存变更（下单时已扣减）
@@ -866,7 +877,7 @@ func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickup
 			return bizerr.New(codes.FailedPrecondition, "非自提订单，无需核销")
 		}
 		if o.PickupCode == nil || *o.PickupCode != req.PickupCode {
-			return bizerr.New(codes.FailedPrecondition, "取货码不正确，请核对后重试")
+			return errPickupCodeMismatch
 		}
 		if o.Status != 2 && o.Status != 3 {
 			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许核销: %d", o.Status))
@@ -893,8 +904,8 @@ func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickup
 		return nil
 	})
 	if err != nil {
-		// 取货码错误时累计失败次数，达阈值后锁定
-		if s.redisClient != nil && strings.Contains(err.Error(), "取货码不正确") {
+		// 取货码错误时累计失败次数，达阈值后锁定（哨兵错误判定，与文案解耦）
+		if s.redisClient != nil && errors.Is(err, errPickupCodeMismatch) {
 			failures, _ := s.redisClient.Incr(ctx, failKey).Result()
 			s.redisClient.Expire(ctx, failKey, 30*time.Minute)
 			if failures >= 5 {

@@ -80,7 +80,7 @@
             <n-button
               type="primary"
               :loading="saving"
-              :disabled="!authStore.hasPermission('system:update')"
+              :disabled="!authStore.isSuperAdmin && !authStore.hasPermission('settings:update')"
               @click="saveChannel"
             >
               保存
@@ -116,15 +116,21 @@ const channels = ref<ClientChannel[]>([])
 const showConfigModal = ref(false)
 const modalChannel = ref<ClientChannel | null>(null)
 
-/** Secret 占位提示：已配置时提示留空保留 */
+/** Secret 占位提示：服务端不回传明文，以 configured 标志判断存量凭证 */
 const secretPlaceholder = computed(() =>
-  modalChannel.value?.app_secret ? '已配置，留空则保留原值' : '微信 AppSecret',
+  modalChannel.value?.configured ? '已配置，留空则保留原值' : '微信 AppSecret',
 )
 
-/** 弹窗内凭证是否完整（控制启用开关的可用性） */
-const hasCredential = computed(() =>
-  Boolean(modalChannel.value && modalChannel.value.app_id && modalChannel.value.app_secret),
-)
+/**
+ * 弹窗内凭证是否完整（控制启用开关的可用性）
+ * Secret 不回传明文：以 configured 标志判断存量凭证，或本次弹窗内新输入了完整凭证
+ */
+const hasCredential = computed(() => {
+  const ch = modalChannel.value
+  if (!ch) return false
+  if (ch.code === 'h5') return true
+  return ch.configured || Boolean(ch.app_id && ch.app_secret)
+})
 
 /**
  * 渠道 code 展示标签
@@ -197,9 +203,9 @@ async function onToggle(ch: ClientChannel, on: boolean) {
     })
     message.success('渠道状态已保存')
     await loadChannels()
-  } catch (err) {
+  } catch {
+    // 保存失败：request 拦截器已弹出后端文案，回滚到服务端状态即可
     await loadChannels()
-    throw err
   } finally {
     saving.value = false
   }
