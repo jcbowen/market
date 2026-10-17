@@ -1,4 +1,5 @@
 # CI 流水线：后端（vet/test/build/lint）+ 前端（admin/client 构建）+ tag 触发自动发布 Release
+# Release 产物：linux/darwin/windows × amd64/arm64 共 6 平台包（tar.gz，Windows 为 zip），内含 6 个服务二进制 + 前端产物 + config.yaml
 # 说明：后端 Go module 位于 src/backend，前端位于 src/admin 与 src/client
 # Gitea Actions 与 GitHub Actions 语法兼容，本文件在 GitHub 与 Gitea（act_runner）上均可运行；
 # tag 发布步骤已做平台适配（API 域名差异见「创建 Release 并上传产物」步骤注释）
@@ -137,7 +138,8 @@ jobs:
   release:
     name: 构建 Release 产物并发布
     runs-on: ubuntu-latest
-    # 仅推送 v* 格式 tag（如 v1.0.0）时触发，产物上传到平台 Release（GitHub / Gitea）
+    # 仅推送 v* 格式 tag（如 v1.0.0）时触发，产物上传到平台 Release（GitHub / Gitea）；
+    # 产物覆盖 linux/darwin/windows × amd64/arm64 共 6 平台包，Linux 为生产部署主用
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -165,14 +167,17 @@ jobs:
         working-directory: src/backend
         run: go test ./... -count=1
 
-      # 交叉编译 6 个服务（linux amd64/arm64），二进制名与 build.mjs SERVICES 保持一致
-      - name: 交叉编译后端（linux amd64/arm64）
+      # 交叉编译 6 个服务（linux/darwin/windows × amd64/arm64 共 6 平台组合），
+      # 二进制名与 build.mjs SERVICES 保持一致；Windows 产物带 .exe 后缀
+      - name: 交叉编译后端（linux/darwin/windows amd64/arm64）
         working-directory: src/backend
         run: |
-          for arch in amd64 arm64; do
+          for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+            goos="${os_arch%-*}"; arch="${os_arch##*-}"
+            ext=""; [ "$goos" = "windows" ] && ext=".exe"
             for svc in gateway services/user services/product services/order services/cart services/payment; do
               name=$(basename $svc); [ "$name" != "gateway" ] && name="${name}-service"
-              CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o ../../bin/linux-${arch}/${name} ./${svc}/
+              CGO_ENABLED=0 GOOS=$goos GOARCH=$arch go build -o ../../bin/${goos}-${arch}/${name}${ext} ./${svc}/
             done
           done
 
@@ -197,21 +202,26 @@ jobs:
           npm ci
           npm run build:h5
 
-      # 打包：解压后得到 market-{ver}-linux-{arch}/ 目录，布局对齐部署文档 9.3.5 的 /opt/market
+      # 打包：解压后得到 market-{ver}-{os}-{arch}/ 目录，布局对齐部署文档 9.3.5 的 /opt/market；
+      # linux/darwin 打 tar.gz，windows 打 zip（ubuntu runner 自带 zip 命令）
       - name: 打包 Release 产物
         run: |
           VERSION="${GITHUB_REF_NAME}"
           mkdir -p package
-          for arch in amd64 arm64; do
-            stage="market-${VERSION}-linux-${arch}"
+          for dir in bin/linux-* bin/darwin-* bin/windows-*; do
+            name="${dir#bin/}"
+            stage="market-${VERSION}-${name}"
             rm -rf "package/${stage}" && mkdir -p "package/${stage}/static"
-            cp bin/linux-${arch}/* "package/${stage}/"
+            cp "${dir}"/* "package/${stage}/"
             cp bin/config.yaml "package/${stage}/config.yaml"
             cp -r bin/static/admin "package/${stage}/static/admin"
             cp -r bin/static/h5 "package/${stage}/static/h5"
-            tar -czf "package/${stage}.tar.gz" -C package "${stage}"
+            case "$name" in
+              windows-*) zip -qr "package/${stage}.zip" "package/${stage}" ;;
+              *)         tar -czf "package/${stage}.tar.gz" -C package "${stage}" ;;
+            esac
           done
-          ls -lh package/*.tar.gz
+          ls -lh package/*.tar.gz package/*.zip
 
       # 通过平台 API 发布（GitHub / Gitea 双端兼容）：内置 GITHUB_TOKEN（Gitea 等价 GITEA_TOKEN），无需第三方 action
       - name: 创建 Release 并上传产物
@@ -247,7 +257,7 @@ jobs:
           fi
           echo "Release ID: ${RELEASE_ID}"
 
-          for f in package/*.tar.gz; do
+          for f in package/*.tar.gz package/*.zip; do
             name=$(basename "${f}")
             echo "上传 ${name} ..."
             curl -sS -f -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
