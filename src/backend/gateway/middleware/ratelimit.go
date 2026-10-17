@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -133,7 +132,7 @@ func UserRateLimitMiddleware(rate, capacity float64) gin.HandlerFunc {
 			c.Header("Retry-After", "12")
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, response.Response{
 				Code:    errcode.RateLimit,
-				Message: fmt.Sprintf("操作过于频繁，请稍后再试"),
+				Message: "操作过于频繁，请稍后再试",
 			})
 			return
 		}

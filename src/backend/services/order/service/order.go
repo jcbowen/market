@@ -314,7 +314,7 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 
 // createOrderTransaction 执行下单事务：落订单与明细、扣减库存、核销优惠券、写状态日志。
 // 任一步失败时回滚本地事务，并补偿释放已提交到商品服务的库存扣减与优惠券核销
-//（库存幂等日志保证重复补偿只生效一次），尽力而为，不掩盖原错误。
+// （库存幂等日志保证重复补偿只生效一次），尽力而为，不掩盖原错误。
 // 参数：
 //   - ctx: 上下文
 //   - orderModel: 订单模型（调用前需已填充 OrderNo 与业务字段）
@@ -1077,6 +1077,7 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 // 返回值：
 //   - float64: 秒杀价，无生效活动返回 0
 //   - error: 错误信息
+//
 // flashSalePriceEnabled 秒杀价开关：库存扣减与限购校验尚未实现，关闭防止超卖资损；
 // 待 DeductFlashStock + LimitPerUser 完整实现后置为 true
 const flashSalePriceEnabled = false

@@ -43,14 +43,15 @@ func init() {
 	}()
 }
 
-// orderFingerprint 计算下单请求指纹（user + community + 商品列表排序哈希）
-func orderFingerprint(userID, communityID int64, items []*order.OrderItem) string {
+// orderFingerprint 计算下单请求指纹（user + community + 配送方式 + 优惠券 + 商品列表排序哈希）
+// 配送方式/优惠券参与指纹：同用户 5s 内换配送方式或优惠券提交相同商品不属于重复提交
+func orderFingerprint(userID, communityID, deliveryType, couponID int64, items []*order.OrderItem) string {
 	skus := make([]string, 0, len(items))
 	for _, it := range items {
 		skus = append(skus, fmt.Sprintf("%d:%d", it.SkuId, it.Quantity))
 	}
 	sort.Strings(skus)
-	raw := fmt.Sprintf("%d|%d|%v", userID, communityID, skus)
+	raw := fmt.Sprintf("%d|%d|%d|%d|%v", userID, communityID, deliveryType, couponID, skus)
 	h := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", h[:16])
 }
@@ -60,8 +61,8 @@ func orderFingerprint(userID, communityID int64, items []*order.OrderItem) strin
 var communityNameCache sync.Map // key: int64(community_id), value: *communityCacheEntry
 
 type communityCacheEntry struct {
-	name      string
-	cachedAt  time.Time
+	name     string
+	cachedAt time.Time
 }
 
 const communityCacheTTL = 5 * time.Minute
@@ -165,8 +166,8 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		communityID = userResp.CommunityId
 	}
 
-	// 防重复下单：相同用户+社区+商品列表在 5s 窗口内仅允许一次提交
-	fp := orderFingerprint(uc.UserID, communityID, req.Items)
+	// 防重复下单：相同用户+社区+配送方式+优惠券+商品列表在 5s 窗口内仅允许一次提交
+	fp := orderFingerprint(uc.UserID, communityID, int64(req.DeliveryType), req.CouponID, req.Items)
 	if prev, loaded := orderDedup.LoadOrStore(fp, time.Now()); loaded {
 		if t, ok := prev.(time.Time); ok && time.Since(t) < orderDedupWindow {
 			response.Error(c, errcode.ParamError, "请勿重复提交订单")
@@ -186,6 +187,8 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		Items:        req.Items,
 	})
 	if err != nil {
+		// 下单失败时释放指纹：库存不足等原因被拒后，用户应可立即重试而非被去重窗口拦截
+		orderDedup.Delete(fp)
 		log.Printf("创建订单失败: %v", err)
 		response.GRPCError(c, err)
 		return
@@ -295,13 +298,13 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 			items = make([]gin.H, 0)
 		}
 		list = append(list, gin.H{
-			"id":             o.Id,
-			"order_no":       o.OrderNo,
-			"status":         o.Status,
-			"status_text":    clientOrderStatusText(o.Status, o.DeliveryType),
-			"delivery_type":  o.DeliveryType,
-			"total_amount":   o.TotalAmount,
-			"pay_amount":     o.PayAmount,
+			"id":            o.Id,
+			"order_no":      o.OrderNo,
+			"status":        o.Status,
+			"status_text":   clientOrderStatusText(o.Status, o.DeliveryType),
+			"delivery_type": o.DeliveryType,
+			"total_amount":  o.TotalAmount,
+			"pay_amount":    o.PayAmount,
 			// 订单所属社区（列表页展示社区标签）
 			"community_id":   o.CommunityId,
 			"community_name": communityNames[o.CommunityId],

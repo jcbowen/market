@@ -499,8 +499,9 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 //
 // 两阶段设计：事务内仅更新支付单状态（快、无外部依赖），事务提交后再 RPC 同步订单状态；
 // 避免事务持锁期间依赖 order-service（慢/宕机时不会拖垮支付服务连接池）。
-// RPC 失败时立即重试 3 次；若仍失败则记 CRITICAL 日志（支付已确认但订单未同步，
-// 调度器超时窗口 1800s 远大于重试耗时，不会误取消；极端情况需人工对账修复）。
+// RPC 失败时立即重试 3 次；若仍失败则记 CRITICAL 日志（支付已确认但订单未同步）。
+// 兜底保障：order-service 调度器超时取消前会反查支付单（GetPayment），
+// 已收款订单不会被误取消，而是自动补同步为已支付——无需人工对账。
 //
 // 参数：
 //   - ctx: 上下文
@@ -580,7 +581,7 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 			return nil
 		}
 	}
-	log.Printf("[CRITICAL] 支付已确认但订单状态同步失败（需人工对账）: payment_no=%s order_id=%d err=%v",
+	log.Printf("[CRITICAL] 支付已确认但订单状态同步失败（调度器超时取消时会反查支付单自动补同步）: payment_no=%s order_id=%d err=%v",
 		params.PaymentNo, orderID, lastErr)
 	return nil
 }

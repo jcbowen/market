@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -9,9 +10,12 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/proto/order"
+	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/order/model"
@@ -24,7 +28,14 @@ const (
 	processingStatusCancel int32 = 100
 	// processingStatusComplete 自动完成处理中（原状态 4 配送中）
 	processingStatusComplete int32 = 101
+	// processingStatusPickup2 自提单自动完成处理中（原状态 2 已支付）
+	processingStatusPickup2 int32 = 102
+	// processingStatusPickup3 自提单自动完成处理中（原状态 3 备货中）
+	processingStatusPickup3 int32 = 103
 )
+
+// errOrderAlreadyPaid 超时取消前反查到成功支付单：订单已收款，跳过取消（补同步已另行发起）
+var errOrderAlreadyPaid = errors.New("订单已收款，跳过超时取消")
 
 // stuckRecoverAfter 处理中状态停留超过该时长视为进程异常中断，兜底恢复原状态
 const stuckRecoverAfter = 10 * time.Minute
@@ -142,6 +153,8 @@ func (s *Scheduler) recoverStuckOrders(ctx context.Context) {
 	pairs := []struct{ processing, from int32 }{
 		{processingStatusCancel, 1},
 		{processingStatusComplete, 4},
+		{processingStatusPickup2, 2},
+		{processingStatusPickup3, 3},
 	}
 	for _, p := range pairs {
 		res := s.db.GetDb().WithContext(ctx).Exec(
@@ -183,6 +196,11 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 	// 3. 处理抢占到的订单；失败时回滚原状态，避免订单永久卡在处理中
 	for _, o := range orders {
 		if err := s.cancelOrderTx(ctx, o, 1); err != nil {
+			if errors.Is(err, errOrderAlreadyPaid) {
+				// 已收款订单已流转为已支付（或补同步失败等待下轮重试），不可回滚覆盖
+				log.Printf("[order-scheduler] 订单 %d 取消前反查到已收款，跳过取消", o.ID)
+				continue
+			}
 			log.Printf("[order-scheduler] 自动取消订单 %d 失败: %v", o.ID, err)
 			s.rollbackStatus(ctx, o.ID, processingStatusCancel, 1)
 			s.recordFailure(ctx, o.ID, "timeout_cancel", err.Error())
@@ -218,8 +236,9 @@ func (s *Scheduler) autoCompleteOrders(ctx context.Context, autoCompleteDays int
 	}
 
 	// 3. 处理抢占到的订单；失败时回滚原状态，避免订单永久卡在处理中
+	remark := fmt.Sprintf("发货后%d天未确认收货，系统自动完成", autoCompleteDays)
 	for _, o := range orders {
-		if err := s.completeOrderTx(ctx, o, 4, autoCompleteDays); err != nil {
+		if err := s.completeOrderTx(ctx, o, 4, remark); err != nil {
 			log.Printf("[order-scheduler] 自动完成订单 %d 失败: %v", o.ID, err)
 			s.rollbackStatus(ctx, o.ID, processingStatusComplete, 4)
 			s.recordFailure(ctx, o.ID, "auto_complete", err.Error())
@@ -271,6 +290,9 @@ func (s *Scheduler) claimOrders(ctx context.Context, fromStatus, processingStatu
 }
 
 // cancelOrderTx 在事务中取消订单并释放库存
+// 取消前反查支付单守卫：支付回调两阶段同步失败时订单仍停留待支付，
+// 若直接取消会造成"已收款但被取消"的资损；反查到成功支付单则改走补同步并跳过取消；
+// 支付服务不可达等不确定情况放弃本轮取消，下轮重试（宁可延迟取消，不可误取消已收款单）
 //
 // 参数：
 //   - ctx: 上下文
@@ -278,8 +300,29 @@ func (s *Scheduler) claimOrders(ctx context.Context, fromStatus, processingStatu
 //   - fromStatus: 流转起点状态（真实原状态，用于状态日志）
 //
 // 返回值：
-//   - error: 错误信息
+//   - error: errOrderAlreadyPaid 表示订单已收款跳过取消（订单状态已被补同步或待下轮重试），其余为取消失败
 func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatus int32) error {
+	if grpcclient.PaymentClient != nil {
+		paid, pErr := isOrderPaid(ctx, o.ID)
+		if pErr != nil {
+			return fmt.Errorf("取消前反查支付单失败: %w", pErr)
+		}
+		if paid {
+			// 已收款：补同步订单为已支付（与支付回调二阶段同接口，幂等）
+			if _, uErr := grpcclient.OrderClient.UpdateOrderStatus(ctx, &order.UpdateOrderStatusReq{
+				Id:           o.ID,
+				Status:       2,
+				OperatorType: "system",
+				Remark:       "支付成功（超时取消前反查支付单补同步）",
+			}); uErr != nil {
+				log.Printf("[CRITICAL] 订单 %d 已收款但补同步失败（需人工对账）: %v", o.ID, uErr)
+			} else {
+				log.Printf("[order-scheduler] 订单 %d 已收款但状态未同步，已补为已支付并跳过取消", o.ID)
+			}
+			return errOrderAlreadyPaid
+		}
+	}
+
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().Format("2006-01-02 15:04:05")
 		o.Status = 6
@@ -305,7 +348,8 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 			}
 		}
 
-		// 回补优惠券：与 CancelOrder/cancelOrderInTx 同口径，防止超时取消吞券
+		// 回补优惠券：与 CancelOrder/cancelOrderInTx 同口径，防止超时取消吞券；
+		// ReleaseCoupon 服务端幂等（按 order_id+status 条件更新，重复调用安全），事务回滚后重试不会二次回补
 		if o.CouponID > 0 {
 			if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
 				return fmt.Errorf("回补优惠券失败: %w", err)
@@ -325,17 +369,36 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 	})
 }
 
+// isOrderPaid 反查支付服务判断订单是否已收款成功（仅 status=2 支付成功视为已支付）
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - bool: 是否已收款
+//   - error: 支付服务不可达等不确定错误；codes.NotFound 表示无成功支付单，返回 nil,false
+func isOrderPaid(ctx context.Context, orderID int64) (bool, error) {
+	resp, err := grpcclient.PaymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: orderID})
+	if err == nil {
+		return resp != nil, nil
+	}
+	if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+		return false, nil
+	}
+	return false, err
+}
+
 // completeOrderTx 在事务中完成订单
 //
 // 参数：
 //   - ctx: 上下文
 //   - o: 待完成订单
 //   - fromStatus: 流转起点状态（真实原状态，用于状态日志）
-//   - autoCompleteDays: 自动完成天数，用于备注
+//   - remark: 状态日志备注（配送单与自提单文案不同，由调用方构造）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *Scheduler) completeOrderTx(ctx context.Context, o *model.Order, fromStatus int32, autoCompleteDays int) error {
+func (s *Scheduler) completeOrderTx(ctx context.Context, o *model.Order, fromStatus int32, remark string) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().Format("2006-01-02 15:04:05")
 		o.Status = 5
@@ -351,7 +414,7 @@ func (s *Scheduler) completeOrderTx(ctx context.Context, o *model.Order, fromSta
 			ToStatus:     5,
 			OperatorType: "system",
 			OperatorID:   0,
-			Remark:       fmt.Sprintf("发货后%d天未确认收货，系统自动完成", autoCompleteDays),
+			Remark:       remark,
 			CreatedAt:    now,
 		}
 		return tx.Create(statusLog).Error
@@ -414,6 +477,16 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 				log.Printf("[order-scheduler] 重试时回查订单 %d 失败: %v", f.OrderID, err)
 				continue
 			}
+		case taskType == "pickup_complete" && (o.Status == processingStatusPickup2 || o.Status == processingStatusPickup3):
+			from := int32(2)
+			if o.Status == processingStatusPickup3 {
+				from = 3
+			}
+			s.rollbackStatus(ctx, o.ID, o.Status, from)
+			if err := s.db.GetDb().WithContext(ctx).First(&o, f.OrderID).Error; err != nil {
+				log.Printf("[order-scheduler] 重试时回查订单 %d 失败: %v", f.OrderID, err)
+				continue
+			}
 		}
 
 		var err error
@@ -429,10 +502,22 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 				s.markFailureStatus(ctx, f.ID, 2)
 				continue
 			}
-			err = s.completeOrderTx(ctx, &o, 4, autoCompleteDays)
+			err = s.completeOrderTx(ctx, &o, 4, fmt.Sprintf("发货后%d天未确认收货，系统自动完成", autoCompleteDays))
+		case "pickup_complete":
+			if o.Status != 2 && o.Status != 3 {
+				s.markFailureStatus(ctx, f.ID, 2)
+				continue
+			}
+			err = s.completeOrderTx(ctx, &o, o.Status, fmt.Sprintf("支付后%d天未取货，系统自动完成", autoCompleteDays))
 		}
 
 		if err != nil {
+			if errors.Is(err, errOrderAlreadyPaid) {
+				// 已收款订单跳过取消，失败记录视为已解决（补同步已另行发起）
+				s.markFailureStatus(ctx, f.ID, 2)
+				log.Printf("[order-scheduler] 重试 %s 订单 %d 时反查到已收款，已跳过", taskType, f.OrderID)
+				continue
+			}
 			s.incrementFailureRetry(ctx, f.ID, err.Error())
 			log.Printf("[order-scheduler] 重试 %s 订单 %d 仍失败: %v", taskType, f.OrderID, err)
 			continue
@@ -445,6 +530,8 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 // autoCompletePickupOrders 自提单超时自动完成
 // 场景：用户支付后长期未到店取货、社区忘记核销 → 订单永久停留在待取货状态，库存永久占用。
 // 支付后超过 autoCompleteDays 天未核销的自提单（delivery_type=1, status∈{2,3}）自动置为已完成。
+// 与 autoCompleteOrders 同机制：失败记录重试 + 原子抢占（中间状态可回溯原状态）+ 失败回滚
+//
 // 参数：
 //   - ctx: 上下文
 //   - autoCompleteDays: 超时天数（与配送单共用配置）
@@ -456,42 +543,28 @@ func (s *Scheduler) autoCompletePickupOrders(ctx context.Context, autoCompleteDa
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
-	deadline := time.Now().AddDate(0, 0, -autoCompleteDays).Format("2006-01-02 15:04:05")
-	var orders []*model.Order
-	if err := s.db.GetDb().WithContext(ctx).
-		Where("delivery_type = 1 AND status IN ? AND pay_time IS NOT NULL AND pay_time < ?", []int32{2, 3}, deadline).
-		Order("id asc").Limit(100).Find(&orders).Error; err != nil {
-		log.Printf("[order-scheduler] 查询超时自提单失败: %v", err)
-		return
-	}
+	// 1. 优先处理历史失败记录
+	s.retryFailures(ctx, "pickup_complete", autoCompleteDays)
 
-	for _, o := range orders {
-		now := time.Now().Format("2006-01-02 15:04:05")
-		fromStatus := o.Status
-		res := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
-			Where("id = ? AND status IN ?", o.ID, []int32{2, 3}).
-			Updates(map[string]interface{}{
-				"status":        int32(5),
-				"complete_time": &now,
-				"updated_at":    now,
-			})
-		if res.Error != nil {
-			log.Printf("[order-scheduler] 自提单 %d 自动完成失败: %v", o.ID, res.Error)
-			continue
+	// 2. 按原状态分别原子抢占（自提单原状态可能为 2 已支付 / 3 备货中，
+	//    拆分处理中状态使 recoverStuckOrders 兜底恢复时可还原真实原状态）
+	deadline := time.Now().AddDate(0, 0, -autoCompleteDays).Format("2006-01-02 15:04:05")
+	cond := "delivery_type = 1 AND pay_time IS NOT NULL AND pay_time < ?"
+	remark := fmt.Sprintf("支付后%d天未取货，系统自动完成", autoCompleteDays)
+	for _, p := range []struct{ from, processing int32 }{
+		{2, processingStatusPickup2},
+		{3, processingStatusPickup3},
+	} {
+		orders := s.claimOrders(ctx, p.from, p.processing, cond, deadline)
+		for _, o := range orders {
+			if err := s.completeOrderTx(ctx, o, p.from, remark); err != nil {
+				log.Printf("[order-scheduler] 自提单 %d 自动完成失败: %v", o.ID, err)
+				s.rollbackStatus(ctx, o.ID, p.processing, p.from)
+				s.recordFailure(ctx, o.ID, "pickup_complete", err.Error())
+				continue
+			}
+			log.Printf("[order-scheduler] 自提单 %d 支付超过 %d 天未核销，已自动完成", o.ID, autoCompleteDays)
 		}
-		if res.RowsAffected == 0 {
-			continue
-		}
-		s.db.GetDb().WithContext(ctx).Create(&model.OrderStatusLog{
-			OrderID:      o.ID,
-			FromStatus:   fromStatus,
-			ToStatus:     5,
-			OperatorType: "system",
-			OperatorID:   0,
-			Remark:       fmt.Sprintf("支付后%d天未取货，系统自动完成", autoCompleteDays),
-			CreatedAt:    now,
-		})
-		log.Printf("[order-scheduler] 自提单 %d 支付超过 %d 天未核销，已自动完成", o.ID, autoCompleteDays)
 	}
 }
 
@@ -544,12 +617,12 @@ func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) {
 func (s *Scheduler) recordFailure(ctx context.Context, orderID int64, taskType string, errMsg string) {
 	now := time.Now().Format("2006-01-02 15:04:05")
 	failure := &model.SchedulerFailure{
-		OrderID:    orderID,
-		TaskType:   taskType,
-		Status:     1,
-		ErrorMsg:   errMsg,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		OrderID:   orderID,
+		TaskType:  taskType,
+		Status:    1,
+		ErrorMsg:  errMsg,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(failure).Error; err != nil {
 		log.Printf("[order-scheduler] 记录失败订单 %d 出错: %v", orderID, err)
