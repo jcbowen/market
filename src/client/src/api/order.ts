@@ -51,6 +51,25 @@ export function getOrderDetail(id: number) {
   return get<Order>(`/orders/${id}`)
 }
 
+/** 用户订单状态角标统计（口径与订单列表 Tab 一致） */
+export interface OrderStatusCounts {
+  /** 待支付（status=1） */
+  pending_pay: number
+  /** 待发货（status=2/3 聚合） */
+  pending_ship: number
+  /** 待收货（status=4） */
+  pending_receive: number
+  /** 退款/售后（status=7/8 聚合） */
+  after_sale: number
+}
+
+/**
+ * 获取当前用户订单状态角标统计（「我的-我的订单」红标）
+ */
+export function getOrderStatusCounts() {
+  return get<OrderStatusCounts>('/orders/status-counts')
+}
+
 /**
  * 取消订单
  * @param id 订单 ID

@@ -166,6 +166,15 @@ func (s *server) GetUserFrequentProducts(ctx stdctx.Context, req *order.GetUserF
 	return &order.GetUserFrequentProductsResp{List: list}, nil
 }
 
+// GetUserOrderStatusCounts 用户订单状态角标统计（C 端「我的-我的订单」红标）
+func (s *server) GetUserOrderStatusCounts(ctx stdctx.Context, req *order.GetUserOrderStatusCountsReq) (*order.GetUserOrderStatusCountsResp, error) {
+	resp, err := s.orderService.GetUserOrderStatusCounts(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
+}
+
 // PreviewFreeShipping 免配送费试算（C 端确认页展示）
 func (s *server) PreviewFreeShipping(ctx stdctx.Context, req *order.PreviewFreeShippingReq) (*order.PreviewFreeShippingResp, error) {
 	return s.orderService.PreviewFreeShipping(ctx, req)

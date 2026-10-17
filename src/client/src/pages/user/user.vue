@@ -26,19 +26,31 @@
       </view>
       <view class="order-grid">
         <view class="order-item" @click="goOrderList(1)">
-          <u-icon name="rmb-circle" size="40" color="#07c160" />
+          <view class="order-icon-wrap">
+            <u-icon name="rmb-circle" size="40" color="#07c160" />
+            <text v-if="orderCounts.pending_pay > 0" class="badge">{{ badgeText(orderCounts.pending_pay) }}</text>
+          </view>
           <text>待支付</text>
         </view>
-        <view class="order-item" @click="goOrderList(2)">
-          <u-icon name="bag" size="40" color="#07c160" />
+        <view class="order-item" @click="goOrderList(90)">
+          <view class="order-icon-wrap">
+            <u-icon name="bag" size="40" color="#07c160" />
+            <text v-if="orderCounts.pending_ship > 0" class="badge">{{ badgeText(orderCounts.pending_ship) }}</text>
+          </view>
           <text>待发货</text>
         </view>
-        <view class="order-item" @click="goOrderList(3)">
-          <u-icon name="car" size="40" color="#07c160" />
+        <view class="order-item" @click="goOrderList(4)">
+          <view class="order-icon-wrap">
+            <u-icon name="car" size="40" color="#07c160" />
+            <text v-if="orderCounts.pending_receive > 0" class="badge">{{ badgeText(orderCounts.pending_receive) }}</text>
+          </view>
           <text>待收货</text>
         </view>
         <view class="order-item" @click="goOrderList(9)">
-          <u-icon name="server-man" size="40" color="#07c160" />
+          <view class="order-icon-wrap">
+            <u-icon name="server-man" size="40" color="#07c160" />
+            <text v-if="orderCounts.after_sale > 0" class="badge">{{ badgeText(orderCounts.after_sale) }}</text>
+          </view>
           <text>退款/售后</text>
         </view>
       </view>
@@ -91,6 +103,7 @@ import { ref } from 'vue'
 import { onShow, onReachBottom } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getProducts } from '@/api/product'
+import { getOrderStatusCounts } from '@/api/order'
 import { getFulfillmentStatus } from '@/api/fulfillment'
 import { formatPrice, maskPhone } from '@/utils/format'
 import {
@@ -116,6 +129,9 @@ const page = ref(1)
 const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 
+/** 我的订单红标统计（口径与订单列表 Tab 一致，未登录/查询失败时全部为 0） */
+const orderCounts = ref({ pending_pay: 0, pending_ship: 0, pending_receive: 0, after_sale: 0 })
+
 onShow(() => {
   userStore.fetchUserInfo()
   page.value = 1
@@ -125,7 +141,38 @@ onShow(() => {
   loadProducts()
   // 履约人员身份查询：失败/未登录静默隐藏入口
   checkFulfiller()
+  // 订单红标统计：失败静默，红标不展示
+  loadOrderCounts()
 })
+
+/**
+ * 加载订单状态角标统计（仅登录用户）
+ */
+async function loadOrderCounts() {
+  if (!userStore.isLogin) {
+    orderCounts.value = { pending_pay: 0, pending_ship: 0, pending_receive: 0, after_sale: 0 }
+    return
+  }
+  try {
+    const res = await getOrderStatusCounts()
+    orderCounts.value = {
+      pending_pay: res.data?.pending_pay || 0,
+      pending_ship: res.data?.pending_ship || 0,
+      pending_receive: res.data?.pending_receive || 0,
+      after_sale: res.data?.after_sale || 0,
+    }
+  } catch {
+    // 查询失败保持无红标
+  }
+}
+
+/**
+ * 角标文案：超过 99 显示 99+
+ * @param count 数量
+ */
+function badgeText(count: number): string {
+  return count > 99 ? '99+' : String(count)
+}
 
 /**
  * 查询当前用户是否履约人员（控制履约工作台入口显隐）
@@ -275,6 +322,32 @@ function onLogout() {
   gap: 10rpx;
   font-size: 24rpx;
   color: #666666;
+}
+
+/* 图标包裹层：为红标提供定位锚点 */
+.order-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 订单状态红标（数量角标） */
+.badge {
+  position: absolute;
+  top: -10rpx;
+  left: 44rpx;
+  min-width: 30rpx;
+  height: 30rpx;
+  box-sizing: border-box;
+  padding: 0 8rpx;
+  font-size: 20rpx;
+  line-height: 30rpx;
+  color: #ffffff;
+  text-align: center;
+  background-color: #ff4d4f;
+  border: 2rpx solid #ffffff;
+  border-radius: 30rpx;
 }
 
 .logout-btn {

@@ -209,6 +209,28 @@ func (h *OrderHandler) ListFrequentProducts(c *gin.Context) {
 	response.Success(c, gin.H{"list": list})
 }
 
+// GetUserOrderStatusCounts 用户订单状态角标统计（C 端「我的-我的订单」红标）
+// 接口: GET /api/v1/orders/status-counts
+// 口径与订单列表 Tab 一致：待支付=1；待发货=2/3；待收货=4；退款/售后=7/8
+// 参数：
+//   - c: gin 上下文
+func (h *OrderHandler) GetUserOrderStatusCounts(c *gin.Context) {
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.orderClient.GetUserOrderStatusCounts(c.Request.Context(), &order.GetUserOrderStatusCountsReq{
+		UserId: uc.UserID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"pending_pay":     resp.PendingPay,
+		"pending_ship":    resp.PendingShip,
+		"pending_receive": resp.PendingReceive,
+		"after_sale":      resp.AfterSale,
+	})
+}
+
 // PreviewFreeShippingReq 免配送费试算请求
 type PreviewFreeShippingReq struct {
 	Items []struct {

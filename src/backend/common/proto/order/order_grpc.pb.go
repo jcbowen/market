@@ -20,39 +20,40 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OrderService_CreateOrder_FullMethodName             = "/order.OrderService/CreateOrder"
-	OrderService_GetOrder_FullMethodName                = "/order.OrderService/GetOrder"
-	OrderService_ListOrders_FullMethodName              = "/order.OrderService/ListOrders"
-	OrderService_CancelOrder_FullMethodName             = "/order.OrderService/CancelOrder"
-	OrderService_UpdateOrderStatus_FullMethodName       = "/order.OrderService/UpdateOrderStatus"
-	OrderService_VerifyPickup_FullMethodName            = "/order.OrderService/VerifyPickup"
-	OrderService_ApplyRefund_FullMethodName             = "/order.OrderService/ApplyRefund"
-	OrderService_AdminCreateRefund_FullMethodName       = "/order.OrderService/AdminCreateRefund"
-	OrderService_ListRefunds_FullMethodName             = "/order.OrderService/ListRefunds"
-	OrderService_ApproveRefund_FullMethodName           = "/order.OrderService/ApproveRefund"
-	OrderService_RejectRefund_FullMethodName            = "/order.OrderService/RejectRefund"
-	OrderService_RetryRefund_FullMethodName             = "/order.OrderService/RetryRefund"
-	OrderService_GetRefundConfig_FullMethodName         = "/order.OrderService/GetRefundConfig"
-	OrderService_SaveRefundConfig_FullMethodName        = "/order.OrderService/SaveRefundConfig"
-	OrderService_GetOrderStatistics_FullMethodName      = "/order.OrderService/GetOrderStatistics"
-	OrderService_GetSalesStatistics_FullMethodName      = "/order.OrderService/GetSalesStatistics"
-	OrderService_GetProductRankings_FullMethodName      = "/order.OrderService/GetProductRankings"
-	OrderService_GetRevenueReport_FullMethodName        = "/order.OrderService/GetRevenueReport"
-	OrderService_GetUserFrequentProducts_FullMethodName = "/order.OrderService/GetUserFrequentProducts"
-	OrderService_PreviewFreeShipping_FullMethodName     = "/order.OrderService/PreviewFreeShipping"
-	OrderService_CreatePosHeldOrder_FullMethodName      = "/order.OrderService/CreatePosHeldOrder"
-	OrderService_ListPosHeldOrders_FullMethodName       = "/order.OrderService/ListPosHeldOrders"
-	OrderService_DeletePosHeldOrder_FullMethodName      = "/order.OrderService/DeletePosHeldOrder"
-	OrderService_StartShift_FullMethodName              = "/order.OrderService/StartShift"
-	OrderService_GetCurrentShift_FullMethodName         = "/order.OrderService/GetCurrentShift"
-	OrderService_EndShift_FullMethodName                = "/order.OrderService/EndShift"
-	OrderService_ListShifts_FullMethodName              = "/order.OrderService/ListShifts"
-	OrderService_GetAppPreferences_FullMethodName       = "/order.OrderService/GetAppPreferences"
-	OrderService_SaveAppPreferences_FullMethodName      = "/order.OrderService/SaveAppPreferences"
-	OrderService_AssignDelivery_FullMethodName          = "/order.OrderService/AssignDelivery"
-	OrderService_ListFulfillmentOrders_FullMethodName   = "/order.OrderService/ListFulfillmentOrders"
-	OrderService_StartDelivery_FullMethodName           = "/order.OrderService/StartDelivery"
-	OrderService_CompleteDelivery_FullMethodName        = "/order.OrderService/CompleteDelivery"
+	OrderService_CreateOrder_FullMethodName              = "/order.OrderService/CreateOrder"
+	OrderService_GetOrder_FullMethodName                 = "/order.OrderService/GetOrder"
+	OrderService_ListOrders_FullMethodName               = "/order.OrderService/ListOrders"
+	OrderService_CancelOrder_FullMethodName              = "/order.OrderService/CancelOrder"
+	OrderService_UpdateOrderStatus_FullMethodName        = "/order.OrderService/UpdateOrderStatus"
+	OrderService_VerifyPickup_FullMethodName             = "/order.OrderService/VerifyPickup"
+	OrderService_ApplyRefund_FullMethodName              = "/order.OrderService/ApplyRefund"
+	OrderService_AdminCreateRefund_FullMethodName        = "/order.OrderService/AdminCreateRefund"
+	OrderService_ListRefunds_FullMethodName              = "/order.OrderService/ListRefunds"
+	OrderService_ApproveRefund_FullMethodName            = "/order.OrderService/ApproveRefund"
+	OrderService_RejectRefund_FullMethodName             = "/order.OrderService/RejectRefund"
+	OrderService_RetryRefund_FullMethodName              = "/order.OrderService/RetryRefund"
+	OrderService_GetRefundConfig_FullMethodName          = "/order.OrderService/GetRefundConfig"
+	OrderService_SaveRefundConfig_FullMethodName         = "/order.OrderService/SaveRefundConfig"
+	OrderService_GetOrderStatistics_FullMethodName       = "/order.OrderService/GetOrderStatistics"
+	OrderService_GetSalesStatistics_FullMethodName       = "/order.OrderService/GetSalesStatistics"
+	OrderService_GetProductRankings_FullMethodName       = "/order.OrderService/GetProductRankings"
+	OrderService_GetRevenueReport_FullMethodName         = "/order.OrderService/GetRevenueReport"
+	OrderService_GetUserFrequentProducts_FullMethodName  = "/order.OrderService/GetUserFrequentProducts"
+	OrderService_GetUserOrderStatusCounts_FullMethodName = "/order.OrderService/GetUserOrderStatusCounts"
+	OrderService_PreviewFreeShipping_FullMethodName      = "/order.OrderService/PreviewFreeShipping"
+	OrderService_CreatePosHeldOrder_FullMethodName       = "/order.OrderService/CreatePosHeldOrder"
+	OrderService_ListPosHeldOrders_FullMethodName        = "/order.OrderService/ListPosHeldOrders"
+	OrderService_DeletePosHeldOrder_FullMethodName       = "/order.OrderService/DeletePosHeldOrder"
+	OrderService_StartShift_FullMethodName               = "/order.OrderService/StartShift"
+	OrderService_GetCurrentShift_FullMethodName          = "/order.OrderService/GetCurrentShift"
+	OrderService_EndShift_FullMethodName                 = "/order.OrderService/EndShift"
+	OrderService_ListShifts_FullMethodName               = "/order.OrderService/ListShifts"
+	OrderService_GetAppPreferences_FullMethodName        = "/order.OrderService/GetAppPreferences"
+	OrderService_SaveAppPreferences_FullMethodName       = "/order.OrderService/SaveAppPreferences"
+	OrderService_AssignDelivery_FullMethodName           = "/order.OrderService/AssignDelivery"
+	OrderService_ListFulfillmentOrders_FullMethodName    = "/order.OrderService/ListFulfillmentOrders"
+	OrderService_StartDelivery_FullMethodName            = "/order.OrderService/StartDelivery"
+	OrderService_CompleteDelivery_FullMethodName         = "/order.OrderService/CompleteDelivery"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -84,6 +85,8 @@ type OrderServiceClient interface {
 	GetRevenueReport(ctx context.Context, in *GetRevenueReportReq, opts ...grpc.CallOption) (*RevenueReportResp, error)
 	// 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
 	GetUserFrequentProducts(ctx context.Context, in *GetUserFrequentProductsReq, opts ...grpc.CallOption) (*GetUserFrequentProductsResp, error)
+	// 用户订单状态角标统计（C 端「我的-我的订单」红标）：按用户维度按状态聚合
+	GetUserOrderStatusCounts(ctx context.Context, in *GetUserOrderStatusCountsReq, opts ...grpc.CallOption) (*GetUserOrderStatusCountsResp, error)
 	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
 	PreviewFreeShipping(ctx context.Context, in *PreviewFreeShippingReq, opts ...grpc.CallOption) (*PreviewFreeShippingResp, error)
 	// 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
@@ -311,6 +314,16 @@ func (c *orderServiceClient) GetUserFrequentProducts(ctx context.Context, in *Ge
 	return out, nil
 }
 
+func (c *orderServiceClient) GetUserOrderStatusCounts(ctx context.Context, in *GetUserOrderStatusCountsReq, opts ...grpc.CallOption) (*GetUserOrderStatusCountsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetUserOrderStatusCountsResp)
+	err := c.cc.Invoke(ctx, OrderService_GetUserOrderStatusCounts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orderServiceClient) PreviewFreeShipping(ctx context.Context, in *PreviewFreeShippingReq, opts ...grpc.CallOption) (*PreviewFreeShippingResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PreviewFreeShippingResp)
@@ -480,6 +493,8 @@ type OrderServiceServer interface {
 	GetRevenueReport(context.Context, *GetRevenueReportReq) (*RevenueReportResp, error)
 	// 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
 	GetUserFrequentProducts(context.Context, *GetUserFrequentProductsReq) (*GetUserFrequentProductsResp, error)
+	// 用户订单状态角标统计（C 端「我的-我的订单」红标）：按用户维度按状态聚合
+	GetUserOrderStatusCounts(context.Context, *GetUserOrderStatusCountsReq) (*GetUserOrderStatusCountsResp, error)
 	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
 	PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error)
 	// 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
@@ -573,6 +588,9 @@ func (UnimplementedOrderServiceServer) GetRevenueReport(context.Context, *GetRev
 }
 func (UnimplementedOrderServiceServer) GetUserFrequentProducts(context.Context, *GetUserFrequentProductsReq) (*GetUserFrequentProductsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetUserFrequentProducts not implemented")
+}
+func (UnimplementedOrderServiceServer) GetUserOrderStatusCounts(context.Context, *GetUserOrderStatusCountsReq) (*GetUserOrderStatusCountsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserOrderStatusCounts not implemented")
 }
 func (UnimplementedOrderServiceServer) PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewFreeShipping not implemented")
@@ -979,6 +997,24 @@ func _OrderService_GetUserFrequentProducts_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_GetUserOrderStatusCounts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUserOrderStatusCountsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).GetUserOrderStatusCounts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_GetUserOrderStatusCounts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).GetUserOrderStatusCounts(ctx, req.(*GetUserOrderStatusCountsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrderService_PreviewFreeShipping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PreviewFreeShippingReq)
 	if err := dec(in); err != nil {
@@ -1313,6 +1349,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUserFrequentProducts",
 			Handler:    _OrderService_GetUserFrequentProducts_Handler,
+		},
+		{
+			MethodName: "GetUserOrderStatusCounts",
+			Handler:    _OrderService_GetUserOrderStatusCounts_Handler,
 		},
 		{
 			MethodName: "PreviewFreeShipping",

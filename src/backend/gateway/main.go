@@ -195,6 +195,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 			authUser.POST("/orders", orderHandler.CreateOrder)
 			authUser.GET("/orders", orderHandler.ListOrders)
+			authUser.GET("/orders/status-counts", orderHandler.GetUserOrderStatusCounts)
 			authUser.GET("/orders/frequent-products", orderHandler.ListFrequentProducts)
 			authUser.POST("/orders/free-shipping/preview", orderHandler.PreviewFreeShipping)
 			authUser.GET("/orders/:id", orderHandler.GetOrder)

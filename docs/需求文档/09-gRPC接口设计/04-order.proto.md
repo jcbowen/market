@@ -37,6 +37,8 @@ service OrderService {
   rpc GetRevenueReport(GetRevenueReportReq) returns (RevenueReportResp);
   // 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
   rpc GetUserFrequentProducts(GetUserFrequentProductsReq) returns (GetUserFrequentProductsResp);
+  // 用户订单状态角标统计（C 端「我的-我的订单」红标）：按用户维度按状态聚合
+  rpc GetUserOrderStatusCounts(GetUserOrderStatusCountsReq) returns (GetUserOrderStatusCountsResp);
   // 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
   rpc PreviewFreeShipping(PreviewFreeShippingReq) returns (PreviewFreeShippingResp);
   // 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
@@ -489,6 +491,24 @@ message FrequentProductItem {
 
 message GetUserFrequentProductsResp {
   repeated FrequentProductItem list = 1;
+}
+
+// --- 用户订单状态角标统计（C 端「我的-我的订单」红标） ---
+
+message GetUserOrderStatusCountsReq {
+  int64 user_id = 1;
+}
+
+// 口径与订单列表 Tab 一致：待支付=1；待发货=2/3 聚合；待收货=4；退款/售后=7/8 聚合
+message GetUserOrderStatusCountsResp {
+  // 待支付（status=1）
+  int32 pending_pay = 1;
+  // 待发货（status=2 已支付 / 3 备货中 聚合）
+  int32 pending_ship = 2;
+  // 待收货（status=4 配送中）
+  int32 pending_receive = 3;
+  // 退款/售后（status=7 退款中 / 8 已退款 聚合）
+  int32 after_sale = 4;
 }
 
 // --- 收银台挂单（未成单草稿，后端暂存；结账成功或放弃后删除） ---

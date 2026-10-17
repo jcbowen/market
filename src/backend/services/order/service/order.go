@@ -524,6 +524,52 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	return list, int(total), err
 }
 
+// GetUserOrderStatusCounts 用户订单状态角标统计（C 端「我的-我的订单」红标）
+// 口径与 C 端订单列表 Tab 一致：待支付=1；待发货=2/3；待收货=4；退款/售后=7/8
+// 单条 GROUP BY 查询覆盖全部状态，不区分订单来源（与列表展示口径一致）
+// 参数：
+//   - ctx: 上下文
+//   - req: 请求（user_id 必传）
+//
+// 返回值：
+//   - *order.GetUserOrderStatusCountsResp: 各状态订单数
+//   - error: 查询错误
+func (s *OrderService) GetUserOrderStatusCounts(ctx context.Context, req *order.GetUserOrderStatusCountsReq) (*order.GetUserOrderStatusCountsResp, error) {
+	resp := &order.GetUserOrderStatusCountsResp{}
+	if req.UserId <= 0 {
+		return resp, nil
+	}
+
+	type statusCount struct {
+		Status int32 `gorm:"column:status"`
+		Total  int32 `gorm:"column:total"`
+	}
+	var rows []statusCount
+	err := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
+		Select("status, COUNT(*) AS total").
+		Where("user_id = ?", req.UserId).
+		Where("status IN ?", []int32{1, 2, 3, 4, 7, 8}).
+		Group("status").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		switch row.Status {
+		case 1:
+			resp.PendingPay += row.Total
+		case 2, 3:
+			resp.PendingShip += row.Total
+		case 4:
+			resp.PendingReceive += row.Total
+		case 7, 8:
+			resp.AfterSale += row.Total
+		}
+	}
+	return resp, nil
+}
+
 // cancelableStatuses 订单允许取消的状态集合
 // status=1（待支付）恒可取消；货到付款单未实际收款，未发货（2已支付/3备货中）也可直接取消，
 // 无需走退款审核（发货后 status=4 仍走退款/拒收流程）
