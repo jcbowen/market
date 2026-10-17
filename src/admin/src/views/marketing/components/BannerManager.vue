@@ -62,7 +62,7 @@
 defineOptions({ name: 'BannerList' })
 import { h, onMounted, reactive, ref, computed } from 'vue'
 import { useMessage } from 'naive-ui'
-import { NButton, NSpace, NTag } from 'naive-ui'
+import { NButton, NSpace, NTag, NImage } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import LinkSelector from '@/components/LinkSelector.vue'
 import type { DataTableColumns } from 'naive-ui'
@@ -128,12 +128,31 @@ const columns: DataTableColumns<Banner> = [
   { title: 'ID', key: 'id', width: 70 },
   { title: '标题', key: 'title', width: 140, ellipsis: { tooltip: true } },
   {
-    title: '图片地址',
+    title: '图片',
     key: 'image_url',
-    width: 180,
-    ellipsis: { tooltip: true },
+    width: 140,
     render(row) {
-      return h('span', { title: row.image_url }, row.image_url)
+      if (!row.image_url) {
+        return h('span', { style: 'color: #999;' }, '—')
+      }
+      // 缩略图预览：21:9 比例（建议尺寸 750×320），点击放大，hover 显示完整 URL；
+      // 外域图片禁 referrer 防 OSS 防盗链 403；加载失败回落文案提示，URL 在 title 中可查
+      return h(
+        NImage,
+        {
+          src: row.image_url,
+          class: 'banner-thumb',
+          width: 120,
+          height: 52,
+          objectFit: 'cover',
+          lazy: true,
+          imgProps: { referrerpolicy: 'no-referrer', title: row.image_url },
+        },
+        {
+          error: () =>
+            h('span', { title: row.image_url, style: 'color: #d03050; font-size: 12px;' }, '图片加载失败'),
+        }
+      )
     },
   },
   {
@@ -337,3 +356,15 @@ onMounted(() => {
   loadCommunities()
 })
 </script>
+
+<style lang="scss" scoped>
+/* 列表 Banner 缩略图：120×52（21:9），与建议上传尺寸 750×320 同比例 */
+.banner-thumb {
+  display: inline-block;
+  vertical-align: middle;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+</style>
