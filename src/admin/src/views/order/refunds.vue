@@ -47,7 +47,8 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'RefundList' })
-import { ref, onMounted, onUnmounted, computed, h } from 'vue'
+import { ref, onActivated, onMounted, onUnmounted, computed, h } from 'vue'
+import { useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, NDataTable, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getRefundList, approveRefund, rejectRefund, retryRefund } from '@/api/order'
@@ -62,6 +63,7 @@ import { REFUND_STATUS, refundStatusMap } from '@/constants/order'
  * 退款中(status=4) 的卡单提供「重试退款」出口；展开行展示审批日志
  */
 const dialog = useDialog()
+const route = useRoute()
 const status = ref<number | null>(null)
 const list = ref<Refund[]>([])
 const loading = ref(false)
@@ -371,9 +373,32 @@ async function loadData() {
   }
 }
 
+/**
+ * 应用路由 query 中的 status 预筛选（工作台待办直达入口）
+ * 仅接受本页状态筛选支持的值（1-5）；无参数或非法值时回到全部
+ * @returns 筛选是否发生变化（变化时调用方需重新加载列表）
+ */
+function applyQueryStatus(): boolean {
+  const raw = Number(route.query.status)
+  const allowed = new Set(statusOptions.map((s) => s.value))
+  const value: number | null = Number.isInteger(raw) && allowed.has(raw) ? raw : null
+  if (value === status.value) return false
+  status.value = value
+  pagination.value.page = 1
+  return true
+}
+
 onMounted(() => {
+  applyQueryStatus()
   loadData()
   window.addEventListener('resize', updateNarrow)
+})
+
+// keep-alive 缓存下再次进入（如工作台待办跳转）时，应用新的 status 查询参数重新筛选
+onActivated(() => {
+  if (applyQueryStatus()) {
+    loadData()
+  }
 })
 
 onUnmounted(() => {

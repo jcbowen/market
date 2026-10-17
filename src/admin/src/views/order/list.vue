@@ -159,7 +159,8 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'OrderList' })
-import { computed, h, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, h, onActivated, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { completeOrder, getOrderList, verifyPickup, assignDelivery } from '@/api/order'
@@ -191,6 +192,7 @@ import {
 
 const dialog = useDialog()
 const message = useMessage()
+const route = useRoute()
 
 const statusFilter = ref(0)
 const list = ref<Order[]>([])
@@ -265,6 +267,21 @@ function setStatusFilter(value: number) {
   statusFilter.value = value
   pagination.value.page = 1
   loadData()
+}
+
+/**
+ * 应用路由 query 中的 status 预筛选（工作台待办直达入口）
+ * 仅接受本页状态筛选项支持的值；无参数或非法值时回到全部订单
+ * @returns 筛选是否发生变化（变化时调用方需重新加载列表）
+ */
+function applyQueryStatus(): boolean {
+  const raw = Number(route.query.status)
+  const allowed = new Set<number>(statusOptions.map((s) => s.value))
+  const value = Number.isInteger(raw) && allowed.has(raw) ? raw : 0
+  if (value === statusFilter.value) return false
+  statusFilter.value = value
+  pagination.value.page = 1
+  return true
 }
 
 const columns: DataTableColumns<Order> = [
@@ -739,9 +756,18 @@ async function loadData() {
 }
 
 onMounted(() => {
+  applyQueryStatus()
   loadData()
   loadStats()
   window.addEventListener('resize', updateNarrow)
+})
+
+// keep-alive 缓存下再次进入（如工作台待办跳转）时，应用新的 status 查询参数重新筛选
+onActivated(() => {
+  if (applyQueryStatus()) {
+    pagination.value.page = 1
+    loadData()
+  }
 })
 
 onUnmounted(() => {
