@@ -128,7 +128,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	userHandler := handler.NewUserHandler(clients.UserClient)
 	productHandler := handler.NewProductHandler(clients.ProductClient)
 	cartHandler := handler.NewCartHandler(clients.CartClient)
-	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient, cfg.Business.OrderTimeout)
+	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient, clients.CartClient, cfg.Business.OrderTimeout)
 	// C 端上传（履约签收照片等）：独立 handler 持有 product 客户端，IsDisplay=false
 	fulfillmentUploadHandler := handler.NewFulfillmentUploadHandler(clients.ProductClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
@@ -195,7 +195,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.POST("/cart/select", cartHandler.SelectAll)
 			authUser.DELETE("/cart/invalid", cartHandler.ClearInvalidItems)
 
-			authUser.POST("/orders", orderHandler.CreateOrder)
+			authUser.POST("/orders", gwMiddleware.UserRateLimitMiddleware(0.08, 5), orderHandler.CreateOrder)
 			authUser.GET("/orders", orderHandler.ListOrders)
 			authUser.GET("/orders/status-counts", orderHandler.GetUserOrderStatusCounts)
 			authUser.GET("/orders/frequent-products", orderHandler.ListFrequentProducts)

@@ -1056,6 +1056,12 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 				return err
 			}
 			refundCompleted.Type = 1
+			// 整单退款回补优惠券：与取消订单同口径，全额退款后券应返还用户
+			if o.CouponID > 0 {
+				if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
+					return fmt.Errorf("回补优惠券失败: %w", err)
+				}
+			}
 		}
 
 		o.Status = nextStatus

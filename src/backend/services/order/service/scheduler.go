@@ -93,7 +93,9 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 	s.recoverStuckOrders(ctx)
 	s.cancelTimeoutOrders(ctx, orderTimeout)
 	s.autoCompleteOrders(ctx, autoCompleteDays)
+	s.autoCompletePickupOrders(ctx, autoCompleteDays)
 	s.retryStuckRefunds(ctx)
+	s.autoApproveStaleRefunds(ctx)
 }
 
 // retryStuckRefunds 自动重试卡在"退款中"(status=4) 超过阈值的退款单
@@ -303,6 +305,13 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 			}
 		}
 
+		// 回补优惠券：与 CancelOrder/cancelOrderInTx 同口径，防止超时取消吞券
+		if o.CouponID > 0 {
+			if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
+				return fmt.Errorf("回补优惠券失败: %w", err)
+			}
+		}
+
 		log := &model.OrderStatusLog{
 			OrderID:      o.ID,
 			FromStatus:   fromStatus,
@@ -430,6 +439,98 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 		}
 		s.markFailureStatus(ctx, f.ID, 2)
 		log.Printf("[order-scheduler] 重试 %s 订单 %d 成功", taskType, f.OrderID)
+	}
+}
+
+// autoCompletePickupOrders 自提单超时自动完成
+// 场景：用户支付后长期未到店取货、社区忘记核销 → 订单永久停留在待取货状态，库存永久占用。
+// 支付后超过 autoCompleteDays 天未核销的自提单（delivery_type=1, status∈{2,3}）自动置为已完成。
+// 参数：
+//   - ctx: 上下文
+//   - autoCompleteDays: 超时天数（与配送单共用配置）
+func (s *Scheduler) autoCompletePickupOrders(ctx context.Context, autoCompleteDays int) {
+	lockKey := "scheduler:order:pickup:complete:lock"
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
+		return
+	}
+	defer s.releaseLock(ctx, lockKey, lockValue)
+
+	deadline := time.Now().AddDate(0, 0, -autoCompleteDays).Format("2006-01-02 15:04:05")
+	var orders []*model.Order
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("delivery_type = 1 AND status IN ? AND pay_time IS NOT NULL AND pay_time < ?", []int32{2, 3}, deadline).
+		Order("id asc").Limit(100).Find(&orders).Error; err != nil {
+		log.Printf("[order-scheduler] 查询超时自提单失败: %v", err)
+		return
+	}
+
+	for _, o := range orders {
+		now := time.Now().Format("2006-01-02 15:04:05")
+		fromStatus := o.Status
+		res := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
+			Where("id = ? AND status IN ?", o.ID, []int32{2, 3}).
+			Updates(map[string]interface{}{
+				"status":        int32(5),
+				"complete_time": &now,
+				"updated_at":    now,
+			})
+		if res.Error != nil {
+			log.Printf("[order-scheduler] 自提单 %d 自动完成失败: %v", o.ID, res.Error)
+			continue
+		}
+		if res.RowsAffected == 0 {
+			continue
+		}
+		s.db.GetDb().WithContext(ctx).Create(&model.OrderStatusLog{
+			OrderID:      o.ID,
+			FromStatus:   fromStatus,
+			ToStatus:     5,
+			OperatorType: "system",
+			OperatorID:   0,
+			Remark:       fmt.Sprintf("支付后%d天未取货，系统自动完成", autoCompleteDays),
+			CreatedAt:    now,
+		})
+		log.Printf("[order-scheduler] 自提单 %d 支付超过 %d 天未核销，已自动完成", o.ID, autoCompleteDays)
+	}
+}
+
+// autoApproveStaleRefunds 退款超时自动审批
+// 场景：用户申请退款后管理员长期不处理 → 退款单永久停留在待审核(status=1)。
+// 超过 72h 未处理的退款申请自动同意并发起退款，保障消费者权益。
+// 参数：
+//   - ctx: 上下文
+func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) {
+	if s.refundService == nil {
+		return
+	}
+	lockKey := "scheduler:order:refund:auto:approve:lock"
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
+		return
+	}
+	defer s.releaseLock(ctx, lockKey, lockValue)
+
+	const staleHours = 72
+	deadline := time.Now().Add(-staleHours * time.Hour).Format("2006-01-02 15:04:05")
+	var refunds []*model.Refund
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("status = 1 AND created_at < ?", deadline).
+		Order("id asc").Limit(20).Find(&refunds).Error; err != nil {
+		log.Printf("[order-scheduler] 查询超时退款申请失败: %v", err)
+		return
+	}
+
+	for _, r := range refunds {
+		err := s.refundService.ApproveRefund(ctx, &order.ApproveRefundReq{
+			Id:         r.ID,
+			OperatorId: 0,
+		})
+		if err != nil {
+			log.Printf("[order-scheduler] 自动审批退款单 %d 失败: %v", r.ID, err)
+			continue
+		}
+		log.Printf("[order-scheduler] 退款单 %d 超过 %dh 未处理，已自动同意", r.ID, staleHours)
 	}
 }
 

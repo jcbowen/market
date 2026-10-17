@@ -497,6 +497,11 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 //  2. 条件更新幂等：仅 status=1（待支付）可流转为已支付，重复/并发回调安全
 //  3. 终态兜底：非待支付状态的回调直接忽略并记日志
 //
+// 两阶段设计：事务内仅更新支付单状态（快、无外部依赖），事务提交后再 RPC 同步订单状态；
+// 避免事务持锁期间依赖 order-service（慢/宕机时不会拖垮支付服务连接池）。
+// RPC 失败时立即重试 3 次；若仍失败则记 CRITICAL 日志（支付已确认但订单未同步，
+// 调度器超时窗口 1800s 远大于重试耗时，不会误取消；极端情况需人工对账修复）。
+//
 // 参数：
 //   - ctx: 上下文
 //   - params: 解析后的回调参数
@@ -513,7 +518,11 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
-	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var orderID int64
+	var needSync bool
+
+	// 阶段一：事务内完成支付单状态流转（纯 DB 操作，无外部依赖）
+	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var p model.Payment
 		if err := tx.Where("payment_no = ?", params.PaymentNo).First(&p).Error; err != nil {
 			return err
@@ -545,18 +554,35 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 			// 并发下另一笔回调已完成流转，幂等返回
 			return nil
 		}
+		orderID = p.OrderID
+		needSync = true
+		return nil
+	}); err != nil {
+		return err
+	}
 
-		_, err := grpcclient.OrderClient.UpdateOrderStatus(ctx, &order.UpdateOrderStatusReq{
-			Id:           p.OrderID,
+	// 阶段二：事务外 RPC 同步订单状态（带重试，不占用 DB 连接）
+	if !needSync {
+		return nil
+	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(100 * time.Millisecond)
+		}
+		_, lastErr = grpcclient.OrderClient.UpdateOrderStatus(ctx, &order.UpdateOrderStatusReq{
+			Id:           orderID,
 			Status:       2,
 			OperatorType: "system",
 			Remark:       "支付成功",
 		})
-		if err != nil {
-			return fmt.Errorf("同步订单支付状态失败: %w", err)
+		if lastErr == nil {
+			return nil
 		}
-		return nil
-	})
+	}
+	log.Printf("[CRITICAL] 支付已确认但订单状态同步失败（需人工对账）: payment_no=%s order_id=%d err=%v",
+		params.PaymentNo, orderID, lastErr)
+	return nil
 }
 
 // payCallbackParams 支付回调解析后的通用参数

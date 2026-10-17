@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
@@ -24,7 +25,8 @@ import (
 
 // OrderService 订单业务服务
 type OrderService struct {
-	db *mysql.Instance
+	db          *mysql.Instance
+	redisClient *redis.Client
 }
 
 // NewOrderService 创建订单业务服务
@@ -35,6 +37,17 @@ type OrderService struct {
 //   - *OrderService: 订单业务服务实例
 func NewOrderService(db *mysql.Instance) *OrderService {
 	return &OrderService{db: db}
+}
+
+// WithRedis 注入 Redis 客户端（可选，用于取货码防暴力破解等场景）
+// 参数：
+//   - client: Redis 客户端
+//
+// 返回值：
+//   - *OrderService: 自身（链式调用）
+func (s *OrderService) WithRedis(client *redis.Client) *OrderService {
+	s.redisClient = client
+	return s
 }
 
 // CreateOrder 创建订单
@@ -97,6 +110,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	var itemScopes []itemScope
 
 	for _, item := range req.Items {
+		if item.Quantity <= 0 || item.Quantity > 999 {
+			return nil, bizerr.New(codes.InvalidArgument, "单品购买数量须在 1~999 之间")
+		}
 		skuInfo, err := grpcclient.ProductClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: item.SkuId})
 		if err != nil {
 			return nil, fmt.Errorf("获取 SKU 失败: %w", err)
@@ -750,6 +766,13 @@ func isTransitionAllowed(from, to int32) bool {
 // 返回值：
 //   - error: 错误信息
 func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateOrderStatusReq) error {
+	// 取消订单需判定货到付款口径（涉及 payment-service RPC），提前到事务外预读，
+	// 避免事务持锁期间依赖外部服务（payment-service 不可用会拖垮 order-service 连接池）
+	var isCOD bool
+	if req.Status == 6 {
+		isCOD = s.isCashOnDeliveryOrder(ctx, req.Id)
+	}
+
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o model.Order
 		if err := tx.First(&o, req.Id).Error; err != nil {
@@ -764,7 +787,7 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 
 		// 取消订单：不走通用状态机，需回补库存并记录取消原因/时间
 		if req.Status == 6 {
-			return s.cancelOrderInTx(ctx, tx, &o, req.OperatorType, req.OperatorId, req.Remark)
+			return s.cancelOrderInTx(ctx, tx, &o, req.OperatorType, req.OperatorId, req.Remark, isCOD)
 		}
 
 		if !isTransitionAllowed(o.Status, req.Status) {
@@ -818,6 +841,17 @@ func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickup
 	if req.PickupCode == "" {
 		return nil, bizerr.New(codes.InvalidArgument, "请输入取货码")
 	}
+
+	// 防暴力破解：同一订单连续输错取货码 5 次后锁定 30 分钟
+	lockKey := fmt.Sprintf("pickup:lock:%d", req.OrderId)
+	failKey := fmt.Sprintf("pickup:fail:%d", req.OrderId)
+	if s.redisClient != nil {
+		if locked, _ := s.redisClient.Exists(ctx, lockKey).Result(); locked > 0 {
+			ttl, _ := s.redisClient.TTL(ctx, lockKey).Result()
+			return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("取货码错误次数过多，请 %d 分钟后再试", int(ttl.Minutes())+1))
+		}
+	}
+
 	var resp *order.VerifyPickupResp
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o model.Order
@@ -859,7 +893,20 @@ func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickup
 		return nil
 	})
 	if err != nil {
+		// 取货码错误时累计失败次数，达阈值后锁定
+		if s.redisClient != nil && strings.Contains(err.Error(), "取货码不正确") {
+			failures, _ := s.redisClient.Incr(ctx, failKey).Result()
+			s.redisClient.Expire(ctx, failKey, 30*time.Minute)
+			if failures >= 5 {
+				s.redisClient.Set(ctx, lockKey, 1, 30*time.Minute)
+				s.redisClient.Del(ctx, failKey)
+			}
+		}
 		return nil, err
+	}
+	// 核销成功，清除失败计数
+	if s.redisClient != nil {
+		s.redisClient.Del(ctx, failKey)
 	}
 	return resp, nil
 }
@@ -873,12 +920,13 @@ func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickup
 //   - operatorType: 操作者类型（admin/user/system）
 //   - operatorID: 操作者 ID
 //   - reason: 取消原因（写入 cancel_reason 与状态日志备注）
+//   - isCOD: 是否货到付款（由调用方在事务外预读，避免事务内 RPC）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *model.Order, operatorType string, operatorID int64, reason string) error {
+func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *model.Order, operatorType string, operatorID int64, reason string, isCOD bool) error {
 	// 货到付款单未实际收款，未发货（2/3）也可直接取消（与 C 端 CancelOrder 同口径）
-	allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, o.ID))
+	allowed := cancelableStatuses(isCOD)
 	if !containsInt32(allowed, o.Status) {
 		return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许取消: %d", o.Status))
 	}
@@ -1029,7 +1077,14 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 // 返回值：
 //   - float64: 秒杀价，无生效活动返回 0
 //   - error: 错误信息
+// flashSalePriceEnabled 秒杀价开关：库存扣减与限购校验尚未实现，关闭防止超卖资损；
+// 待 DeductFlashStock + LimitPerUser 完整实现后置为 true
+const flashSalePriceEnabled = false
+
 func (s *OrderService) getActiveFlashSalePrice(ctx context.Context, communityID, skuID int64) (float64, error) {
+	if !flashSalePriceEnabled {
+		return 0, nil
+	}
 	fsResp, err := grpcclient.ProductClient.ListFlashSales(ctx, &product.ListFlashSalesReq{CommunityId: communityID})
 	if err != nil {
 		return 0, err

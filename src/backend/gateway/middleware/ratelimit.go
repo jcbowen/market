@@ -1,12 +1,14 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/jcbowen/market/src/backend/common/appcontext"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/response"
 )
@@ -84,6 +86,54 @@ func RateLimitMiddleware(rate, capacity float64) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, response.Response{
 				Code:    errcode.RateLimit,
 				Message: errcode.GetMessage(errcode.RateLimit),
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
+// UserRateLimitMiddleware 构造基于用户 ID 的限流中间件（需置于 AuthMiddleware 之后）
+// 防止同一用户高频调用敏感接口（如下单、退款申请）
+// 参数：
+//   - rate: 每秒请求数
+//   - capacity: 桶容量
+//
+// 返回值：
+//   - gin.HandlerFunc: 限流中间件
+func UserRateLimitMiddleware(rate, capacity float64) gin.HandlerFunc {
+	limiters := make(map[int64]*RateLimiter)
+	var mu sync.Mutex
+
+	// 定期清理不活跃用户的限流器，防止内存泄漏
+	go func() {
+		for range time.Tick(10 * time.Minute) {
+			mu.Lock()
+			limiters = make(map[int64]*RateLimiter)
+			mu.Unlock()
+		}
+	}()
+
+	return func(c *gin.Context) {
+		uc := appcontext.GetUserContext(c)
+		if uc == nil || uc.UserID <= 0 {
+			c.Next()
+			return
+		}
+
+		mu.Lock()
+		l, ok := limiters[uc.UserID]
+		if !ok {
+			l = NewRateLimiter(rate, capacity)
+			limiters[uc.UserID] = l
+		}
+		mu.Unlock()
+
+		if !l.Allow() {
+			c.Header("Retry-After", "12")
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, response.Response{
+				Code:    errcode.RateLimit,
+				Message: fmt.Sprintf("操作过于频繁，请稍后再试"),
 			})
 			return
 		}
