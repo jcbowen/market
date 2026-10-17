@@ -9,6 +9,12 @@ import { uniquePhone } from '../helpers/data';
  *       同时校验未到期对照券保持未使用
  * 说明：调度周期为 1 分钟，本模块包含轮询等待，整体耗时约 2~3 分钟；
  *       前置数据在 beforeAll 创建（券过期时点 = now + 75s）
+ * 时序注意：全栈（Go 服务 time.Local / MySQL NOW()）均为服务器本地时间（Asia/Shanghai），
+ *            naive 时间串必须按本地墙钟生成；本文件曾用 toISOString()（UTC 墙钟）下发，
+ *            75s 券窗被 8h 时差抹掉 → 券一出生即「已过期」，既不在 status=1 列表
+ *           （expire_at < NOW() 被排除）又不在 status=3 列表（调度器尚未扫描），
+ *           稳定复现失败（2026-10-17 修复）。正常情况下领取后 75s 内券必在 status=1 组，
+ *           保留双终态兼容仅为防御 beforeAll 重度延迟超过券窗的极端场景
  */
 
 interface UserCoupon {
@@ -24,7 +30,12 @@ let api: Awaited<ReturnType<typeof newAuthedRequest>>;
 let expiringCouponId = 0;   // 即将过期的固定期券
 let controlCouponId = 0;    // 未到期的对照券
 
-const fmt = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
+// 本地墙钟格式化（与 admin UI 下发口径、MySQL NOW()、Go time.Local 一致）；
+// 不可用 toISOString()——其为 UTC 墙钟，比本地慢 8h，会抹掉窄窗口券（见文件头说明）
+const fmt = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
 
 test.beforeAll(async ({ playwright }) => {
   const info = await clientLogin(playwright.request, uniquePhone());
@@ -83,17 +94,30 @@ test.afterAll(async () => {
 });
 
 test.describe.serial('优惠券过期流转调度器', () => {
-  test('领取后两张券均为未使用状态且过期时间快照正确', async () => {
+  test('领取后券状态与过期时间快照正确', async () => {
     const resp = await api.get('/api/v1/user/coupons', { params: { status: 1 } });
     const body = (await resp.json()) as ApiResponse<PageData<UserCoupon>>;
     expect(body.code).toBe(0);
     const mine = asList<UserCoupon>(body.data);
-    const expiring = mine.find((uc) => uc.coupon_id === expiringCouponId);
+
+    // 对照券（7 天有效期）必须在未使用组，且带 expire_at 快照
     const control = mine.find((uc) => uc.coupon_id === controlCouponId);
-    expect(expiring, '我的券应含即将过期的固定期券').toBeTruthy();
-    expect(control, '我的券应含对照券').toBeTruthy();
-    expect(expiring!.status).toBe(1);
+    expect(control, '我的券应含未到期对照券').toBeTruthy();
     expect(control!.status).toBe(1);
+    expect(control!.expire_at, '对照券应有 expire_at 快照').toBeTruthy();
+
+    // 秒级过期券：status=1 列表按设计排除已过期的行，执行快慢决定它此刻在
+    // 「未使用」组还是已被调度器流转进「已过期」组，两种终态皆合法
+    let expiring = mine.find((uc) => uc.coupon_id === expiringCouponId);
+    if (expiring) {
+      expect(expiring.status).toBe(1);
+    } else {
+      const expiredResp = await api.get('/api/v1/user/coupons', { params: { status: 3 } });
+      const expiredBody = (await expiredResp.json()) as ApiResponse<PageData<UserCoupon>>;
+      expiring = asList<UserCoupon>(expiredBody.data).find((uc) => uc.coupon_id === expiringCouponId);
+      expect(expiring, '秒级券应在未使用组或已过期组内').toBeTruthy();
+      expect(expiring!.status).toBe(3);
+    }
     expect(expiring!.expire_at, '固定期券应有 expire_at 快照').toBeTruthy();
     // expire_at 应约等于创建时设定的 use_end_time（now+75s，允许 ±60s 时钟/处理偏差）
     const expireTs = new Date(expiring!.expire_at!.replace(' ', 'T')).getTime();

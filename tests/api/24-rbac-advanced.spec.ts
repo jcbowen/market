@@ -185,7 +185,10 @@ test.describe.serial('员工与角色权限边界', () => {
 
   test('8. 上限收紧后员工写操作即时 403（product:update 被剔除）', async () => {
     // 收紧：剔除 product:update
-    const narrowed = originalCeiling.filter((p) => p !== 'product:update');
+    // 注意：primaryCommunity 取 my/communities 第一个，随环境漂移；存量社区上限可能是
+    // ["*"] 通配（历史数据），filter 单项对它无效，必须整体替换为具体权限集才能验证收紧
+    const base = originalCeiling.includes('*') ? ['product:view', 'order:view'] : originalCeiling;
+    const narrowed = base.filter((p) => p !== 'product:update');
     test.skip(narrowed.length === 0, '原权限上限仅含 product:update，无法安全收紧');
     const put = (await (
       await superApi.put(`/api/v1/admin/communities/${primaryCommunity}/permissions`, { data: { permissions: narrowed } })

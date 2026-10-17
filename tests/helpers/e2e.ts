@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 /** 管理端默认账号（init.dev.sql 预置） */
@@ -36,6 +37,39 @@ export async function adminLogin(page: Page): Promise<void> {
     await page.waitForURL((url) => !url.href.includes('select-community'), { timeout: 15_000 });
     await page.waitForTimeout(1000); // 等待后台布局渲染
   }
+}
+
+/**
+ * 收银台登录助手（POS 独立应用，/pos 前缀 hash 路由）
+ * 流程：/b/#/pos/login 填表登录 → 多社区账号先落 select-community 点第一个社区卡片
+ *       （选后整页 reload 回 redirect 目标）→ 进入收银工作台
+ * 已知行为：
+ * - 不可用 URL 正则判定登录后终态：select-community 的 redirect 查询串形如
+ *   /b/#/select-community?redirect=/pos/cashier，含 /pos/cashier 会误匹配，
+ *   必须按页面元素（.community-card / .start-shift-guide / .cashier-tabs）判定
+ * - 选社区后 onPick 执行 router.push(redirect) + window.location.reload()，
+ *   reload 后凭 cookie + localStorage 社区记录恢复登录态直达 redirect 目标
+ * - 函数名: posLogin
+ * - 参数: page — Playwright 页面对象
+ * - 返回: Promise<void>，成功后已登录、已选定社区并位于收银台
+ * - 异常: 登录超时或页面元素未找到时抛出
+ * - 使用示例: await posLogin(page);
+ */
+export async function posLogin(page: Page): Promise<void> {
+  await page.goto('/b/#/pos/login');
+  await page.getByPlaceholder('员工账号').fill(ADMIN_USER);
+  await page.getByPlaceholder('密码').fill(ADMIN_PASS);
+  await page.getByRole('button', { name: /进入收银台/ }).click();
+
+  // 登录后终态二选一：社区选择页（多社区账号未选定）或直接进收银台
+  const landing = page.locator('.community-card, .start-shift-guide, .cashier-tabs').first();
+  await landing.waitFor({ state: 'visible', timeout: 20_000 });
+
+  if (await page.locator('.community-card').first().isVisible()) {
+    await page.locator('.community-card').first().click();
+  }
+  // 无论是否经过社区选择，最终都应到达收银台（班次状态异步加载中，tabs 可能闪现）
+  await expect(page.locator('.start-shift-guide, .cashier-tabs').first()).toBeVisible({ timeout: 20_000 });
 }
 
 /**
