@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 )
 
@@ -19,13 +18,6 @@ const (
 	// getList 省级入口：code=0 从根查起，maxLevel=3 一次返回完整三级树
 	// （实测 34 省 / 333 市 / 2847 区县，约 245KB，单请求即可完成全量拉取）
 	regionOfficialListPath = "/xzqh/getList"
-
-	// getCodeList 逐级查询入口：POST，按 parentCode 查询下级（市/区县/街道共用）
-	regionOfficialCodePath = "/xzqh/getCodeList"
-
-	// 官方接口版本表名：随官方数据版本变化（如 Xzqh20241231），
-	// 官方换版后需手动更新此常量，否则 getCodeList 查不到数据
-	regionOfficialTableName = "Xzqh20251231"
 )
 
 // 官方源拉取超时与重试参数（单请求重试 3 次，指数退避：2s → 4s）
@@ -42,17 +34,6 @@ type officialListNode struct {
 	Level    int32               `json:"level"`
 	Type     string              `json:"type"`
 	Children []*officialListNode `json:"children"`
-}
-
-// officialCodeItem getCodeList 响应条目
-// code 为 12 位补零码（如 500000000 / 500101000 / 500107001），
-// 需按 level 截断为有效位数（见 officialTrimCode）
-type officialCodeItem struct {
-	Code       string `json:"code"`
-	Name       string `json:"name"`
-	Level      int32  `json:"level"`
-	ParentCode string `json:"parentCode"`
-	NamePath   string `json:"namePath"`
 }
 
 // fetchOfficialRegions 拉取民政部官方完整三级区划树
@@ -81,33 +62,6 @@ func fetchOfficialRegions() ([]*remoteRegionNode, string, error) {
 		return nil, "", fmt.Errorf("官方源数据异常：仅 %d 个省级节点", len(nodes))
 	}
 	return nodes, listURL, nil
-}
-
-// fetchOfficialCodeList getCodeList 通用封装（市/区县/街道共用），带重试
-// 返回条目 code 已按 level 截断为有效位数（省 2 位 / 市 4 位 / 区县 6 位 / 街道 9 位）
-// 注意：街道级（9 位码）数据暂不存入 regions 表，此封装先留作后续扩展使用
-// 参数：
-//   - parentCode: 父级区划代码（6 位区县码可查街道，2 位省码可查市）
-//
-// 返回：
-//   - []officialCodeItem: 下级条目列表
-//   - error: 重试耗尽后的错误信息
-func fetchOfficialCodeList(parentCode string) ([]officialCodeItem, error) {
-	form := url.Values{}
-	form.Set("parentCode", parentCode)
-	form.Set("placeCode", "")
-	form.Set("title", "")
-	form.Set("tableName", regionOfficialTableName)
-	form.Set("type", "2")
-
-	codeURL := regionOfficialBaseURL + regionOfficialCodePath
-	var resp struct {
-		Data []officialCodeItem `json:"data"`
-	}
-	if err := officialRequestWithRetry(http.MethodPost, codeURL, form.Encode(), &resp); err != nil {
-		return nil, err
-	}
-	return resp.Data, nil
 }
 
 // officialListToRemote 将官方 getList 树转换为通用远端节点树
@@ -196,36 +150,4 @@ func officialDoRequest(client *http.Client, method, reqURL, body string, out int
 		return fmt.Errorf("解析 JSON 失败: %w", err)
 	}
 	return nil
-}
-
-// officialTrimCode 将 getCodeList 的 12 位补零码按 level 截断为有效位数
-// level 与位数的对应：1 省 → 2 位，2 市 → 4 位，3 区县 → 6 位，4 街道 → 9 位；
-// 不能简单去尾零（街道码合法地以 0 结尾，如 500107020），必须按 level 截取
-// 参数：
-//   - code: 12 位补零码
-//   - level: 官方层级
-//
-// 返回：
-//   - string: 有效位区划码（level 未识别时原样返回）
-func officialTrimCode(code string, level int32) string {
-	if len(code) <= 2 {
-		return code
-	}
-	var n int
-	switch level {
-	case 1:
-		n = 2
-	case 2:
-		n = 4
-	case 3:
-		n = 6
-	case 4:
-		n = 9
-	default:
-		return code
-	}
-	if n >= len(code) {
-		return code
-	}
-	return code[:n]
 }

@@ -2278,7 +2278,7 @@ func (h *AdminHandler) CompleteOrder(c *gin.Context) {
 		return
 	}
 	o := orderResp.Order
-	if o.Status != 4 && !(o.Status == 2 && o.DeliveryType == 1) {
+	if o.Status != 4 && (o.Status != 2 || o.DeliveryType != 1) {
 		response.Error(c, errcode.ParamError, "订单状态不允许完成")
 		return
 	}

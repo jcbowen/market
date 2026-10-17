@@ -150,23 +150,3 @@ func alipaySign(params alipayParams, privateKey string) string {
 	hashed := md5.Sum([]byte(str))
 	return hex.EncodeToString(hashed[:])
 }
-
-// extractValue 从键值对字符串中提取指定 key 的值
-// 参数：
-//   - source: 源字符串
-//   - key: 目标键
-//
-// 返回值：
-//   - string: 提取到的值
-func extractValue(source, key string) string {
-	prefix := key + "="
-	idx := strings.Index(source, prefix)
-	if idx < 0 {
-		return ""
-	}
-	end := strings.Index(source[idx+len(prefix):], "&")
-	if end < 0 {
-		return source[idx+len(prefix):]
-	}
-	return source[idx+len(prefix) : idx+len(prefix)+end]
-}

@@ -138,7 +138,7 @@ func protoToMap(m proto.Message) map[string]interface{} {
 	if m == nil {
 		return nil
 	}
-	if rv := reflect.ValueOf(m); rv.Kind() == reflect.Ptr && rv.IsNil() {
+	if rv := reflect.ValueOf(m); rv.Kind() == reflect.Pointer && rv.IsNil() {
 		return nil
 	}
 	pr := m.ProtoReflect()

@@ -181,12 +181,11 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 	var a *model.Admin
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing model.Admin
-		err := tx.Where("username = ?", req.Username).First(&existing).Error
-		switch {
-		case err == nil:
+		switch err := tx.Where("username = ?", req.Username).First(&existing).Error; err {
+		case nil:
 			// 复用已有账号
 			a = &existing
-		case err == gorm.ErrRecordNotFound:
+		case gorm.ErrRecordNotFound:
 			if len(req.Password) < 6 {
 				return fmt.Errorf("新账号密码长度至少 6 位")
 			}

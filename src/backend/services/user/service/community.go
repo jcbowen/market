@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"math"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
@@ -265,27 +264,6 @@ func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.Update
 //   - error: 错误信息
 func (s *CommunityService) DeleteCommunity(ctx context.Context, id int64) error {
 	return s.db.GetDb().WithContext(ctx).Delete(&model.Community{}, id).Error
-}
-
-// earthDistanceKm 计算地球表面两点间距离（单位：公里）
-// 参数：
-//   - lat1, lon1: 第一点经纬度
-//   - lat2, lon2: 第二点经纬度
-//
-// 返回：
-//   - float64: 距离公里数
-func earthDistanceKm(lat1, lon1, lat2, lon2 float64) float64 {
-	const r = 6371.0
-	φ1 := lat1 * math.Pi / 180
-	φ2 := lat2 * math.Pi / 180
-	Δφ := (lat2 - lat1) * math.Pi / 180
-	Δλ := (lon2 - lon1) * math.Pi / 180
-
-	a := math.Sin(Δφ/2)*math.Sin(Δφ/2) +
-		math.Cos(φ1)*math.Cos(φ2)*
-			math.Sin(Δλ/2)*math.Sin(Δλ/2)
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-	return r * c
 }
 
 // _ 占位，避免 common 未使用告警

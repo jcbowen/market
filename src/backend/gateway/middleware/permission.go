@@ -149,20 +149,6 @@ func resolveAdminContext(c *gin.Context) *user.AdminContextInfo {
 	return info
 }
 
-// getAdminPermissionsFromContext 从 gin 上下文读取管理员权限列表
-// 兼容保留：返回当前请求语境下实时解析的权限（原为 JWT 快照）
-// 参数：
-//   - c: gin 上下文
-//
-// 返回值：
-//   - []string: 权限编码列表
-func getAdminPermissionsFromContext(c *gin.Context) []string {
-	if info := resolveAdminContext(c); info != nil {
-		return info.Permissions
-	}
-	return nil
-}
-
 // containsInt64 判断 int64 切片是否包含指定元素
 // 参数：
 //   - list: int64 切片

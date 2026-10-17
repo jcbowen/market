@@ -292,23 +292,21 @@ func (s *PaymentService) applyPayConfig(row *model.PayConfig) {
 		return
 	}
 
-	// wego NewClient 在配置异常时会 panic，使用 recover 避免影响服务运行
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("重建微信支付客户端失败: %v", r)
-				s.wechatPayClient = nil
-			}
-		}()
-		s.wechatPayClient = wegopayment.NewClient(&wegopayment.Config{
-			AppID:        wechat.AppID,
-			MchID:        wechat.MchID,
-			APIV3Key:     wechat.APIV3Key,
-			CertSerialNo: wechat.CertSerialNo,
-			PrivateKey:   wechat.PrivateKey,
-			NotifyURL:    wechat.NotifyURL,
-		})
-	}()
+	// NewClientE 在配置异常时返回错误，失败时置空客户端，C 端渠道接口会相应隐藏微信支付
+	client, err := wegopayment.NewClientE(&wegopayment.Config{
+		AppID:        wechat.AppID,
+		MchID:        wechat.MchID,
+		APIV3Key:     wechat.APIV3Key,
+		CertSerialNo: wechat.CertSerialNo,
+		PrivateKey:   wechat.PrivateKey,
+		NotifyURL:    wechat.NotifyURL,
+	})
+	if err != nil {
+		log.Printf("重建微信支付客户端失败: %v", err)
+		s.wechatPayClient = nil
+		return
+	}
+	s.wechatPayClient = client
 }
 
 // allowedExtList 生成允许的证书扩展名提示列表
