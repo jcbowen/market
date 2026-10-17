@@ -5,6 +5,7 @@ import (
 	crand "crypto/rand"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -1178,7 +1179,8 @@ func (s *OrderService) GetSalesStatistics(ctx context.Context, req *order.GetSal
 
 	avg := float64(0)
 	if result.TotalOrders > 0 {
-		avg = result.PayAmount / float64(result.TotalOrders)
+		// 客单价按"分"取整，避免 float64 除法产生 5.0649999999999995 之类的尾差
+		avg = math.Round(result.PayAmount/float64(result.TotalOrders)*100) / 100
 	}
 	return &order.SalesStatisticsResp{
 		TotalAmount:    result.TotalAmount,

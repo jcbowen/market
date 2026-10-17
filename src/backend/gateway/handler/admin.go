@@ -2359,6 +2359,27 @@ func (h *AdminHandler) GetDashboard(c *gin.Context) {
 	})
 }
 
+// resolveStatsCommunityID 统计接口的社区口径解析
+// 默认取管理员当前社区；超管可通过查询参数显式指定口径：
+//   - scope=all        → 0（全平台聚合，order 服务对 community_id<=0 不过滤）
+//   - community_id=N>0 → 指定社区（用于全平台统计页的社区排行）
+//
+// 普通管理员的传参一律忽略（回落当前社区），避免越权查看其他社区数据
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) resolveStatsCommunityID(c *gin.Context) int64 {
+	uc := appcontext.GetUserContext(c)
+	if uc.Role == "super_admin" {
+		if c.Query("scope") == "all" {
+			return 0
+		}
+		if id, err := strconv.ParseInt(c.Query("community_id"), 10, 64); err == nil && id > 0 {
+			return id
+		}
+	}
+	return h.getAdminCommunityID(c)
+}
+
 // GetOrderStatistics 获取订单状态统计
 // 参数：
 //   - c: gin 上下文
@@ -2367,7 +2388,7 @@ func (h *AdminHandler) GetOrderStatistics(c *gin.Context) {
 	endDate := c.Query("end_date")
 
 	resp, err := h.orderClient.GetOrderStatistics(c.Request.Context(), &order.GetOrderStatisticsReq{
-		CommunityId: h.getAdminCommunityID(c),
+		CommunityId: h.resolveStatsCommunityID(c),
 		StartDate:   startDate,
 		EndDate:     endDate,
 	})
@@ -2386,7 +2407,7 @@ func (h *AdminHandler) GetSalesStatistics(c *gin.Context) {
 	endDate := c.Query("end_date")
 
 	resp, err := h.orderClient.GetSalesStatistics(c.Request.Context(), &order.GetSalesStatisticsReq{
-		CommunityId: h.getAdminCommunityID(c),
+		CommunityId: h.resolveStatsCommunityID(c),
 		StartDate:   startDate,
 		EndDate:     endDate,
 	})
@@ -2406,7 +2427,7 @@ func (h *AdminHandler) GetProductRankings(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 
 	resp, err := h.orderClient.GetProductRankings(c.Request.Context(), &order.GetProductRankingsReq{
-		CommunityId: h.getAdminCommunityID(c),
+		CommunityId: h.resolveStatsCommunityID(c),
 		StartDate:   startDate,
 		EndDate:     endDate,
 		Limit:       int32(limit),
@@ -2427,7 +2448,7 @@ func (h *AdminHandler) GetRevenueReport(c *gin.Context) {
 	groupBy := c.DefaultQuery("group_by", "day")
 
 	resp, err := h.orderClient.GetRevenueReport(c.Request.Context(), &order.GetRevenueReportReq{
-		CommunityId: h.getAdminCommunityID(c),
+		CommunityId: h.resolveStatsCommunityID(c),
 		StartDate:   startDate,
 		EndDate:     endDate,
 		GroupBy:     groupBy,

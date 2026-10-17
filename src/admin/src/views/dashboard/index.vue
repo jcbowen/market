@@ -74,7 +74,7 @@
       </n-grid>
     </n-card>
 
-    <n-grid cols="1 l:2" :x-gap="16" :y-gap="16" responsive="screen" class="bottom-grid">
+    <div class="two-col">
       <!-- 近 7 日营收趋势 -->
       <n-card size="small" title="近 7 日营收" class="section-card">
         <template #header-extra>
@@ -131,7 +131,7 @@
         </div>
         <n-empty v-else description="暂无销售数据" class="trend-empty" />
       </n-card>
-    </n-grid>
+    </div>
 
     <!-- 快捷入口 -->
     <n-card size="small" title="快捷入口" class="section-card">
@@ -496,10 +496,10 @@ async function loadAll() {
     stockWarningCount.value = stockRes.value.data.data?.length ?? 0
   }
   if (revenueRes.status === 'fulfilled' && revenueRes.value.data.code === 0) {
-    buildRevenueTrend(revenueRes.value.data.data.list || [])
+    buildRevenueTrend(revenueRes.value.data.data || [])
   }
   if (rankRes.status === 'fulfilled' && rankRes.value.data.code === 0) {
-    hotProducts.value = rankRes.value.data.data.list || []
+    hotProducts.value = rankRes.value.data.data || []
   }
 }
 
@@ -521,6 +521,17 @@ onActivated(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 双列区（趋势/热销）：naive-ui n-grid 单断点 cols 存在静默不渲染问题，改用 CSS grid */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+
+  @media (min-width: 1024px) {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 /* 欢迎横幅 */

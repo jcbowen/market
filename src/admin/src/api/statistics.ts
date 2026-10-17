@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, PageResult } from './types'
+import type { ApiResult } from './types'
 
 /**
  * 订单状态统计响应
@@ -69,10 +69,17 @@ export function getDashboardStatistics() {
 
 /**
  * 获取订单状态统计
+ * 超管可传 scope='all'（全平台聚合）或 community_id（指定社区）；
+ * 普管传参被网关忽略，恒为当前社区
  * @param params 查询参数
  * @returns 订单状态统计
  */
-export function getOrderStatistics(params: { start_date?: string; end_date?: string }) {
+export function getOrderStatistics(params: {
+  start_date?: string
+  end_date?: string
+  scope?: 'all'
+  community_id?: number
+}) {
   return request<ApiResult<OrderStatistics>>({
     url: '/api/v1/admin/statistics/orders',
     method: 'GET',
@@ -82,10 +89,17 @@ export function getOrderStatistics(params: { start_date?: string; end_date?: str
 
 /**
  * 获取销售统计
+ * 超管可传 scope='all'（全平台聚合）或 community_id（指定社区）；
+ * 普管传参被网关忽略，恒为当前社区
  * @param params 查询参数
  * @returns 销售统计
  */
-export function getSalesStatistics(params: { start_date?: string; end_date?: string }) {
+export function getSalesStatistics(params: {
+  start_date?: string
+  end_date?: string
+  scope?: 'all'
+  community_id?: number
+}) {
   return request<ApiResult<SalesStatistics>>({
     url: '/api/v1/admin/statistics/sales',
     method: 'GET',
@@ -95,11 +109,20 @@ export function getSalesStatistics(params: { start_date?: string; end_date?: str
 
 /**
  * 获取商品销售排行
+ * 超管可传 scope='all'（全平台聚合）或 community_id（指定社区）；
+ * 普管传参被网关忽略，恒为当前社区
+ * 注意：网关 SuccessWithList 返回的 data 直接是数组（非 {list,total}）
  * @param params 查询参数
  * @returns 商品销售排行列表
  */
-export function getProductRankings(params: { start_date?: string; end_date?: string; limit?: number }) {
-  return request<ApiResult<PageResult<ProductRankingItem>>>({
+export function getProductRankings(params: {
+  start_date?: string
+  end_date?: string
+  limit?: number
+  scope?: 'all'
+  community_id?: number
+}) {
+  return request<ApiResult<ProductRankingItem[]>>({
     url: '/api/v1/admin/statistics/rankings',
     method: 'GET',
     params,
@@ -108,11 +131,20 @@ export function getProductRankings(params: { start_date?: string; end_date?: str
 
 /**
  * 获取营收报表
+ * 超管可传 scope='all'（全平台聚合）或 community_id（指定社区）；
+ * 普管传参被网关忽略，恒为当前社区
+ * 注意：网关 SuccessWithList 返回的 data 直接是数组（非 {list,total}）
  * @param params 查询参数
  * @returns 营收报表列表
  */
-export function getRevenueReport(params: { start_date?: string; end_date?: string; group_by?: string }) {
-  return request<ApiResult<PageResult<RevenueReportItem>>>({
+export function getRevenueReport(params: {
+  start_date?: string
+  end_date?: string
+  group_by?: string
+  scope?: 'all'
+  community_id?: number
+}) {
+  return request<ApiResult<RevenueReportItem[]>>({
     url: '/api/v1/admin/statistics/revenue',
     method: 'GET',
     params,

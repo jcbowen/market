@@ -10,7 +10,7 @@
       :native-scrollbar="false"
     >
       <div class="logo">
-        <span v-if="!collapsed">{{ isSystemSpace ? '系统管理' : '社区商超' }}</span>
+        <span v-if="!collapsed">{{ isSystemSpace ? '管理后台' : '社区商超' }}</span>
         <span v-else>{{ isSystemSpace ? '系统' : '商超' }}</span>
       </div>
       <!-- 系统空间：提供返回业务后台的出口，保证两套菜单完全隔离互不混排 -->
@@ -105,7 +105,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { MenuOutline, PersonCircleOutline, HomeOutline, GridOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, ArrowBackOutline } from '@vicons/ionicons5'
+import { MenuOutline, PersonCircleOutline, HomeOutline, GridOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, SettingsOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, ArrowBackOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
@@ -401,24 +401,38 @@ const menuOptions = computed<MenuOption[]>(() => {
 
 /**
  * 系统空间菜单（仅系统管理页面展示，替代业务菜单）
- * 系统级入口与业务菜单完全隔离：社区权限/全局角色仅超管可见
+ * 按职能拆分三个一级菜单：数据统计 / 系统管理 / 平台配置
+ * superOnly 项仅超管可见（社区权限/账号/全局角色/全平台统计）
  */
 const systemMenuOptions = computed<MenuOption[]>(() => {
   const groups: MenuGroupConfig[] = [
     {
+      label: '数据统计',
+      key: 'sys-group-stats',
+      icon: renderIcon(BarChartOutline),
+      children: [{ label: '全平台统计', key: '/system/statistics', permission: 'statistics:view', superOnly: true }],
+    },
+    {
       label: '系统管理',
-      key: '/system',
+      key: 'sys-group-system',
       icon: renderIcon(StorefrontOutline),
       children: [
         { label: '社区管理', key: '/system/communities', permission: 'community:view' },
         { label: '社区权限', key: '/system/community-permissions', permission: 'community:view', superOnly: true },
         { label: '账号管理', key: '/system/accounts', permission: 'admin:view', superOnly: true },
-        { label: '行政区划', key: '/system/regions', permission: 'region:view' },
-        { label: '全局 Banner', key: '/system/banners', permission: 'marketing:view' },
         { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
+        { label: '行政区划', key: '/system/regions', permission: 'region:view' },
+      ],
+    },
+    {
+      label: '平台配置',
+      key: 'sys-group-config',
+      icon: renderIcon(SettingsOutline),
+      children: [
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
         { label: '售后配置', key: '/system/refund', permission: 'settings:view' },
         { label: '附件配置', key: '/system/attachment', permission: 'settings:view' },
+        { label: '全局 Banner', key: '/system/banners', permission: 'marketing:view' },
       ],
     },
   ]
@@ -478,11 +492,11 @@ function onMenuChange(key: string) {
   router.push(key)
 }
 
-/** 用户操作下拉选项：系统管理入口在"退出登录"之前，仅有系统级权限时展示 */
+/** 用户操作下拉选项：管理后台入口在"退出登录"之前，仅有系统级权限时展示 */
 const userOptions = computed(() => {
   const options: Array<{ label: string; key: string }> = [{ label: '个人设置', key: 'profile' }]
   if (canEnterSystem.value) {
-    options.push({ label: '系统管理', key: 'system' })
+    options.push({ label: '管理后台', key: 'system' })
   }
   options.push({ label: '退出登录', key: 'logout' })
   return options
