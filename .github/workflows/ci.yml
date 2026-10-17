@@ -1,6 +1,7 @@
 # CI 流水线：后端（vet/test/build/lint）+ 前端（admin/client 构建）+ tag 触发自动发布 Release
 # 说明：后端 Go module 位于 src/backend，前端位于 src/admin 与 src/client
-# Gitea Actions 与 GitHub Actions 语法兼容，本文件在 Gitea（act_runner）上可直接运行
+# Gitea Actions 与 GitHub Actions 语法兼容，本文件在 GitHub 与 Gitea（act_runner）上均可运行；
+# tag 发布步骤已做平台适配（API 域名差异见「创建 Release 并上传产物」步骤注释）
 name: CI
 
 on:
@@ -136,7 +137,7 @@ jobs:
   release:
     name: 构建 Release 产物并发布
     runs-on: ubuntu-latest
-    # 仅推送 v* 格式 tag（如 v1.0.0）时触发，产物上传到 Gitea Release
+    # 仅推送 v* 格式 tag（如 v1.0.0）时触发，产物上传到平台 Release（GitHub / Gitea）
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -212,31 +213,44 @@ jobs:
           done
           ls -lh package/*.tar.gz
 
-      # 通过 Gitea API 发布：act_runner 内置 GITHUB_TOKEN（等价 GITEA_TOKEN），无需第三方 action
+      # 通过平台 API 发布（GitHub / Gitea 双端兼容）：内置 GITHUB_TOKEN（Gitea 等价 GITEA_TOKEN），无需第三方 action
       - name: 创建 Release 并上传产物
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          API="${GITHUB_SERVER_URL%/}/api/v1"
+          # 平台适配：github.com 的 API 与资产上传分属两个域名，Gitea 为单域名 /api/v1
+          if [[ "${GITHUB_SERVER_URL}" == *github.com* ]]; then
+            API="https://api.github.com"
+            UPLOAD_API="https://uploads.github.com"
+          else
+            API="${GITHUB_SERVER_URL%/}/api/v1"
+            UPLOAD_API="${API}"
+          fi
           VERSION="${GITHUB_REF_NAME}"
           AUTH="Authorization: token ${GITHUB_TOKEN}"
           REPO="repos/${GITHUB_REPOSITORY}"
 
-          # 创建 Release；该 tag 已有 Release（重复触发）时改为获取并复用
-          RELEASE_ID=$(curl -sf -X POST "${API}/${REPO}/releases" \
+          # 创建 Release；捕获响应体以便失败时从日志定位（如 token 权限、重复 tag）
+          CREATE_RESP=$(curl -sS -X POST "${API}/${REPO}/releases" \
             -H "$AUTH" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\",\"body\":\"自动发布：${VERSION}\"}" \
-            | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\",\"body\":\"自动发布：${VERSION}\"}") || true
+          RELEASE_ID=$(echo "${CREATE_RESP}" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+
+          # 该 tag 已有 Release（重复触发）时改为获取并复用
           if [ -z "${RELEASE_ID}" ]; then
-            RELEASE_ID=$(curl -sf "${API}/${REPO}/releases/tags/${VERSION}" \
-              -H "$AUTH" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*')
+            GET_RESP=$(curl -sS "${API}/${REPO}/releases/tags/${VERSION}" -H "$AUTH") || true
+            RELEASE_ID=$(echo "${GET_RESP}" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+          fi
+          if [ -z "${RELEASE_ID}" ]; then
+            echo "获取 Release ID 失败，创建响应：${CREATE_RESP}"
+            exit 1
           fi
           echo "Release ID: ${RELEASE_ID}"
 
           for f in package/*.tar.gz; do
             name=$(basename "${f}")
             echo "上传 ${name} ..."
-            curl -sf -X POST "${API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+            curl -sS -f -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
               -H "$AUTH" -F "attachment=@${f}" > /dev/null
           done
           echo "发布完成：${GITHUB_SERVER_URL%/}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
