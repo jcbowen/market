@@ -72,6 +72,17 @@ service UserService {
   rpc ListFulfillers(ListFulfillersReq) returns (ListFulfillersResp);
   // 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
   rpc CheckFulfiller(CheckFulfillerReq) returns (CheckFulfillerResp);
+
+  // --- 客户端渠道管理（微信小程序/公众号/App/浏览器 H5） ---
+  // 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
+  // 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+  rpc ListClientChannels(ListClientChannelsReq) returns (ListClientChannelsResp);
+  rpc GetClientChannel(GetClientChannelReq) returns (ClientChannelInfo);
+  rpc SaveClientChannel(SaveClientChannelReq) returns (ClientChannelInfo);
+  // 查询用户在指定客户端渠道的微信 openid（渠道身份表优先，mp 渠道回落 users.openid 存量口径）
+  rpc GetUserChannelOpenid(GetUserChannelOpenidReq) returns (GetUserChannelOpenidResp);
+  // 登录后写入/更新用户在指定渠道的微信身份（幂等 upsert）
+  rpc UpsertUserChannelIdentity(UpsertUserChannelIdentityReq) returns (common.CommonResponse);
 }
 
 message GetUserByIdReq {
@@ -664,4 +675,63 @@ message CheckFulfillerReq {
 
 message CheckFulfillerResp {
   bool is_fulfiller = 1;
+}
+
+// --- 客户端渠道管理 ---
+
+// ClientChannelInfo 客户端渠道信息
+message ClientChannelInfo {
+  int64 id = 1;
+  // 渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5
+  string code = 2;
+  string name = 3;
+  string app_id = 4;
+  string app_secret = 5;
+  bool enabled = 6;
+  int32 sort = 7;
+  // 凭证是否配置完整（AppID+AppSecret 均非空），C 端渲染与支付就绪判定用
+  bool configured = 8;
+  string updated_at = 9;
+}
+
+message ListClientChannelsReq {
+  // true 仅返回启用渠道；false 返回全部（管理端用）
+  bool only_enabled = 1;
+}
+
+message ListClientChannelsResp {
+  repeated ClientChannelInfo list = 1;
+}
+
+message GetClientChannelReq {
+  string code = 1;
+}
+
+message SaveClientChannelReq {
+  int64 id = 1;
+  // 渠道标识由服务端按内置渠道固定，请求中的 code 仅作校验
+  string code = 2;
+  string name = 3;
+  string app_id = 4;
+  // 为空时保留原值，避免未重新输入时清空已保存的 Secret
+  string app_secret = 5;
+  bool enabled = 6;
+  int32 sort = 7;
+}
+
+message GetUserChannelOpenidReq {
+  int64 user_id = 1;
+  string channel_code = 2;
+}
+
+message GetUserChannelOpenidResp {
+  string openid = 1;
+  string unionid = 2;
+}
+
+message UpsertUserChannelIdentityReq {
+  int64 user_id = 1;
+  string channel_code = 2;
+  string openid = 3;
+  string unionid = 4;
 }

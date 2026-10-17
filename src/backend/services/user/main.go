@@ -32,6 +32,10 @@ func main() {
 	if err := service.NewUserService(db).BackfillUserCommunities(stdctx.Background()); err != nil {
 		log.Printf("会员-社区关联回填失败（不阻塞启动）: %v", err)
 	}
+	// 内置客户端渠道幂等种子（小程序/公众号/App 待配置，h5 默认启用）
+	if err := service.NewChannelService(db).EnsureDefaultClientChannels(); err != nil {
+		log.Printf("客户端渠道种子初始化失败（不阻塞启动）: %v", err)
+	}
 	_ = bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer()
@@ -60,5 +64,7 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.Role{},
 		&model.Region{},
 		&model.RegionUpdateTask{},
+		&model.ClientChannel{},
+		&model.UserChannelIdentity{},
 	)
 }

@@ -23,6 +23,7 @@ type server struct {
 	adminService     *service.AdminService
 	roleService      *service.RoleService
 	regionService    *service.RegionService
+	channelService   *service.ChannelService
 }
 
 // newServer 创建用户服务 gRPC 实现
@@ -39,6 +40,7 @@ func newServer(db *mysql.Instance) *server {
 		adminService:     service.NewAdminService(db),
 		roleService:      service.NewRoleService(db),
 		regionService:    service.NewRegionService(db),
+		channelService:   service.NewChannelService(db),
 	}
 }
 
@@ -560,6 +562,57 @@ func (s *server) ApplyRegionUpdateTask(ctx stdctx.Context, req *user.ApplyRegion
 		if err.Error() == "任务不存在" || err.Error() == "任务尚未完成，无法应用差异" || err.Error() == "任务差异已应用过，请重新执行检查更新" {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ListClientChannels 查询客户端渠道列表
+func (s *server) ListClientChannels(ctx stdctx.Context, req *user.ListClientChannelsReq) (*user.ListClientChannelsResp, error) {
+	list, err := s.channelService.ListClientChannels(ctx, req.OnlyEnabled)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	resp := &user.ListClientChannelsResp{List: make([]*user.ClientChannelInfo, 0, len(list))}
+	for _, c := range list {
+		resp.List = append(resp.List, service.ToClientChannelInfo(c))
+	}
+	return resp, nil
+}
+
+// GetClientChannel 按渠道 code 查询客户端渠道
+func (s *server) GetClientChannel(ctx stdctx.Context, req *user.GetClientChannelReq) (*user.ClientChannelInfo, error) {
+	row, err := s.channelService.GetClientChannel(ctx, req.Code)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	if row == nil {
+		return nil, status.Error(codes.NotFound, "客户端渠道不存在")
+	}
+	return service.ToClientChannelInfo(row), nil
+}
+
+// SaveClientChannel 保存客户端渠道配置
+func (s *server) SaveClientChannel(ctx stdctx.Context, req *user.SaveClientChannelReq) (*user.ClientChannelInfo, error) {
+	row, err := s.channelService.SaveClientChannel(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToClientChannelInfo(row), nil
+}
+
+// GetUserChannelOpenid 查询用户在指定渠道的微信 openid（mp 渠道回落存量 users.openid）
+func (s *server) GetUserChannelOpenid(ctx stdctx.Context, req *user.GetUserChannelOpenidReq) (*user.GetUserChannelOpenidResp, error) {
+	openid, unionid, err := s.channelService.GetUserChannelOpenid(ctx, req.UserId, req.ChannelCode)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &user.GetUserChannelOpenidResp{Openid: openid, Unionid: unionid}, nil
+}
+
+// UpsertUserChannelIdentity 幂等写入/更新用户渠道身份
+func (s *server) UpsertUserChannelIdentity(ctx stdctx.Context, req *user.UpsertUserChannelIdentityReq) (*common.CommonResponse, error) {
+	if err := s.channelService.UpsertUserChannelIdentity(ctx, req.UserId, req.ChannelCode, req.Openid, req.Unionid); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil

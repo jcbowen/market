@@ -4822,6 +4822,516 @@ func (x *CheckFulfillerResp) GetIsFulfiller() bool {
 	return false
 }
 
+// ClientChannelInfo 客户端渠道信息
+type ClientChannelInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	// 渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5
+	Code      string `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Name      string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	AppId     string `protobuf:"bytes,4,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	AppSecret string `protobuf:"bytes,5,opt,name=app_secret,json=appSecret,proto3" json:"app_secret,omitempty"`
+	Enabled   bool   `protobuf:"varint,6,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Sort      int32  `protobuf:"varint,7,opt,name=sort,proto3" json:"sort,omitempty"`
+	// 凭证是否配置完整（AppID+AppSecret 均非空），C 端渲染与支付就绪判定用
+	Configured    bool   `protobuf:"varint,8,opt,name=configured,proto3" json:"configured,omitempty"`
+	UpdatedAt     string `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientChannelInfo) Reset() {
+	*x = ClientChannelInfo{}
+	mi := &file_user_user_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientChannelInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientChannelInfo) ProtoMessage() {}
+
+func (x *ClientChannelInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientChannelInfo.ProtoReflect.Descriptor instead.
+func (*ClientChannelInfo) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *ClientChannelInfo) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ClientChannelInfo) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *ClientChannelInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ClientChannelInfo) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *ClientChannelInfo) GetAppSecret() string {
+	if x != nil {
+		return x.AppSecret
+	}
+	return ""
+}
+
+func (x *ClientChannelInfo) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *ClientChannelInfo) GetSort() int32 {
+	if x != nil {
+		return x.Sort
+	}
+	return 0
+}
+
+func (x *ClientChannelInfo) GetConfigured() bool {
+	if x != nil {
+		return x.Configured
+	}
+	return false
+}
+
+func (x *ClientChannelInfo) GetUpdatedAt() string {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return ""
+}
+
+type ListClientChannelsReq struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// true 仅返回启用渠道；false 返回全部（管理端用）
+	OnlyEnabled   bool `protobuf:"varint,1,opt,name=only_enabled,json=onlyEnabled,proto3" json:"only_enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListClientChannelsReq) Reset() {
+	*x = ListClientChannelsReq{}
+	mi := &file_user_user_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListClientChannelsReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListClientChannelsReq) ProtoMessage() {}
+
+func (x *ListClientChannelsReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListClientChannelsReq.ProtoReflect.Descriptor instead.
+func (*ListClientChannelsReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *ListClientChannelsReq) GetOnlyEnabled() bool {
+	if x != nil {
+		return x.OnlyEnabled
+	}
+	return false
+}
+
+type ListClientChannelsResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	List          []*ClientChannelInfo   `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListClientChannelsResp) Reset() {
+	*x = ListClientChannelsResp{}
+	mi := &file_user_user_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListClientChannelsResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListClientChannelsResp) ProtoMessage() {}
+
+func (x *ListClientChannelsResp) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListClientChannelsResp.ProtoReflect.Descriptor instead.
+func (*ListClientChannelsResp) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *ListClientChannelsResp) GetList() []*ClientChannelInfo {
+	if x != nil {
+		return x.List
+	}
+	return nil
+}
+
+type GetClientChannelReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetClientChannelReq) Reset() {
+	*x = GetClientChannelReq{}
+	mi := &file_user_user_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetClientChannelReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetClientChannelReq) ProtoMessage() {}
+
+func (x *GetClientChannelReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetClientChannelReq.ProtoReflect.Descriptor instead.
+func (*GetClientChannelReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *GetClientChannelReq) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+type SaveClientChannelReq struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	// 渠道标识由服务端按内置渠道固定，请求中的 code 仅作校验
+	Code  string `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
+	Name  string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	AppId string `protobuf:"bytes,4,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	// 为空时保留原值，避免未重新输入时清空已保存的 Secret
+	AppSecret     string `protobuf:"bytes,5,opt,name=app_secret,json=appSecret,proto3" json:"app_secret,omitempty"`
+	Enabled       bool   `protobuf:"varint,6,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	Sort          int32  `protobuf:"varint,7,opt,name=sort,proto3" json:"sort,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveClientChannelReq) Reset() {
+	*x = SaveClientChannelReq{}
+	mi := &file_user_user_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveClientChannelReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveClientChannelReq) ProtoMessage() {}
+
+func (x *SaveClientChannelReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveClientChannelReq.ProtoReflect.Descriptor instead.
+func (*SaveClientChannelReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *SaveClientChannelReq) GetId() int64 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *SaveClientChannelReq) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *SaveClientChannelReq) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SaveClientChannelReq) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *SaveClientChannelReq) GetAppSecret() string {
+	if x != nil {
+		return x.AppSecret
+	}
+	return ""
+}
+
+func (x *SaveClientChannelReq) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *SaveClientChannelReq) GetSort() int32 {
+	if x != nil {
+		return x.Sort
+	}
+	return 0
+}
+
+type GetUserChannelOpenidReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ChannelCode   string                 `protobuf:"bytes,2,opt,name=channel_code,json=channelCode,proto3" json:"channel_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserChannelOpenidReq) Reset() {
+	*x = GetUserChannelOpenidReq{}
+	mi := &file_user_user_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserChannelOpenidReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserChannelOpenidReq) ProtoMessage() {}
+
+func (x *GetUserChannelOpenidReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserChannelOpenidReq.ProtoReflect.Descriptor instead.
+func (*GetUserChannelOpenidReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *GetUserChannelOpenidReq) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *GetUserChannelOpenidReq) GetChannelCode() string {
+	if x != nil {
+		return x.ChannelCode
+	}
+	return ""
+}
+
+type GetUserChannelOpenidResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Openid        string                 `protobuf:"bytes,1,opt,name=openid,proto3" json:"openid,omitempty"`
+	Unionid       string                 `protobuf:"bytes,2,opt,name=unionid,proto3" json:"unionid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserChannelOpenidResp) Reset() {
+	*x = GetUserChannelOpenidResp{}
+	mi := &file_user_user_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserChannelOpenidResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserChannelOpenidResp) ProtoMessage() {}
+
+func (x *GetUserChannelOpenidResp) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserChannelOpenidResp.ProtoReflect.Descriptor instead.
+func (*GetUserChannelOpenidResp) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *GetUserChannelOpenidResp) GetOpenid() string {
+	if x != nil {
+		return x.Openid
+	}
+	return ""
+}
+
+func (x *GetUserChannelOpenidResp) GetUnionid() string {
+	if x != nil {
+		return x.Unionid
+	}
+	return ""
+}
+
+type UpsertUserChannelIdentityReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ChannelCode   string                 `protobuf:"bytes,2,opt,name=channel_code,json=channelCode,proto3" json:"channel_code,omitempty"`
+	Openid        string                 `protobuf:"bytes,3,opt,name=openid,proto3" json:"openid,omitempty"`
+	Unionid       string                 `protobuf:"bytes,4,opt,name=unionid,proto3" json:"unionid,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpsertUserChannelIdentityReq) Reset() {
+	*x = UpsertUserChannelIdentityReq{}
+	mi := &file_user_user_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpsertUserChannelIdentityReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpsertUserChannelIdentityReq) ProtoMessage() {}
+
+func (x *UpsertUserChannelIdentityReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpsertUserChannelIdentityReq.ProtoReflect.Descriptor instead.
+func (*UpsertUserChannelIdentityReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *UpsertUserChannelIdentityReq) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *UpsertUserChannelIdentityReq) GetChannelCode() string {
+	if x != nil {
+		return x.ChannelCode
+	}
+	return ""
+}
+
+func (x *UpsertUserChannelIdentityReq) GetOpenid() string {
+	if x != nil {
+		return x.Openid
+	}
+	return ""
+}
+
+func (x *UpsertUserChannelIdentityReq) GetUnionid() string {
+	if x != nil {
+		return x.Unionid
+	}
+	return ""
+}
+
 var File_user_user_proto protoreflect.FileDescriptor
 
 const file_user_user_proto_rawDesc = "" +
@@ -5239,7 +5749,47 @@ const file_user_user_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"7\n" +
 	"\x12CheckFulfillerResp\x12!\n" +
-	"\fis_fulfiller\x18\x01 \x01(\bR\visFulfiller2\xb3\x15\n" +
+	"\fis_fulfiller\x18\x01 \x01(\bR\visFulfiller\"\xee\x01\n" +
+	"\x11ClientChannelInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x15\n" +
+	"\x06app_id\x18\x04 \x01(\tR\x05appId\x12\x1d\n" +
+	"\n" +
+	"app_secret\x18\x05 \x01(\tR\tappSecret\x12\x18\n" +
+	"\aenabled\x18\x06 \x01(\bR\aenabled\x12\x12\n" +
+	"\x04sort\x18\a \x01(\x05R\x04sort\x12\x1e\n" +
+	"\n" +
+	"configured\x18\b \x01(\bR\n" +
+	"configured\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\t \x01(\tR\tupdatedAt\":\n" +
+	"\x15ListClientChannelsReq\x12!\n" +
+	"\fonly_enabled\x18\x01 \x01(\bR\vonlyEnabled\"E\n" +
+	"\x16ListClientChannelsResp\x12+\n" +
+	"\x04list\x18\x01 \x03(\v2\x17.user.ClientChannelInfoR\x04list\")\n" +
+	"\x13GetClientChannelReq\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\"\xb2\x01\n" +
+	"\x14SaveClientChannelReq\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x15\n" +
+	"\x06app_id\x18\x04 \x01(\tR\x05appId\x12\x1d\n" +
+	"\n" +
+	"app_secret\x18\x05 \x01(\tR\tappSecret\x12\x18\n" +
+	"\aenabled\x18\x06 \x01(\bR\aenabled\x12\x12\n" +
+	"\x04sort\x18\a \x01(\x05R\x04sort\"U\n" +
+	"\x17GetUserChannelOpenidReq\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
+	"\fchannel_code\x18\x02 \x01(\tR\vchannelCode\"L\n" +
+	"\x18GetUserChannelOpenidResp\x12\x16\n" +
+	"\x06openid\x18\x01 \x01(\tR\x06openid\x12\x18\n" +
+	"\aunionid\x18\x02 \x01(\tR\aunionid\"\x8c\x01\n" +
+	"\x1cUpsertUserChannelIdentityReq\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
+	"\fchannel_code\x18\x02 \x01(\tR\vchannelCode\x12\x16\n" +
+	"\x06openid\x18\x03 \x01(\tR\x06openid\x12\x18\n" +
+	"\aunionid\x18\x04 \x01(\tR\aunionid2\xc6\x18\n" +
 	"\vUserService\x123\n" +
 	"\vGetUserById\x12\x14.user.GetUserByIdReq\x1a\x0e.user.UserInfo\x129\n" +
 	"\x0eGetUserByPhone\x12\x17.user.GetUserByPhoneReq\x1a\x0e.user.UserInfo\x129\n" +
@@ -5287,7 +5837,12 @@ const file_user_user_proto_rawDesc = "" +
 	"\fCreateMember\x12\x15.user.CreateMemberReq\x1a\x16.user.CreateMemberResp\x12=\n" +
 	"\fSetFulfiller\x12\x15.user.SetFulfillerReq\x1a\x16.common.CommonResponse\x12C\n" +
 	"\x0eListFulfillers\x12\x17.user.ListFulfillersReq\x1a\x18.user.ListFulfillersResp\x12C\n" +
-	"\x0eCheckFulfiller\x12\x17.user.CheckFulfillerReq\x1a\x18.user.CheckFulfillerRespB9Z7github.com/jcbowen/market/src/backend/common/proto/userb\x06proto3"
+	"\x0eCheckFulfiller\x12\x17.user.CheckFulfillerReq\x1a\x18.user.CheckFulfillerResp\x12O\n" +
+	"\x12ListClientChannels\x12\x1b.user.ListClientChannelsReq\x1a\x1c.user.ListClientChannelsResp\x12F\n" +
+	"\x10GetClientChannel\x12\x19.user.GetClientChannelReq\x1a\x17.user.ClientChannelInfo\x12H\n" +
+	"\x11SaveClientChannel\x12\x1a.user.SaveClientChannelReq\x1a\x17.user.ClientChannelInfo\x12U\n" +
+	"\x14GetUserChannelOpenid\x12\x1d.user.GetUserChannelOpenidReq\x1a\x1e.user.GetUserChannelOpenidResp\x12W\n" +
+	"\x19UpsertUserChannelIdentity\x12\".user.UpsertUserChannelIdentityReq\x1a\x16.common.CommonResponseB9Z7github.com/jcbowen/market/src/backend/common/proto/userb\x06proto3"
 
 var (
 	file_user_user_proto_rawDescOnce sync.Once
@@ -5301,93 +5856,101 @@ func file_user_user_proto_rawDescGZIP() []byte {
 	return file_user_user_proto_rawDescData
 }
 
-var file_user_user_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
+var file_user_user_proto_msgTypes = make([]protoimpl.MessageInfo, 71)
 var file_user_user_proto_goTypes = []any{
-	(*GetUserByIdReq)(nil),            // 0: user.GetUserByIdReq
-	(*GetUserByPhoneReq)(nil),         // 1: user.GetUserByPhoneReq
-	(*CreateUserReq)(nil),             // 2: user.CreateUserReq
-	(*UpdateCommunityReq)(nil),        // 3: user.UpdateCommunityReq
-	(*UserInfo)(nil),                  // 4: user.UserInfo
-	(*UpdateUserProfileReq)(nil),      // 5: user.UpdateUserProfileReq
-	(*ListUsersReq)(nil),              // 6: user.ListUsersReq
-	(*ListUsersResp)(nil),             // 7: user.ListUsersResp
-	(*ListAddressesReq)(nil),          // 8: user.ListAddressesReq
-	(*GetAddressReq)(nil),             // 9: user.GetAddressReq
-	(*CreateAddressReq)(nil),          // 10: user.CreateAddressReq
-	(*UpdateAddressReq)(nil),          // 11: user.UpdateAddressReq
-	(*DeleteAddressReq)(nil),          // 12: user.DeleteAddressReq
-	(*SetDefaultAddressReq)(nil),      // 13: user.SetDefaultAddressReq
-	(*AddressInfo)(nil),               // 14: user.AddressInfo
-	(*ListAddressesResp)(nil),         // 15: user.ListAddressesResp
-	(*GetCommunityReq)(nil),           // 16: user.GetCommunityReq
-	(*CommunityInfo)(nil),             // 17: user.CommunityInfo
-	(*ListCommunitiesReq)(nil),        // 18: user.ListCommunitiesReq
-	(*CreateCommunityReq)(nil),        // 19: user.CreateCommunityReq
-	(*UpdateCommunityInfoReq)(nil),    // 20: user.UpdateCommunityInfoReq
-	(*DeleteCommunityReq)(nil),        // 21: user.DeleteCommunityReq
-	(*ListNearbyCommunitiesReq)(nil),  // 22: user.ListNearbyCommunitiesReq
-	(*ListCommunitiesResp)(nil),       // 23: user.ListCommunitiesResp
-	(*GetAdminByUsernameReq)(nil),     // 24: user.GetAdminByUsernameReq
-	(*AdminInfo)(nil),                 // 25: user.AdminInfo
-	(*ListAdminsReq)(nil),             // 26: user.ListAdminsReq
-	(*ListAdminsResp)(nil),            // 27: user.ListAdminsResp
-	(*CreateAdminReq)(nil),            // 28: user.CreateAdminReq
-	(*UpdateAdminReq)(nil),            // 29: user.UpdateAdminReq
-	(*DeleteAdminReq)(nil),            // 30: user.DeleteAdminReq
-	(*ChangeAdminPasswordReq)(nil),    // 31: user.ChangeAdminPasswordReq
-	(*GetAdminContextReq)(nil),        // 32: user.GetAdminContextReq
-	(*AdminContextInfo)(nil),          // 33: user.AdminContextInfo
-	(*RoleInfo)(nil),                  // 34: user.RoleInfo
-	(*ListRolesReq)(nil),              // 35: user.ListRolesReq
-	(*ListRolesResp)(nil),             // 36: user.ListRolesResp
-	(*GetRoleReq)(nil),                // 37: user.GetRoleReq
-	(*CreateRoleReq)(nil),             // 38: user.CreateRoleReq
-	(*UpdateRoleReq)(nil),             // 39: user.UpdateRoleReq
-	(*DeleteRoleReq)(nil),             // 40: user.DeleteRoleReq
-	(*RegionInfo)(nil),                // 41: user.RegionInfo
-	(*ListRegionChildrenReq)(nil),     // 42: user.ListRegionChildrenReq
-	(*ListRegionChildrenResp)(nil),    // 43: user.ListRegionChildrenResp
-	(*ListRegionsReq)(nil),            // 44: user.ListRegionsReq
-	(*ListRegionsResp)(nil),           // 45: user.ListRegionsResp
-	(*MatchRegionByNameReq)(nil),      // 46: user.MatchRegionByNameReq
-	(*RegionMatchInfo)(nil),           // 47: user.RegionMatchInfo
-	(*RegionDiffItem)(nil),            // 48: user.RegionDiffItem
-	(*RegionUpdateTaskInfo)(nil),      // 49: user.RegionUpdateTaskInfo
-	(*GetRegionUpdateTaskReq)(nil),    // 50: user.GetRegionUpdateTaskReq
-	(*CreateRegionUpdateTaskReq)(nil), // 51: user.CreateRegionUpdateTaskReq
-	(*ApplyRegionUpdateTaskReq)(nil),  // 52: user.ApplyRegionUpdateTaskReq
-	(*MarkUserCommunityReq)(nil),      // 53: user.MarkUserCommunityReq
-	(*SetUserStatusReq)(nil),          // 54: user.SetUserStatusReq
-	(*CreateMemberReq)(nil),           // 55: user.CreateMemberReq
-	(*CreateMemberResp)(nil),          // 56: user.CreateMemberResp
-	(*SetFulfillerReq)(nil),           // 57: user.SetFulfillerReq
-	(*FulfillerInfo)(nil),             // 58: user.FulfillerInfo
-	(*ListFulfillersReq)(nil),         // 59: user.ListFulfillersReq
-	(*ListFulfillersResp)(nil),        // 60: user.ListFulfillersResp
-	(*CheckFulfillerReq)(nil),         // 61: user.CheckFulfillerReq
-	(*CheckFulfillerResp)(nil),        // 62: user.CheckFulfillerResp
-	(*common.Pagination)(nil),         // 63: common.Pagination
-	(*common.PaginationResponse)(nil), // 64: common.PaginationResponse
-	(*common.CommonResponse)(nil),     // 65: common.CommonResponse
+	(*GetUserByIdReq)(nil),               // 0: user.GetUserByIdReq
+	(*GetUserByPhoneReq)(nil),            // 1: user.GetUserByPhoneReq
+	(*CreateUserReq)(nil),                // 2: user.CreateUserReq
+	(*UpdateCommunityReq)(nil),           // 3: user.UpdateCommunityReq
+	(*UserInfo)(nil),                     // 4: user.UserInfo
+	(*UpdateUserProfileReq)(nil),         // 5: user.UpdateUserProfileReq
+	(*ListUsersReq)(nil),                 // 6: user.ListUsersReq
+	(*ListUsersResp)(nil),                // 7: user.ListUsersResp
+	(*ListAddressesReq)(nil),             // 8: user.ListAddressesReq
+	(*GetAddressReq)(nil),                // 9: user.GetAddressReq
+	(*CreateAddressReq)(nil),             // 10: user.CreateAddressReq
+	(*UpdateAddressReq)(nil),             // 11: user.UpdateAddressReq
+	(*DeleteAddressReq)(nil),             // 12: user.DeleteAddressReq
+	(*SetDefaultAddressReq)(nil),         // 13: user.SetDefaultAddressReq
+	(*AddressInfo)(nil),                  // 14: user.AddressInfo
+	(*ListAddressesResp)(nil),            // 15: user.ListAddressesResp
+	(*GetCommunityReq)(nil),              // 16: user.GetCommunityReq
+	(*CommunityInfo)(nil),                // 17: user.CommunityInfo
+	(*ListCommunitiesReq)(nil),           // 18: user.ListCommunitiesReq
+	(*CreateCommunityReq)(nil),           // 19: user.CreateCommunityReq
+	(*UpdateCommunityInfoReq)(nil),       // 20: user.UpdateCommunityInfoReq
+	(*DeleteCommunityReq)(nil),           // 21: user.DeleteCommunityReq
+	(*ListNearbyCommunitiesReq)(nil),     // 22: user.ListNearbyCommunitiesReq
+	(*ListCommunitiesResp)(nil),          // 23: user.ListCommunitiesResp
+	(*GetAdminByUsernameReq)(nil),        // 24: user.GetAdminByUsernameReq
+	(*AdminInfo)(nil),                    // 25: user.AdminInfo
+	(*ListAdminsReq)(nil),                // 26: user.ListAdminsReq
+	(*ListAdminsResp)(nil),               // 27: user.ListAdminsResp
+	(*CreateAdminReq)(nil),               // 28: user.CreateAdminReq
+	(*UpdateAdminReq)(nil),               // 29: user.UpdateAdminReq
+	(*DeleteAdminReq)(nil),               // 30: user.DeleteAdminReq
+	(*ChangeAdminPasswordReq)(nil),       // 31: user.ChangeAdminPasswordReq
+	(*GetAdminContextReq)(nil),           // 32: user.GetAdminContextReq
+	(*AdminContextInfo)(nil),             // 33: user.AdminContextInfo
+	(*RoleInfo)(nil),                     // 34: user.RoleInfo
+	(*ListRolesReq)(nil),                 // 35: user.ListRolesReq
+	(*ListRolesResp)(nil),                // 36: user.ListRolesResp
+	(*GetRoleReq)(nil),                   // 37: user.GetRoleReq
+	(*CreateRoleReq)(nil),                // 38: user.CreateRoleReq
+	(*UpdateRoleReq)(nil),                // 39: user.UpdateRoleReq
+	(*DeleteRoleReq)(nil),                // 40: user.DeleteRoleReq
+	(*RegionInfo)(nil),                   // 41: user.RegionInfo
+	(*ListRegionChildrenReq)(nil),        // 42: user.ListRegionChildrenReq
+	(*ListRegionChildrenResp)(nil),       // 43: user.ListRegionChildrenResp
+	(*ListRegionsReq)(nil),               // 44: user.ListRegionsReq
+	(*ListRegionsResp)(nil),              // 45: user.ListRegionsResp
+	(*MatchRegionByNameReq)(nil),         // 46: user.MatchRegionByNameReq
+	(*RegionMatchInfo)(nil),              // 47: user.RegionMatchInfo
+	(*RegionDiffItem)(nil),               // 48: user.RegionDiffItem
+	(*RegionUpdateTaskInfo)(nil),         // 49: user.RegionUpdateTaskInfo
+	(*GetRegionUpdateTaskReq)(nil),       // 50: user.GetRegionUpdateTaskReq
+	(*CreateRegionUpdateTaskReq)(nil),    // 51: user.CreateRegionUpdateTaskReq
+	(*ApplyRegionUpdateTaskReq)(nil),     // 52: user.ApplyRegionUpdateTaskReq
+	(*MarkUserCommunityReq)(nil),         // 53: user.MarkUserCommunityReq
+	(*SetUserStatusReq)(nil),             // 54: user.SetUserStatusReq
+	(*CreateMemberReq)(nil),              // 55: user.CreateMemberReq
+	(*CreateMemberResp)(nil),             // 56: user.CreateMemberResp
+	(*SetFulfillerReq)(nil),              // 57: user.SetFulfillerReq
+	(*FulfillerInfo)(nil),                // 58: user.FulfillerInfo
+	(*ListFulfillersReq)(nil),            // 59: user.ListFulfillersReq
+	(*ListFulfillersResp)(nil),           // 60: user.ListFulfillersResp
+	(*CheckFulfillerReq)(nil),            // 61: user.CheckFulfillerReq
+	(*CheckFulfillerResp)(nil),           // 62: user.CheckFulfillerResp
+	(*ClientChannelInfo)(nil),            // 63: user.ClientChannelInfo
+	(*ListClientChannelsReq)(nil),        // 64: user.ListClientChannelsReq
+	(*ListClientChannelsResp)(nil),       // 65: user.ListClientChannelsResp
+	(*GetClientChannelReq)(nil),          // 66: user.GetClientChannelReq
+	(*SaveClientChannelReq)(nil),         // 67: user.SaveClientChannelReq
+	(*GetUserChannelOpenidReq)(nil),      // 68: user.GetUserChannelOpenidReq
+	(*GetUserChannelOpenidResp)(nil),     // 69: user.GetUserChannelOpenidResp
+	(*UpsertUserChannelIdentityReq)(nil), // 70: user.UpsertUserChannelIdentityReq
+	(*common.Pagination)(nil),            // 71: common.Pagination
+	(*common.PaginationResponse)(nil),    // 72: common.PaginationResponse
+	(*common.CommonResponse)(nil),        // 73: common.CommonResponse
 }
 var file_user_user_proto_depIdxs = []int32{
-	63, // 0: user.ListUsersReq.pagination:type_name -> common.Pagination
+	71, // 0: user.ListUsersReq.pagination:type_name -> common.Pagination
 	4,  // 1: user.ListUsersResp.list:type_name -> user.UserInfo
-	64, // 2: user.ListUsersResp.pagination:type_name -> common.PaginationResponse
+	72, // 2: user.ListUsersResp.pagination:type_name -> common.PaginationResponse
 	14, // 3: user.ListAddressesResp.list:type_name -> user.AddressInfo
-	63, // 4: user.ListCommunitiesReq.pagination:type_name -> common.Pagination
-	63, // 5: user.ListNearbyCommunitiesReq.pagination:type_name -> common.Pagination
+	71, // 4: user.ListCommunitiesReq.pagination:type_name -> common.Pagination
+	71, // 5: user.ListNearbyCommunitiesReq.pagination:type_name -> common.Pagination
 	17, // 6: user.ListCommunitiesResp.list:type_name -> user.CommunityInfo
-	64, // 7: user.ListCommunitiesResp.pagination:type_name -> common.PaginationResponse
+	72, // 7: user.ListCommunitiesResp.pagination:type_name -> common.PaginationResponse
 	34, // 8: user.AdminInfo.roles:type_name -> user.RoleInfo
-	63, // 9: user.ListAdminsReq.pagination:type_name -> common.Pagination
+	71, // 9: user.ListAdminsReq.pagination:type_name -> common.Pagination
 	25, // 10: user.ListAdminsResp.list:type_name -> user.AdminInfo
-	64, // 11: user.ListAdminsResp.pagination:type_name -> common.PaginationResponse
+	72, // 11: user.ListAdminsResp.pagination:type_name -> common.PaginationResponse
 	34, // 12: user.ListRolesResp.list:type_name -> user.RoleInfo
 	41, // 13: user.ListRegionChildrenResp.list:type_name -> user.RegionInfo
-	63, // 14: user.ListRegionsReq.pagination:type_name -> common.Pagination
+	71, // 14: user.ListRegionsReq.pagination:type_name -> common.Pagination
 	41, // 15: user.ListRegionsResp.list:type_name -> user.RegionInfo
-	64, // 16: user.ListRegionsResp.pagination:type_name -> common.PaginationResponse
+	72, // 16: user.ListRegionsResp.pagination:type_name -> common.PaginationResponse
 	41, // 17: user.RegionMatchInfo.province:type_name -> user.RegionInfo
 	41, // 18: user.RegionMatchInfo.city:type_name -> user.RegionInfo
 	48, // 19: user.RegionUpdateTaskInfo.added:type_name -> user.RegionDiffItem
@@ -5395,95 +5958,106 @@ var file_user_user_proto_depIdxs = []int32{
 	48, // 21: user.RegionUpdateTaskInfo.removed:type_name -> user.RegionDiffItem
 	4,  // 22: user.CreateMemberResp.user:type_name -> user.UserInfo
 	58, // 23: user.ListFulfillersResp.list:type_name -> user.FulfillerInfo
-	0,  // 24: user.UserService.GetUserById:input_type -> user.GetUserByIdReq
-	1,  // 25: user.UserService.GetUserByPhone:input_type -> user.GetUserByPhoneReq
-	2,  // 26: user.UserService.CreateOrUpdateUser:input_type -> user.CreateUserReq
-	3,  // 27: user.UserService.UpdateUserCommunity:input_type -> user.UpdateCommunityReq
-	6,  // 28: user.UserService.ListUsers:input_type -> user.ListUsersReq
-	8,  // 29: user.UserService.ListAddresses:input_type -> user.ListAddressesReq
-	9,  // 30: user.UserService.GetAddress:input_type -> user.GetAddressReq
-	10, // 31: user.UserService.CreateAddress:input_type -> user.CreateAddressReq
-	11, // 32: user.UserService.UpdateAddress:input_type -> user.UpdateAddressReq
-	12, // 33: user.UserService.DeleteAddress:input_type -> user.DeleteAddressReq
-	13, // 34: user.UserService.SetDefaultAddress:input_type -> user.SetDefaultAddressReq
-	18, // 35: user.UserService.ListCommunities:input_type -> user.ListCommunitiesReq
-	16, // 36: user.UserService.GetCommunity:input_type -> user.GetCommunityReq
-	22, // 37: user.UserService.ListNearbyCommunities:input_type -> user.ListNearbyCommunitiesReq
-	19, // 38: user.UserService.CreateCommunity:input_type -> user.CreateCommunityReq
-	20, // 39: user.UserService.UpdateCommunity:input_type -> user.UpdateCommunityInfoReq
-	21, // 40: user.UserService.DeleteCommunity:input_type -> user.DeleteCommunityReq
-	5,  // 41: user.UserService.UpdateUserProfile:input_type -> user.UpdateUserProfileReq
-	42, // 42: user.UserService.ListRegionChildren:input_type -> user.ListRegionChildrenReq
-	44, // 43: user.UserService.ListRegions:input_type -> user.ListRegionsReq
-	46, // 44: user.UserService.MatchRegionByName:input_type -> user.MatchRegionByNameReq
-	51, // 45: user.UserService.CreateRegionUpdateTask:input_type -> user.CreateRegionUpdateTaskReq
-	50, // 46: user.UserService.GetRegionUpdateTask:input_type -> user.GetRegionUpdateTaskReq
-	52, // 47: user.UserService.ApplyRegionUpdateTask:input_type -> user.ApplyRegionUpdateTaskReq
-	24, // 48: user.UserService.GetAdminByUsername:input_type -> user.GetAdminByUsernameReq
-	26, // 49: user.UserService.ListAdmins:input_type -> user.ListAdminsReq
-	28, // 50: user.UserService.CreateAdmin:input_type -> user.CreateAdminReq
-	29, // 51: user.UserService.UpdateAdmin:input_type -> user.UpdateAdminReq
-	30, // 52: user.UserService.DeleteAdmin:input_type -> user.DeleteAdminReq
-	31, // 53: user.UserService.ChangeAdminPassword:input_type -> user.ChangeAdminPasswordReq
-	32, // 54: user.UserService.GetAdminContext:input_type -> user.GetAdminContextReq
-	35, // 55: user.UserService.ListRoles:input_type -> user.ListRolesReq
-	37, // 56: user.UserService.GetRole:input_type -> user.GetRoleReq
-	38, // 57: user.UserService.CreateRole:input_type -> user.CreateRoleReq
-	39, // 58: user.UserService.UpdateRole:input_type -> user.UpdateRoleReq
-	40, // 59: user.UserService.DeleteRole:input_type -> user.DeleteRoleReq
-	53, // 60: user.UserService.MarkUserCommunity:input_type -> user.MarkUserCommunityReq
-	54, // 61: user.UserService.SetUserStatus:input_type -> user.SetUserStatusReq
-	55, // 62: user.UserService.CreateMember:input_type -> user.CreateMemberReq
-	57, // 63: user.UserService.SetFulfiller:input_type -> user.SetFulfillerReq
-	59, // 64: user.UserService.ListFulfillers:input_type -> user.ListFulfillersReq
-	61, // 65: user.UserService.CheckFulfiller:input_type -> user.CheckFulfillerReq
-	4,  // 66: user.UserService.GetUserById:output_type -> user.UserInfo
-	4,  // 67: user.UserService.GetUserByPhone:output_type -> user.UserInfo
-	4,  // 68: user.UserService.CreateOrUpdateUser:output_type -> user.UserInfo
-	65, // 69: user.UserService.UpdateUserCommunity:output_type -> common.CommonResponse
-	7,  // 70: user.UserService.ListUsers:output_type -> user.ListUsersResp
-	15, // 71: user.UserService.ListAddresses:output_type -> user.ListAddressesResp
-	14, // 72: user.UserService.GetAddress:output_type -> user.AddressInfo
-	14, // 73: user.UserService.CreateAddress:output_type -> user.AddressInfo
-	14, // 74: user.UserService.UpdateAddress:output_type -> user.AddressInfo
-	65, // 75: user.UserService.DeleteAddress:output_type -> common.CommonResponse
-	65, // 76: user.UserService.SetDefaultAddress:output_type -> common.CommonResponse
-	23, // 77: user.UserService.ListCommunities:output_type -> user.ListCommunitiesResp
-	17, // 78: user.UserService.GetCommunity:output_type -> user.CommunityInfo
-	23, // 79: user.UserService.ListNearbyCommunities:output_type -> user.ListCommunitiesResp
-	17, // 80: user.UserService.CreateCommunity:output_type -> user.CommunityInfo
-	17, // 81: user.UserService.UpdateCommunity:output_type -> user.CommunityInfo
-	65, // 82: user.UserService.DeleteCommunity:output_type -> common.CommonResponse
-	4,  // 83: user.UserService.UpdateUserProfile:output_type -> user.UserInfo
-	43, // 84: user.UserService.ListRegionChildren:output_type -> user.ListRegionChildrenResp
-	45, // 85: user.UserService.ListRegions:output_type -> user.ListRegionsResp
-	47, // 86: user.UserService.MatchRegionByName:output_type -> user.RegionMatchInfo
-	49, // 87: user.UserService.CreateRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
-	49, // 88: user.UserService.GetRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
-	65, // 89: user.UserService.ApplyRegionUpdateTask:output_type -> common.CommonResponse
-	25, // 90: user.UserService.GetAdminByUsername:output_type -> user.AdminInfo
-	27, // 91: user.UserService.ListAdmins:output_type -> user.ListAdminsResp
-	25, // 92: user.UserService.CreateAdmin:output_type -> user.AdminInfo
-	25, // 93: user.UserService.UpdateAdmin:output_type -> user.AdminInfo
-	65, // 94: user.UserService.DeleteAdmin:output_type -> common.CommonResponse
-	65, // 95: user.UserService.ChangeAdminPassword:output_type -> common.CommonResponse
-	33, // 96: user.UserService.GetAdminContext:output_type -> user.AdminContextInfo
-	36, // 97: user.UserService.ListRoles:output_type -> user.ListRolesResp
-	34, // 98: user.UserService.GetRole:output_type -> user.RoleInfo
-	34, // 99: user.UserService.CreateRole:output_type -> user.RoleInfo
-	34, // 100: user.UserService.UpdateRole:output_type -> user.RoleInfo
-	65, // 101: user.UserService.DeleteRole:output_type -> common.CommonResponse
-	65, // 102: user.UserService.MarkUserCommunity:output_type -> common.CommonResponse
-	65, // 103: user.UserService.SetUserStatus:output_type -> common.CommonResponse
-	56, // 104: user.UserService.CreateMember:output_type -> user.CreateMemberResp
-	65, // 105: user.UserService.SetFulfiller:output_type -> common.CommonResponse
-	60, // 106: user.UserService.ListFulfillers:output_type -> user.ListFulfillersResp
-	62, // 107: user.UserService.CheckFulfiller:output_type -> user.CheckFulfillerResp
-	66, // [66:108] is the sub-list for method output_type
-	24, // [24:66] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	63, // 24: user.ListClientChannelsResp.list:type_name -> user.ClientChannelInfo
+	0,  // 25: user.UserService.GetUserById:input_type -> user.GetUserByIdReq
+	1,  // 26: user.UserService.GetUserByPhone:input_type -> user.GetUserByPhoneReq
+	2,  // 27: user.UserService.CreateOrUpdateUser:input_type -> user.CreateUserReq
+	3,  // 28: user.UserService.UpdateUserCommunity:input_type -> user.UpdateCommunityReq
+	6,  // 29: user.UserService.ListUsers:input_type -> user.ListUsersReq
+	8,  // 30: user.UserService.ListAddresses:input_type -> user.ListAddressesReq
+	9,  // 31: user.UserService.GetAddress:input_type -> user.GetAddressReq
+	10, // 32: user.UserService.CreateAddress:input_type -> user.CreateAddressReq
+	11, // 33: user.UserService.UpdateAddress:input_type -> user.UpdateAddressReq
+	12, // 34: user.UserService.DeleteAddress:input_type -> user.DeleteAddressReq
+	13, // 35: user.UserService.SetDefaultAddress:input_type -> user.SetDefaultAddressReq
+	18, // 36: user.UserService.ListCommunities:input_type -> user.ListCommunitiesReq
+	16, // 37: user.UserService.GetCommunity:input_type -> user.GetCommunityReq
+	22, // 38: user.UserService.ListNearbyCommunities:input_type -> user.ListNearbyCommunitiesReq
+	19, // 39: user.UserService.CreateCommunity:input_type -> user.CreateCommunityReq
+	20, // 40: user.UserService.UpdateCommunity:input_type -> user.UpdateCommunityInfoReq
+	21, // 41: user.UserService.DeleteCommunity:input_type -> user.DeleteCommunityReq
+	5,  // 42: user.UserService.UpdateUserProfile:input_type -> user.UpdateUserProfileReq
+	42, // 43: user.UserService.ListRegionChildren:input_type -> user.ListRegionChildrenReq
+	44, // 44: user.UserService.ListRegions:input_type -> user.ListRegionsReq
+	46, // 45: user.UserService.MatchRegionByName:input_type -> user.MatchRegionByNameReq
+	51, // 46: user.UserService.CreateRegionUpdateTask:input_type -> user.CreateRegionUpdateTaskReq
+	50, // 47: user.UserService.GetRegionUpdateTask:input_type -> user.GetRegionUpdateTaskReq
+	52, // 48: user.UserService.ApplyRegionUpdateTask:input_type -> user.ApplyRegionUpdateTaskReq
+	24, // 49: user.UserService.GetAdminByUsername:input_type -> user.GetAdminByUsernameReq
+	26, // 50: user.UserService.ListAdmins:input_type -> user.ListAdminsReq
+	28, // 51: user.UserService.CreateAdmin:input_type -> user.CreateAdminReq
+	29, // 52: user.UserService.UpdateAdmin:input_type -> user.UpdateAdminReq
+	30, // 53: user.UserService.DeleteAdmin:input_type -> user.DeleteAdminReq
+	31, // 54: user.UserService.ChangeAdminPassword:input_type -> user.ChangeAdminPasswordReq
+	32, // 55: user.UserService.GetAdminContext:input_type -> user.GetAdminContextReq
+	35, // 56: user.UserService.ListRoles:input_type -> user.ListRolesReq
+	37, // 57: user.UserService.GetRole:input_type -> user.GetRoleReq
+	38, // 58: user.UserService.CreateRole:input_type -> user.CreateRoleReq
+	39, // 59: user.UserService.UpdateRole:input_type -> user.UpdateRoleReq
+	40, // 60: user.UserService.DeleteRole:input_type -> user.DeleteRoleReq
+	53, // 61: user.UserService.MarkUserCommunity:input_type -> user.MarkUserCommunityReq
+	54, // 62: user.UserService.SetUserStatus:input_type -> user.SetUserStatusReq
+	55, // 63: user.UserService.CreateMember:input_type -> user.CreateMemberReq
+	57, // 64: user.UserService.SetFulfiller:input_type -> user.SetFulfillerReq
+	59, // 65: user.UserService.ListFulfillers:input_type -> user.ListFulfillersReq
+	61, // 66: user.UserService.CheckFulfiller:input_type -> user.CheckFulfillerReq
+	64, // 67: user.UserService.ListClientChannels:input_type -> user.ListClientChannelsReq
+	66, // 68: user.UserService.GetClientChannel:input_type -> user.GetClientChannelReq
+	67, // 69: user.UserService.SaveClientChannel:input_type -> user.SaveClientChannelReq
+	68, // 70: user.UserService.GetUserChannelOpenid:input_type -> user.GetUserChannelOpenidReq
+	70, // 71: user.UserService.UpsertUserChannelIdentity:input_type -> user.UpsertUserChannelIdentityReq
+	4,  // 72: user.UserService.GetUserById:output_type -> user.UserInfo
+	4,  // 73: user.UserService.GetUserByPhone:output_type -> user.UserInfo
+	4,  // 74: user.UserService.CreateOrUpdateUser:output_type -> user.UserInfo
+	73, // 75: user.UserService.UpdateUserCommunity:output_type -> common.CommonResponse
+	7,  // 76: user.UserService.ListUsers:output_type -> user.ListUsersResp
+	15, // 77: user.UserService.ListAddresses:output_type -> user.ListAddressesResp
+	14, // 78: user.UserService.GetAddress:output_type -> user.AddressInfo
+	14, // 79: user.UserService.CreateAddress:output_type -> user.AddressInfo
+	14, // 80: user.UserService.UpdateAddress:output_type -> user.AddressInfo
+	73, // 81: user.UserService.DeleteAddress:output_type -> common.CommonResponse
+	73, // 82: user.UserService.SetDefaultAddress:output_type -> common.CommonResponse
+	23, // 83: user.UserService.ListCommunities:output_type -> user.ListCommunitiesResp
+	17, // 84: user.UserService.GetCommunity:output_type -> user.CommunityInfo
+	23, // 85: user.UserService.ListNearbyCommunities:output_type -> user.ListCommunitiesResp
+	17, // 86: user.UserService.CreateCommunity:output_type -> user.CommunityInfo
+	17, // 87: user.UserService.UpdateCommunity:output_type -> user.CommunityInfo
+	73, // 88: user.UserService.DeleteCommunity:output_type -> common.CommonResponse
+	4,  // 89: user.UserService.UpdateUserProfile:output_type -> user.UserInfo
+	43, // 90: user.UserService.ListRegionChildren:output_type -> user.ListRegionChildrenResp
+	45, // 91: user.UserService.ListRegions:output_type -> user.ListRegionsResp
+	47, // 92: user.UserService.MatchRegionByName:output_type -> user.RegionMatchInfo
+	49, // 93: user.UserService.CreateRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
+	49, // 94: user.UserService.GetRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
+	73, // 95: user.UserService.ApplyRegionUpdateTask:output_type -> common.CommonResponse
+	25, // 96: user.UserService.GetAdminByUsername:output_type -> user.AdminInfo
+	27, // 97: user.UserService.ListAdmins:output_type -> user.ListAdminsResp
+	25, // 98: user.UserService.CreateAdmin:output_type -> user.AdminInfo
+	25, // 99: user.UserService.UpdateAdmin:output_type -> user.AdminInfo
+	73, // 100: user.UserService.DeleteAdmin:output_type -> common.CommonResponse
+	73, // 101: user.UserService.ChangeAdminPassword:output_type -> common.CommonResponse
+	33, // 102: user.UserService.GetAdminContext:output_type -> user.AdminContextInfo
+	36, // 103: user.UserService.ListRoles:output_type -> user.ListRolesResp
+	34, // 104: user.UserService.GetRole:output_type -> user.RoleInfo
+	34, // 105: user.UserService.CreateRole:output_type -> user.RoleInfo
+	34, // 106: user.UserService.UpdateRole:output_type -> user.RoleInfo
+	73, // 107: user.UserService.DeleteRole:output_type -> common.CommonResponse
+	73, // 108: user.UserService.MarkUserCommunity:output_type -> common.CommonResponse
+	73, // 109: user.UserService.SetUserStatus:output_type -> common.CommonResponse
+	56, // 110: user.UserService.CreateMember:output_type -> user.CreateMemberResp
+	73, // 111: user.UserService.SetFulfiller:output_type -> common.CommonResponse
+	60, // 112: user.UserService.ListFulfillers:output_type -> user.ListFulfillersResp
+	62, // 113: user.UserService.CheckFulfiller:output_type -> user.CheckFulfillerResp
+	65, // 114: user.UserService.ListClientChannels:output_type -> user.ListClientChannelsResp
+	63, // 115: user.UserService.GetClientChannel:output_type -> user.ClientChannelInfo
+	63, // 116: user.UserService.SaveClientChannel:output_type -> user.ClientChannelInfo
+	69, // 117: user.UserService.GetUserChannelOpenid:output_type -> user.GetUserChannelOpenidResp
+	73, // 118: user.UserService.UpsertUserChannelIdentity:output_type -> common.CommonResponse
+	72, // [72:119] is the sub-list for method output_type
+	25, // [25:72] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_user_user_proto_init() }
@@ -5497,7 +6071,7 @@ func file_user_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_user_user_proto_rawDesc), len(file_user_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   63,
+			NumMessages:   71,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

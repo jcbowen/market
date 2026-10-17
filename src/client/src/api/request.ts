@@ -7,7 +7,7 @@ import {
   UNAUTHORIZED_CODES,
 } from './config'
 import type { LoginResult } from './auth'
-import { isH5 } from '@/utils/platform'
+import { isH5, CLIENT_CHANNEL } from '@/utils/platform'
 
 /**
  * 统一响应结构
@@ -226,6 +226,8 @@ function requestOnce<T = unknown>(
   if (token) {
     header.Authorization = `Bearer ${token}`
   }
+  // 客户端渠道标识：服务端按渠道渲染支付方式与解析登录/支付凭证
+  header['X-Channel-Code'] = CLIENT_CHANNEL
 
   // #ifndef H5
   if (!hideLoading) {
@@ -384,7 +386,10 @@ function uploadOnce<T = unknown>(
       url: fullUrl,
       filePath,
       name,
-      header: token ? { Authorization: `Bearer ${token}` } : {},
+      header: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'X-Channel-Code': CLIENT_CHANNEL,
+      },
       timeout: REQUEST_TIMEOUT,
       success: (res) => {
         if (res.statusCode === 401) {

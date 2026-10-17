@@ -28,7 +28,8 @@ type CreatePaymentReq struct {
 	UserId        int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	PayType       int32                  `protobuf:"varint,3,opt,name=pay_type,json=payType,proto3" json:"pay_type,omitempty"` // 1微信 2支付宝 3现金
 	Amount        float64                `protobuf:"fixed64,4,opt,name=amount,proto3" json:"amount,omitempty"`
-	Openid        string                 `protobuf:"bytes,5,opt,name=openid,proto3" json:"openid,omitempty"` // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
+	Openid        string                 `protobuf:"bytes,5,opt,name=openid,proto3" json:"openid,omitempty"`            // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
+	AppId         string                 `protobuf:"bytes,6,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"` // 微信下单使用的 AppID（JSAPI/H5），由网关按客户端渠道解析后传入；为空回落支付配置默认 AppID
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -94,6 +95,13 @@ func (x *CreatePaymentReq) GetAmount() float64 {
 func (x *CreatePaymentReq) GetOpenid() string {
 	if x != nil {
 		return x.Openid
+	}
+	return ""
+}
+
+func (x *CreatePaymentReq) GetAppId() string {
+	if x != nil {
+		return x.AppId
 	}
 	return ""
 }
@@ -596,8 +604,11 @@ type PayConfig struct {
 	UpdatedAt          string `protobuf:"bytes,16,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	WechatPaymentReady bool   `protobuf:"varint,17,opt,name=wechat_payment_ready,json=wechatPaymentReady,proto3" json:"wechat_payment_ready,omitempty"`
 	AlipayReady        bool   `protobuf:"varint,18,opt,name=alipay_ready,json=alipayReady,proto3" json:"alipay_ready,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// 适用客户端渠道（勾选的客户端渠道 code 列表：mp/gzh/app/h5；空=全部客户端渠道可用，兼容存量数据）
+	WechatClientChannels []string `protobuf:"bytes,19,rep,name=wechat_client_channels,json=wechatClientChannels,proto3" json:"wechat_client_channels,omitempty"`
+	AlipayClientChannels []string `protobuf:"bytes,20,rep,name=alipay_client_channels,json=alipayClientChannels,proto3" json:"alipay_client_channels,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *PayConfig) Reset() {
@@ -756,6 +767,20 @@ func (x *PayConfig) GetAlipayReady() bool {
 	return false
 }
 
+func (x *PayConfig) GetWechatClientChannels() []string {
+	if x != nil {
+		return x.WechatClientChannels
+	}
+	return nil
+}
+
+func (x *PayConfig) GetAlipayClientChannels() []string {
+	if x != nil {
+		return x.AlipayClientChannels
+	}
+	return nil
+}
+
 type UploadPayCertReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Channel       string                 `protobuf:"bytes,1,opt,name=channel,proto3" json:"channel,omitempty"`                   // 渠道：wechat / alipay
@@ -880,13 +905,14 @@ var File_payment_payment_proto protoreflect.FileDescriptor
 
 const file_payment_payment_proto_rawDesc = "" +
 	"\n" +
-	"\x15payment/payment.proto\x12\apayment\x1a\x13common/common.proto\"\x91\x01\n" +
+	"\x15payment/payment.proto\x12\apayment\x1a\x13common/common.proto\"\xa8\x01\n" +
 	"\x10CreatePaymentReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x19\n" +
 	"\bpay_type\x18\x03 \x01(\x05R\apayType\x12\x16\n" +
 	"\x06amount\x18\x04 \x01(\x01R\x06amount\x12\x16\n" +
-	"\x06openid\x18\x05 \x01(\tR\x06openid\"\xbd\x01\n" +
+	"\x06openid\x18\x05 \x01(\tR\x06openid\x12\x15\n" +
+	"\x06app_id\x18\x06 \x01(\tR\x05appId\"\xbd\x01\n" +
 	"\x11CreatePaymentResp\x12\x1d\n" +
 	"\n" +
 	"payment_no\x18\x01 \x01(\tR\tpaymentNo\x12\x19\n" +
@@ -926,7 +952,7 @@ const file_payment_payment_proto_rawDesc = "" +
 	"payment_no\x18\x04 \x01(\tR\tpaymentNo\"-\n" +
 	"\x10ClosePaymentsReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\"\x11\n" +
-	"\x0fGetPayConfigReq\"\x90\x06\n" +
+	"\x0fGetPayConfigReq\"\xfc\x06\n" +
 	"\tPayConfig\x12)\n" +
 	"\x10enabled_channels\x18\x01 \x03(\tR\x0fenabledChannels\x12\"\n" +
 	"\rwechat_app_id\x18\x02 \x01(\tR\vwechatAppId\x12*\n" +
@@ -947,7 +973,9 @@ const file_payment_payment_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\x10 \x01(\tR\tupdatedAt\x120\n" +
 	"\x14wechat_payment_ready\x18\x11 \x01(\bR\x12wechatPaymentReady\x12!\n" +
-	"\falipay_ready\x18\x12 \x01(\bR\valipayReady\"\x7f\n" +
+	"\falipay_ready\x18\x12 \x01(\bR\valipayReady\x124\n" +
+	"\x16wechat_client_channels\x18\x13 \x03(\tR\x14wechatClientChannels\x124\n" +
+	"\x16alipay_client_channels\x18\x14 \x03(\tR\x14alipayClientChannels\"\x7f\n" +
 	"\x10UploadPayCertReq\x12\x18\n" +
 	"\achannel\x18\x01 \x01(\tR\achannel\x12\x1b\n" +
 	"\tcert_type\x18\x02 \x01(\tR\bcertType\x12\x1a\n" +

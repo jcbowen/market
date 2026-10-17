@@ -108,6 +108,27 @@
                 </div>
               </n-form-item>
             </n-grid-item>
+            <n-grid-item :span="2">
+              <n-form-item label="适用客户端渠道">
+                <div class="client-channel-box">
+                  <n-checkbox-group v-model:value="paymentForm.wechat_client_channels">
+                    <n-checkbox
+                      v-for="opt in clientChannelOptions"
+                      :key="opt.code"
+                      :value="opt.code"
+                      :disabled="!opt.enabled"
+                      style="margin-right: 16px;"
+                    >
+                      {{ opt.label }}
+                    </n-checkbox>
+                  </n-checkbox-group>
+                  <n-text depth="3" class="client-channel-hint">
+                    勾选微信支付在哪些客户端渠道展示与可用；全部不勾选 = 所有已启用客户端渠道均可用（兼容口径）。
+                    公众号需 OAuth 授权、App 需支付 SDK，链路开放前即使勾选也不会展示。
+                  </n-text>
+                </div>
+              </n-form-item>
+            </n-grid-item>
           </n-grid>
         </template>
 
@@ -144,8 +165,8 @@ defineOptions({ name: 'PaymentSetting' })
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import type { UploadCustomRequestOptions } from 'naive-ui'
-import { getPaymentSetting, updatePaymentSetting, uploadPaymentCert } from '@/api/admin'
-import type { PaymentSetting, PaymentSuggestedURLs } from '@/api/admin'
+import { getPaymentSetting, updatePaymentSetting, uploadPaymentCert, getClientChannels } from '@/api/admin'
+import type { PaymentSetting, PaymentSuggestedURLs, ClientChannel } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -205,12 +226,26 @@ const paymentForm = reactive({
   wechat_cert_uploaded: false,
   alipay_cert_uploaded: false,
   updated_at: '',
+  wechat_client_channels: [] as string[],
+  alipay_client_channels: [] as string[],
   suggested_urls: {
     base_url: '',
     wechat_notify_url: '',
     alipay_notify_url: '',
   } as PaymentSuggestedURLs,
 })
+
+/** 客户端渠道勾选项（渠道管理已配置的数据源） */
+const clientChannels = ref<ClientChannel[]>([])
+
+/** 勾选项渲染：公众号/App 标注链路未开放，未启用渠道禁用勾选 */
+const clientChannelOptions = computed(() =>
+  clientChannels.value.map((ch) => ({
+    code: ch.code,
+    label: `${ch.name}${ch.code === 'gzh' || ch.code === 'app' ? '（链路未开放）' : ''}${ch.enabled ? '' : '（未启用）'}`,
+    enabled: ch.enabled,
+  })),
+)
 
 /** 已启用渠道的顺序（数组顺序即 C 端收银台展示顺序，保存时写入 enabled_channels） */
 const enabledOrder = ref<string[]>([])
@@ -312,6 +347,8 @@ function buildPayload(): PaymentSetting {
     wechat_cert_uploaded: paymentForm.wechat_cert_uploaded,
     alipay_cert_uploaded: paymentForm.alipay_cert_uploaded,
     updated_at: paymentForm.updated_at,
+    wechat_client_channels: [...paymentForm.wechat_client_channels],
+    alipay_client_channels: [...paymentForm.alipay_client_channels],
     suggested_urls: paymentForm.suggested_urls,
   }
 }
@@ -365,6 +402,8 @@ async function loadPaymentSetting() {
     paymentForm.wechat_cert_uploaded = data.wechat_cert_uploaded
     paymentForm.alipay_cert_uploaded = data.alipay_cert_uploaded
     paymentForm.updated_at = data.updated_at
+    paymentForm.wechat_client_channels = data.wechat_client_channels ?? []
+    paymentForm.alipay_client_channels = data.alipay_client_channels ?? []
     paymentForm.suggested_urls = data.suggested_urls
   } finally {
     paymentLoading.value = false
@@ -412,6 +451,14 @@ async function copyURL(url: string) {
 
 onMounted(() => {
   loadPaymentSetting()
+  // 勾选项数据源：渠道管理维护的客户端渠道；加载失败不阻断支付配置页
+  getClientChannels()
+    .then((res) => {
+      clientChannels.value = res.data.data.channels
+    })
+    .catch(() => {
+      clientChannels.value = []
+    })
 })
 </script>
 
@@ -524,5 +571,17 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   width: 100%;
+}
+
+.client-channel-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.client-channel-hint {
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>

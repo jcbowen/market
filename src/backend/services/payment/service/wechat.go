@@ -35,16 +35,19 @@ type wechatPayParams struct {
 }
 
 // buildWechatPayParams 构造微信支付调起参数
-// 根据 openid 是否为空自动选择 JSAPI 或 H5 支付方式
+// 根据 openid 是否为空自动选择 JSAPI 或 H5 支付方式；
+// appID 由网关按客户端渠道解析后传入（小程序=小程序 AppID，H5=商户绑定任一 AppID），
+// 为空时回落支付配置默认 AppID（wego 客户端请求级覆盖）
 // 参数：
 //   - ctx: 上下文
 //   - p: 支付记录模型
 //   - openid: 用户微信 openid，为空则走 H5 支付
+//   - appID: 本次下单使用的 AppID，可为空
 //
 // 返回值：
 //   - string: 调起参数 JSON 字符串（JSAPI）或包含 h5_url 的 JSON（H5）
 //   - error: 错误信息
-func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Payment, openid string) (string, error) {
+func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Payment, openid, appID string) (string, error) {
 	// 支付前检测数据库配置版本，后台修改配置后无需重启即可生效
 	s.getPayConfigCached(ctx)
 	client := s.getWechatPayClient()
@@ -52,6 +55,10 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 		return "", fmt.Errorf("微信支付未配置或配置不完整")
 	}
 	cfg := s.getWechatPayConfig()
+	// 请求级 AppID 优先，为空回落配置默认值；JSAPI 签名必须使用与 openid 同源的 AppID
+	if appID == "" {
+		appID = cfg.AppID
+	}
 	description := "社区商超订单"
 	amountTotal := yuanToFen(p.Amount)
 
@@ -66,6 +73,7 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 
 	if openid != "" {
 		resp, err := client.JSAPIPay(ctx, &wegopayment.JSAPIRequest{
+			AppID:       appID,
 			Description: description,
 			OutTradeNo:  p.PaymentNo,
 			Amount: wegopayment.Amount{
@@ -81,7 +89,7 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 		}
 
 		params := wechatPayParams{
-			AppID:     cfg.AppID,
+			AppID:     appID,
 			TimeStamp: fmt.Sprintf("%d", time.Now().Unix()),
 			NonceStr:  randomNonceStr(32),
 			Package:   "prepay_id=" + resp.PrepayID,
@@ -101,6 +109,7 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 	}
 
 	resp, err := client.H5Pay(ctx, &wegopayment.H5Request{
+		AppID:       appID,
 		Description: description,
 		OutTradeNo:  p.PaymentNo,
 		Amount: wegopayment.Amount{

@@ -132,7 +132,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	// C 端上传（履约签收照片等）：独立 handler 持有 product 客户端，IsDisplay=false
 	fulfillmentUploadHandler := handler.NewFulfillmentUploadHandler(clients.ProductClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
-	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg.Wechat)
+	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient)
 	// IP 定位：本地 GeoLite2-City 数据库，相对路径以可执行文件所在目录为基准
 	geoipHandler := handler.NewGeoIPHandler(resolveBinPath(cfg.GeoIP.DBPath))
 	// 行政区划：级联选择器懒加载、IP 定位反查区划、后台管理（列表/检查更新/差异覆盖）
@@ -342,6 +342,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentSetting)
 			authAdmin.PUT("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdatePaymentSetting)
 			authAdmin.POST("/settings/payment/cert", gwMiddleware.RequirePermission("settings:update"), adminHandler.UploadPaymentCert)
+
+			// 渠道管理（系统空间）：客户端渠道主数据（凭证/启用/排序），登录与支付链路按渠道取用
+			authAdmin.GET("/settings/channels", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetClientChannels)
+			authAdmin.PUT("/settings/channels/:id", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateClientChannel)
 
 			// 退款配置（运费退还策略）
 			authAdmin.GET("/settings/refund", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetRefundSetting)

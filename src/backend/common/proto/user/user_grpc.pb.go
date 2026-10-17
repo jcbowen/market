@@ -20,48 +20,53 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	UserService_GetUserById_FullMethodName            = "/user.UserService/GetUserById"
-	UserService_GetUserByPhone_FullMethodName         = "/user.UserService/GetUserByPhone"
-	UserService_CreateOrUpdateUser_FullMethodName     = "/user.UserService/CreateOrUpdateUser"
-	UserService_UpdateUserCommunity_FullMethodName    = "/user.UserService/UpdateUserCommunity"
-	UserService_ListUsers_FullMethodName              = "/user.UserService/ListUsers"
-	UserService_ListAddresses_FullMethodName          = "/user.UserService/ListAddresses"
-	UserService_GetAddress_FullMethodName             = "/user.UserService/GetAddress"
-	UserService_CreateAddress_FullMethodName          = "/user.UserService/CreateAddress"
-	UserService_UpdateAddress_FullMethodName          = "/user.UserService/UpdateAddress"
-	UserService_DeleteAddress_FullMethodName          = "/user.UserService/DeleteAddress"
-	UserService_SetDefaultAddress_FullMethodName      = "/user.UserService/SetDefaultAddress"
-	UserService_ListCommunities_FullMethodName        = "/user.UserService/ListCommunities"
-	UserService_GetCommunity_FullMethodName           = "/user.UserService/GetCommunity"
-	UserService_ListNearbyCommunities_FullMethodName  = "/user.UserService/ListNearbyCommunities"
-	UserService_CreateCommunity_FullMethodName        = "/user.UserService/CreateCommunity"
-	UserService_UpdateCommunity_FullMethodName        = "/user.UserService/UpdateCommunity"
-	UserService_DeleteCommunity_FullMethodName        = "/user.UserService/DeleteCommunity"
-	UserService_UpdateUserProfile_FullMethodName      = "/user.UserService/UpdateUserProfile"
-	UserService_ListRegionChildren_FullMethodName     = "/user.UserService/ListRegionChildren"
-	UserService_ListRegions_FullMethodName            = "/user.UserService/ListRegions"
-	UserService_MatchRegionByName_FullMethodName      = "/user.UserService/MatchRegionByName"
-	UserService_CreateRegionUpdateTask_FullMethodName = "/user.UserService/CreateRegionUpdateTask"
-	UserService_GetRegionUpdateTask_FullMethodName    = "/user.UserService/GetRegionUpdateTask"
-	UserService_ApplyRegionUpdateTask_FullMethodName  = "/user.UserService/ApplyRegionUpdateTask"
-	UserService_GetAdminByUsername_FullMethodName     = "/user.UserService/GetAdminByUsername"
-	UserService_ListAdmins_FullMethodName             = "/user.UserService/ListAdmins"
-	UserService_CreateAdmin_FullMethodName            = "/user.UserService/CreateAdmin"
-	UserService_UpdateAdmin_FullMethodName            = "/user.UserService/UpdateAdmin"
-	UserService_DeleteAdmin_FullMethodName            = "/user.UserService/DeleteAdmin"
-	UserService_ChangeAdminPassword_FullMethodName    = "/user.UserService/ChangeAdminPassword"
-	UserService_GetAdminContext_FullMethodName        = "/user.UserService/GetAdminContext"
-	UserService_ListRoles_FullMethodName              = "/user.UserService/ListRoles"
-	UserService_GetRole_FullMethodName                = "/user.UserService/GetRole"
-	UserService_CreateRole_FullMethodName             = "/user.UserService/CreateRole"
-	UserService_UpdateRole_FullMethodName             = "/user.UserService/UpdateRole"
-	UserService_DeleteRole_FullMethodName             = "/user.UserService/DeleteRole"
-	UserService_MarkUserCommunity_FullMethodName      = "/user.UserService/MarkUserCommunity"
-	UserService_SetUserStatus_FullMethodName          = "/user.UserService/SetUserStatus"
-	UserService_CreateMember_FullMethodName           = "/user.UserService/CreateMember"
-	UserService_SetFulfiller_FullMethodName           = "/user.UserService/SetFulfiller"
-	UserService_ListFulfillers_FullMethodName         = "/user.UserService/ListFulfillers"
-	UserService_CheckFulfiller_FullMethodName         = "/user.UserService/CheckFulfiller"
+	UserService_GetUserById_FullMethodName               = "/user.UserService/GetUserById"
+	UserService_GetUserByPhone_FullMethodName            = "/user.UserService/GetUserByPhone"
+	UserService_CreateOrUpdateUser_FullMethodName        = "/user.UserService/CreateOrUpdateUser"
+	UserService_UpdateUserCommunity_FullMethodName       = "/user.UserService/UpdateUserCommunity"
+	UserService_ListUsers_FullMethodName                 = "/user.UserService/ListUsers"
+	UserService_ListAddresses_FullMethodName             = "/user.UserService/ListAddresses"
+	UserService_GetAddress_FullMethodName                = "/user.UserService/GetAddress"
+	UserService_CreateAddress_FullMethodName             = "/user.UserService/CreateAddress"
+	UserService_UpdateAddress_FullMethodName             = "/user.UserService/UpdateAddress"
+	UserService_DeleteAddress_FullMethodName             = "/user.UserService/DeleteAddress"
+	UserService_SetDefaultAddress_FullMethodName         = "/user.UserService/SetDefaultAddress"
+	UserService_ListCommunities_FullMethodName           = "/user.UserService/ListCommunities"
+	UserService_GetCommunity_FullMethodName              = "/user.UserService/GetCommunity"
+	UserService_ListNearbyCommunities_FullMethodName     = "/user.UserService/ListNearbyCommunities"
+	UserService_CreateCommunity_FullMethodName           = "/user.UserService/CreateCommunity"
+	UserService_UpdateCommunity_FullMethodName           = "/user.UserService/UpdateCommunity"
+	UserService_DeleteCommunity_FullMethodName           = "/user.UserService/DeleteCommunity"
+	UserService_UpdateUserProfile_FullMethodName         = "/user.UserService/UpdateUserProfile"
+	UserService_ListRegionChildren_FullMethodName        = "/user.UserService/ListRegionChildren"
+	UserService_ListRegions_FullMethodName               = "/user.UserService/ListRegions"
+	UserService_MatchRegionByName_FullMethodName         = "/user.UserService/MatchRegionByName"
+	UserService_CreateRegionUpdateTask_FullMethodName    = "/user.UserService/CreateRegionUpdateTask"
+	UserService_GetRegionUpdateTask_FullMethodName       = "/user.UserService/GetRegionUpdateTask"
+	UserService_ApplyRegionUpdateTask_FullMethodName     = "/user.UserService/ApplyRegionUpdateTask"
+	UserService_GetAdminByUsername_FullMethodName        = "/user.UserService/GetAdminByUsername"
+	UserService_ListAdmins_FullMethodName                = "/user.UserService/ListAdmins"
+	UserService_CreateAdmin_FullMethodName               = "/user.UserService/CreateAdmin"
+	UserService_UpdateAdmin_FullMethodName               = "/user.UserService/UpdateAdmin"
+	UserService_DeleteAdmin_FullMethodName               = "/user.UserService/DeleteAdmin"
+	UserService_ChangeAdminPassword_FullMethodName       = "/user.UserService/ChangeAdminPassword"
+	UserService_GetAdminContext_FullMethodName           = "/user.UserService/GetAdminContext"
+	UserService_ListRoles_FullMethodName                 = "/user.UserService/ListRoles"
+	UserService_GetRole_FullMethodName                   = "/user.UserService/GetRole"
+	UserService_CreateRole_FullMethodName                = "/user.UserService/CreateRole"
+	UserService_UpdateRole_FullMethodName                = "/user.UserService/UpdateRole"
+	UserService_DeleteRole_FullMethodName                = "/user.UserService/DeleteRole"
+	UserService_MarkUserCommunity_FullMethodName         = "/user.UserService/MarkUserCommunity"
+	UserService_SetUserStatus_FullMethodName             = "/user.UserService/SetUserStatus"
+	UserService_CreateMember_FullMethodName              = "/user.UserService/CreateMember"
+	UserService_SetFulfiller_FullMethodName              = "/user.UserService/SetFulfiller"
+	UserService_ListFulfillers_FullMethodName            = "/user.UserService/ListFulfillers"
+	UserService_CheckFulfiller_FullMethodName            = "/user.UserService/CheckFulfiller"
+	UserService_ListClientChannels_FullMethodName        = "/user.UserService/ListClientChannels"
+	UserService_GetClientChannel_FullMethodName          = "/user.UserService/GetClientChannel"
+	UserService_SaveClientChannel_FullMethodName         = "/user.UserService/SaveClientChannel"
+	UserService_GetUserChannelOpenid_FullMethodName      = "/user.UserService/GetUserChannelOpenid"
+	UserService_UpsertUserChannelIdentity_FullMethodName = "/user.UserService/UpsertUserChannelIdentity"
 )
 
 // UserServiceClient is the client API for UserService service.
@@ -125,6 +130,16 @@ type UserServiceClient interface {
 	ListFulfillers(ctx context.Context, in *ListFulfillersReq, opts ...grpc.CallOption) (*ListFulfillersResp, error)
 	// 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
 	CheckFulfiller(ctx context.Context, in *CheckFulfillerReq, opts ...grpc.CallOption) (*CheckFulfillerResp, error)
+	// --- 客户端渠道管理（微信小程序/公众号/App/浏览器 H5） ---
+	// 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
+	// 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+	ListClientChannels(ctx context.Context, in *ListClientChannelsReq, opts ...grpc.CallOption) (*ListClientChannelsResp, error)
+	GetClientChannel(ctx context.Context, in *GetClientChannelReq, opts ...grpc.CallOption) (*ClientChannelInfo, error)
+	SaveClientChannel(ctx context.Context, in *SaveClientChannelReq, opts ...grpc.CallOption) (*ClientChannelInfo, error)
+	// 查询用户在指定客户端渠道的微信 openid（渠道身份表优先，mp 渠道回落 users.openid 存量口径）
+	GetUserChannelOpenid(ctx context.Context, in *GetUserChannelOpenidReq, opts ...grpc.CallOption) (*GetUserChannelOpenidResp, error)
+	// 登录后写入/更新用户在指定渠道的微信身份（幂等 upsert）
+	UpsertUserChannelIdentity(ctx context.Context, in *UpsertUserChannelIdentityReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 }
 
 type userServiceClient struct {
@@ -555,6 +570,56 @@ func (c *userServiceClient) CheckFulfiller(ctx context.Context, in *CheckFulfill
 	return out, nil
 }
 
+func (c *userServiceClient) ListClientChannels(ctx context.Context, in *ListClientChannelsReq, opts ...grpc.CallOption) (*ListClientChannelsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListClientChannelsResp)
+	err := c.cc.Invoke(ctx, UserService_ListClientChannels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) GetClientChannel(ctx context.Context, in *GetClientChannelReq, opts ...grpc.CallOption) (*ClientChannelInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClientChannelInfo)
+	err := c.cc.Invoke(ctx, UserService_GetClientChannel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) SaveClientChannel(ctx context.Context, in *SaveClientChannelReq, opts ...grpc.CallOption) (*ClientChannelInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClientChannelInfo)
+	err := c.cc.Invoke(ctx, UserService_SaveClientChannel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) GetUserChannelOpenid(ctx context.Context, in *GetUserChannelOpenidReq, opts ...grpc.CallOption) (*GetUserChannelOpenidResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetUserChannelOpenidResp)
+	err := c.cc.Invoke(ctx, UserService_GetUserChannelOpenid_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) UpsertUserChannelIdentity(ctx context.Context, in *UpsertUserChannelIdentityReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, UserService_UpsertUserChannelIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserServiceServer is the server API for UserService service.
 // All implementations must embed UnimplementedUserServiceServer
 // for forward compatibility.
@@ -616,6 +681,16 @@ type UserServiceServer interface {
 	ListFulfillers(context.Context, *ListFulfillersReq) (*ListFulfillersResp, error)
 	// 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
 	CheckFulfiller(context.Context, *CheckFulfillerReq) (*CheckFulfillerResp, error)
+	// --- 客户端渠道管理（微信小程序/公众号/App/浏览器 H5） ---
+	// 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
+	// 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+	ListClientChannels(context.Context, *ListClientChannelsReq) (*ListClientChannelsResp, error)
+	GetClientChannel(context.Context, *GetClientChannelReq) (*ClientChannelInfo, error)
+	SaveClientChannel(context.Context, *SaveClientChannelReq) (*ClientChannelInfo, error)
+	// 查询用户在指定客户端渠道的微信 openid（渠道身份表优先，mp 渠道回落 users.openid 存量口径）
+	GetUserChannelOpenid(context.Context, *GetUserChannelOpenidReq) (*GetUserChannelOpenidResp, error)
+	// 登录后写入/更新用户在指定渠道的微信身份（幂等 upsert）
+	UpsertUserChannelIdentity(context.Context, *UpsertUserChannelIdentityReq) (*common.CommonResponse, error)
 	mustEmbedUnimplementedUserServiceServer()
 }
 
@@ -751,6 +826,21 @@ func (UnimplementedUserServiceServer) ListFulfillers(context.Context, *ListFulfi
 }
 func (UnimplementedUserServiceServer) CheckFulfiller(context.Context, *CheckFulfillerReq) (*CheckFulfillerResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckFulfiller not implemented")
+}
+func (UnimplementedUserServiceServer) ListClientChannels(context.Context, *ListClientChannelsReq) (*ListClientChannelsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListClientChannels not implemented")
+}
+func (UnimplementedUserServiceServer) GetClientChannel(context.Context, *GetClientChannelReq) (*ClientChannelInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetClientChannel not implemented")
+}
+func (UnimplementedUserServiceServer) SaveClientChannel(context.Context, *SaveClientChannelReq) (*ClientChannelInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveClientChannel not implemented")
+}
+func (UnimplementedUserServiceServer) GetUserChannelOpenid(context.Context, *GetUserChannelOpenidReq) (*GetUserChannelOpenidResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserChannelOpenid not implemented")
+}
+func (UnimplementedUserServiceServer) UpsertUserChannelIdentity(context.Context, *UpsertUserChannelIdentityReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpsertUserChannelIdentity not implemented")
 }
 func (UnimplementedUserServiceServer) mustEmbedUnimplementedUserServiceServer() {}
 func (UnimplementedUserServiceServer) testEmbeddedByValue()                     {}
@@ -1529,6 +1619,96 @@ func _UserService_CheckFulfiller_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_ListClientChannels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListClientChannelsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).ListClientChannels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_ListClientChannels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).ListClientChannels(ctx, req.(*ListClientChannelsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_GetClientChannel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetClientChannelReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetClientChannel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetClientChannel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetClientChannel(ctx, req.(*GetClientChannelReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_SaveClientChannel_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveClientChannelReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).SaveClientChannel(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_SaveClientChannel_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).SaveClientChannel(ctx, req.(*SaveClientChannelReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_GetUserChannelOpenid_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUserChannelOpenidReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetUserChannelOpenid(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetUserChannelOpenid_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetUserChannelOpenid(ctx, req.(*GetUserChannelOpenidReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_UpsertUserChannelIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpsertUserChannelIdentityReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).UpsertUserChannelIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_UpsertUserChannelIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).UpsertUserChannelIdentity(ctx, req.(*UpsertUserChannelIdentityReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UserService_ServiceDesc is the grpc.ServiceDesc for UserService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1703,6 +1883,26 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckFulfiller",
 			Handler:    _UserService_CheckFulfiller_Handler,
+		},
+		{
+			MethodName: "ListClientChannels",
+			Handler:    _UserService_ListClientChannels_Handler,
+		},
+		{
+			MethodName: "GetClientChannel",
+			Handler:    _UserService_GetClientChannel_Handler,
+		},
+		{
+			MethodName: "SaveClientChannel",
+			Handler:    _UserService_SaveClientChannel_Handler,
+		},
+		{
+			MethodName: "GetUserChannelOpenid",
+			Handler:    _UserService_GetUserChannelOpenid_Handler,
+		},
+		{
+			MethodName: "UpsertUserChannelIdentity",
+			Handler:    _UserService_UpsertUserChannelIdentity_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -84,8 +84,18 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 	if err != nil {
 		return fmt.Errorf("解析支付渠道列表失败: %w", err)
 	}
+	wechatChannels, err := json.Marshal(cfg.WechatClientChannels)
+	if err != nil {
+		return fmt.Errorf("解析微信支付适用客户端渠道失败: %w", err)
+	}
+	alipayChannels, err := json.Marshal(cfg.AlipayClientChannels)
+	if err != nil {
+		return fmt.Errorf("解析支付宝适用客户端渠道失败: %w", err)
+	}
 
 	row.EnabledChannels = string(channels)
+	row.WechatClientChannels = string(wechatChannels)
+	row.AlipayClientChannels = string(alipayChannels)
 	row.WechatAppID = cfg.WechatAppId
 	row.WechatAppSecret = cfg.WechatAppSecret
 	row.WechatMchID = cfg.WechatMchId

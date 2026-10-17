@@ -127,7 +127,7 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	var payParams string
 	switch req.PayType {
 	case 1:
-		payParams, err = s.buildWechatPayParams(ctx, p, req.Openid)
+		payParams, err = s.buildWechatPayParams(ctx, p, req.Openid, req.AppId)
 	case 2:
 		payParams, err = s.buildAlipayParams(ctx, p)
 	case 3, 4:

@@ -199,6 +199,28 @@ export interface PaymentSetting {
   alipay_cert_uploaded: boolean
   updated_at: string
   suggested_urls: PaymentSuggestedURLs
+  /** 适用客户端渠道勾选（mp/gzh/app/h5；空数组=全部客户端渠道可用，存量兼容口径） */
+  wechat_client_channels: string[]
+  alipay_client_channels: string[]
+}
+
+/**
+ * 客户端渠道（渠道管理）
+ * 后台统一维护各客户端访问凭证（AppID/AppSecret）、启用开关与排序；
+ * 登录与支付链路按渠道取用凭证
+ */
+export interface ClientChannel {
+  id: number
+  /** 渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5 */
+  code: string
+  name: string
+  app_id: string
+  app_secret: string
+  enabled: boolean
+  sort: number
+  /** 凭证是否配置完整（h5 无需凭证恒为 true） */
+  configured: boolean
+  updated_at: string
 }
 
 /**
@@ -277,5 +299,31 @@ export function uploadPaymentCert(channel: string, certType: string, file: File)
     method: 'POST',
     data: formData,
     headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+/**
+ * 获取客户端渠道列表（全部，含停用）
+ * @returns 渠道列表
+ */
+export function getClientChannels() {
+  return request<ApiResult<{ channels: ClientChannel[] }>>({
+    url: '/api/v1/admin/settings/channels',
+    method: 'GET',
+  })
+}
+
+/**
+ * 更新客户端渠道配置
+ * app_secret 提交为空时服务端保留原值
+ * @param id 渠道 ID
+ * @param data 渠道配置数据
+ * @returns 更新后的渠道信息
+ */
+export function updateClientChannel(id: number, data: Pick<ClientChannel, 'code' | 'name' | 'app_id' | 'app_secret' | 'enabled' | 'sort'>) {
+  return request<ApiResult<ClientChannel>>({
+    url: `/api/v1/admin/settings/channels/${id}`,
+    method: 'PUT',
+    data,
   })
 }

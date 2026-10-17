@@ -677,3 +677,10 @@ message CheckFulfillerResp {
 - `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/backfill，重复记录不报错。
 - `SetUserStatus` / `CreateMember`：会员拉黑/恢复与按手机号幂等注册（收银台与后台均可用）。`CreateMember` 以手机号为唯一键：未注册时新建会员并归属当前社区语境；已注册时不报错，复用既有会员并把 `user_communities` 关联到当前社区，`source` 标记关联来源（`admin` 后台添加 / `pos` 收银台，缺省 `admin`）。响应 `CreateMemberResp` 返回 `user`（注册或复用的会员信息）与 `is_new`（是否本次新注册）。
 - `SetFulfiller` / `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）标记、列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。
+
+### 客户端渠道管理（2026-10-18 新增 RPC）
+
+- `ListClientChannels(only_enabled)` / `GetClientChannel(code)` / `SaveClientChannel`：客户端渠道主数据（client_channels 表：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5）的查询与维护；`SaveClientChannel` 的 AppSecret 留空保留原值，code 不可变更，返回 `ClientChannelInfo`（含 `configured` 凭证完整性，h5 恒 true）。
+- `GetUserChannelOpenid(user_id, channel_code)`：查询用户在指定渠道的微信 openid/unionid；渠道身份表（user_channel_identities）优先，mp 渠道回落存量 `users.openid`（排除 phone_ 占位），零迁移兼容。
+- `UpsertUserChannelIdentity(user_id, channel_code, openid, unionid)`：登录成功后幂等写入/更新用户渠道身份；内容一致时跳过写入，并发唯一索引冲突视为已存在。
+- 服务归属说明：渠道本质是「客户端身份与准入」（登录换 openid、按端授权、未来的渠道访问开关），与 identities 同域闭环在 user 服务；支付仅是消费场景，payment 侧不感知渠道表，按网关传入的 app_id+openid 下单。

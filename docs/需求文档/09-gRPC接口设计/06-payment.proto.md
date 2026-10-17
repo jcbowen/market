@@ -128,3 +128,9 @@ message UploadPayCertResp {
 - **回调幂等**：置支付成功采用条件更新 `WHERE payment_no=? AND status=1`，重复回调与并发回调只生效一次；支付单/订单已处于终态时走终态兜底，不再重复推进订单状态。
 - **ClosePayments**：订单取消（用户取消/后台取消）或调度器超时关单后，由 order 服务调用本 RPC，将该订单下全部 `status=1`（待支付）支付单条件更新为 `status=5 已关闭`；此后到达的迟到回调因状态不匹配被幂等拦截，防止"已关单却回调成功"造成资损。`ClosePaymentsReq` 按订单维度（`order_id`）批量关闭，无需逐单枚举支付单号。
 - **支付单状态**：1待支付 2支付成功 3支付失败 4已退款 5已关闭（`5` 为本次新增，不复用 `3 支付失败`——后者语义为渠道侧确认失败）。
+
+### 客户端渠道相关字段（2026-10-18 新增）
+
+- `PayConfig` 新增 `wechat_client_channels` / `alipay_client_channels`（repeated string）：各支付方式适用的客户端渠道 code 勾选（mp/gzh/app/h5），落库为 `pay_config.wechat_channels/alipay_channels` JSON；空=全部客户端渠道可用（存量兼容口径）。
+- `CreatePaymentReq` 新增 `app_id`（field 6）：微信下单使用的 AppID，由网关按客户端渠道解析后传入（小程序=渠道管理的 mp AppID；H5=mp AppID 或默认）；为空回落 pay_config 默认 AppID。wego `JSAPIPay/H5Pay` 支持请求级 AppID 覆盖，无需多客户端实例。
+

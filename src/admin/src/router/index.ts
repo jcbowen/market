@@ -282,6 +282,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '支付配置', permission: 'settings:view', group: '系统管理', space: 'system' },
       },
       {
+        path: 'system/channels',
+        name: 'ChannelSetting',
+        component: () => import('@/views/settings/channel.vue'),
+        meta: { title: '渠道管理', permission: 'settings:view', group: '系统管理', space: 'system' },
+      },
+      {
         path: 'system/refund',
         name: 'RefundSetting',
         component: () => import('@/views/settings/refund.vue'),

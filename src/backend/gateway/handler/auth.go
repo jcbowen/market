@@ -2,12 +2,13 @@ package handler
 
 import (
 	"context"
+	"log"
 	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -23,36 +24,27 @@ const phoneOpenidPrefix = "phone_"
 // AuthHandler C 端认证处理器
 // 负责微信小程序登录、手机号验证码登录、token 刷新
 // 当前手机号登录为测试模式，不调用真实短信服务
-// 微信小程序登录调用 wego/miniprogram Code2Session 接口换取 openid
-// 登录成功后统一签发 access_token 与 refresh_token
+// 微信小程序登录凭证取自后台「渠道管理」（client_channels 表，热更），
+// 登录成功后按渠道落用户身份（user_channel_identities），并签发 access_token 与 refresh_token
 type AuthHandler struct {
-	jwtManager       *jwt.Manager
-	userClient       user.UserServiceClient
-	wechatMiniClient *miniprogram.Client
+	jwtManager *jwt.Manager
+	userClient user.UserServiceClient
 }
 
 // NewAuthHandler 创建 C 端认证处理器
-// 若微信小程序配置完整，则自动初始化 wego 小程序客户端
+// 小程序客户端不再启动时构建：每次登录按 DB 渠道配置现取现用（配置变更即时生效，登录频率低无性能压力）
 //
 // 参数：
 //   - jwtManager: JWT 管理器
 //   - userClient: user-service gRPC 客户端
-//   - wechatCfg: 微信配置
 //
 // 返回：
 //   - *AuthHandler: 认证处理器实例
-func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, wechatCfg config.WechatConfig) *AuthHandler {
-	h := &AuthHandler{
+func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient) *AuthHandler {
+	return &AuthHandler{
 		jwtManager: jwtManager,
 		userClient: userClient,
 	}
-	if wechatCfg.IsMiniprogramConfigured() {
-		h.wechatMiniClient = miniprogram.NewClient(&miniprogram.Config{
-			AppID:     wechatCfg.AppID,
-			AppSecret: wechatCfg.AppSecret,
-		})
-	}
-	return h
 }
 
 // WechatLoginReq 微信小程序登录请求
@@ -98,7 +90,8 @@ type loginUser struct {
 }
 
 // WechatLogin 微信小程序登录
-// 使用 wego/miniprogram Code2Session 换取 openid，创建或更新用户后签发 token
+// 凭证取自渠道管理的 mp 渠道配置，Code2Session 换取 openid，
+// 创建或更新用户、落渠道身份后签发 token
 //
 // 参数：
 //   - c: gin 上下文
@@ -109,18 +102,29 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 		return
 	}
 
-	if h.wechatMiniClient == nil {
-		response.Error(c, errcode.InternalServerError, "微信小程序未配置")
+	ctx := c.Request.Context()
+	// 登录凭证取 DB 渠道配置（渠道停用或凭证不完整时拒绝登录）
+	chResp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.MP})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	if chResp == nil || !chResp.Enabled || !chResp.Configured {
+		response.Error(c, errcode.InternalServerError, "微信小程序渠道未启用或未配置")
 		return
 	}
 
-	session, err := h.wechatMiniClient.Code2Session(c.Request.Context(), req.Code)
+	miniClient := miniprogram.NewClient(&miniprogram.Config{
+		AppID:     chResp.AppId,
+		AppSecret: chResp.AppSecret,
+	})
+	session, err := miniClient.Code2Session(ctx, req.Code)
 	if err != nil {
 		response.Error(c, errcode.InternalServerError, err.Error())
 		return
 	}
 
-	u, err := h.userClient.CreateOrUpdateUser(c.Request.Context(), &user.CreateUserReq{
+	u, err := h.userClient.CreateOrUpdateUser(ctx, &user.CreateUserReq{
 		Openid:   session.OpenID,
 		UnionId:  session.UnionID,
 		Nickname: "微信用户",
@@ -134,6 +138,16 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 	if u.Status != 1 {
 		response.Error(c, errcode.UserBlocked)
 		return
+	}
+
+	// 落渠道身份（幂等 upsert）；失败不阻断登录，支付侧仍有 users.openid 存量口径兜底
+	if _, ierr := h.userClient.UpsertUserChannelIdentity(ctx, &user.UpsertUserChannelIdentityReq{
+		UserId:      u.Id,
+		ChannelCode: channel.MP,
+		Openid:      session.OpenID,
+		Unionid:     session.UnionID,
+	}); ierr != nil {
+		log.Printf("写入用户渠道身份失败 user_id=%d: %v", u.Id, ierr)
 	}
 
 	h.successResponse(c, u)

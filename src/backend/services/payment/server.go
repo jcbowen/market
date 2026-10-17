@@ -125,6 +125,14 @@ func (s *server) toPayConfig(row *model.PayConfig) *payment.PayConfig {
 	if row.EnabledChannels != "" {
 		_ = json.Unmarshal([]byte(row.EnabledChannels), &channels)
 	}
+	var wechatClientChannels []string
+	if row.WechatClientChannels != "" {
+		_ = json.Unmarshal([]byte(row.WechatClientChannels), &wechatClientChannels)
+	}
+	var alipayClientChannels []string
+	if row.AlipayClientChannels != "" {
+		_ = json.Unmarshal([]byte(row.AlipayClientChannels), &alipayClientChannels)
+	}
 
 	wechat := config.WechatConfig{
 		AppID:        row.WechatAppID,
@@ -144,23 +152,25 @@ func (s *server) toPayConfig(row *model.PayConfig) *payment.PayConfig {
 	}
 
 	return &payment.PayConfig{
-		EnabledChannels:    channels,
-		WechatAppId:        row.WechatAppID,
-		WechatAppSecret:    row.WechatAppSecret,
-		WechatMchId:        row.WechatMchID,
-		WechatApiV3Key:     row.WechatAPIV3Key,
-		WechatCertSerialNo: row.WechatCertSerialNo,
-		WechatPrivateKey:   row.WechatPrivateKey,
-		WechatNotifyUrl:    row.WechatNotifyURL,
-		AlipayAppId:        row.AlipayAppID,
-		AlipayPrivateKey:   row.AlipayPrivateKey,
-		AlipayPublicKey:    row.AlipayPublicKey,
-		AlipayNotifyUrl:    row.AlipayNotifyURL,
-		AlipayReturnUrl:    row.AlipayReturnURL,
-		WechatCertUploaded: row.WechatPrivateKey != "",
-		AlipayCertUploaded: row.AlipayPrivateKey != "",
-		UpdatedAt:          row.UpdatedAt,
-		WechatPaymentReady: wechat.IsPaymentConfigured(),
-		AlipayReady:        alipay.IsConfigured(),
+		EnabledChannels:      channels,
+		WechatAppId:          row.WechatAppID,
+		WechatAppSecret:      row.WechatAppSecret,
+		WechatMchId:          row.WechatMchID,
+		WechatApiV3Key:       row.WechatAPIV3Key,
+		WechatCertSerialNo:   row.WechatCertSerialNo,
+		WechatPrivateKey:     row.WechatPrivateKey,
+		WechatNotifyUrl:      row.WechatNotifyURL,
+		AlipayAppId:          row.AlipayAppID,
+		AlipayPrivateKey:     row.AlipayPrivateKey,
+		AlipayPublicKey:      row.AlipayPublicKey,
+		AlipayNotifyUrl:      row.AlipayNotifyURL,
+		AlipayReturnUrl:      row.AlipayReturnURL,
+		WechatCertUploaded:   row.WechatPrivateKey != "",
+		AlipayCertUploaded:   row.AlipayPrivateKey != "",
+		UpdatedAt:            row.UpdatedAt,
+		WechatPaymentReady:   wechat.IsPaymentConfigured(),
+		AlipayReady:          alipay.IsConfigured(),
+		WechatClientChannels: wechatClientChannels,
+		AlipayClientChannels: alipayClientChannels,
 	}
 }

@@ -25,6 +25,7 @@ message CreatePaymentReq {
   int32 pay_type = 3;       // 1微信 2支付宝 3现金
   double amount = 4;
   string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
+  string app_id = 6;        // 微信下单使用的 AppID（JSAPI/H5），由网关按客户端渠道解析后传入；为空回落支付配置默认 AppID
 }
 
 message CreatePaymentResp {
@@ -98,6 +99,9 @@ message PayConfig {
   string updated_at = 16;
   bool wechat_payment_ready = 17;
   bool alipay_ready = 18;
+  // 适用客户端渠道（勾选的客户端渠道 code 列表：mp/gzh/app/h5；空=全部客户端渠道可用，兼容存量数据）
+  repeated string wechat_client_channels = 19;
+  repeated string alipay_client_channels = 20;
 }
 
 message UploadPayCertReq {

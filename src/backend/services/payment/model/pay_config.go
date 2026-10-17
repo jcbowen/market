@@ -16,6 +16,11 @@ type PayConfig struct {
 	// 支付渠道开关与顺序，可选值：wechat / alipay / cash
 	EnabledChannels string `gorm:"column:enabled_channels;type:varchar(100);comment:启用的支付渠道 JSON 数组，可选值 wechat/alipay/cash，决定 C 端展示与顺序" json:"enabled_channels"`
 
+	// 适用客户端渠道（勾选的客户端渠道 code JSON 数组：mp/gzh/app/h5）
+	// 空数组/空串=全部客户端渠道可用（存量数据兼容口径）；渲染时与后台「渠道管理」已启用渠道取交集
+	WechatClientChannels string `gorm:"column:wechat_channels;type:varchar(255);comment:微信支付适用客户端渠道 JSON 数组（mp/gzh/app/h5），空=全部可用" json:"wechat_channels"`
+	AlipayClientChannels string `gorm:"column:alipay_channels;type:varchar(255);comment:支付宝适用客户端渠道 JSON 数组（mp/gzh/app/h5），空=全部可用" json:"alipay_channels"`
+
 	// 微信支付 V3
 	WechatAppID        string `gorm:"column:wechat_app_id;type:varchar(64);comment:微信支付 AppID" json:"wechat_app_id"`
 	WechatAppSecret    string `gorm:"column:wechat_app_secret;type:varchar(128);comment:微信支付 AppSecret" json:"wechat_app_secret"`

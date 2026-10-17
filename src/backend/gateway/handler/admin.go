@@ -4323,6 +4323,9 @@ type PaymentSetting struct {
 	AlipayCertUploaded bool                 `json:"alipay_cert_uploaded"`
 	UpdatedAt          string               `json:"updated_at"`
 	SuggestedURLs      PaymentSuggestedURLs `json:"suggested_urls"`
+	// 适用客户端渠道勾选（mp/gzh/app/h5；空数组=全部客户端渠道可用，存量兼容口径）
+	WechatClientChannels []string `json:"wechat_client_channels"`
+	AlipayClientChannels []string `json:"alipay_client_channels"`
 }
 
 // PaymentSuggestedURLs 回调 URL 配置引导
@@ -4367,6 +4370,9 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 		AlipayCertUploaded: resp.AlipayCertUploaded,
 		UpdatedAt:          resp.UpdatedAt,
 		SuggestedURLs:      buildSuggestedURLs(c),
+
+		WechatClientChannels: resp.WechatClientChannels,
+		AlipayClientChannels: resp.AlipayClientChannels,
 	}
 
 	response.Success(c, setting)
@@ -4406,6 +4412,9 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 		AlipayPublicKey:  req.Alipay.AlipayPublicKey,
 		AlipayNotifyUrl:  req.Alipay.NotifyURL,
 		AlipayReturnUrl:  req.Alipay.ReturnURL,
+
+		WechatClientChannels: req.WechatClientChannels,
+		AlipayClientChannels: req.AlipayClientChannels,
 	})
 	if err != nil {
 		log.Printf("保存支付设置失败: %v", err)
