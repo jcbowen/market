@@ -74,6 +74,11 @@
 
     <!-- 优惠券、支付方式与备注 -->
     <view class="extra-card">
+      <!-- 商品总额：让"总额 + 配送费 - 满减 - 券 = 合计"口径可对账 -->
+      <view class="extra-item">
+        <text>商品总额</text>
+        <text class="extra-value amount-value">{{ formatPrice(totalAmount) }}</text>
+      </view>
       <view class="extra-item">
         <text>满减优惠</text>
         <text class="extra-value" :class="{ 'discount-value': fullReductionDiscount > 0 }">{{ fullReductionText }}</text>
@@ -176,7 +181,7 @@ import { getPaymentChannels } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
 import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
-import { goAddressList, goOrderDetail, goLogin } from '@/utils/navigate'
+import { goAddressList, goLogin } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { removeLocalCartItem } from '@/utils/localCart'
 import { calcCouponDiscount, couponTitle, isCouponExpired } from '@/utils/coupon'
@@ -377,11 +382,38 @@ onLoad((query) => {
   }
 })
 
+/** 进入页面时记录的社区 ID，用于识别结算中途切换社区 */
+const enteredCommunityId = ref(0)
+let communityInitialized = false
+
 onShow(() => {
   if (!userStore.isLogin) {
     goLogin()
     return
   }
+  const currentCommunityId = userStore.communityInfo?.id || 0
+  // 结算中途切换社区：购物车按社区隔离，原购物车商品在新社区查不到，商品信息会丢失。
+  // 购物车结算场景（含默认选中路径）提示后退出确认页重新选购；
+  // 直接购买（skuId）不依赖社区购物车，仅刷新社区运费等信息，不打断
+  if (
+    communityInitialized &&
+    enteredCommunityId.value > 0 &&
+    currentCommunityId !== enteredCommunityId.value &&
+    (cartItemIds.value.length > 0 || !skuId.value)
+  ) {
+    uni.showToast({ title: '已切换社区，请重新选购商品', icon: 'none' })
+    setTimeout(() => {
+      const pages = getCurrentPages()
+      if (pages.length > 1) {
+        uni.navigateBack({})
+      } else {
+        uni.switchTab({ url: '/pages/cart/cart' })
+      }
+    }, 800)
+    return
+  }
+  enteredCommunityId.value = currentCommunityId
+  communityInitialized = true
   loadAddresses()
   loadPaymentChannels()
   loadFullReductions()
@@ -644,7 +676,9 @@ async function onSubmit() {
     userStore.setAddress(null)
     const outcome = await payOrder(res.data.id, selectedChannel.value.channel)
     notifyPayOutcome(outcome)
-    goOrderDetail(res.data.id)
+    // redirectTo 替换当前确认页：返回键/滑动返回直接回到进入确认页前的页面，
+    // 避免再回到确认页看到已结算商品或重复下单
+    uni.redirectTo({ url: `/pages/order/detail?id=${res.data.id}` })
   } catch {
     // 下单或支付失败已由 request 统一提示
   } finally {
@@ -837,6 +871,11 @@ async function onSubmit() {
 
 .extra-value.discount-value {
   color: #ff4d4f;
+}
+
+/* 金额类明细（商品总额）用深色，与灰色占位文案区分 */
+.amount-value {
+  color: #333333;
 }
 
 /* 免配送费试算展示：右对齐两行（金额+活动进度提示） */

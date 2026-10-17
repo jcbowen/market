@@ -330,6 +330,8 @@ async function onRegionChange(e: { columnIndex: number; value: Region[] }) {
  * 直辖市（第二列即区县）无市级层：市与省同名同码落库，保证 city 字段始终有值
  */
 function onRegionConfirm(e: { value: Region[] }) {
+  // uview-plus 的 u-picker 为受控模式（:show），确认后不会自动关闭，必须手动收起
+  regionPickerShow.value = false
   const [prov, second, third] = e.value
   if (!prov) return
   if (second && second.level === 3) {
