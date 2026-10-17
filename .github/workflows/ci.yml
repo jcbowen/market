@@ -76,6 +76,12 @@ jobs:
           go mod edit -dropreplace github.com/jcbowen/jcbaseGo
           go mod edit -dropreplace github.com/jcbowen/wego
 
+      # 仓库提交的 go.sum 基于 replace 状态生成，不含 jcbaseGo/wego 条目，
+      # 需 tidy 补全后 lint 才能完成 typecheck
+      - name: 下载依赖
+        working-directory: src/backend
+        run: go mod tidy
+
       # 配置文件位于仓库根目录 .golangci.yml（v2 格式），golangci-lint 会自
       # working-directory 逐级向上查找配置
       - uses: golangci/golangci-lint-action@v8
