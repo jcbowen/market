@@ -907,8 +907,17 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 	}
 	refund.Status = 4
 
+	// 操作者类型按 OperatorId 区分：0 为系统自动审批（调度器超时自动同意），
+	// 其余为后台管理员人工审批；审批与完成日志均需如实区分，便于审计追溯
+	operatorType := "admin"
+	remark := ""
+	if req.OperatorId == 0 {
+		operatorType = "system"
+		remark = "超过72小时未处理，系统自动同意"
+	}
+
 	// 审批日志：同意（进入退款中）
-	if err := s.createRefundLog(ctx, refund.ID, "approve", "admin", req.OperatorId, ""); err != nil {
+	if err := s.createRefundLog(ctx, refund.ID, "approve", operatorType, req.OperatorId, remark); err != nil {
 		return err
 	}
 
@@ -917,7 +926,7 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 		return err
 	}
 
-	return s.completeRefundSuccess(ctx, &refund, refundItems, "admin", req.OperatorId)
+	return s.completeRefundSuccess(ctx, &refund, refundItems, operatorType, req.OperatorId)
 }
 
 // RetryRefund 重试退款
@@ -1056,6 +1065,12 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 				return err
 			}
 			refundCompleted.Type = 1
+			// 整单退款回补优惠券：与取消订单同口径，全额退款后券应返还用户
+			if o.CouponID > 0 {
+				if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
+					return fmt.Errorf("回补优惠券失败: %w", err)
+				}
+			}
 		}
 
 		o.Status = nextStatus

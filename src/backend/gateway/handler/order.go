@@ -1,14 +1,20 @@
 package handler
 
 import (
+	"context"
+	"crypto/sha256"
+	"fmt"
 	"log"
+	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
 	"github.com/jcbowen/market/src/backend/common/errcode"
+	"github.com/jcbowen/market/src/backend/common/proto/cart"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -16,11 +22,73 @@ import (
 	"github.com/jcbowen/market/src/backend/common/response"
 )
 
+// orderDedup 下单去重：基于 (user_id + community_id + items) 指纹的短时间窗口防重复提交。
+// 单实例内存实现（gateway 当前单副本部署）；多实例扩展需替换为 Redis SETNX。
+var orderDedup sync.Map // key: string(sha256 fingerprint), value: time.Time
+
+const orderDedupWindow = 5 * time.Second
+
+func init() {
+	// 定期清理过期指纹，防止内存泄漏
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			cutoff := time.Now().Add(-orderDedupWindow * 2)
+			orderDedup.Range(func(key, value any) bool {
+				if t, ok := value.(time.Time); ok && t.Before(cutoff) {
+					orderDedup.Delete(key)
+				}
+				return true
+			})
+		}
+	}()
+}
+
+// orderFingerprint 计算下单请求指纹（user + community + 配送方式 + 优惠券 + 商品列表排序哈希）
+// 配送方式/优惠券参与指纹：同用户 5s 内换配送方式或优惠券提交相同商品不属于重复提交
+func orderFingerprint(userID, communityID, deliveryType, couponID int64, items []*order.OrderItem) string {
+	skus := make([]string, 0, len(items))
+	for _, it := range items {
+		skus = append(skus, fmt.Sprintf("%d:%d", it.SkuId, it.Quantity))
+	}
+	sort.Strings(skus)
+	raw := fmt.Sprintf("%d|%d|%d|%d|%v", userID, communityID, deliveryType, couponID, skus)
+	h := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", h[:16])
+}
+
+// communityNameCache 社区名称本地缓存（TTL 5min）：社区数据变更频率极低，
+// 避免订单列表页每次请求都逐条 RPC 查询社区名称
+var communityNameCache sync.Map // key: int64(community_id), value: *communityCacheEntry
+
+type communityCacheEntry struct {
+	name     string
+	cachedAt time.Time
+}
+
+const communityCacheTTL = 5 * time.Minute
+
+// getCommunityName 带缓存的社区名称查询：命中缓存直接返回，未命中则 RPC 查询并回填
+func (h *OrderHandler) getCommunityName(ctx context.Context, communityID int64) string {
+	if v, ok := communityNameCache.Load(communityID); ok {
+		entry := v.(*communityCacheEntry)
+		if time.Since(entry.cachedAt) < communityCacheTTL {
+			return entry.name
+		}
+	}
+	community, err := h.userClient.GetCommunity(ctx, &user.GetCommunityReq{Id: communityID})
+	if err != nil || community == nil {
+		return ""
+	}
+	communityNameCache.Store(communityID, &communityCacheEntry{name: community.Name, cachedAt: time.Now()})
+	return community.Name
+}
+
 // OrderHandler 订单接口处理器
 type OrderHandler struct {
 	orderClient   order.OrderServiceClient
 	userClient    user.UserServiceClient
 	paymentClient payment.PaymentServiceClient
+	cartClient    cart.CartServiceClient
 	// orderTimeoutSec 订单超时未支付时间（秒），与 order-service 读同一份配置，
 	// 用于详情响应生成待支付订单的 expire_at
 	orderTimeoutSec int
@@ -31,11 +99,12 @@ type OrderHandler struct {
 //   - orderClient: order-service gRPC 客户端
 //   - userClient: user-service gRPC 客户端
 //   - paymentClient: payment-service gRPC 客户端，用于订单详情展示支付方式
+//   - cartClient: cart-service gRPC 客户端，用于下单后清理购物车
 //   - orderTimeoutSec: 订单超时未支付时间（秒）
 //
 // 返回值：
 //   - *OrderHandler: 订单处理器实例
-func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient, paymentClient payment.PaymentServiceClient, orderTimeoutSec int) *OrderHandler {
+func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient, paymentClient payment.PaymentServiceClient, cartClient cart.CartServiceClient, orderTimeoutSec int) *OrderHandler {
 	if orderTimeoutSec <= 0 {
 		orderTimeoutSec = 1800
 	}
@@ -43,6 +112,7 @@ func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserS
 		orderClient:     orderClient,
 		userClient:      userClient,
 		paymentClient:   paymentClient,
+		cartClient:      cartClient,
 		orderTimeoutSec: orderTimeoutSec,
 	}
 }
@@ -95,6 +165,17 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		}
 		communityID = userResp.CommunityId
 	}
+
+	// 防重复下单：相同用户+社区+配送方式+优惠券+商品列表在 5s 窗口内仅允许一次提交
+	fp := orderFingerprint(uc.UserID, communityID, int64(req.DeliveryType), req.CouponID, req.Items)
+	if prev, loaded := orderDedup.LoadOrStore(fp, time.Now()); loaded {
+		if t, ok := prev.(time.Time); ok && time.Since(t) < orderDedupWindow {
+			response.Error(c, errcode.ParamError, "请勿重复提交订单")
+			return
+		}
+		orderDedup.Store(fp, time.Now())
+	}
+
 	resp, err := h.orderClient.CreateOrder(c.Request.Context(), &order.CreateOrderReq{
 		UserId:       uc.UserID,
 		CommunityId:  communityID,
@@ -106,10 +187,28 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		Items:        req.Items,
 	})
 	if err != nil {
+		// 下单失败时释放指纹：库存不足等原因被拒后，用户应可立即重试而非被去重窗口拦截
+		orderDedup.Delete(fp)
 		log.Printf("创建订单失败: %v", err)
 		response.GRPCError(c, err)
 		return
 	}
+
+	// 服务端兜底清理购物车：下单成功后异步删除已购 SKU，防止客户端崩溃/网络中断导致残留
+	if h.cartClient != nil {
+		go func(userID int64, items []*order.OrderItem) {
+			bgCtx := context.Background()
+			for _, item := range items {
+				if _, err := h.cartClient.RemoveItem(bgCtx, &cart.RemoveItemReq{
+					Id:     item.SkuId,
+					UserId: userID,
+				}); err != nil {
+					log.Printf("下单后清理购物车失败（user=%d sku=%d）: %v", userID, item.SkuId, err)
+				}
+			}
+		}(uc.UserID, req.Items)
+	}
+
 	response.Success(c, resp)
 }
 
@@ -144,7 +243,7 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		return
 	}
 
-	// 批量补社区名称（按社区 ID 去重后逐个查询，列表页展示订单所属社区）
+	// 批量补社区名称（本地缓存 TTL 5min，消除逐条 RPC）
 	communityNames := make(map[int64]string)
 	for _, o := range resp.List {
 		if o.CommunityId <= 0 {
@@ -153,48 +252,65 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		if _, ok := communityNames[o.CommunityId]; ok {
 			continue
 		}
-		if community, cErr := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: o.CommunityId}); cErr == nil && community != nil {
-			communityNames[o.CommunityId] = community.Name
-		}
+		communityNames[o.CommunityId] = h.getCommunityName(c.Request.Context(), o.CommunityId)
 	}
 
-	list := make([]gin.H, 0, len(resp.List))
-	for _, o := range resp.List {
-		detail, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{
-			Id:     o.Id,
-			UserId: uc.UserID,
-		})
-		items := make([]gin.H, 0)
-		if err == nil && detail != nil {
-			for _, item := range detail.Items {
-				// 键名与购物车/商品接口及前端 types.ts 的 OrderItem 保持一致
-				items = append(items, gin.H{
-					"id":            item.Id,
-					"product_id":    item.ProductId,
-					"product_name":  item.ProductName,
-					"sku_id":        item.SkuId,
-					"spec_name":     item.SpecName,
-					"price":         item.Price,
-					"quantity":      item.Quantity,
-					"total_price":   item.TotalPrice,
-					"product_image": item.ProductImage,
-				})
+	// 并行获取订单商品明细（消除 N+1 串行 RPC，延迟从 N×RTT 降为 ~1×RTT）
+	type orderDetail struct {
+		items   []gin.H
+		payType int32
+	}
+	details := make([]orderDetail, len(resp.List))
+	var wg sync.WaitGroup
+	for i, o := range resp.List {
+		wg.Add(1)
+		go func(idx int64, orderID int64) {
+			defer wg.Done()
+			var d orderDetail
+			if detail, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{
+				Id:     orderID,
+				UserId: uc.UserID,
+			}); err == nil && detail != nil {
+				for _, item := range detail.Items {
+					d.items = append(d.items, gin.H{
+						"id":            item.Id,
+						"product_id":    item.ProductId,
+						"product_name":  item.ProductName,
+						"sku_id":        item.SkuId,
+						"spec_name":     item.SpecName,
+						"price":         item.Price,
+						"quantity":      item.Quantity,
+						"total_price":   item.TotalPrice,
+						"product_image": item.ProductImage,
+					})
+				}
 			}
+			d.payType = h.orderPayType(c, orderID)
+			details[idx] = d
+		}(int64(i), o.Id)
+	}
+	wg.Wait()
+
+	list := make([]gin.H, 0, len(resp.List))
+	for i, o := range resp.List {
+		items := details[i].items
+		if items == nil {
+			items = make([]gin.H, 0)
 		}
 		list = append(list, gin.H{
-			"id":             o.Id,
-			"order_no":       o.OrderNo,
-			"status":         o.Status,
-			"status_text":    clientOrderStatusText(o.Status, o.DeliveryType),
-			"delivery_type":  o.DeliveryType,
-			"total_amount":   o.TotalAmount,
-			"pay_amount":     o.PayAmount,
+			"id":            o.Id,
+			"order_no":      o.OrderNo,
+			"status":        o.Status,
+			"status_text":   clientOrderStatusText(o.Status, o.DeliveryType),
+			"delivery_type": o.DeliveryType,
+			"total_amount":  o.TotalAmount,
+			"pay_amount":    o.PayAmount,
 			// 订单所属社区（列表页展示社区标签）
 			"community_id":   o.CommunityId,
 			"community_name": communityNames[o.CommunityId],
 			// 支付类型（1微信 2支付宝 3货到付款 4现金；0=未支付/未知），
 			// 供前端区分货到付款单的"取消订单/申请退款"按钮显示
-			"pay_type": h.orderPayType(c, o.Id),
+			"pay_type": details[i].payType,
 			// 订单来源（1=C端用户 2=收银台代客）：门店单在 C 端展示但只读（隐藏操作按钮）
 			"source":     o.Source,
 			"items":      items,
