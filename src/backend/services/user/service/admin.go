@@ -8,8 +8,10 @@ import (
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -23,6 +25,7 @@ type AdminService struct {
 // NewAdminService 创建管理员业务服务
 // 参数：
 //   - db: MySQL 实例
+//
 // 返回：
 //   - *AdminService: 管理员业务服务实例
 func NewAdminService(db *mysql.Instance) *AdminService {
@@ -33,6 +36,7 @@ func NewAdminService(db *mysql.Instance) *AdminService {
 // 参数：
 //   - ctx: 上下文
 //   - username: 用户名
+//
 // 返回：
 //   - *model.Admin: 管理员模型
 //   - error: 错误信息
@@ -131,7 +135,7 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 		var account model.Admin
 		err := s.db.GetDb().WithContext(ctx).Where("username = ?", req.Username).First(&account).Error
 		if err == nil {
-			return nil, fmt.Errorf("用户名已存在")
+			return nil, bizerr.New(codes.FailedPrecondition, "用户名已存在")
 		}
 		if err != gorm.ErrRecordNotFound {
 			return nil, err
@@ -344,6 +348,7 @@ func (s *AdminService) ChangeAdminPassword(ctx context.Context, id int64, oldPas
 //   - ctx: 上下文
 //   - id: 管理员 ID
 //   - ip: 登录 IP
+//
 // 返回：
 //   - error: 错误信息
 func (s *AdminService) UpdateLoginInfo(ctx context.Context, id int64, ip string) error {
@@ -360,6 +365,7 @@ func (s *AdminService) UpdateLoginInfo(ctx context.Context, id int64, ip string)
 // 参数：
 //   - ctx: 上下文
 //   - id: 管理员 ID
+//
 // 返回：
 //   - *model.Admin: 管理员模型
 //   - error: 错误信息
@@ -618,6 +624,7 @@ func replaceAssignmentsTx(tx *gorm.DB, adminID int64, communityID int64, roleIDs
 // hashPassword 对密码进行 bcrypt 哈希
 // 参数：
 //   - password: 明文密码
+//
 // 返回：
 //   - string: 哈希后的密码
 //   - error: 错误信息
@@ -630,6 +637,7 @@ func hashPassword(password string) (string, error) {
 // 参数：
 //   - password: 明文密码
 //   - hashed: 哈希密码
+//
 // 返回：
 //   - error: 校验错误信息
 func CheckPassword(password, hashed string) error {
@@ -641,6 +649,7 @@ func CheckPassword(password, hashed string) error {
 //   - a: 管理员模型
 //   - communityIDs: 任职社区 ID 列表（可选，超管传空）
 //   - roles: 语境社区内的角色列表（可选）
+//
 // 返回：
 //   - *user.AdminInfo: proto 管理员信息
 func ToAdminInfo(a *model.Admin, communityIDs []int64, roles []*model.Role) *user.AdminInfo {

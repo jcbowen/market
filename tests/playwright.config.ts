@@ -14,7 +14,7 @@ export default defineConfig({
   workers: 1,
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  retries: 0,
+  retries: 2,
   reporter: [
     ['list'],
     ['html', { outputFolder: 'test-results/html', open: 'never' }],

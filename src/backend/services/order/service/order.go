@@ -1088,14 +1088,16 @@ func (s *OrderService) GetOrderStatistics(ctx context.Context, req *order.GetOrd
 		switch c.Status {
 		case 1:
 			resp.PendingPay = int32(c.Count)
-		case 2:
-			resp.PendingShip = int32(c.Count)
+		case 2, 3:
+			// 待发货口径涵盖备货中（3），否则状态之和会小于总单数
+			resp.PendingShip += int32(c.Count)
 		case 4:
 			resp.PendingReceive = int32(c.Count)
 		case 5:
 			resp.Completed = int32(c.Count)
-		case 6:
-			resp.Cancelled = int32(c.Count)
+		case 6, 8:
+			// 已退款（8）为交易未达成的终态，统计口径并入已取消，保证状态之和等于总单数
+			resp.Cancelled += int32(c.Count)
 		case 7:
 			resp.Refunding = int32(c.Count)
 		}
