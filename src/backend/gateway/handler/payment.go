@@ -30,7 +30,7 @@ const (
 var (
 	errWechatClientChannelNotReady = errors.New("微信小程序渠道未启用或未配置")
 	errWechatGzhNotOpen            = errors.New("公众号内微信支付暂未开放")
-	errWechatAppNotOpen            = errors.New("App 微信支付暂未开放")
+	errWechatAppNotOpen            = errors.New("微信 App 支付暂未开放")
 	// errWechatOpenidUnavailable 渠道身份缺失/查询异常：拒绝支付而非静默降级——
 	// 空 openid 会被支付服务误判为 H5 通道下单，小程序内无法调起 h5_url，表现为支付必失败
 	errWechatOpenidUnavailable = errors.New("微信支付身份缺失，请重新登录小程序后重试")

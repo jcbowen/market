@@ -263,8 +263,8 @@ func (s *ChannelService) UpsertUserChannelIdentity(ctx context.Context, userID i
 	err := s.db.GetDb().WithContext(ctx).
 		Where("user_id = ? AND channel_code = ?", userID, channelCode).
 		First(&row).Error
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		// 内容一致时跳过写入，减少登录链路的无效更新
 		if row.Openid == openid && row.Unionid == unionid {
 			return nil
@@ -276,7 +276,7 @@ func (s *ChannelService) UpsertUserChannelIdentity(ctx context.Context, userID i
 				"unionid":    unionid,
 				"updated_at": now,
 			}).Error
-	case err == gorm.ErrRecordNotFound:
+	case gorm.ErrRecordNotFound:
 		row = model.UserChannelIdentity{
 			UserID:      userID,
 			ChannelCode: channelCode,
