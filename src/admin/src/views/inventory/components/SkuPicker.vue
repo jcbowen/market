@@ -12,6 +12,7 @@
     :render-label="renderLabel"
     style="width: 300px"
     @search="onSearch"
+    @update:show="onShowChange"
     @update:value="onSelect"
     @clear="onClear"
   />
@@ -20,8 +21,8 @@
 <script setup lang="ts">
 /**
  * SKU 选择器（单框远程搜索）
- * 输入即搜（防抖 300ms）：商品名 / SKU 编码 / 条形码，SKU 级选项直达选中，
- * 替代旧版「输入关键字 → 点查询 → 选商品 → 选 SKU」的多步交互。
+ * 点击展开即加载默认前 20 条（免输入直接浏览选货）；输入即搜（防抖 300ms）：商品名 / SKU 编码 / 条形码，
+ * SKU 级选项直达选中，替代旧版「输入关键字 → 点查询 → 选商品 → 选 SKU」的多步交互。
  * 供采购单/入库单/出库单/盘点详情的明细行选择商品使用，change 事件回传完整 SKU（含商品名/库存）。
  */
 import { h, onBeforeUnmount, ref, type VNodeChild } from 'vue'
@@ -63,22 +64,43 @@ function skuLabel(sku: Sku) {
 }
 
 /**
- * 自定义下拉选项渲染：两行布局，避免「商品名·规格（编码｜库存）」单行超长被面板截断
- * 主行「商品名 · 规格」超长省略；副行小字灰色展示 SKU 编码 / 条形码 / 库存，
- * 库存 ≤ 安全库存时追加红色「库存不足」提醒（进销存选货关键信号）
+ * 生成触发框回显用的短文本
+ * @param sku 完整 SKU 信息
+ * @returns 「商品名 · 规格」，保持单行，避免回显撑高触发框导致页面错位
+ */
+function shortLabel(sku: Sku) {
+  const name = sku.product_name || sku.sku_code
+  const spec = sku.spec_name ? ` · ${sku.spec_name}` : ''
+  return `${name}${spec}`
+}
+
+/**
+ * 自定义选项渲染：按渲染场景分支（Naive UI 的选中回显与菜单选项共用本函数）
+ * - 触发框回显（selected=true）：单行「商品名 · 规格」，ellipsis 截断 + title 悬浮全量信息，
+ *   触发框高度恒定不撑高表格行；库存/成本由明细行下方小字承载
+ * - 菜单选项（selected=false）：两行详情布局，主行「商品名 · 规格」，副行小字灰色展示
+ *   SKU 编码 / 条形码 / 库存，库存 ≤ 安全库存时追加红色「库存不足」提醒
  * @param option 当前选项（含自定义 sku 字段）
- * @returns VNode 子节点；根节点带 title 属性，悬浮可看全量文本，无抛错路径
+ * @param selected 是否为触发框内的选中回显
+ * @returns VNode 子节点，无抛错路径
  * @example <n-select :render-label="renderLabel" />
  */
-function renderLabel(option: SelectOption): VNodeChild {
+function renderLabel(option: SelectOption, selected: boolean): VNodeChild {
   const sku = (option as PickerOption).sku
+  const full = skuLabel(sku)
+  if (selected) {
+    return h('span', {
+      title: full,
+      style: 'display: inline-block; vertical-align: middle; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap',
+    }, shortLabel(sku))
+  }
   const spec = sku.spec_name ? ` · ${sku.spec_name}` : ''
   const meta = [sku.sku_code, sku.barcode, `库存 ${sku.stock}`].filter(Boolean).join(' ｜ ')
   const slots = [
     h('span', { style: 'color: rgba(0, 0, 0, 0.45)' }, meta),
     ...(sku.stock <= sku.safety_stock ? [h('span', { style: 'color: #d03050' }, '库存不足')] : []),
   ]
-  return h('div', { style: 'min-width: 0; max-width: 480px', title: skuLabel(sku) }, [
+  return h('div', { style: 'min-width: 0; max-width: 520px', title: full }, [
     h('div', { style: 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap' }, `${sku.product_name || sku.sku_code}${spec}`),
     h('div', { style: 'display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 12px; line-height: 17px' }, slots),
   ])
@@ -86,27 +108,43 @@ function renderLabel(option: SelectOption): VNodeChild {
 
 function onSearch(keyword: string) {
   if (searchTimer) clearTimeout(searchTimer)
-  if (!keyword.trim()) {
-    options.value = []
-    return
-  }
-  searchTimer = setTimeout(async () => {
-    const seq = ++requestSeq
-    searching.value = true
-    try {
-      const res = await getSkuStockList({ page: 1, page_size: 20, keyword: keyword.trim() })
-      if (seq !== requestSeq) return
-      if (res.data.code === 0) {
-        options.value = (res.data.data.list || []).map((sku) => ({
-          label: skuLabel(sku),
-          value: sku.id,
-          sku,
-        }))
-      }
-    } finally {
-      if (seq === requestSeq) searching.value = false
+  searchTimer = setTimeout(() => fetchOptions(keyword), 300)
+}
+
+/**
+ * 拉取选项列表（实际请求，含乱序响应保护）
+ * @param keyword 搜索关键词（商品名/SKU 编码/条形码），空串加载默认前 20 条
+ * @returns 无；结果写入 options，加载态写入 searching
+ * @example fetchOptions('鸡蛋')
+ */
+async function fetchOptions(keyword: string) {
+  const seq = ++requestSeq
+  searching.value = true
+  try {
+    const res = await getSkuStockList({ page: 1, page_size: 20, keyword: keyword.trim() || undefined })
+    if (seq !== requestSeq) return
+    if (res.data.code === 0) {
+      options.value = (res.data.data.list || []).map((sku) => ({
+        label: shortLabel(sku),
+        value: sku.id,
+        sku,
+      }))
     }
-  }, 300)
+  } finally {
+    if (seq === requestSeq) searching.value = false
+  }
+}
+
+/**
+ * 下拉展开/收起回调：展开且尚无选项时（首次点击或 reset 后）直接加载默认列表，
+ * 免输入即可浏览选货；已有选项（如刚搜索过）则保留不覆盖
+ * @param show 下拉菜单是否展开
+ */
+function onShowChange(show: boolean) {
+  if (show && options.value.length === 0) {
+    if (searchTimer) clearTimeout(searchTimer)
+    fetchOptions('')
+  }
 }
 
 function onSelect(value: number | null) {
