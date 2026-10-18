@@ -33,15 +33,18 @@ jobs:
           go-version: '1.26'
           cache-dependency-path: src/backend/go.sum
 
-      # jcbaseGo / wego 已在 GitHub 公开发布对应 tag（v0.15.7 / v0.1.0），
-      # 本地开发经 go.mod replace 指向本机仓库目录；CI 统一 drop replace，
-      # 从公共 Go proxy 拉取已发布版本。
+      # jcbaseGo / wego / alipay-sdk-go-all 已在 GitHub 公开发布对应 tag
+      # （v0.16.1 / v0.1.0 / v0.0.1），本地开发经 go.mod replace 指向本机仓库目录；
+      # CI 统一 drop replace，从公共 Go proxy 拉取已发布版本。
+      # 新增本地 replace 依赖时必须同步在此处补 dropreplace，否则 CI 上不存在
+      # ../../../ 仓库外路径，go mod tidy 会直接报 replacement directory does not exist。
       # 注意：若本地依赖库有未发版改动导致编译不兼容，需先在依赖仓库发布新 tag
       # 并同步更新本仓库 go.mod require 版本；或改用 PAT + GOPRIVATE 私有拉取方案。
       - name: 移除本地 replace 指令
         run: |
           go mod edit -dropreplace github.com/jcbowen/jcbaseGo
           go mod edit -dropreplace github.com/jcbowen/wego
+          go mod edit -dropreplace github.com/jcbowen/alipay-sdk-go-all
 
       - name: 下载依赖
         run: go mod tidy
@@ -77,6 +80,7 @@ jobs:
         run: |
           go mod edit -dropreplace github.com/jcbowen/jcbaseGo
           go mod edit -dropreplace github.com/jcbowen/wego
+          go mod edit -dropreplace github.com/jcbowen/alipay-sdk-go-all
 
       # 仓库提交的 go.sum 基于 replace 状态生成，不含 jcbaseGo/wego 条目，
       # 需 tidy 补全后 lint 才能完成 typecheck
@@ -157,6 +161,7 @@ jobs:
         run: |
           go mod edit -dropreplace github.com/jcbowen/jcbaseGo
           go mod edit -dropreplace github.com/jcbowen/wego
+          go mod edit -dropreplace github.com/jcbowen/alipay-sdk-go-all
 
       - name: 下载依赖
         working-directory: src/backend
