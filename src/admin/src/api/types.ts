@@ -162,6 +162,8 @@ export interface Sku {
   status: number
   /** 商品条形码（EAN-13 等，社区内唯一，空表示未设置） */
   barcode: string
+  /** 冗余商品名（仅 SKU 搜索接口返回，按商品查询的接口为空） */
+  product_name?: string
 }
 
 /**

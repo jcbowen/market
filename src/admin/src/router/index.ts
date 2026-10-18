@@ -121,12 +121,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/inventory/check.vue'),
         meta: { title: '盘点管理', permission: 'inventory:view', group: '库存管理' },
       },
-      {
-        path: 'stock/check/create',
-        name: 'StockCheckCreate',
-        component: () => import('@/views/inventory/check-form.vue'),
-        meta: { title: '新建盘点', permission: 'inventory:create', group: '库存管理', hidden: true },
-      },
+      // 新建盘点已改为列表页内弹窗（原 /stock/check/create 独立页已删除）
       {
         path: 'stock/check/:id',
         name: 'StockCheckDetail',

@@ -34,6 +34,7 @@ const (
 	ProductService_DeleteProduct_FullMethodName                 = "/product.ProductService/DeleteProduct"
 	ProductService_UpdateProductStatus_FullMethodName           = "/product.ProductService/UpdateProductStatus"
 	ProductService_ListSkus_FullMethodName                      = "/product.ProductService/ListSkus"
+	ProductService_SearchSkus_FullMethodName                    = "/product.ProductService/SearchSkus"
 	ProductService_CreateSku_FullMethodName                     = "/product.ProductService/CreateSku"
 	ProductService_UpdateSku_FullMethodName                     = "/product.ProductService/UpdateSku"
 	ProductService_GetSkuById_FullMethodName                    = "/product.ProductService/GetSkuById"
@@ -131,6 +132,10 @@ type ProductServiceClient interface {
 	UpdateProductStatus(ctx context.Context, in *UpdateProductStatusReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// SKU
 	ListSkus(ctx context.Context, in *ListSkusReq, opts ...grpc.CallOption) (*ListSkusResp, error)
+	// SearchSkus 社区内 SKU 级搜索（join products 携带商品名）
+	// keyword 匹配商品名 / SKU 编码 / 条形码（LIKE）；keyword 为空时返回全量（分页）
+	// 供库存工作台列表与进销存表单的 SKU 选择器复用，替代 gateway 侧 N+1 组合查询
+	SearchSkus(ctx context.Context, in *SearchSkusReq, opts ...grpc.CallOption) (*SearchSkusResp, error)
 	CreateSku(ctx context.Context, in *CreateSkuReq, opts ...grpc.CallOption) (*SkuInfo, error)
 	UpdateSku(ctx context.Context, in *UpdateSkuReq, opts ...grpc.CallOption) (*SkuInfo, error)
 	GetSkuById(ctx context.Context, in *GetSkuByIdReq, opts ...grpc.CallOption) (*SkuInfo, error)
@@ -367,6 +372,16 @@ func (c *productServiceClient) ListSkus(ctx context.Context, in *ListSkusReq, op
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSkusResp)
 	err := c.cc.Invoke(ctx, ProductService_ListSkus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) SearchSkus(ctx context.Context, in *SearchSkusReq, opts ...grpc.CallOption) (*SearchSkusResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchSkusResp)
+	err := c.cc.Invoke(ctx, ProductService_SearchSkus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1134,6 +1149,10 @@ type ProductServiceServer interface {
 	UpdateProductStatus(context.Context, *UpdateProductStatusReq) (*common.CommonResponse, error)
 	// SKU
 	ListSkus(context.Context, *ListSkusReq) (*ListSkusResp, error)
+	// SearchSkus 社区内 SKU 级搜索（join products 携带商品名）
+	// keyword 匹配商品名 / SKU 编码 / 条形码（LIKE）；keyword 为空时返回全量（分页）
+	// 供库存工作台列表与进销存表单的 SKU 选择器复用，替代 gateway 侧 N+1 组合查询
+	SearchSkus(context.Context, *SearchSkusReq) (*SearchSkusResp, error)
 	CreateSku(context.Context, *CreateSkuReq) (*SkuInfo, error)
 	UpdateSku(context.Context, *UpdateSkuReq) (*SkuInfo, error)
 	GetSkuById(context.Context, *GetSkuByIdReq) (*SkuInfo, error)
@@ -1277,6 +1296,9 @@ func (UnimplementedProductServiceServer) UpdateProductStatus(context.Context, *U
 }
 func (UnimplementedProductServiceServer) ListSkus(context.Context, *ListSkusReq) (*ListSkusResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSkus not implemented")
+}
+func (UnimplementedProductServiceServer) SearchSkus(context.Context, *SearchSkusReq) (*SearchSkusResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchSkus not implemented")
 }
 func (UnimplementedProductServiceServer) CreateSku(context.Context, *CreateSkuReq) (*SkuInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateSku not implemented")
@@ -1769,6 +1791,24 @@ func _ProductService_ListSkus_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ProductServiceServer).ListSkus(ctx, req.(*ListSkusReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_SearchSkus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchSkusReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).SearchSkus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_SearchSkus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).SearchSkus(ctx, req.(*SearchSkusReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3167,6 +3207,10 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSkus",
 			Handler:    _ProductService_ListSkus_Handler,
+		},
+		{
+			MethodName: "SearchSkus",
+			Handler:    _ProductService_SearchSkus_Handler,
 		},
 		{
 			MethodName: "CreateSku",

@@ -119,7 +119,7 @@ function addItem() {
     id: 0,
     sku_id: addSkuId.value,
     sku_code: sku?.sku_code || '',
-    product_name: '',
+    product_name: sku?.product_name || '',
     spec_name: sku?.spec_name || '',
     system_stock: systemStock,
     actual_stock: addActualStock.value,

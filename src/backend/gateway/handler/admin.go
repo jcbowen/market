@@ -2516,51 +2516,29 @@ func (h *AdminHandler) GetStockWarnings(c *gin.Context) {
 }
 
 // ListSkuStock 获取当前社区 SKU 库存列表
-// 通过组合 ListProducts 与 ListSkus 实现，后续可在 product-service 中增加独立 gRPC 方法优化
+// 走 product 服务 SearchSkus（keyword 匹配商品名/编码/条形码，DB 级分页）。
+// 历史实现为 gateway 侧组合查询：先拉 1000 个商品再逐个 ListSkus（N+1），且不读 keyword 参数，
+// 导致工作台关键字搜索为空操作、商品量大时接口变慢，2026-10-18 改造根治
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListSkuStock(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	communityID := h.getAdminCommunityID(c)
-	ctx := c.Request.Context()
+	keyword := strings.TrimSpace(c.Query("keyword"))
 
-	productResp, err := h.productClient.ListProducts(ctx, &product.ListProductsReq{
-		CommunityId: communityID,
+	resp, err := h.productClient.SearchSkus(c.Request.Context(), &product.SearchSkusReq{
+		CommunityId: h.getAdminCommunityID(c),
+		Keyword:     keyword,
 		Pagination: &common.Pagination{
-			Page:     1,
-			PageSize: 1000,
+			Page:     int32(page),
+			PageSize: int32(pageSize),
 		},
 	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
-
-	var allSkus []*product.SkuInfo
-	for _, p := range productResp.List {
-		skuResp, err := h.productClient.ListSkus(ctx, &product.ListSkusReq{ProductId: p.Id})
-		if err != nil {
-			continue
-		}
-		allSkus = append(allSkus, skuResp.List...)
-	}
-
-	total := len(allSkus)
-	start := (page - 1) * pageSize
-	end := start + pageSize
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
-	}
-	var pageList []*product.SkuInfo
-	if start < end {
-		pageList = allSkus[start:end]
-	}
-
-	response.SuccessWithPage(c, pageList, total, page, pageSize)
+	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
 }
 
 // ListStockChecks 获取库存盘点列表

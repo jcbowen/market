@@ -2,10 +2,23 @@
   <n-card title="盘点管理">
     <n-space vertical>
       <n-space>
-        <n-button type="primary" @click="router.push('/stock/check/create')">新建盘点</n-button>
+        <n-button type="primary" @click="createVisible = true">新建盘点</n-button>
       </n-space>
       <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" />
     </n-space>
+
+    <!-- 新建盘点弹窗：创建后直接进入详情录入实盘数据 -->
+    <n-modal v-model:show="createVisible" preset="card" title="新建盘点单" style="width: 440px">
+      <n-space vertical>
+        <n-input v-model:value="remark" placeholder="备注（选填）" type="textarea" :rows="2" maxlength="200" />
+      </n-space>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="createVisible = false">取消</n-button>
+          <n-button type="primary" :loading="creating" @click="create">创建</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </n-card>
 </template>
 
@@ -16,18 +29,22 @@ import { ref, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getInventoryCheckList } from '@/api/inventory'
+import { createInventoryCheck, getInventoryCheckList } from '@/api/inventory'
 import type { InventoryCheck } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 盘点管理页面
- * 展示盘点单列表并提供新建与详情入口
+ * 展示盘点单列表；新建改为弹窗（原独立页面只有一个备注框，多一次无意义跳转）
  */
 const router = useRouter()
 const list = ref<InventoryCheck[]>([])
 const loading = ref(false)
 const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
+
+const createVisible = ref(false)
+const creating = ref(false)
+const remark = ref('')
 
 const columns: DataTableColumns<InventoryCheck> = [
   { title: '盘点单号', key: 'check_no' },
@@ -56,6 +73,20 @@ async function loadData() {
   } finally {
     // 请求异常时也必须关闭 loading，避免页面永久转圈
     loading.value = false
+  }
+}
+
+async function create() {
+  creating.value = true
+  try {
+    const res = await createInventoryCheck({ remark: remark.value } as any)
+    if (res.data.code === 0) {
+      createVisible.value = false
+      remark.value = ''
+      router.push(`/stock/check/${res.data.data.id}`)
+    }
+  } finally {
+    creating.value = false
   }
 }
 

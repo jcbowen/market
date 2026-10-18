@@ -98,6 +98,7 @@ const stockPagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
 
 const stockColumns: DataTableColumns<Sku> = [
   { title: 'SKU ID', key: 'id', width: 90 },
+  { title: '商品', key: 'product_name', ellipsis: { tooltip: true } },
   { title: 'SKU 编码', key: 'sku_code', width: 150 },
   { title: '规格', key: 'spec_name', width: 140, ellipsis: { tooltip: true } },
   { title: '售价', key: 'price', width: 100 },
@@ -181,13 +182,13 @@ async function loadWarnings() {
   }
 }
 
-/** 一键补货：拉取补货建议，带上建议量跳采购页新建采购单 */
+/** 一键补货：拉取补货建议，直接带入新建采购单页预填明细 */
 async function replenish() {
   replenishing.value = true
   try {
     const res = await generatePurchaseOrder()
     if (res.data.code === 0) {
-      router.push({ path: '/stock/purchase', query: { tab: 'orders', replenish: JSON.stringify(res.data.data) } })
+      router.push({ path: '/stock/purchase/create', query: { replenish: JSON.stringify(res.data.data) } })
     }
   } finally {
     replenishing.value = false
@@ -345,7 +346,7 @@ function onTabChange(value: string) {
 }
 
 function goPurchase() {
-  router.push('/stock/purchase')
+  router.push('/stock/purchase/create')
 }
 
 loadStocks()

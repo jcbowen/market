@@ -43,7 +43,12 @@
                       <n-text>{{ item.sku_code }} · {{ item.product_name }}</n-text>
                       <n-text v-if="item.spec_name" depth="3"> / {{ item.spec_name }}</n-text>
                     </template>
-                    <SkuPicker v-else v-model="item.sku_id" @change="(sku) => onSkuChange(index, sku)" />
+                    <n-space v-else vertical size="small">
+                      <SkuPicker v-model="item.sku_id" @change="(sku) => onSkuChange(index, sku)" />
+                      <n-text v-if="skuInfoOf(item.sku_id)" depth="3" style="font-size: 12px">
+                        当前库存 {{ skuInfoOf(item.sku_id)!.stock }} · 成本 ¥{{ Number(skuInfoOf(item.sku_id)!.cost_price || 0).toFixed(2) }}
+                      </n-text>
+                    </n-space>
                   </td>
                   <td>
                     <n-input-number v-model:value="item.quantity" :min="1" :precision="0" placeholder="数量" style="width: 110px" />
@@ -66,7 +71,11 @@
                 </tr>
               </tbody>
             </n-table>
-            <n-button v-if="!purchaseId" size="small" dashed @click="addItem">+ 添加一行</n-button>
+            <n-space>
+              <n-button v-if="!purchaseId" size="small" dashed @click="addItem">+ 添加一行</n-button>
+              <n-button v-if="!purchaseId" size="small" dashed @click="batchPickerVisible = true">批量选货</n-button>
+              <BatchPickerModal v-if="!purchaseId" v-model:show="batchPickerVisible" @confirm="addBatchRows" />
+            </n-space>
           </n-space>
         </n-form-item>
         <n-form-item>
@@ -87,6 +96,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import SkuPicker from './components/SkuPicker.vue'
+import BatchPickerModal from './components/BatchPickerModal.vue'
 import { getSupplierList, getPurchaseOrderDetail, createStockInOrder } from '@/api/inventory'
 import type { PurchaseOrderDetail, Sku, Supplier } from '@/api/types'
 
@@ -119,6 +129,9 @@ interface InRow {
 const supplierOptions = ref<{ label: string; value: number }[]>([])
 const supplierLoading = ref(false)
 const submitting = ref(false)
+const batchPickerVisible = ref(false)
+// 已选 SKU 信息（含库存/成本），用于行内展示
+const skuInfoMap = ref<Record<number, Sku>>({})
 const form = ref({ supplier_id: null as number | null, remark: '' })
 const rows = ref<InRow[]>([])
 
@@ -135,9 +148,34 @@ function removeItem(index: number) {
   rows.value.splice(index, 1)
 }
 
+function skuInfoOf(skuId: number | undefined) {
+  return skuId ? skuInfoMap.value[skuId] : undefined
+}
+
 function onSkuChange(index: number, sku: Sku | null) {
-  if (sku && !rows.value[index].unit_cost && sku.cost_price) {
-    rows.value[index].unit_cost = Number(sku.cost_price)
+  if (sku) {
+    skuInfoMap.value[sku.id] = sku
+    if (!rows.value[index].unit_cost && sku.cost_price) {
+      rows.value[index].unit_cost = Number(sku.cost_price)
+    }
+  }
+}
+
+/** 批量选货确认：逐个 SKU 生成明细行（跳过已存在的 SKU），数量默认 1 */
+function addBatchRows(skus: Sku[]) {
+  const existing = new Set(rows.value.map((row) => row.sku_id))
+  for (const sku of skus) {
+    skuInfoMap.value[sku.id] = sku
+    if (existing.has(sku.id)) continue
+    rows.value.push({
+      sku_id: sku.id,
+      quantity: 1,
+      unit_cost: Number(sku.cost_price || 0),
+      batch_no: '',
+      production_date: null,
+      expire_date: null,
+    })
+    existing.add(sku.id)
   }
 }
 

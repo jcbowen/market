@@ -289,6 +289,35 @@ func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*produc
 	return resp, nil
 }
 
+// SearchSkus 社区内 SKU 级搜索（库存工作台列表 + 进销存表单 SKU 选择器共用）
+// 填充冗余商品名 product_name；SKU 规格图片拼接完整访问 URL
+func (s *server) SearchSkus(ctx stdctx.Context, req *product.SearchSkusReq) (*product.SearchSkusResp, error) {
+	page, pageSize := 1, 20
+	if req.Pagination != nil {
+		page = int(req.Pagination.Page)
+		pageSize = int(req.Pagination.PageSize)
+	}
+	list, total, err := s.skuService.SearchSkus(ctx, req.CommunityId, req.Keyword, page, pageSize)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	resp := &product.SearchSkusResp{
+		List: make([]*product.SkuInfo, 0, len(list)),
+		Pagination: &common.PaginationResponse{
+			Total:    int32(total),
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+	}
+	for _, row := range list {
+		info := service.ToSkuInfo(&row.Sku)
+		info.ProductName = row.ProductName
+		info.Image = s.attachmentService.ToMediaURL(ctx, row.Image)
+		resp.List = append(resp.List, info)
+	}
+	return resp, nil
+}
+
 // CreateSku 创建 SKU
 func (s *server) CreateSku(ctx stdctx.Context, req *product.CreateSkuReq) (*product.SkuInfo, error) {
 	sku, err := s.skuService.CreateSku(ctx, req)

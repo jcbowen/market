@@ -20,7 +20,13 @@
             <tbody>
               <tr v-for="(item, index) in form.items" :key="index">
                 <td>
-                  <SkuPicker v-model="item.sku_id" @change="(sku) => onSkuChange(index, sku)" />
+                  <n-space vertical size="small">
+                    <SkuPicker v-model="item.sku_id" @change="(sku) => onSkuChange(index, sku)" />
+                    <n-text v-if="skuInfoOf(item.sku_id)" depth="3" style="font-size: 12px">
+                      当前库存 {{ skuInfoOf(item.sku_id)!.stock }}
+                    </n-text>
+                    <n-text v-if="overStock(item)" type="error" style="font-size: 12px">出库数量超过当前库存，可能提交失败</n-text>
+                  </n-space>
                 </td>
                 <td>
                   <n-input-number v-model:value="item.quantity" :min="1" :precision="0" placeholder="数量" style="width: 120px" />
@@ -32,6 +38,8 @@
             </tbody>
           </n-table>
           <n-button size="small" dashed @click="addItem">+ 添加一行</n-button>
+          <n-button size="small" dashed @click="batchPickerVisible = true">批量选货</n-button>
+          <BatchPickerModal v-model:show="batchPickerVisible" @confirm="addBatchRows" />
         </n-space>
       </n-form-item>
       <n-form-item>
@@ -52,6 +60,7 @@ import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import SkuPicker from './components/SkuPicker.vue'
+import BatchPickerModal from './components/BatchPickerModal.vue'
 import { createStockOutOrder } from '@/api/inventory'
 import type { Sku } from '@/api/types'
 
@@ -65,6 +74,9 @@ const message = useMessage()
 
 const formRef = ref<FormInst | null>(null)
 const submitting = ref(false)
+const batchPickerVisible = ref(false)
+// 已选 SKU 信息（含库存），用于行内展示与超库提示
+const skuInfoMap = ref<Record<number, Sku>>({})
 const form = ref({
   type: 1 as number,
   remark: '',
@@ -89,8 +101,31 @@ function removeItem(index: number) {
   form.value.items.splice(index, 1)
 }
 
-function onSkuChange(_index: number, _sku: Sku | null) {
-  // 预留：后续可按 SKU 展示可用批次库存
+function skuInfoOf(skuId: number | undefined) {
+  return skuId ? skuInfoMap.value[skuId] : undefined
+}
+
+/** 出库数量是否超过当前库存（软提示，最终以后端 FEFO 扣减校验为准） */
+function overStock(item: { sku_id: number | undefined; quantity: number }) {
+  const sku = skuInfoOf(item.sku_id)
+  return !!sku && item.quantity > sku.stock
+}
+
+function onSkuChange(_index: number, sku: Sku | null) {
+  if (sku) {
+    skuInfoMap.value[sku.id] = sku
+  }
+}
+
+/** 批量选货确认：逐个 SKU 生成明细行（跳过已存在的 SKU），数量默认 1 */
+function addBatchRows(skus: Sku[]) {
+  const existing = new Set(form.value.items.map((item) => item.sku_id))
+  for (const sku of skus) {
+    skuInfoMap.value[sku.id] = sku
+    if (existing.has(sku.id)) continue
+    form.value.items.push({ sku_id: sku.id, quantity: 1 })
+    existing.add(sku.id)
+  }
 }
 
 async function submit() {

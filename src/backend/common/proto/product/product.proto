@@ -26,6 +26,10 @@ service ProductService {
 
   // SKU
   rpc ListSkus(ListSkusReq) returns (ListSkusResp);
+  // SearchSkus 社区内 SKU 级搜索（join products 携带商品名）
+  // keyword 匹配商品名 / SKU 编码 / 条形码（LIKE）；keyword 为空时返回全量（分页）
+  // 供库存工作台列表与进销存表单的 SKU 选择器复用，替代 gateway 侧 N+1 组合查询
+  rpc SearchSkus(SearchSkusReq) returns (SearchSkusResp);
   rpc CreateSku(CreateSkuReq) returns (SkuInfo);
   rpc UpdateSku(UpdateSkuReq) returns (SkuInfo);
   rpc GetSkuById(GetSkuByIdReq) returns (SkuInfo);
@@ -392,6 +396,19 @@ message SkuInfo {
   string spec_value_ids = 13; // 逗号分隔的规格值 ID（多规格组合键，单规格为空）
   double original_price = 14; // 划线价（原价，0 表示不展示）
   string barcode = 15;       // 商品条形码（EAN-13 等，社区内唯一，空表示未设置）
+  string product_name = 16;  // 冗余商品名（仅 SearchSkus 填充，其余 RPC 为空）
+}
+
+// SearchSkusReq SKU 级搜索请求（keyword 为空 = 全量分页，即库存列表）
+message SearchSkusReq {
+  int64 community_id = 1;
+  string keyword = 2; // 匹配商品名 / SKU 编码 / 条形码
+  common.Pagination pagination = 3;
+}
+
+message SearchSkusResp {
+  repeated SkuInfo list = 1;
+  common.PaginationResponse pagination = 2;
 }
 
 message ListSkusResp {
