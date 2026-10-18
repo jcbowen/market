@@ -487,7 +487,24 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 		if refunded+req.Amount > p.Amount+1e-6 {
 			return fmt.Errorf("退款金额超过剩余可退金额")
 		}
-		return tx.Create(refund).Error
+		if err := tx.Create(refund).Error; err != nil {
+			return err
+		}
+
+		// 累计退款金额等于支付金额时标记支付单为已退款，与微信/支付宝路径口径一致
+		var totalRefunded float64
+		if err := tx.Model(&model.RefundPayment{}).
+			Select("COALESCE(SUM(amount), 0)").
+			Where("payment_no = ? AND status = ?", p.PaymentNo, 2).
+			Scan(&totalRefunded).Error; err != nil {
+			return err
+		}
+		if totalRefunded >= p.Amount-1e-6 {
+			// 条件更新：仅支付成功(2)状态可置已退款
+			return tx.Model(&model.Payment{}).Where("id = ? AND status = 2", p.ID).
+				Updates(map[string]interface{}{"status": int32(4), "updated_at": now}).Error
+		}
+		return nil
 	})
 }
 
