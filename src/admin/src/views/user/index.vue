@@ -44,8 +44,11 @@
       </n-space>
     </n-modal>
 
-    <!-- 会员订单弹窗：查看该会员在当前社区（或超管跨社区）的订单 -->
-    <UserOrdersModal v-model:show="showOrdersModal" :user="ordersUser" />
+    <!-- 会员订单弹窗：查看该会员在当前社区（或超管跨社区）的订单（订单号点击经 open-order 转发到详情弹窗） -->
+    <UserOrdersModal v-model:show="showOrdersModal" :user="ordersUser" @open-order="openOrderDetail" />
+
+    <!-- 订单详情弹窗（会员订单内订单号点击打开；用户点击经 view-user 回到会员订单弹窗） -->
+    <order-detail-modal v-model:show="detailVisible" :order-id="detailId" @view-user="openOrdersOf" />
   </div>
 </template>
 
@@ -58,6 +61,7 @@ import { getUserList, createUser, setUserStatus, setUserFulfiller } from '@/api/
 import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 import UserOrdersModal from './components/UserOrdersModal.vue'
+import OrderDetailModal from '@/views/order/detail.vue'
 import type { DataTableColumns } from 'naive-ui'
 import type { User } from '@/api/types'
 
@@ -190,9 +194,13 @@ const showCreateModal = ref(false)
 const createLoading = ref(false)
 const createForm = reactive({ phone: '', nickname: '', gender: 0 })
 
-// 会员订单弹窗状态
+// 会员订单弹窗状态（行数据或详情弹窗 view-user 转发的轻量用户对象）
 const showOrdersModal = ref(false)
-const ordersUser = ref<User | null>(null)
+const ordersUser = ref<User | { id: number; nickname?: string } | null>(null)
+
+// 订单详情弹窗状态（会员订单弹窗内订单号点击打开）
+const detailVisible = ref(false)
+const detailId = ref<number | null>(null)
 
 /**
  * 打开会员订单弹窗
@@ -201,6 +209,24 @@ const ordersUser = ref<User | null>(null)
 function openOrders(row: User) {
   ordersUser.value = row
   showOrdersModal.value = true
+}
+
+/**
+ * 打开会员订单弹窗（轻量用户对象，含订单详情弹窗 view-user 事件转发）
+ * @param user 会员 ID 与昵称
+ */
+function openOrdersOf(user: { id: number; nickname?: string }) {
+  ordersUser.value = { id: user.id, nickname: user.nickname }
+  showOrdersModal.value = true
+}
+
+/**
+ * 打开订单详情弹窗（含会员订单弹窗 open-order 事件转发）
+ * @param id 订单 ID
+ */
+function openOrderDetail(id: number) {
+  detailId.value = id
+  detailVisible.value = true
 }
 
 /**

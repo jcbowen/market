@@ -4,6 +4,13 @@
       <!-- 采购单 -->
       <n-tab-pane name="orders" tab="采购单">
         <n-space style="margin-bottom: 12px">
+          <n-input
+            v-model:value="orderKeyword"
+            placeholder="采购单号"
+            style="width: 200px"
+            clearable
+            @keyup.enter="searchOrders"
+          />
           <n-select v-model:value="orderStatus" :options="statusOptions" placeholder="状态" clearable style="width: 140px" />
           <n-select
             v-model:value="orderSupplierId"
@@ -80,8 +87,8 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockPurchase' })
-import { h, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { h, ref, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui'
@@ -103,6 +110,7 @@ import { formatDateTime } from '@/utils/datetime'
  * 供应商页签：列表/新增/编辑/删除
  */
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
 const dialog = useDialog()
 const activeTab = ref('orders')
@@ -110,6 +118,8 @@ const activeTab = ref('orders')
 // ---------- 采购单 ----------
 const orderStatus = ref<number | null>(null)
 const orderSupplierId = ref<number | null>(null)
+// 单号搜索（入库单「关联采购单」跳转时经 route.query.keyword 预填）
+const orderKeyword = ref('')
 const orderList = ref<PurchaseOrder[]>([])
 const orderLoading = ref(false)
 const orderPagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
@@ -177,6 +187,12 @@ const orderColumns: DataTableColumns<PurchaseOrder> = [
   },
 ]
 
+/** 单号搜索：重置到第一页 */
+function searchOrders() {
+  orderPagination.value.page = 1
+  loadOrders()
+}
+
 async function loadOrders() {
   orderLoading.value = true
   try {
@@ -185,6 +201,7 @@ async function loadOrders() {
       page_size: orderPagination.value.pageSize,
       status: orderStatus.value ?? undefined,
       supplier_id: orderSupplierId.value ?? undefined,
+      keyword: orderKeyword.value || undefined,
     })
     if (res.data.code === 0) {
       orderList.value = res.data.data.list
@@ -360,5 +377,10 @@ function onTabChange(value: string) {
 }
 
 // 补货建议带入：从库存工作台「一键补货」跳转过来时，预置供应商筛选并刷新
-loadOrders()
+// 入库单「关联采购单」跳转：经 route.query.keyword 预填单号搜索
+onMounted(() => {
+  const q = route.query.keyword
+  if (typeof q === 'string' && q) orderKeyword.value = q
+  loadOrders()
+})
 </script>

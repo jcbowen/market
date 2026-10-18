@@ -279,6 +279,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/orders/:id/assign-delivery", gwMiddleware.RequirePermission("order:update"), adminHandler.AssignDelivery)
 			authAdmin.GET("/fulfillers", gwMiddleware.RequirePermission("user:view"), adminHandler.ListFulfillers)
 			authAdmin.PUT("/users/:id/fulfiller", gwMiddleware.RequirePermission("user:update"), adminHandler.SetFulfiller)
+			// 会员常买商品排行（会员订单弹窗板块）：订单/会员任一查看权限即可
+			authAdmin.GET("/users/:id/frequent-products", gwMiddleware.RequirePermission("order:view", "user:view"), adminHandler.ListUserFrequentProducts)
 			authAdmin.POST("/orders/:id/refund", gwMiddleware.RequirePermission("refund:update"), adminHandler.AdminCreateRefund)
 
 			// 收银台代客下单（G）：下单/挂单写操作用 order:create，挂单查看用 order:view

@@ -526,7 +526,9 @@ type ListOrdersReq struct {
 	// 订单来源筛选：1=C端 2=收银台（0=全部）
 	Source int32 `protobuf:"varint,10,opt,name=source,proto3" json:"source,omitempty"`
 	// 取货码精确查询（收银台核销 Tab 扫码/输码查单）
-	PickupCode    string `protobuf:"bytes,11,opt,name=pickup_code,json=pickupCode,proto3" json:"pickup_code,omitempty"`
+	PickupCode string `protobuf:"bytes,11,opt,name=pickup_code,json=pickupCode,proto3" json:"pickup_code,omitempty"`
+	// 收银班次筛选（交班记录「查看班内订单」入口；0=全部）
+	ShiftId       int64 `protobuf:"varint,12,opt,name=shift_id,json=shiftId,proto3" json:"shift_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -636,6 +638,13 @@ func (x *ListOrdersReq) GetPickupCode() string {
 		return x.PickupCode
 	}
 	return ""
+}
+
+func (x *ListOrdersReq) GetShiftId() int64 {
+	if x != nil {
+		return x.ShiftId
+	}
+	return 0
 }
 
 type CancelOrderReq struct {
@@ -3236,8 +3245,12 @@ func (x *VerifyPickupResp) GetStatus() int32 {
 type GetUserFrequentProductsReq struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	UserId int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	// 返回条数，默认 10
-	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// 返回条数，默认 10（page=0 时生效，兼容 C 端购物车用法）
+	Limit int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// 页码（>0 走分页模式，管理端会员订单弹窗用；分页时忽略 limit）
+	Page int32 `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`
+	// 每页条数（分页模式生效，默认 5）
+	PageSize      int32 `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3282,6 +3295,20 @@ func (x *GetUserFrequentProductsReq) GetUserId() int64 {
 func (x *GetUserFrequentProductsReq) GetLimit() int32 {
 	if x != nil {
 		return x.Limit
+	}
+	return 0
+}
+
+func (x *GetUserFrequentProductsReq) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *GetUserFrequentProductsReq) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
 	}
 	return 0
 }
@@ -3375,8 +3402,10 @@ func (x *FrequentProductItem) GetTotalQuantity() int32 {
 }
 
 type GetUserFrequentProductsResp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	List          []*FrequentProductItem `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	List  []*FrequentProductItem `protobuf:"bytes,1,rep,name=list,proto3" json:"list,omitempty"`
+	// 商品总数（分页模式返回；limit 模式为 0）
+	Total         int64 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3416,6 +3445,13 @@ func (x *GetUserFrequentProductsResp) GetList() []*FrequentProductItem {
 		return x.List
 	}
 	return nil
+}
+
+func (x *GetUserFrequentProductsResp) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
 }
 
 type GetUserOrderStatusCountsReq struct {
@@ -5140,7 +5176,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\fdelivery_fee\x18\a \x01(\x01R\vdeliveryFee\"6\n" +
 	"\vGetOrderReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\xf1\x02\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\"\x8c\x03\n" +
 	"\rListOrdersReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12\x16\n" +
@@ -5157,7 +5193,8 @@ const file_order_order_proto_rawDesc = "" +
 	"\x06source\x18\n" +
 	" \x01(\x05R\x06source\x12\x1f\n" +
 	"\vpickup_code\x18\v \x01(\tR\n" +
-	"pickupCode\"Q\n" +
+	"pickupCode\x12\x19\n" +
+	"\bshift_id\x18\f \x01(\x03R\ashiftId\"Q\n" +
 	"\x0eCancelOrderReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x16\n" +
@@ -5404,10 +5441,12 @@ const file_order_order_proto_rawDesc = "" +
 	"\fcommunity_id\x18\x05 \x01(\x03R\vcommunityId\"E\n" +
 	"\x10VerifyPickupResp\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\x05R\x06status\"K\n" +
+	"\x06status\x18\x02 \x01(\x05R\x06status\"|\n" +
 	"\x1aGetUserFrequentProductsReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\xe1\x01\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x12\n" +
+	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\"\xe1\x01\n" +
 	"\x13FrequentProductItem\x12\x1d\n" +
 	"\n" +
 	"product_id\x18\x01 \x01(\x03R\tproductId\x12!\n" +
@@ -5415,9 +5454,10 @@ const file_order_order_proto_rawDesc = "" +
 	"\rproduct_image\x18\x03 \x01(\tR\fproductImage\x12\x15\n" +
 	"\x06sku_id\x18\x04 \x01(\x03R\x05skuId\x12%\n" +
 	"\x0epurchase_count\x18\x05 \x01(\x05R\rpurchaseCount\x12%\n" +
-	"\x0etotal_quantity\x18\x06 \x01(\x05R\rtotalQuantity\"M\n" +
+	"\x0etotal_quantity\x18\x06 \x01(\x05R\rtotalQuantity\"c\n" +
 	"\x1bGetUserFrequentProductsResp\x12.\n" +
-	"\x04list\x18\x01 \x03(\v2\x1a.order.FrequentProductItemR\x04list\"6\n" +
+	"\x04list\x18\x01 \x03(\v2\x1a.order.FrequentProductItemR\x04list\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x03R\x05total\"6\n" +
 	"\x1bGetUserOrderStatusCountsReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\"\xaa\x01\n" +
 	"\x1cGetUserOrderStatusCountsResp\x12\x1f\n" +

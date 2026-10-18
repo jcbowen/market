@@ -28,6 +28,12 @@
       </n-space>
       <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" remote />
     </n-space>
+
+    <!-- 会员订单弹窗：点击会员查看其订单与常买商品（订单号点击经 open-order 转发到详情弹窗） -->
+    <user-orders-modal v-model:show="showUserOrders" :user="userOrdersUser" @open-order="openOrderDetail" />
+
+    <!-- 订单详情弹窗：点击「查看订单」查看核销该券的订单（用户点击经 view-user 转发到会员订单弹窗） -->
+    <order-detail-modal v-model:show="showOrderDetail" :order-id="orderDetailId" @view-user="openUserOrdersOf" />
   </n-card>
 </template>
 
@@ -36,9 +42,11 @@
 defineOptions({ name: 'CouponRecords' })
 import { ref, onMounted, watch, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NTag } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getCouponList, getCouponRecords } from '@/api/marketing'
+import OrderDetailModal from '@/views/order/detail.vue'
+import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import type { Coupon, CouponRecord } from '@/api/types'
 
 /**
@@ -85,6 +93,40 @@ function renderDiscount(row: CouponRecord) {
   return `¥${row.discount_value}`
 }
 
+// --- 会员订单弹窗（点击会员打开） ---
+const showUserOrders = ref(false)
+const userOrdersUser = ref<{ id: number; nickname?: string } | null>(null)
+
+/**
+ * 打开会员订单弹窗，查看该会员的订单与常买商品
+ * @param row 记录行（取归属会员）
+ */
+function openUserOrders(row: CouponRecord) {
+  openUserOrdersOf({ id: row.user_id, nickname: row.user_nickname })
+}
+
+/**
+ * 打开会员订单弹窗（轻量用户对象，含订单详情弹窗 view-user 事件转发）
+ * @param user 会员 ID 与昵称
+ */
+function openUserOrdersOf(user: { id: number; nickname?: string }) {
+  userOrdersUser.value = { id: user.id, nickname: user.nickname }
+  showUserOrders.value = true
+}
+
+// --- 订单详情弹窗（点击「查看订单」打开） ---
+const showOrderDetail = ref(false)
+const orderDetailId = ref<number | null>(null)
+
+/**
+ * 打开订单详情弹窗，查看核销该券的订单
+ * @param orderId 订单 ID
+ */
+function openOrderDetail(orderId: number) {
+  orderDetailId.value = orderId
+  showOrderDetail.value = true
+}
+
 /** 门槛列：0 显示「无门槛」 */
 function renderThreshold(row: CouponRecord) {
   return row.threshold > 0 ? `满${row.threshold}可用` : '无门槛'
@@ -103,7 +145,14 @@ const columns: DataTableColumns<CouponRecord> = [
     render(row) {
       const name = row.user_nickname || '未设置昵称'
       const phone = row.user_phone ? ` ${row.user_phone.slice(0, 3)}****${row.user_phone.slice(-4)}` : ''
-      return `${name}${phone}`
+      const text = `${name}${phone}`
+      // 关联会员可点击查看其订单（复用会员订单弹窗）
+      if (row.user_id <= 0) return text
+      return h(
+        NButton,
+        { size: 'small', text: true, type: 'primary', onClick: () => openUserOrders(row) },
+        { default: () => text },
+      )
     },
   },
   {
@@ -114,6 +163,20 @@ const columns: DataTableColumns<CouponRecord> = [
       const s = statusMap[row.status] || { text: '未知', type: 'default' as const }
       return h(NTag, { type: s.type }, { default: () => s.text })
     },
+  },
+  {
+    title: '关联订单',
+    key: 'order_id',
+    width: 100,
+    // 已使用的券回填核销订单号，点击查看订单详情；未使用/过期无订单
+    render: (row) =>
+      row.order_id > 0
+        ? h(
+            NButton,
+            { size: 'small', text: true, type: 'primary', onClick: () => openOrderDetail(row.order_id) },
+            { default: () => '查看订单' },
+          )
+        : '-',
   },
   {
     title: '来源',

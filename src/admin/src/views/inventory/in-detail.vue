@@ -5,7 +5,19 @@
         <n-descriptions-item label="入库单号">{{ detail.info.in_no }}</n-descriptions-item>
         <n-descriptions-item label="类型">{{ detail.info.type === 1 ? '采购入库' : '直接入库' }}</n-descriptions-item>
         <n-descriptions-item label="供应商">{{ detail.info.supplier_name || '-' }}</n-descriptions-item>
-        <n-descriptions-item label="关联采购单">{{ detail.info.purchase_no || '-' }}</n-descriptions-item>
+        <n-descriptions-item label="关联采购单">
+          <!-- 有采购单号时点击跳采购管理并按单号预筛 -->
+          <n-button
+            v-if="detail.info.purchase_no"
+            size="tiny"
+            text
+            type="primary"
+            @click="router.push({ path: '/stock/purchase', query: { keyword: detail.info.purchase_no } })"
+          >
+            {{ detail.info.purchase_no }}
+          </n-button>
+          <template v-else>-</template>
+        </n-descriptions-item>
         <n-descriptions-item label="入库金额">¥{{ Number(detail.info.total_amount || 0).toFixed(2) }}</n-descriptions-item>
         <n-descriptions-item label="入库时间">{{ formatDateTime(detail.info.created_at) }}</n-descriptions-item>
         <n-descriptions-item label="备注" :span="3">{{ detail.info.remark || '-' }}</n-descriptions-item>

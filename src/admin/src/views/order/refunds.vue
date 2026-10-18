@@ -18,8 +18,11 @@
     </n-space>
   </n-card>
 
-  <!-- 订单详情弹窗（点击订单号查看） -->
-  <order-detail-modal v-model:show="detailVisible" :order-id="detailId" />
+  <!-- 订单详情弹窗（点击订单号查看；用户点击经 view-user 转发到会员订单弹窗） -->
+  <order-detail-modal v-model:show="detailVisible" :order-id="detailId" @view-user="openUserOrdersOf" />
+
+  <!-- 会员订单弹窗（详情内用户点击打开；订单号点击经 open-order 转发到详情弹窗） -->
+  <user-orders-modal v-model:show="userOrdersVisible" :user="userOrdersUser" @open-order="openOrderDetail" />
 
   <!-- 拒绝原因弹窗 -->
   <n-modal v-model:show="rejectVisible" preset="card" title="拒绝售后" style="width: 460px">
@@ -53,6 +56,7 @@ import { NButton, NSpace, NTag, NDataTable, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getRefundList, approveRefund, rejectRefund, retryRefund } from '@/api/order'
 import OrderDetailModal from './detail.vue'
+import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import type { Refund, RefundItem } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import { REFUND_STATUS, refundStatusMap } from '@/constants/order'
@@ -71,6 +75,19 @@ const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
 
 const detailVisible = ref(false)
 const detailId = ref<number | null>(null)
+
+// 会员订单弹窗（订单详情内用户点击打开）
+const userOrdersVisible = ref(false)
+const userOrdersUser = ref<{ id: number; nickname?: string } | null>(null)
+
+/**
+ * 打开会员订单弹窗（含订单详情弹窗 view-user 事件转发）
+ * @param user 会员 ID 与昵称
+ */
+function openUserOrdersOf(user: { id: number; nickname?: string }) {
+  userOrdersUser.value = { id: user.id, nickname: user.nickname }
+  userOrdersVisible.value = true
+}
 
 const rejectVisible = ref(false)
 const rejectSubmitting = ref(false)

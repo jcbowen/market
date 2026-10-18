@@ -42,7 +42,25 @@ const columns: DataTableColumns<StockInOrder> = [
       }),
   },
   { title: '供应商', key: 'supplier_name', width: 150, ellipsis: { tooltip: true } },
-  { title: '关联采购单', key: 'purchase_no', width: 170, render: (row) => row.purchase_no || '-' },
+  {
+    title: '关联采购单',
+    key: 'purchase_no',
+    width: 170,
+    // 有采购单号时点击跳采购管理并按单号预筛（直接入库单无单号不可点）
+    render: (row) =>
+      row.purchase_no
+        ? h(
+            NButton,
+            {
+              size: 'small',
+              text: true,
+              type: 'primary',
+              onClick: () => router.push({ path: '/stock/purchase', query: { keyword: row.purchase_no } }),
+            },
+            { default: () => row.purchase_no },
+          )
+        : '-',
+  },
   {
     title: '入库金额',
     key: 'total_amount',

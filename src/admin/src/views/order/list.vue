@@ -58,6 +58,10 @@
           class="source-select"
           @update:value="onSearch"
         />
+        <!-- 班次预筛标签（交班记录「查看班内订单」直达），可关闭清除 -->
+        <n-tag v-if="shiftFilter > 0" closable size="small" type="info" @close="clearShiftFilter">
+          班次 #{{ shiftFilter }}
+        </n-tag>
         <n-button type="primary" @click="onSearch">查询</n-button>
         <n-button :loading="exporting" @click="exportCsv">导出 CSV</n-button>
       </n-space>
@@ -93,7 +97,10 @@
   </n-card>
 
   <!-- 订单详情弹窗 -->
-  <order-detail-modal v-model:show="detailVisible" :order-id="detailId" @refresh="loadData" />
+  <order-detail-modal v-model:show="detailVisible" :order-id="detailId" @refresh="loadData" @view-user="openUserOrdersOf" />
+
+  <!-- 会员订单弹窗：点击用户列查看该会员订单（订单号点击经 open-order 转发到详情弹窗） -->
+  <user-orders-modal v-model:show="userOrdersVisible" :user="userOrdersUser" @open-order="openDetail" />
 
   <!-- 发货弹窗（单笔/批量共用） -->
   <ship-modal v-model:show="shipVisible" :order-ids="shipOrderIds" @success="onActionSuccess" />
@@ -167,6 +174,7 @@ import { completeOrder, getOrderList, verifyPickup, assignDelivery } from '@/api
 import { getFulfillers } from '@/api/user'
 import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
 import OrderDetailModal from './detail.vue'
+import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
 import RefundModal from './components/RefundModal.vue'
@@ -206,9 +214,32 @@ const filters = reactive({ order_no: '', receiver_name: '', receiver_phone: '' }
 const dateRange = ref<[number, number] | null>(null)
 // 来源筛选：0=全部 1=C端 2=收银台
 const sourceFilter = ref(0)
+// 班次筛选：>0 时仅看该收银班次订单（交班记录「查看班内订单」直达）
+const shiftFilter = ref(0)
 
 const detailVisible = ref(false)
 const detailId = ref<number | null>(null)
+
+// 会员订单弹窗（点击用户列打开）
+const userOrdersVisible = ref(false)
+const userOrdersUser = ref<{ id: number; nickname?: string } | null>(null)
+
+/**
+ * 打开会员订单弹窗
+ * @param row 订单行（取归属会员）
+ */
+function openUserOrders(row: Order) {
+  openUserOrdersOf({ id: row.user_id, nickname: row.user_name })
+}
+
+/**
+ * 打开会员订单弹窗（轻量用户对象，含订单详情弹窗 view-user 事件转发）
+ * @param user 会员 ID 与昵称
+ */
+function openUserOrdersOf(user: { id: number; nickname?: string }) {
+  userOrdersUser.value = { id: user.id, nickname: user.nickname }
+  userOrdersVisible.value = true
+}
 
 const shipVisible = ref(false)
 const shipOrderIds = ref<number[]>([])
@@ -285,10 +316,46 @@ function applyQueryStatus(): boolean {
   return true
 }
 
+/**
+ * 应用路由 query 中的 shift_id 预筛选（交班记录「查看班内订单」直达入口）
+ * 仅接受正整数；无参数或非法值时清除班次筛选
+ * @returns 筛选是否发生变化（变化时调用方需重新加载列表）
+ */
+function applyQueryShift(): boolean {
+  const raw = Number(route.query.shift_id)
+  const value = Number.isInteger(raw) && raw > 0 ? raw : 0
+  if (value === shiftFilter.value) return false
+  shiftFilter.value = value
+  pagination.value.page = 1
+  return true
+}
+
+/**
+ * 清除班次筛选并刷新
+ */
+function clearShiftFilter() {
+  shiftFilter.value = 0
+  pagination.value.page = 1
+  loadData()
+}
+
 const columns: DataTableColumns<Order> = [
   { type: 'selection' },
   { title: '订单号', key: 'order_no', width: 200 },
-  { title: '用户', key: 'user_name', width: 110 },
+  {
+    title: '用户',
+    key: 'user_name',
+    width: 110,
+    // 关联会员（user_id>0）可点击查看该会员订单；无归属时展示原文
+    render: (row) =>
+      row.user_id > 0
+        ? h(
+            NButton,
+            { size: 'small', text: true, type: 'primary', onClick: () => openUserOrders(row) },
+            { default: () => row.user_name || `用户${row.user_id}` },
+          )
+        : row.user_name || '-',
+  },
   {
     title: '配送方式',
     key: 'delivery_type',
@@ -488,6 +555,7 @@ function buildQuery() {
     end_time: end ? fmt(end) : undefined,
     status: statusFilter.value > 0 ? statusFilter.value : undefined,
     source: sourceFilter.value > 0 ? sourceFilter.value : undefined,
+    shift_id: shiftFilter.value > 0 ? shiftFilter.value : undefined,
   }
 }
 
@@ -767,14 +835,17 @@ async function loadData() {
 
 onMounted(() => {
   applyQueryStatus()
+  applyQueryShift()
   loadData()
   loadStats()
   window.addEventListener('resize', updateNarrow)
 })
 
-// keep-alive 缓存下再次进入（如工作台待办跳转）时，应用新的 status 查询参数重新筛选
+// keep-alive 缓存下再次进入（如工作台待办/交班记录跳转）时，应用新的 query 参数重新筛选
 onActivated(() => {
-  if (applyQueryStatus()) {
+  const statusChanged = applyQueryStatus()
+  const shiftChanged = applyQueryShift()
+  if (statusChanged || shiftChanged) {
     pagination.value.page = 1
     loadData()
   }

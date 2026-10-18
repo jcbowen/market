@@ -6,7 +6,19 @@
         <!-- 描述列表：窄屏自动降为单列，避免两列内容挤压换行难读 -->
         <n-descriptions label-placement="left" bordered :column="descColumn" size="small">
           <n-descriptions-item label="订单号">{{ detail.order_no }}</n-descriptions-item>
-          <n-descriptions-item label="用户">{{ detail.user_name }}</n-descriptions-item>
+          <n-descriptions-item label="用户">
+            <!-- 关联会员（user_id>0）可点击查看该会员订单（事件上抛页面层打开会员订单弹窗） -->
+            <n-button
+              v-if="detail.user_id > 0"
+              size="tiny"
+              text
+              type="primary"
+              @click="emitViewUser"
+            >
+              {{ detail.user_name || `用户${detail.user_id}` }}
+            </n-button>
+            <template v-else>{{ detail.user_name || '-' }}</template>
+          </n-descriptions-item>
           <n-descriptions-item label="状态">
             <n-tag :type="orderStatusTagType(detail.status)" size="small">{{ detail.status_text }}</n-tag>
           </n-descriptions-item>
@@ -145,6 +157,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
   (e: 'refresh'): void
+  /** 点击用户字段：请求页面层打开会员订单弹窗（弹窗间不互相嵌套，避免组件递归） */
+  (e: 'view-user', user: { id: number; nickname?: string }): void
 }>()
 
 const dialog = useDialog()
@@ -157,6 +171,15 @@ const cancelVisible = ref(false)
 const cancelOrderId = ref<number | null>(null)
 const refundVisible = ref(false)
 const refundOrderId = ref<number | null>(null)
+
+/**
+ * 用户字段点击：上抛 view-user 事件，由页面层打开会员订单弹窗
+ */
+function emitViewUser() {
+  const d = detail.value
+  if (!d || d.user_id <= 0) return
+  emit('view-user', { id: d.user_id, nickname: d.user_name })
+}
 
 // --- 描述列表响应式列数 ---
 // 窄屏（<=768px，与全局布局断点一致）降为单列，宽屏保持两列

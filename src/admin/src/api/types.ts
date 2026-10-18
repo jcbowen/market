@@ -687,6 +687,23 @@ export interface User {
 }
 
 /**
+ * 会员常买商品排行项（会员订单弹窗板块）
+ * 口径：按该会员有效订单（已支付及之后）统计，购买次数 = 去重订单数
+ */
+export interface FrequentProduct {
+  product_id: number
+  product_name: string
+  /** 商品图片快照（取自购买记录） */
+  product_image?: string
+  /** 该会员买该商品最常买的 SKU */
+  sku_id: number
+  /** 购买次数（去重订单数） */
+  purchase_count: number
+  /** 累计购买件数 */
+  total_quantity: number
+}
+
+/**
  * 后台账号信息（系统管理·账号管理页，仅账号本身维度）
  */
 export interface Account {

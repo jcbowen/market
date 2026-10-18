@@ -84,6 +84,8 @@
             <div class="receipt-line muted center">打印时间：{{ printTimeText }}</div>
           </div>
           <n-space justify="center" class="detail-actions">
+            <!-- 查看班内订单：跳订单列表按班次预筛（订单列表读取 shift_id query） -->
+            <n-button size="small" type="primary" secondary @click="viewShiftOrders">查看班内订单</n-button>
             <n-button size="small" @click="printReceipt">打印小票</n-button>
           </n-space>
         </template>
@@ -134,6 +136,14 @@ const printTimeText = ref('')
  */
 function backToCashier() {
   router.push('/pos/cashier')
+}
+
+/**
+ * 查看班内订单：跳转订单列表并按班次预筛（订单列表读取 shift_id query）
+ */
+function viewShiftOrders() {
+  if (!activeShift.value) return
+  router.push({ path: '/orders', query: { shift_id: String(activeShift.value.id) } })
 }
 
 /**

@@ -62,7 +62,20 @@
             <div class="detail-item"><span class="label">订单号</span><span>{{ detail.order_no }}</span></div>
             <div class="detail-item"><span class="label">状态</span><n-tag size="small" :type="orderStatusTagType(detail.status)">{{ detail.status_text }}</n-tag></div>
             <div class="detail-item"><span class="label">来源</span><span>{{ orderSourceText(detail.source ?? 1) }}</span></div>
-            <div class="detail-item"><span class="label">会员</span><span>{{ detail.user_name || '散客' }}</span></div>
+            <div class="detail-item">
+              <span class="label">会员</span>
+              <!-- 关联会员可点击查看其历史订单/常买商品 -->
+              <n-button
+                v-if="detail.user_id > 0"
+                size="tiny"
+                text
+                type="primary"
+                @click="openUserOrders(detail)"
+              >
+                {{ detail.user_name || `用户${detail.user_id}` }}
+              </n-button>
+              <span v-else>{{ detail.user_name || '散客' }}</span>
+            </div>
             <div class="detail-item"><span class="label">配送方式</span><span>{{ deliveryTypeText(detail.delivery_type) }}</span></div>
             <div class="detail-item"><span class="label">支付方式</span><span>{{ detail.pay_type_text || (detail.pay_type ? payTypeText(detail.pay_type) : '-') }}</span></div>
             <div class="detail-item"><span class="label">下单时间</span><span>{{ detail.created_at }}</span></div>
@@ -163,6 +176,12 @@
 
     <!-- 代客退款弹窗（与后台订单页共用：整单/部分商品/仅金额退，金额可调低） -->
     <refund-modal v-model:show="showRefundModal" :order-id="detail?.id ?? null" @success="onRefundSuccess" />
+
+    <!-- 会员订单弹窗：点击会员查看其历史订单与常买商品（订单号点击经 open-order 转发到详情弹窗） -->
+    <user-orders-modal v-model:show="showUserOrders" :user="userOrdersUser" @open-order="openOrderDetail" />
+
+    <!-- 订单详情弹窗（会员订单内订单号点击打开；用户点击经 view-user 回到会员订单弹窗） -->
+    <order-detail-modal v-model:show="showOrderDetail" :order-id="orderDetailId" @view-user="openUserOrdersOf" />
   </div>
 </template>
 
@@ -175,6 +194,8 @@ import type { Order, OrderDetail } from '@/api/types'
 import { ORDER_STATUS, QUERY_STATUS, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
 import RefundModal from '@/views/order/components/RefundModal.vue'
+import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
+import OrderDetailModal from '@/views/order/detail.vue'
 
 /**
  * 订单查询 Tab（收银台内）
@@ -354,10 +375,59 @@ function onRefundSuccess() {
   void loadOrders()
 }
 
+// --- 会员订单弹窗（列表/详情中的会员点击打开） ---
+const showUserOrders = ref(false)
+const userOrdersUser = ref<{ id: number; nickname?: string } | null>(null)
+
+// --- 订单详情弹窗（会员订单弹窗内订单号点击打开） ---
+const showOrderDetail = ref(false)
+const orderDetailId = ref<number | null>(null)
+
+/**
+ * 打开会员订单弹窗（轻量用户对象；订单详情弹窗 view-user 事件也走这里）
+ * @param user 会员 ID 与昵称
+ */
+function openUserOrdersOf(user: { id: number; nickname?: string }) {
+  userOrdersUser.value = { id: user.id, nickname: user.nickname }
+  showUserOrders.value = true
+}
+
+/**
+ * 打开订单详情弹窗（含会员订单弹窗 open-order 事件转发）
+ * @param id 订单 ID
+ */
+function openOrderDetail(id: number) {
+  orderDetailId.value = id
+  showOrderDetail.value = true
+}
+
+/**
+ * 打开会员订单弹窗
+ * @param row 订单行（取归属会员；散客不响应）
+ */
+function openUserOrders(row: Pick<Order, 'user_id' | 'user_name'>) {
+  if (row.user_id <= 0) return
+  openUserOrdersOf({ id: row.user_id, nickname: row.user_name })
+}
+
 /** 表格列定义（行点击打开详情） */
 const columns = computed<DataTableColumns<Order>>(() => [
   { title: '订单号', key: 'order_no', width: 190, ellipsis: { tooltip: true } },
-  { title: '会员', key: 'user_name', width: 110, ellipsis: { tooltip: true }, render: (row) => row.user_name || '散客' },
+  {
+    title: '会员',
+    key: 'user_name',
+    width: 110,
+    ellipsis: { tooltip: true },
+    // 关联会员（user_id>0）可点击查看其历史订单/常买商品；散客展示原文
+    render: (row) =>
+      row.user_id > 0
+        ? h(
+            NButton,
+            { size: 'tiny', type: 'primary', quaternary: true, onClick: () => openUserOrders(row) },
+            { default: () => row.user_name || `用户${row.user_id}` },
+          )
+        : row.user_name || '散客',
+  },
   { title: '实付', key: 'pay_amount', width: 90, render: (row) => `￥${row.pay_amount.toFixed(2)}` },
   {
     title: '支付方式',

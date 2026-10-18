@@ -157,13 +157,9 @@ func (s *server) GetRevenueReport(ctx stdctx.Context, req *order.GetRevenueRepor
 	return &order.RevenueReportResp{List: list}, nil
 }
 
-// GetUserFrequentProducts 获取用户常买商品
+// GetUserFrequentProducts 获取用户常买商品（C 端购物车 Top N / 管理端分页排行）
 func (s *server) GetUserFrequentProducts(ctx stdctx.Context, req *order.GetUserFrequentProductsReq) (*order.GetUserFrequentProductsResp, error) {
-	list, err := s.orderService.GetUserFrequentProducts(ctx, req)
-	if err != nil {
-		return nil, bizerr.ToStatus(err)
-	}
-	return &order.GetUserFrequentProductsResp{List: list}, nil
+	return s.orderService.GetUserFrequentProducts(ctx, req)
 }
 
 // GetUserOrderStatusCounts 用户订单状态角标统计（C 端「我的-我的订单」红标）

@@ -547,6 +547,10 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	if req.PickupCode != "" {
 		db = db.Where("pickup_code = ?", req.PickupCode)
 	}
+	// 收银班次筛选（交班记录「查看班内订单」入口）
+	if req.ShiftId > 0 {
+		db = db.Where("shift_id = ?", req.ShiftId)
+	}
 	switch {
 	case req.Status == queryStatusRefundAggregate:
 		db = db.Where("status IN ?", []int32{7, 8})
@@ -1391,60 +1395,105 @@ func (s *OrderService) GetProductRankings(ctx context.Context, req *order.GetPro
 //   - ctx: 上下文
 //   - req: 报表请求
 //
-// GetUserFrequentProducts 获取用户常买商品（购物车"常买商品"列表）
+// GetUserFrequentProducts 获取用户常买商品（购物车"常买商品"列表 / 管理端会员订单弹窗排行）
 // 统计口径（决策点③）：仅计有效订单（已支付及之后，排除待支付1/已取消6/退款7/已退款8）；
 // 购买次数 = 去重订单数，另附该用户买该商品最常买的 SKU（供一键加购）
+// 两种模式：page>0 走分页（管理端，LIMIT/OFFSET 并回填 total）；否则按 limit 取 Top N（C 端购物车，total 不填）
 // 参数：
 //   - ctx: 上下文
-//   - req: 请求（user_id + limit）
+//   - req: 请求（user_id + limit 或 page/page_size）
 //
 // 返回值：
-//   - []*order.FrequentProductItem: 常买商品列表（按购买次数降序）
+//   - *order.GetUserFrequentProductsResp: 常买商品列表（按购买次数降序）+ 分页模式下的商品总数
 //   - error: 错误信息
-func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.GetUserFrequentProductsReq) ([]*order.FrequentProductItem, error) {
+func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.GetUserFrequentProductsReq) (*order.GetUserFrequentProductsResp, error) {
 	if req.UserId <= 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "缺少用户 ID")
-	}
-	limit := int(req.Limit)
-	if limit <= 0 {
-		limit = 10
 	}
 
 	// 有效订单口径：排除待支付(1)/已取消(6)/退款中(7)/已退款(8)
 	validStatuses := []int32{2, 3, 4, 5}
 
-	var rows []*order.FrequentProductItem
-	err := s.db.GetDb().WithContext(ctx).
-		Table("order_items").
+	paged := req.Page > 0
+
+	// 基础查询（Join + 过滤条件）供总数与分页两处复用，避免重复拼装导致口径漂移
+	baseQuery := func() *gorm.DB {
+		return s.db.GetDb().WithContext(ctx).
+			Table("order_items").
+			Joins("JOIN orders ON orders.id = order_items.order_id").
+			Where("orders.user_id = ? AND orders.status IN ?", req.UserId, validStatuses)
+	}
+
+	// 分页模式下先查商品总数（去重商品 ID），供前端计算页数
+	var total int64
+	if paged {
+		if err := baseQuery().
+			Select("COUNT(DISTINCT order_items.product_id) AS total").
+			Scan(&total).Error; err != nil {
+			return nil, err
+		}
+	}
+
+	query := baseQuery().
 		Select("order_items.product_id, order_items.product_name, MAX(order_items.product_image) AS product_image, "+
 			"COUNT(DISTINCT orders.id) AS purchase_count, SUM(order_items.quantity) AS total_quantity").
-		Joins("JOIN orders ON orders.id = order_items.order_id").
-		Where("orders.user_id = ? AND orders.status IN ?", req.UserId, validStatuses).
 		Group("order_items.product_id, order_items.product_name").
-		Order("purchase_count DESC, total_quantity DESC").
-		Limit(limit).
-		Scan(&rows).Error
-	if err != nil {
+		Order("purchase_count DESC, total_quantity DESC")
+
+	if paged {
+		pageSize := int(req.PageSize)
+		if pageSize <= 0 {
+			pageSize = 5
+		}
+		query = query.Limit(pageSize).Offset((int(req.Page) - 1) * pageSize)
+	} else {
+		limit := int(req.Limit)
+		if limit <= 0 {
+			limit = 10
+		}
+		query = query.Limit(limit)
+	}
+
+	var rows []*order.FrequentProductItem
+	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
 	// 附带每个商品该用户最常买的 SKU（按累计数量取 Top1，供一键加购）
-	for _, r := range rows {
-		var skuID int64
-		err := s.db.GetDb().WithContext(ctx).
-			Table("order_items").
-			Select("order_items.sku_id").
-			Joins("JOIN orders ON orders.id = order_items.order_id").
-			Where("orders.user_id = ? AND orders.status IN ? AND order_items.product_id = ?", req.UserId, validStatuses, r.ProductId).
-			Group("order_items.sku_id").
-			Order("SUM(order_items.quantity) DESC").
-			Limit(1).
-			Scan(&skuID).Error
-		if err == nil {
-			r.SkuId = skuID
+	// 窗口函数一次查出全部商品的 Top1 SKU（MySQL 8.0+），替代逐商品循环查询，避免 N+1
+	type skuTopRow struct {
+		ProductId int64
+		SkuId     int64
+	}
+	var skuRows []skuTopRow
+	err := s.db.GetDb().WithContext(ctx).Raw(`
+SELECT product_id, sku_id FROM (
+    SELECT order_items.product_id AS product_id, order_items.sku_id AS sku_id,
+           ROW_NUMBER() OVER (
+               PARTITION BY order_items.product_id
+               ORDER BY SUM(order_items.quantity) DESC
+           ) AS rn
+    FROM order_items
+    JOIN orders ON orders.id = order_items.order_id
+    WHERE orders.user_id = ? AND orders.status IN ?
+    GROUP BY order_items.product_id, order_items.sku_id
+) ranked
+WHERE rn = 1`, req.UserId, validStatuses).Scan(&skuRows).Error
+	if err != nil {
+		// SKU 仅为附属信息（一键加购用），查询失败不阻断列表返回，仅记日志
+		log.Printf("[order] 查询用户 %d 常买商品 SKU 失败（sku_id 置 0）: %v", req.UserId, err)
+	} else {
+		skuByProduct := make(map[int64]int64, len(skuRows))
+		for _, sr := range skuRows {
+			skuByProduct[sr.ProductId] = sr.SkuId
+		}
+		for _, r := range rows {
+			if id, ok := skuByProduct[r.ProductId]; ok {
+				r.SkuId = id
+			}
 		}
 	}
-	return rows, nil
+	return &order.GetUserFrequentProductsResp{List: rows, Total: total}, nil
 }
 
 // GetRevenueReport 获取营收报表

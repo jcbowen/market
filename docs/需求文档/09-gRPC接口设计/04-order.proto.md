@@ -472,8 +472,12 @@ message VerifyPickupResp {
 // --- 用户常买商品 ---
 message GetUserFrequentProductsReq {
   int64 user_id = 1;
-  // 返回条数，默认 10
+  // 返回条数，默认 10（page=0 时生效，兼容 C 端购物车用法）
   int32 limit = 2;
+  // 页码（>0 走分页模式，管理端会员订单弹窗用；分页时忽略 limit）
+  int32 page = 3;
+  // 每页条数（分页模式生效，默认 5）
+  int32 page_size = 4;
 }
 
 message FrequentProductItem {
@@ -491,6 +495,8 @@ message FrequentProductItem {
 
 message GetUserFrequentProductsResp {
   repeated FrequentProductItem list = 1;
+  // 商品总数（分页模式返回；limit 模式为 0）
+  int64 total = 2;
 }
 
 // --- 用户订单状态角标统计（C 端「我的-我的订单」红标） ---

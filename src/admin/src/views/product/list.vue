@@ -15,8 +15,8 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'ProductList' })
-import { ref, onMounted, h, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, onActivated, h, reactive } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { NButton, NInput, NSpace, NTag, createDiscreteApi } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getProductList, getCategoryList, updateProductStatus, deleteProduct, updateProductName } from '@/api/product'
@@ -28,6 +28,7 @@ import type { Product, Category } from '@/api/types'
  * 多规格标注、价格区间展示与名称行内改名
  */
 const router = useRouter()
+const route = useRoute()
 const { message } = createDiscreteApi(['message'])
 const keyword = ref('')
 const categoryId = ref<number | null>(null)
@@ -195,7 +196,20 @@ async function remove(row: Product) {
 }
 
 onMounted(() => {
+  // 支持「统计热销排行」等外部入口带 keyword 预筛选
+  const q = route.query.keyword
+  if (typeof q === 'string' && q) keyword.value = q
   loadCategories()
   loadData()
+})
+
+// keep-alive 缓存下再次进入（如统计页跳转）时，应用新的 keyword 参数重新筛选
+onActivated(() => {
+  const q = route.query.keyword
+  if (typeof q === 'string' && q && q !== keyword.value) {
+    keyword.value = q
+    pagination.value.page = 1
+    loadData()
+  }
 })
 </script>

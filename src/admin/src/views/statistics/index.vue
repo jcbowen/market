@@ -55,7 +55,7 @@
     <!-- 热销商品 -->
     <n-card size="small" title="热销商品 TOP10" class="section-card">
       <div v-if="hotProducts.length" class="rank-list rank-grid">
-        <div v-for="(item, index) in hotProducts" :key="item.product_id" class="rank-item">
+        <div v-for="(item, index) in hotProducts" :key="item.product_id" class="rank-item" @click="goProductList(item.product_name)">
           <span :class="['rank-badge', rankClass(index)]">{{ index + 1 }}</span>
           <div class="rank-info">
             <div class="rank-name">{{ item.product_name }}</div>
@@ -84,6 +84,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'Statistics' })
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { getOrderStatistics, getProductRankings, getRevenueReport, getSalesStatistics } from '@/api/statistics'
 import type { OrderStatistics, ProductRankingItem, RevenueReportItem } from '@/api/statistics'
 import TrendBars from '@/components/TrendBars.vue'
@@ -98,6 +99,16 @@ import { formatMoney } from '@/utils/format'
  */
 
 type PresetValue = 'today' | '7d' | '30d' | 'month' | 'custom'
+
+const router = useRouter()
+
+/**
+ * 跳转商品列表并按商品名预筛选（热销排行点击下钻）
+ * @param productName 商品名
+ */
+function goProductList(productName: string) {
+  router.push({ path: '/products', query: { keyword: productName } })
+}
 
 const presetOptions: Array<{ label: string; value: PresetValue }> = [
   { label: '今日', value: 'today' },
@@ -400,6 +411,15 @@ onMounted(loadData)
   display: flex;
   align-items: center;
   gap: 12px;
+  /* 点击跳商品列表（keyword 预筛） */
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 4px;
+  transition: background-color 0.2s;
+}
+
+.rank-item:hover {
+  background-color: rgba(7, 193, 96, 0.06);
 }
 
 .rank-badge {

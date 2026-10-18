@@ -31,6 +31,8 @@ export function getOrderList(
     receiver_phone?: string
     /** 按会员过滤（会员列表弹窗查订单） */
     user_id?: number
+    /** 按收银班次过滤（交班记录「查看班内订单」入口） */
+    shift_id?: number
     /** 来源过滤：1=C端 2=收银台（0=全部） */
     source?: number
     /** 按取货码精确过滤（收银台核销/订单 Tab 扫码查询） */

@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, Account, Community, PageParams, PageResult, User } from './types'
+import type { ApiResult, Account, Community, FrequentProduct, PageParams, PageResult, User } from './types'
 
 /**
  * 用户管理相关 API
@@ -152,6 +152,21 @@ export function setUserFulfiller(id: number, isFulfiller: boolean) {
     url: `/api/v1/admin/users/${id}/fulfiller`,
     method: 'PUT',
     data: { is_fulfiller: isFulfiller },
+  })
+}
+
+/**
+ * 获取会员常买商品排行（会员订单弹窗板块）
+ * 按该会员有效订单（已支付及之后，排除待支付/取消/退款）统计，按购买次数降序
+ * @param id 会员 ID
+ * @param params 分页参数
+ * @returns 分页常买商品列表
+ */
+export function getUserFrequentProducts(id: number, params: PageParams) {
+  return request<ApiResult<PageResult<FrequentProduct>>>({
+    url: `/api/v1/admin/users/${id}/frequent-products`,
+    method: 'GET',
+    params,
   })
 }
 

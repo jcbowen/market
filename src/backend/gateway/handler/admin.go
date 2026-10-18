@@ -1903,12 +1903,15 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
 	// 来源过滤：1=C端 2=收银台（0=全部）
 	source, _ := strconv.Atoi(c.DefaultQuery("source", "0"))
+	// 收银班次过滤（交班记录「查看班内订单」入口）
+	shiftID, _ := strconv.ParseInt(c.DefaultQuery("shift_id", "0"), 10, 64)
 
 	resp, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
 		CommunityId:   communityID,
 		UserId:        userID,
 		Source:        int32(source),
 		Status:        int32(status),
+		ShiftId:       shiftID,
 		OrderNo:       c.Query("order_no"),
 		StartTime:     c.Query("start_time"),
 		EndTime:       c.Query("end_time"),
@@ -3549,6 +3552,45 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
+}
+
+// ListUserFrequentProducts 会员常买商品排行（会员订单弹窗「常买商品排行」板块）
+// 按该会员有效订单（已支付及之后，排除待支付/取消/退款）统计：
+// 购买次数 = 去重订单数，累计件数 = SUM(quantity)，按购买次数降序分页返回；
+// 口径为会员全社区消费（用户维度统计，不随社区语境过滤）
+// 参数：
+//   - c: gin 上下文（路径 user_id；query: page/page_size）
+func (h *AdminHandler) ListUserFrequentProducts(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || userID <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "5"))
+
+	resp, err := h.orderClient.GetUserFrequentProducts(c.Request.Context(), &order.GetUserFrequentProductsReq{
+		UserId:   userID,
+		Page:     int32(page),
+		PageSize: int32(pageSize),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	list := make([]gin.H, 0, len(resp.List))
+	for _, p := range resp.List {
+		list = append(list, gin.H{
+			"product_id":     p.ProductId,
+			"product_name":   p.ProductName,
+			"product_image":  p.ProductImage,
+			"sku_id":         p.SkuId,
+			"purchase_count": p.PurchaseCount,
+			"total_quantity": p.TotalQuantity,
+		})
+	}
+	response.SuccessWithPage(c, list, int(resp.Total), page, pageSize)
 }
 
 // CreateUserReq 后台/收银台添加会员请求
