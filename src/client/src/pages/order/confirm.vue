@@ -208,7 +208,7 @@ import { createOrder, previewFreeShipping, type FreeShippingPreview } from '@/ap
 import { getPaymentChannels } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
 import { formatPrice, formatDate } from '@/utils/format'
-import { notifyPayOutcome, payOrder } from '@/utils/pay'
+import { notifyPayOutcome, onReturnToSite, payOrder } from '@/utils/pay'
 import { goAddressList, goLogin } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { removeLocalCartItem } from '@/utils/localCart'
@@ -805,9 +805,16 @@ async function onSubmit() {
     userStore.setAddress(null)
     const outcome = await payOrder(res.data.id, selectedChannel.value.channel)
     notifyPayOutcome(outcome, selectedChannel.value.channel)
+    const detailUrl = `/pages/order/detail?id=${res.data.id}`
+    // 已整页跳转第三方收银台：当前文档即将卸载，此刻执行站内路由不生效，
+    // 改为等回跳或用户切回标签页后再进订单详情，避免停留在确认页看到已结算商品或重复下单
+    if (outcome === 'redirected') {
+      onReturnToSite(() => uni.redirectTo({ url: detailUrl }))
+      return
+    }
     // redirectTo 替换当前确认页：返回键/滑动返回直接回到进入确认页前的页面，
     // 避免再回到确认页看到已结算商品或重复下单
-    uni.redirectTo({ url: `/pages/order/detail?id=${res.data.id}` })
+    uni.redirectTo({ url: detailUrl })
   } catch {
     // 下单或支付失败已由 request 统一提示
   } finally {

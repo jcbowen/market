@@ -292,3 +292,175 @@ func TestAlipayTimeoutExpress(t *testing.T) {
 		})
 	}
 }
+
+// newTestAlipayKeys 生成测试用 RSA 密钥对（裸 base64 串，与后台录入格式一致）
+// 返回值：
+//   - string: PKCS#8 私钥 base64
+//   - string: PKIX 公钥 base64
+func newTestAlipayKeys(t *testing.T) (string, string) {
+	t.Helper()
+	pri, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成测试 RSA 密钥对失败: %v", err)
+	}
+	priDER, err := x509.MarshalPKCS8PrivateKey(pri)
+	if err != nil {
+		t.Fatalf("序列化测试私钥失败: %v", err)
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(&pri.PublicKey)
+	if err != nil {
+		t.Fatalf("序列化测试公钥失败: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(priDER), base64.StdEncoding.EncodeToString(pubDER)
+}
+
+// configuredAlipayConfig 字段齐全的支付宝配置载体（公钥模式）
+// 参数：
+//   - privateKey: 应用私钥
+//   - publicKey: 支付宝公钥
+//
+// 返回值：
+//   - config.AlipayConfig: 配置载体
+func configuredAlipayConfig(privateKey, publicKey string) config.AlipayConfig {
+	return config.AlipayConfig{
+		AppID:           testAlipayAppID,
+		PrivateKey:      privateKey,
+		AlipayPublicKey: publicKey,
+		NotifyURL:       "https://market.example.com/api/v1/payments/callback/alipay",
+	}
+}
+
+// TestCheckAlipayKeys 密钥自检：合法通过，畸形私钥与错填公钥分别报出对应原因
+func TestCheckAlipayKeys(t *testing.T) {
+	priKey, pubKey := newTestAlipayKeys(t)
+
+	if msg := checkAlipayKeys(configuredAlipayConfig(priKey, pubKey)); msg != "" {
+		t.Fatalf("合法密钥自检应通过，实际: %s", msg)
+	}
+
+	cases := []struct {
+		name     string
+		pri      string
+		pub      string
+		contains string
+	}{
+		{"私钥乱码", "not-a-private-key", pubKey, "应用私钥"},
+		{"私钥为空", "", pubKey, "应用私钥"},
+		{"公钥填成私钥内容", priKey, priKey, "支付宝公钥"},
+		{"公钥乱码", priKey, "%%%bad-key%%%", "支付宝公钥"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			msg := checkAlipayKeys(configuredAlipayConfig(c.pri, c.pub))
+			if msg == "" {
+				t.Fatalf("非法密钥应自检失败")
+			}
+			if !strings.Contains(msg, c.contains) {
+				t.Fatalf("失败原因应包含 %q，实际: %s", c.contains, msg)
+			}
+		})
+	}
+}
+
+// TestAlipayConfigStatus 就绪口径：字段齐全且自检通过才算就绪，未就绪须给出原因
+func TestAlipayConfigStatus(t *testing.T) {
+	priKey, pubKey := newTestAlipayKeys(t)
+
+	cases := []struct {
+		name       string
+		row        *model.PayConfig
+		wantReady  bool
+		wantReason string
+	}{
+		{"配置行为空", nil, false, "不完整"},
+		{"必填字段缺失", &model.PayConfig{AlipayAppID: testAlipayAppID}, false, "不完整"},
+		{"字段齐全且密钥合法", &model.PayConfig{
+			AlipayAppID:      testAlipayAppID,
+			AlipayPrivateKey: priKey,
+			AlipayPublicKey:  pubKey,
+			AlipayNotifyURL:  "https://market.example.com/api/v1/payments/callback/alipay",
+		}, true, ""},
+		{"字段齐全但公钥错填", &model.PayConfig{
+			AlipayAppID:      testAlipayAppID,
+			AlipayPrivateKey: priKey,
+			AlipayPublicKey:  "%%%bad-key%%%",
+			AlipayNotifyURL:  "https://market.example.com/api/v1/payments/callback/alipay",
+		}, false, "支付宝公钥"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ready, reason := AlipayConfigStatus(c.row)
+			if ready != c.wantReady {
+				t.Fatalf("ready = %v, 期望 %v", ready, c.wantReady)
+			}
+			if c.wantReason == "" && reason != "" {
+				t.Fatalf("就绪时不应有原因，实际: %s", reason)
+			}
+			if c.wantReason != "" && !strings.Contains(reason, c.wantReason) {
+				t.Fatalf("原因应包含 %q，实际: %s", c.wantReason, reason)
+			}
+		})
+	}
+}
+
+// TestNormalizeAlipayGateway 网关规范化：只保留到域名，去掉开放平台复制来的 /gateway.do 后缀
+func TestNormalizeAlipayGateway(t *testing.T) {
+	cases := []struct {
+		name     string
+		raw      string
+		expected string
+	}{
+		{"空串保持生产", "", ""},
+		{"两侧空白", "  https://openapi.alipay.com  ", "https://openapi.alipay.com"},
+		{"带 V2 路径后缀", "https://openapi-sandbox.dl.alipaydev.com/gateway.do", "https://openapi-sandbox.dl.alipaydev.com"},
+		{"大小写混用的路径后缀", "https://openapi-sandbox.dl.alipaydev.com/Gateway.DO", "https://openapi-sandbox.dl.alipaydev.com"},
+		{"末尾多余斜杠", "https://openapi-sandbox.dl.alipaydev.com/", "https://openapi-sandbox.dl.alipaydev.com"},
+		{"自定义端口", "https://proxy.example.com:8443/gateway.do", "https://proxy.example.com:8443"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := normalizeAlipayGateway(c.raw); got != c.expected {
+				t.Fatalf("normalizeAlipayGateway(%q) = %q, 期望 %q", c.raw, got, c.expected)
+			}
+		})
+	}
+}
+
+// TestBuildAlipayExecutorGatewayRouting 网关地址贯通：沙箱网关生成的收银台跳转串指向沙箱且路径不重复
+func TestBuildAlipayExecutorGatewayRouting(t *testing.T) {
+	priKey, pubKey := newTestAlipayKeys(t)
+	const sandboxGateway = "https://openapi-sandbox.dl.alipaydev.com"
+
+	cases := []struct {
+		name     string
+		gateway  string
+		wantBase string
+	}{
+		{"留空走生产网关", "", "https://openapi.alipay.com/gateway.do"},
+		{"沙箱网关", sandboxGateway, sandboxGateway + "/gateway.do"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := configuredAlipayConfig(priKey, pubKey)
+			cfg.GatewayURL = c.gateway
+			executor := buildAlipayExecutor(cfg)
+			if executor == nil {
+				t.Fatalf("配置齐全时应构建执行器")
+			}
+			payURL, err := executor.PageExecute("alipay.trade.wap.pay", "GET", map[string]interface{}{
+				"biz_content": map[string]interface{}{"out_trade_no": "PAY202601010001", "total_amount": "12.34"},
+				"notify_url":  cfg.NotifyURL,
+			}, "", "", nil)
+			if err != nil {
+				t.Fatalf("生成收银台跳转串失败: %v", err)
+			}
+			if !strings.HasPrefix(payURL, c.wantBase+"?") {
+				t.Fatalf("跳转串前缀 = %s，期望 %s?", payURL[:min(len(payURL), 80)], c.wantBase)
+			}
+			// 网关带 /gateway.do 时 SDK 会再拼一次，出现双路径即为规范化失效
+			if strings.Contains(payURL, "/gateway.do/gateway.do") {
+				t.Fatalf("跳转串出现重复网关路径: %s", payURL)
+			}
+		})
+	}
+}

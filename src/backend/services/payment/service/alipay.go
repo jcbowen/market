@@ -6,13 +6,76 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 
+	"github.com/jcbowen/jcbaseGo/component/security"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 
 	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
 	alipaymodel "github.com/jcbowen/alipay-sdk-go-all/model"
 )
+
+// normalizeAlipayGateway 规范化支付宝网关地址
+// SDK 会自行拼接 V2 的 /gateway.do 与 V3 的接口路径，故网关地址必须只保留到域名（含可选端口），
+// 管理端从支付宝开放平台复制的「网关地址」通常带 /gateway.do 后缀，直接入库会导致请求路径重复
+// 参数：
+//   - raw: 原始网关地址，可为空
+//
+// 返回值：
+//   - string: 仅含协议与域名的网关地址，空串表示使用生产默认网关
+func normalizeAlipayGateway(raw string) string {
+	gw := strings.TrimSpace(raw)
+	if gw == "" {
+		return ""
+	}
+	gw = strings.TrimRight(gw, "/")
+	// 去掉 V2 网关路径后缀，保留到域名（大小写不敏感，仅处理末尾一次）
+	pathLen := len(alipaysdk.V2GatewayPath)
+	if len(gw) >= pathLen && strings.EqualFold(gw[len(gw)-pathLen:], alipaysdk.V2GatewayPath) {
+		gw = gw[:len(gw)-pathLen]
+	}
+	return strings.TrimRight(gw, "/")
+}
+
+// checkAlipayKeys 离线自检支付宝密钥可用性（不联网）
+// 私钥走与真实下单一致的签名路径（SDK AloneRsaSign → security.RSASign），
+// 公钥走与回调验签一致的解析路径（security.ParseRSAPublicKey），
+// 用于把「私钥粘错、把应用公钥错填成支付宝公钥、密钥缺字符」这类配置错误
+// 在后台保存时就暴露出来，而不是等真实用户点支付才在签名阶段失败
+// 参数：
+//   - cfg: 支付宝配置载体
+//
+// 返回值：
+//   - string: 自检失败原因，空串表示通过
+func checkAlipayKeys(cfg config.AlipayConfig) string {
+	if _, err := alipaysdk.AloneRsaSign("market_alipay_config_check", cfg.PrivateKey, false); err != nil {
+		return "应用私钥不可用：" + err.Error()
+	}
+	if _, err := security.ParseRSAPublicKey([]byte(cfg.AlipayPublicKey)); err != nil {
+		return "支付宝公钥不可解析：" + err.Error()
+	}
+	return ""
+}
+
+// AlipayConfigStatus 计算支付配置行的支付宝就绪状态与自检失败原因
+// 就绪口径为「必填字段齐全 且 密钥自检通过」，与 C 端是否展示支付宝、下单是否可用保持一致
+// 参数：
+//   - cfg: 支付配置行，可为 nil
+//
+// 返回值：
+//   - bool: 是否就绪（可安全对 C 端展示并承接下单）
+//   - string: 未就绪原因，就绪时为空串
+func AlipayConfigStatus(cfg *model.PayConfig) (bool, string) {
+	alipay := alipayConfigOf(cfg)
+	if !alipay.IsConfigured() {
+		return false, "支付宝必填配置不完整（AppID、应用私钥、支付宝公钥、异步通知地址均为必填）"
+	}
+	if msg := checkAlipayKeys(alipay); msg != "" {
+		return false, msg
+	}
+	return true, ""
+}
 
 // buildAlipayExecutor 根据支付宝配置构建通用执行器（V2 pageExecute 与 V3 API 共享）
 // 采用公钥模式：AppID + 应用私钥 + 支付宝公钥；配置不完整或构建失败时返回 nil，
@@ -27,6 +90,8 @@ func buildAlipayExecutor(cfg config.AlipayConfig) *alipaysdk.GenericExecuteApi {
 		return nil
 	}
 	configUtil, err := alipaysdk.NewAlipayConfigUtil(&alipaysdk.AlipayConfig{
+		// GatewayURL 入库前已由 normalizeAlipayGateway 规范化为「协议+域名」，空串即 SDK 默认生产网关
+		ServerUrl:       cfg.GatewayURL,
 		AppId:           cfg.AppID,
 		PrivateKey:      cfg.PrivateKey,
 		AlipayPublicKey: cfg.AlipayPublicKey,

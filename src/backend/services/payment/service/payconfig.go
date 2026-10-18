@@ -8,10 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 	wegopayment "github.com/jcbowen/wego/payment"
+
+	"google.golang.org/grpc/codes"
 
 	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
 )
@@ -75,11 +78,21 @@ func (s *PaymentService) GetPayConfig(ctx context.Context) (*model.PayConfig, er
 //   - cfg: proto 支付配置
 //
 // 返回值：
-//   - error: 保存失败时返回错误
+//   - error: 保存失败或配置版本冲突时返回错误
 func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConfig) error {
 	row, err := s.GetPayConfig(ctx)
 	if err != nil {
 		return err
+	}
+
+	// 乐观锁：调用方携带读取时的版本号（updated_at），与库中不一致说明期间已被他人改写，
+	// 拒绝整行覆写（支付配置为单行全量覆盖式保存，后提交者会静默丢掉先提交者的改动）；
+	// 版本号为空表示调用方未参与并发写入（如旧版客户端），不校验。
+	// 用 FailedPrecondition 而非普通错误：网关对 codes.Internal 不透传原始消息，
+	// 该提示需要原样到达管理端界面
+	if cfg.UpdatedAt != "" && cfg.UpdatedAt != row.UpdatedAt {
+		log.Printf("支付配置保存冲突：调用方版本 %s，当前版本 %s", cfg.UpdatedAt, row.UpdatedAt)
+		return bizerr.New(codes.FailedPrecondition, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
 	}
 
 	channels, err := json.Marshal(cfg.EnabledChannels)
@@ -119,6 +132,7 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 	row.AlipayPublicKey = cfg.AlipayPublicKey
 	row.AlipayNotifyURL = cfg.AlipayNotifyUrl
 	row.AlipayReturnURL = cfg.AlipayReturnUrl
+	row.AlipayGatewayURL = normalizeAlipayGateway(cfg.AlipayGatewayUrl)
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
 
 	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
@@ -301,6 +315,7 @@ func alipayConfigOf(cfg *model.PayConfig) config.AlipayConfig {
 		AlipayPublicKey: cfg.AlipayPublicKey,
 		NotifyURL:       cfg.AlipayNotifyURL,
 		ReturnURL:       cfg.AlipayReturnURL,
+		GatewayURL:      cfg.AlipayGatewayURL,
 	}
 }
 

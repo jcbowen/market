@@ -17,7 +17,9 @@ import {
  *   - 交班冻结快照：statistics 与实时统计一致、end_time 落库
  *   - 快照冻结不可变：shifts 列表回读已结束班次统计与交班时一致
  *   - 交班后重新开工新班次（id 递增），收银恢复正常
- * 说明：POS 代选券/散客清零已在 28 号覆盖；本模块聚焦班次统计口径与生命周期
+ * 说明：POS 代选券/散客清零已在 28 号覆盖；本模块聚焦班次统计口径与生命周期。
+ *   退款载体单用自提（delivery_type=1）：到店单收款即自动完结为已完成(5)，
+ *   而代客退款状态口径仅允许 2/3/4，到店单无法再发起退款
  */
 
 interface StatItem {
@@ -122,7 +124,10 @@ test.describe.serial('POS 交班统计快照', () => {
       data: {
         user_id: globalThis.__pos44MemberId,
         pay_type: 4,
-        delivery_type: 3,
+        // 会员单走自提（status 停在 2 已支付）以便后续代客退款：
+        // 到店单（delivery_type=3）收款即同事务终态化为已完成(5)，而代客退款只允许 2/3/4，
+        // 用到店单构造退款会在状态机处被拒（该口径缺口已记入待办清单待决策，14 号已锁定到店终态）
+        delivery_type: 1,
         items: [{ sku_id: sku!.id, quantity: 1 }],
         remark: 'AUTO-TEST 44 会员单',
       },

@@ -102,6 +102,10 @@ message PayConfig {
   // 适用客户端渠道（勾选的客户端渠道 code 列表：mp/gzh/app/h5；空=全部客户端渠道可用，兼容存量数据）
   repeated string wechat_client_channels = 19;
   repeated string alipay_client_channels = 20;
+  // 支付宝网关地址，空=生产环境 https://openapi.alipay.com（填沙箱网关即切沙箱）
+  string alipay_gateway_url = 21;
+  // 支付宝配置自检失败原因，空表示自检通过；就绪状态为「字段齐全且自检通过」
+  string alipay_ready_message = 22;
 }
 
 message UploadPayCertReq {

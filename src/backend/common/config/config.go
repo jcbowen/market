@@ -115,11 +115,14 @@ func (w *WechatConfig) IsPaymentConfigured() bool {
 // AlipayConfig 支付宝支付配置数据载体
 // 支付配置实际存储于数据库 pay_config 表，此结构体仅作为服务间传递的数据载体
 type AlipayConfig struct {
-	AppID           string `json:"app_id" yaml:"app_id"`                     // 支付宝 AppID
-	PrivateKey      string `json:"private_key" yaml:"private_key"`           // 支付宝应用私钥
+	AppID           string `json:"app_id" yaml:"app_id"`                       // 支付宝 AppID
+	PrivateKey      string `json:"private_key" yaml:"private_key"`             // 支付宝应用私钥
 	AlipayPublicKey string `json:"alipay_public_key" yaml:"alipay_public_key"` // 支付宝公钥
-	NotifyURL       string `json:"notify_url" yaml:"notify_url"`             // 支付宝支付结果通知 URL
-	ReturnURL       string `json:"return_url" yaml:"return_url"`             // 支付宝支付完成回跳 URL
+	NotifyURL       string `json:"notify_url" yaml:"notify_url"`               // 支付宝支付结果通知 URL
+	ReturnURL       string `json:"return_url" yaml:"return_url"`               // 支付宝支付完成回跳 URL
+	// GatewayURL V2/V3 网关地址，空=生产环境 https://openapi.alipay.com；
+	// 填支付宝沙箱网关（https://openapi-sandbox.dl.alipaydev.com）即切到沙箱环境联调
+	GatewayURL string `json:"gateway_url" yaml:"gateway_url"`
 }
 
 // IsConfigured 判断支付宝支付配置是否完整

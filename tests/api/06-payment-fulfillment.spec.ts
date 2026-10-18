@@ -67,10 +67,17 @@ async function getOrder(id: number): Promise<OrderInfo> {
 }
 
 test.describe('支付单查询与回调安全', () => {
-  test('支付渠道列表可获取（alipay 渠道应不可用）', async ({ request }) => {
+  test('支付渠道列表可获取（仅下发能力就绪的渠道）', async ({ request }) => {
     const resp = await request.get('/api/v1/payments/channels');
     const body = (await resp.json()) as ApiResponse<{ channels?: Record<string, unknown>[] }>;
     expect(body.code).toBe(0);
+    // 原标题声称「alipay 渠道应不可用」但无对应断言，属标题与实现不符；
+    // 就绪口径与渠道下发的联动断言在 47-settings-write 模块，此处只校验响应结构
+    const list = body.data?.channels ?? [];
+    expect(Array.isArray(list), 'channels 应为数组').toBe(true);
+    for (const ch of list) {
+      expect(typeof ch.channel, '渠道项应含 channel 标识').toBe('string');
+    }
   });
 
   test('支付单详情仅本人订单可查（归属校验）', async () => {

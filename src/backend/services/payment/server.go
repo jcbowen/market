@@ -143,13 +143,8 @@ func (s *server) toPayConfig(row *model.PayConfig) *payment.PayConfig {
 		PrivateKey:   row.WechatPrivateKey,
 		NotifyURL:    row.WechatNotifyURL,
 	}
-	alipay := config.AlipayConfig{
-		AppID:           row.AlipayAppID,
-		PrivateKey:      row.AlipayPrivateKey,
-		AlipayPublicKey: row.AlipayPublicKey,
-		NotifyURL:       row.AlipayNotifyURL,
-		ReturnURL:       row.AlipayReturnURL,
-	}
+	// 支付宝就绪口径与 C 端展示、下单可用性一致：字段齐全且密钥离线自检通过
+	alipayReady, alipayReadyMsg := service.AlipayConfigStatus(row)
 
 	return &payment.PayConfig{
 		EnabledChannels:      channels,
@@ -169,7 +164,9 @@ func (s *server) toPayConfig(row *model.PayConfig) *payment.PayConfig {
 		AlipayCertUploaded:   row.AlipayPrivateKey != "",
 		UpdatedAt:            row.UpdatedAt,
 		WechatPaymentReady:   wechat.IsPaymentConfigured(),
-		AlipayReady:          alipay.IsConfigured(),
+		AlipayReady:          alipayReady,
+		AlipayReadyMessage:   alipayReadyMsg,
+		AlipayGatewayUrl:     row.AlipayGatewayURL,
 		WechatClientChannels: wechatClientChannels,
 		AlipayClientChannels: alipayClientChannels,
 	}

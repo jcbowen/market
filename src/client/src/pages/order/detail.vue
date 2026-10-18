@@ -119,7 +119,7 @@ import { onLoad, onUnload, onHide, onShow } from '@dcloudio/uni-app'
 import { getOrderDetail, confirmReceive } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
-import { notifyPayOutcome, payOrder } from '@/utils/pay'
+import { notifyPayOutcome, onReturnToSite, payOrder } from '@/utils/pay'
 import { goOrderList, goProductDetail } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { canReceive, receiveButtonText, canCancel, canRefund, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
@@ -340,6 +340,12 @@ async function onPay() {
     if (!channel) return
     const outcome = await payOrder(order.value.id, channel.channel)
     notifyPayOutcome(outcome, channel.channel)
+    // 已整页跳转第三方收银台：文档即将卸载，此刻刷新订单结果无意义，
+    // 改为等用户回跳或切回标签页后再刷新订单状态
+    if (outcome === 'redirected') {
+      onReturnToSite(loadOrder)
+      return
+    }
     loadOrder()
   } catch {
     // request 已统一提示错误

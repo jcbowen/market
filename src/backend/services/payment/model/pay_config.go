@@ -36,6 +36,8 @@ type PayConfig struct {
 	AlipayPublicKey  string `gorm:"column:alipay_public_key;type:text;comment:支付宝公钥内容" json:"alipay_public_key"`
 	AlipayNotifyURL  string `gorm:"column:alipay_notify_url;type:varchar(255);comment:支付宝异步通知 URL" json:"alipay_notify_url"`
 	AlipayReturnURL  string `gorm:"column:alipay_return_url;type:varchar(255);comment:支付宝支付完成回跳 URL" json:"alipay_return_url"`
+	// 网关地址为空表示生产环境（https://openapi.alipay.com），填沙箱地址即切换沙箱环境
+	AlipayGatewayURL string `gorm:"column:alipay_gateway_url;type:varchar(255);comment:支付宝网关地址，空=生产环境 openapi.alipay.com" json:"alipay_gateway_url"`
 
 	// updated_at 兼作版本号，payment 服务据此检测配置变更并热更新支付客户端
 	CreatedAt string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`

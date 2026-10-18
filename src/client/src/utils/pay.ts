@@ -263,6 +263,33 @@ function showAlipayGuide(payUrl: string): void {
 // #endif
 
 /**
+ * 注册「用户回到本站」一次性回调（H5 专用）
+ * 整页跳转第三方收银台后当前文档会被卸载，此时执行站内路由不生效，
+ * 必须等用户回跳或手动切回标签页再处理：
+ * - 配了支付宝 return_url：浏览器直接落到回跳地址，本回调一般不触发；
+ * - 未配 return_url：用户手动切回标签页时由 visibilitychange 接管，
+ *   避免停留在下单确认页看到已结算商品或重复下单
+ * 回调触发后自动解绑，非 H5 端为空实现（不会进入 redirected 分支）
+ * @param callback 用户回到本站时执行一次
+ */
+export function onReturnToSite(callback: () => void): void {
+  // #ifdef H5
+  const off = () => {
+    document.removeEventListener('visibilitychange', onVisible)
+    window.removeEventListener('pageshow', onPageShow)
+    callback()
+  }
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') off()
+  }
+  // bfcache 恢复（用户用返回键回到本站）同样视为回到本站
+  const onPageShow = () => off()
+  document.addEventListener('visibilitychange', onVisible)
+  window.addEventListener('pageshow', onPageShow)
+  // #endif
+}
+
+/**
  * 拉起微信支付
  * 小程序端使用 uni.requestPayment 调起 JSAPI 支付；
  * H5 端 uni-app 未封装浏览器支付，直接跳转后端返回的 h5_url；

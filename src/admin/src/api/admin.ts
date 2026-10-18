@@ -199,6 +199,8 @@ export interface PaymentSetting {
   alipay: AlipayPayConfig
   wechat_payment_ready: boolean
   alipay_ready: boolean
+  /** 支付宝配置自检失败原因，空表示自检通过（就绪 = 字段齐全且自检通过）；仅服务端出参，保存载荷无需携带 */
+  alipay_ready_message?: string
   wechat_cert_uploaded: boolean
   alipay_cert_uploaded: boolean
   updated_at: string
@@ -260,6 +262,8 @@ export interface AlipayPayConfig {
   alipay_public_key: string
   notify_url: string
   return_url: string
+  /** 网关地址（仅协议+域名），空串=生产环境 openapi.alipay.com；填沙箱网关即切沙箱联调 */
+  gateway_url: string
 }
 
 /**
