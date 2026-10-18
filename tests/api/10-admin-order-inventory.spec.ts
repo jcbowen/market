@@ -164,6 +164,25 @@ test.describe.serial('库存管理', () => {
     expect(body.code, `出库失败: ${body.message}`).toBe(0);
   });
 
+  test('出库超量库存被拒绝且错误码为库存不足', async () => {
+    test.skip(!targetSku, '环境无 SKU');
+    // 查当前库存，出库 stock+5 必然超出
+    const before = (await (
+      await api.get('/api/v1/admin/inventory/skus', { params: { page: 1, page_size: 100 } })
+    ).json()) as ApiResponse<PageData<{ id?: number; sku_id?: number; stock: number }>>;
+    const stock = (before.data?.list ?? []).find((s) => (s.id ?? s.sku_id) === targetSku)?.stock;
+    if (stock === undefined) {
+      test.skip(true, '库存列表未返回目标 SKU，跳过超量出库断言');
+      return;
+    }
+    const resp = await api.post('/api/v1/admin/inventory/out-orders', {
+      data: { type: 2, items: [{ sku_id: targetSku, quantity: stock + 5 }], remark: 'AUTO-TEST 超量出库' },
+    });
+    const body = (await resp.json()) as ApiResponse;
+    // 出库单库存不足与下单扣减口径一致：ResourceExhausted → 12002（修复前误报参数错误 10001）
+    expect(body.code, `预期库存不足 12002，实际 ${body.code} ${body.message}`).toBe(12002);
+  });
+
   test('库存预警接口可查', async () => {
     const resp = await api.get('/api/v1/admin/inventory/warnings');
     const body = (await resp.json()) as ApiResponse;

@@ -131,6 +131,33 @@ test.describe.serial('商品管理', () => {
     expect(detail.data?.product?.name ?? detail.data?.name).toBe(newName);
   });
 
+  test('表单调整库存落流水(ref_no=FORM)', async () => {
+    // 以详情当前库存为基准调低 20，不依赖前序用例的库存值
+    const beforeDetail = (await (await api.get(`/api/v1/admin/products/${productId}`)).json()) as ApiResponse<Product>;
+    const skuId = (beforeDetail.data?.skus ?? beforeDetail.data?.product?.skus)?.[0]?.id ?? 0;
+    const beforeStock = (beforeDetail.data?.skus ?? beforeDetail.data?.product?.skus)?.[0]?.stock;
+    test.skip(!skuId || beforeStock === undefined || beforeStock < 20, '环境无 SKU 或库存不足 20，跳过表单调库存用例');
+
+    const afterStock = beforeStock! - 20;
+    const resp = await api.put(`/api/v1/admin/products/${productId}`, {
+      data: { category_id: catId, name: autoName('调库存商品'), is_multi_spec: false, sku_items: [{ price: 12.5, stock: afterStock }] },
+    });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, `表单调库存失败: ${body.message}`).toBe(0);
+
+    // 表单调低库存须同步落流水（ref_no=FORM），保证进销存报表口径完整
+    const records = (await (
+      await api.get('/api/v1/admin/inventory/entries', { params: { sku_id: skuId, page: 1, page_size: 20 } })
+    ).json()) as ApiResponse<PageData<{ ref_no?: string; type?: number; quantity?: number; before_stock?: number; after_stock?: number }>>;
+    expect(records.code).toBe(0);
+    const form = (records.data?.list ?? []).find((r) => r.ref_no === 'FORM');
+    expect(form, '未查到 ref_no=FORM 的表单调整流水').toBeTruthy();
+    expect(form!.type, '表单调低库存流水类型应为 2(出库)').toBe(2);
+    expect(form!.quantity).toBe(-20);
+    expect(form!.before_stock).toBe(beforeStock);
+    expect(form!.after_stock).toBe(afterStock);
+  });
+
   test('商品上架状态设置成功', async () => {
     const on = (await (
       await api.post(`/api/v1/admin/products/${productId}/status`, { data: { status: 1 } })
