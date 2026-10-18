@@ -34,7 +34,7 @@ jobs:
           cache-dependency-path: src/backend/go.sum
 
       # jcbaseGo / wego / alipay-sdk-go-all 已在 GitHub 公开发布对应 tag
-      # （v0.16.1 / v0.1.0 / v0.0.1），本地开发经 go.mod replace 指向本机仓库目录；
+      # （v0.16.1 / v0.1.0 / v0.0.2），本地开发经 go.mod replace 指向本机仓库目录；
       # CI 统一 drop replace，从公共 Go proxy 拉取已发布版本。
       # 新增本地 replace 依赖时必须同步在此处补 dropreplace，否则 CI 上不存在
       # ../../../ 仓库外路径，go mod tidy 会直接报 replacement directory does not exist。
@@ -265,7 +265,15 @@ jobs:
           for f in package/*.tar.gz package/*.zip; do
             name=$(basename "${f}")
             echo "上传 ${name} ..."
-            curl -sS -f -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
-              -H "$AUTH" -F "attachment=@${f}" > /dev/null
+            if [[ "${GITHUB_SERVER_URL}" == *github.com* ]]; then
+              # GitHub 资产上传只接受 raw binary（文档要求 application/octet-stream），
+              # multipart 的 attachment 字段是 Gitea 写法，GitHub 端会校验失败
+              curl -sS -f -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+                -H "$AUTH" -H "Content-Type: application/octet-stream" \
+                --data-binary "@${f}" > /dev/null
+            else
+              curl -sS -f -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+                -H "$AUTH" -F "attachment=@${f}" > /dev/null
+            fi
           done
           echo "发布完成：${GITHUB_SERVER_URL%/}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
