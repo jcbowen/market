@@ -814,6 +814,8 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 	if req.Status == 6 {
 		isCOD = s.isCashOnDeliveryOrder(ctx, req.Id)
 	}
+	// 取消前的订单状态（req.Status=6 时用于判断是否回退销量：仅已支付/备货中取消需回退，待支付取消未计销量）
+	var statusBeforeCancel int32
 
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o model.Order
@@ -829,6 +831,7 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 
 		// 取消订单：不走通用状态机，需回补库存并记录取消原因/时间
 		if req.Status == 6 {
+			statusBeforeCancel = o.Status
 			return s.cancelOrderInTx(ctx, tx, &o, req.OperatorType, req.OperatorId, req.Remark, isCOD)
 		}
 
@@ -836,6 +839,7 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许流转: %d -> %d", o.Status, req.Status))
 		}
 		fromStatus := o.Status
+		toStatus := req.Status
 		now := time.Now().Format("2006-01-02 15:04:05")
 		updates := map[string]interface{}{
 			"status":     req.Status,
@@ -844,6 +848,13 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 		switch req.Status {
 		case 2:
 			updates["pay_time"] = &now
+			// 到店单（delivery_type=3，即买即走）：收款成功即同事务终态化为已完成，
+			// 不产生"已支付"停留态，后台无需再核销/完成（到店单无取货码，核销不适用）
+			if o.DeliveryType == 3 {
+				toStatus = 5
+				updates["status"] = toStatus
+				updates["complete_time"] = &now
+			}
 		case 4:
 			updates["deliver_time"] = &now
 			// 发货时写入独立物流字段（替代原先拼接 remark 的做法）
@@ -860,13 +871,56 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 		if res.RowsAffected == 0 {
 			return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
 		}
-		return s.createStatusLogTx(tx, o.ID, fromStatus, req.Status, req.OperatorType, req.OperatorId, req.Remark)
+		if err := s.createStatusLogTx(tx, o.ID, fromStatus, req.Status, req.OperatorType, req.OperatorId, req.Remark); err != nil {
+			return err
+		}
+		// 到店单一步终态化时补记完成日志，状态轨迹完整可追溯
+		if toStatus != req.Status {
+			return s.createStatusLogTx(tx, o.ID, req.Status, toStatus, req.OperatorType, req.OperatorId, "到店订单收款完成，自动完结")
+		}
+		return nil
 	})
-	if err == nil && req.Status == 6 {
-		// 取消成功后关闭待支付支付单，防迟到回调误置已支付
-		closePendingPayments(ctx, req.Id)
+	if err == nil {
+		switch req.Status {
+		case 2:
+			// 支付成功累加销量（含到店单收款即完结路径；调度器补同步同走此处）
+			s.adjustOrderSales(ctx, req.Id, 1)
+		case 6:
+			// 取消成功后关闭待支付支付单，防迟到回调误置已支付
+			closePendingPayments(ctx, req.Id)
+			// 已支付/备货中取消需回退销量（待支付取消未计销量，不回退）
+			if statusBeforeCancel == 2 || statusBeforeCancel == 3 {
+				s.adjustOrderSales(ctx, req.Id, -1)
+			}
+		}
 	}
 	return err
+}
+
+// adjustOrderSales 按订单明细调整商品/SKU 销量（净成交口径）
+// 支付成功(+1)/取消回退(-1)共用；必须在主事务提交成功后调用，
+// 失败仅记日志不回滚主流程（展示口径容忍瞬时缺失；AdjustSalesCount 无幂等键，放事务内重试会重复调整）
+//
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//   - sign: +1 累加 / -1 回退
+func (s *OrderService) adjustOrderSales(ctx context.Context, orderID int64, sign int32) {
+	var items []model.OrderItem
+	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", orderID).Find(&items).Error; err != nil {
+		log.Printf("[order] 查询订单明细失败（销量未调整）: order_id=%d err=%v", orderID, err)
+		return
+	}
+	reqItems := make([]*product.AdjustSalesCountItem, 0, len(items))
+	for _, it := range items {
+		reqItems = append(reqItems, &product.AdjustSalesCountItem{SkuId: it.SkuID, Delta: sign * it.Quantity})
+	}
+	if len(reqItems) == 0 {
+		return
+	}
+	if _, err := grpcclient.ProductClient.AdjustSalesCount(ctx, &product.AdjustSalesCountReq{Items: reqItems}); err != nil {
+		log.Printf("[order] 调整销量失败: order_id=%d sign=%d err=%v", orderID, sign, err)
+	}
 }
 
 // errPickupCodeMismatch 取货码不匹配（哨兵错误：防爆破计数依赖它判定，避免字符串匹配错误文案）

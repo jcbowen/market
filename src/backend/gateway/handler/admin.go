@@ -1668,6 +1668,40 @@ func (h *AdminHandler) UpdateProductStatus(c *gin.Context) {
 	response.Success(c, gin.H{"id": id, "status": *req.Status})
 }
 
+// UpdateProductName 商品名称行内更新请求
+type UpdateProductNameReq struct {
+	Name string `json:"name" binding:"required"`
+}
+
+// UpdateProductName 更新商品名称（列表页行内改名轻量接口）
+// 携带管理员社区语境，商品归属校验在 product-service 内完成
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) UpdateProductName(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req UpdateProductNameReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	_, err = h.productClient.UpdateProductName(c.Request.Context(), &product.UpdateProductNameReq{
+		Id:          id,
+		Name:        req.Name,
+		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id, "name": req.Name})
+}
+
 // --- 订单管理 ---
 
 // AdminVerifyPickupReq 后台自提核销请求

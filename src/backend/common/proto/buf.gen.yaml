@@ -1,3 +1,5 @@
+# buf 代码生成配置：与 protoc 等价（paths=source_relative，输出到各 proto 同目录）
+# 依赖本机已安装 protoc-gen-go / protoc-gen-go-grpc（go install 一致即可）
 version: v2
 plugins:
   - local: protoc-gen-go

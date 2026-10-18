@@ -147,6 +147,20 @@ export function updateProductStatus(id: number, status: number) {
 }
 
 /**
+ * 行内更新商品名称（轻量接口，仅改 name，不影响规格/SKU）
+ * @param id 商品 ID
+ * @param name 新名称
+ * @returns 更新结果
+ */
+export function updateProductName(id: number, name: string) {
+  return request<ApiResult<{ id: number; name: string }>>({
+    url: `/api/v1/admin/products/${id}/name`,
+    method: 'PUT',
+    data: { name },
+  })
+}
+
+/**
  * 条形码精确查询（收银台扫码直达）
  * @param code 条形码
  * @returns 命中的商品与 SKU；未命中返回 404 业务错误

@@ -33,6 +33,7 @@ const (
 	ProductService_UpdateProduct_FullMethodName                 = "/product.ProductService/UpdateProduct"
 	ProductService_DeleteProduct_FullMethodName                 = "/product.ProductService/DeleteProduct"
 	ProductService_UpdateProductStatus_FullMethodName           = "/product.ProductService/UpdateProductStatus"
+	ProductService_UpdateProductName_FullMethodName             = "/product.ProductService/UpdateProductName"
 	ProductService_ListSkus_FullMethodName                      = "/product.ProductService/ListSkus"
 	ProductService_SearchSkus_FullMethodName                    = "/product.ProductService/SearchSkus"
 	ProductService_CreateSku_FullMethodName                     = "/product.ProductService/CreateSku"
@@ -45,6 +46,7 @@ const (
 	ProductService_GeneratePurchaseOrder_FullMethodName         = "/product.ProductService/GeneratePurchaseOrder"
 	ProductService_DeductFlashSaleStock_FullMethodName          = "/product.ProductService/DeductFlashSaleStock"
 	ProductService_ReleaseFlashSaleStock_FullMethodName         = "/product.ProductService/ReleaseFlashSaleStock"
+	ProductService_AdjustSalesCount_FullMethodName              = "/product.ProductService/AdjustSalesCount"
 	ProductService_ListSuppliers_FullMethodName                 = "/product.ProductService/ListSuppliers"
 	ProductService_CreateSupplier_FullMethodName                = "/product.ProductService/CreateSupplier"
 	ProductService_UpdateSupplier_FullMethodName                = "/product.ProductService/UpdateSupplier"
@@ -130,6 +132,8 @@ type ProductServiceClient interface {
 	UpdateProduct(ctx context.Context, in *UpdateProductReq, opts ...grpc.CallOption) (*ProductDetail, error)
 	DeleteProduct(ctx context.Context, in *DeleteProductReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	UpdateProductStatus(ctx context.Context, in *UpdateProductStatusReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// UpdateProductName 列表页行内改名轻量接口（仅更新 name，避免全量提交覆盖规格/SKU）
+	UpdateProductName(ctx context.Context, in *UpdateProductNameReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// SKU
 	ListSkus(ctx context.Context, in *ListSkusReq, opts ...grpc.CallOption) (*ListSkusResp, error)
 	// SearchSkus 社区内 SKU 级搜索（join products 携带商品名）
@@ -148,6 +152,8 @@ type ProductServiceClient interface {
 	// 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
 	DeductFlashSaleStock(ctx context.Context, in *DeductFlashSaleStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ReleaseFlashSaleStock(ctx context.Context, in *ReleaseFlashSaleStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 销量调整（净成交口径）：支付成功累加、取消/退款回退；SKU 行与商品汇总行同事务同步
+	AdjustSalesCount(ctx context.Context, in *AdjustSalesCountReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 供应商
 	ListSuppliers(ctx context.Context, in *ListSuppliersReq, opts ...grpc.CallOption) (*ListSuppliersResp, error)
 	CreateSupplier(ctx context.Context, in *CreateSupplierReq, opts ...grpc.CallOption) (*SupplierInfo, error)
@@ -368,6 +374,16 @@ func (c *productServiceClient) UpdateProductStatus(ctx context.Context, in *Upda
 	return out, nil
 }
 
+func (c *productServiceClient) UpdateProductName(ctx context.Context, in *UpdateProductNameReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_UpdateProductName_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *productServiceClient) ListSkus(ctx context.Context, in *ListSkusReq, opts ...grpc.CallOption) (*ListSkusResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListSkusResp)
@@ -482,6 +498,16 @@ func (c *productServiceClient) ReleaseFlashSaleStock(ctx context.Context, in *Re
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.CommonResponse)
 	err := c.cc.Invoke(ctx, ProductService_ReleaseFlashSaleStock_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) AdjustSalesCount(ctx context.Context, in *AdjustSalesCountReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_AdjustSalesCount_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1147,6 +1173,8 @@ type ProductServiceServer interface {
 	UpdateProduct(context.Context, *UpdateProductReq) (*ProductDetail, error)
 	DeleteProduct(context.Context, *DeleteProductReq) (*common.CommonResponse, error)
 	UpdateProductStatus(context.Context, *UpdateProductStatusReq) (*common.CommonResponse, error)
+	// UpdateProductName 列表页行内改名轻量接口（仅更新 name，避免全量提交覆盖规格/SKU）
+	UpdateProductName(context.Context, *UpdateProductNameReq) (*common.CommonResponse, error)
 	// SKU
 	ListSkus(context.Context, *ListSkusReq) (*ListSkusResp, error)
 	// SearchSkus 社区内 SKU 级搜索（join products 携带商品名）
@@ -1165,6 +1193,8 @@ type ProductServiceServer interface {
 	// 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
 	DeductFlashSaleStock(context.Context, *DeductFlashSaleStockReq) (*common.CommonResponse, error)
 	ReleaseFlashSaleStock(context.Context, *ReleaseFlashSaleStockReq) (*common.CommonResponse, error)
+	// 销量调整（净成交口径）：支付成功累加、取消/退款回退；SKU 行与商品汇总行同事务同步
+	AdjustSalesCount(context.Context, *AdjustSalesCountReq) (*common.CommonResponse, error)
 	// 供应商
 	ListSuppliers(context.Context, *ListSuppliersReq) (*ListSuppliersResp, error)
 	CreateSupplier(context.Context, *CreateSupplierReq) (*SupplierInfo, error)
@@ -1294,6 +1324,9 @@ func (UnimplementedProductServiceServer) DeleteProduct(context.Context, *DeleteP
 func (UnimplementedProductServiceServer) UpdateProductStatus(context.Context, *UpdateProductStatusReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateProductStatus not implemented")
 }
+func (UnimplementedProductServiceServer) UpdateProductName(context.Context, *UpdateProductNameReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateProductName not implemented")
+}
 func (UnimplementedProductServiceServer) ListSkus(context.Context, *ListSkusReq) (*ListSkusResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSkus not implemented")
 }
@@ -1329,6 +1362,9 @@ func (UnimplementedProductServiceServer) DeductFlashSaleStock(context.Context, *
 }
 func (UnimplementedProductServiceServer) ReleaseFlashSaleStock(context.Context, *ReleaseFlashSaleStockReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReleaseFlashSaleStock not implemented")
+}
+func (UnimplementedProductServiceServer) AdjustSalesCount(context.Context, *AdjustSalesCountReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdjustSalesCount not implemented")
 }
 func (UnimplementedProductServiceServer) ListSuppliers(context.Context, *ListSuppliersReq) (*ListSuppliersResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSuppliers not implemented")
@@ -1777,6 +1813,24 @@ func _ProductService_UpdateProductStatus_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_UpdateProductName_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateProductNameReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).UpdateProductName(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_UpdateProductName_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).UpdateProductName(ctx, req.(*UpdateProductNameReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProductService_ListSkus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListSkusReq)
 	if err := dec(in); err != nil {
@@ -1989,6 +2043,24 @@ func _ProductService_ReleaseFlashSaleStock_Handler(srv interface{}, ctx context.
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ProductServiceServer).ReleaseFlashSaleStock(ctx, req.(*ReleaseFlashSaleStockReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_AdjustSalesCount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdjustSalesCountReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).AdjustSalesCount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_AdjustSalesCount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).AdjustSalesCount(ctx, req.(*AdjustSalesCountReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3205,6 +3277,10 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ProductService_UpdateProductStatus_Handler,
 		},
 		{
+			MethodName: "UpdateProductName",
+			Handler:    _ProductService_UpdateProductName_Handler,
+		},
+		{
 			MethodName: "ListSkus",
 			Handler:    _ProductService_ListSkus_Handler,
 		},
@@ -3251,6 +3327,10 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReleaseFlashSaleStock",
 			Handler:    _ProductService_ReleaseFlashSaleStock_Handler,
+		},
+		{
+			MethodName: "AdjustSalesCount",
+			Handler:    _ProductService_AdjustSalesCount_Handler,
 		},
 		{
 			MethodName: "ListSuppliers",

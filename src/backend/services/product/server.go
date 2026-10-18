@@ -273,6 +273,22 @@ func (s *server) UpdateProductStatus(ctx stdctx.Context, req *product.UpdateProd
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// UpdateProductName 更新商品名称（列表页行内改名轻量接口）
+func (s *server) UpdateProductName(ctx stdctx.Context, req *product.UpdateProductNameReq) (*common.CommonResponse, error) {
+	if err := s.productService.UpdateProductName(ctx, req.GetId(), req.GetName(), req.GetCommunityId()); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// AdjustSalesCount 批量调整销量（净成交口径：支付成功累加、取消/退款回退）
+func (s *server) AdjustSalesCount(ctx stdctx.Context, req *product.AdjustSalesCountReq) (*common.CommonResponse, error) {
+	if err := s.productService.AdjustSalesCount(ctx, req.GetItems()); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // ListSkus 获取 SKU 列表
 func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*product.ListSkusResp, error) {
 	list, err := s.skuService.ListSkus(ctx, req.ProductId)

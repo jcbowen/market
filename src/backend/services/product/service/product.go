@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -357,6 +361,110 @@ func (s *ProductService) UpdateProductStatus(ctx context.Context, id int64, stat
 		Model(&model.Product{}).
 		Where("id = ?", id).
 		Update("status", status).Error
+}
+
+// UpdateProductName 更新商品名称（列表页行内改名轻量接口）
+// 仅更新 name 字段，避免全量提交覆盖规格/SKU；communityId>0 时校验商品归属社区
+//
+// 参数：
+//   - ctx: 上下文
+//   - id: 商品 ID
+//   - name: 新名称（去空白后非空）
+//   - communityId: 操作者社区语境（0=跳过归属校验）
+//
+// 返回值：
+//   - error: 名称非法/商品不存在/跨社区时返回业务错误
+//
+// 使用示例：
+//
+//	err := svc.UpdateProductName(ctx, 123, "新名称", 456)
+func (s *ProductService) UpdateProductName(ctx context.Context, id int64, name string, communityId int64) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return bizerr.New(codes.InvalidArgument, "商品名称不能为空")
+	}
+	if utf8.RuneCountInString(name) > 100 {
+		return bizerr.New(codes.InvalidArgument, "商品名称不能超过 100 字")
+	}
+
+	db := s.db.GetDb().WithContext(ctx)
+	var count int64
+	query := db.Model(&model.Product{}).Where("id = ? AND status <> ?", id, 2)
+	if communityId > 0 {
+		query = query.Where("community_id = ?", communityId)
+	}
+	if err := query.Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return bizerr.New(codes.NotFound, "商品不存在或无权操作")
+	}
+	return db.Model(&model.Product{}).Where("id = ?", id).Update("name", name).Error
+}
+
+// AdjustSalesCount 批量调整销量（净成交口径）
+// SKU 行与所属商品汇总行同事务同步累加；delta 正=累加（支付成功），负=回退（取消/退款）。
+// 防御：结果向下钳制为 0，避免异常回退产生负销量；SKU 不存在时忽略（正常下单明细必存在）
+//
+// 参数：
+//   - ctx: 上下文
+//   - items: SKU 维度调整项（同 SKU 多条自动合并）
+//
+// 返回值：
+//   - error: 错误信息
+//
+// 使用示例：
+//
+//	err := svc.AdjustSalesCount(ctx, []*product.AdjustSalesCountItem{{SkuId: 1, Delta: 2}})
+func (s *ProductService) AdjustSalesCount(ctx context.Context, items []*product.AdjustSalesCountItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	// 按 SKU 合并 delta（同订单同 SKU 可能多行）
+	merged := make(map[int64]int32, len(items))
+	skuIDs := make([]int64, 0, len(items))
+	for _, it := range items {
+		if it.GetSkuId() <= 0 || it.GetDelta() == 0 {
+			continue
+		}
+		if _, ok := merged[it.GetSkuId()]; !ok {
+			skuIDs = append(skuIDs, it.GetSkuId())
+		}
+		merged[it.GetSkuId()] += it.GetDelta()
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+
+	var skus []model.Sku
+	if err := s.db.GetDb().WithContext(ctx).Where("id IN ?", skuIDs).Find(&skus).Error; err != nil {
+		return err
+	}
+	if len(skus) == 0 {
+		return nil
+	}
+
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// SKU 行累加（GREATEST 钳制非负）
+		for _, sku := range skus {
+			if err := tx.Model(&model.Sku{}).Where("id = ?", sku.ID).
+				Update("sales_count", gorm.Expr("GREATEST(sales_count + ?, 0)", merged[sku.ID])).Error; err != nil {
+				return err
+			}
+		}
+		// 商品汇总行按 product_id 聚合累加
+		productDeltas := make(map[int64]int32, len(skus))
+		for _, sku := range skus {
+			productDeltas[sku.ProductID] += merged[sku.ID]
+		}
+		for pid, delta := range productDeltas {
+			if err := tx.Model(&model.Product{}).Where("id = ?", pid).
+				Update("sales_count", gorm.Expr("GREATEST(sales_count + ?, 0)", delta)).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ListSkusByProductID 查询商品下的 SKU 列表

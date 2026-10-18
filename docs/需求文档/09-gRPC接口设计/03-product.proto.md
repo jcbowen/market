@@ -26,6 +26,7 @@ service ProductService {
   rpc UpdateProduct(UpdateProductReq) returns (ProductDetail);
   rpc DeleteProduct(DeleteProductReq) returns (common.CommonResponse);
   rpc UpdateProductStatus(UpdateProductStatusReq) returns (common.CommonResponse);
+  rpc UpdateProductName(UpdateProductNameReq) returns (common.CommonResponse);
 
   // SKU
   rpc ListSkus(ListSkusReq) returns (ListSkusResp);
@@ -36,6 +37,7 @@ service ProductService {
   // 库存
   rpc DeductStock(DeductStockReq) returns (DeductStockResp);
   rpc ReleaseStock(ReleaseStockReq) returns (common.CommonResponse);
+  rpc AdjustSalesCount(AdjustSalesCountReq) returns (common.CommonResponse);
   rpc StockEntry(StockEntryReq) returns (common.CommonResponse);
   rpc StockOut(StockOutReq) returns (common.CommonResponse);
   rpc ListStockRecords(ListStockRecordsReq) returns (ListStockRecordsResp);
@@ -217,6 +219,14 @@ message UpdateProductStatusReq {
   int32 status = 2;
 }
 
+// 商品名称更新（后台列表页行内改名轻量接口，仅改 name 不影响规格/SKU）
+message UpdateProductNameReq {
+  int64 id = 1;
+  string name = 2;
+  // 操作者社区语境（>0 时校验商品归属社区，跨社区修改直接拒绝）
+  int64 community_id = 3;
+}
+
 message ProductInfo {
   int64 id = 1;
   int64 community_id = 2;
@@ -388,6 +398,20 @@ message ReleaseStockReq {
   // 幂等业务号：同一 biz_no 的重复释放只生效一次；不同业务（多笔部分退款/取消/超时关单）
   // 各自携带不同 biz_no，避免同一订单同一 SKU 的多次部分释放被幂等约束吞掉
   string biz_no = 4;
+}
+
+// --- 销量（净成交口径：支付成功累加，取消/退款回退） ---
+// AdjustSalesCountItem 销量调整项（SKU 维度）
+message AdjustSalesCountItem {
+  int64 sku_id = 1;
+  // 销量变化量：正=累加（支付成功），负=回退（取消/退款）
+  int32 delta = 2;
+}
+
+// AdjustSalesCountReq 批量调整销量（SKU 行与所属商品汇总行同事务同步累加，
+// 结果向下钳制为 0 防负数；无幂等键，调用方必须在主事务提交成功后调用）
+message AdjustSalesCountReq {
+  repeated AdjustSalesCountItem items = 1;
 }
 
 message StockEntryItem {

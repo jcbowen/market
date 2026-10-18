@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -1007,7 +1008,7 @@ func (s *RefundService) processChannelRefund(ctx context.Context, refund *model.
 // 返回值：
 //   - error: 错误信息
 func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model.Refund, items []*model.RefundItem, operatorType string, operatorID int64) error {
-	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var refundCompleted model.Refund
 		if err := tx.First(&refundCompleted, refund.ID).Error; err != nil {
 			return err
@@ -1089,6 +1090,35 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 		}
 		return createStatusLogTx(tx, o.ID, 7, nextStatus, operatorType, operatorID, remark)
 	})
+	if err == nil {
+		// 事务提交成功后按退款明细回退销量（仅金额退无商品明细自然跳过）；
+		// 失败仅记日志：AdjustSalesCount 无幂等键，放事务内重试会重复回退
+		s.adjustRefundSales(ctx, refund.ID, items)
+	}
+	return err
+}
+
+// adjustRefundSales 退款成功后按明细回退销量（净成交口径）
+// 必须在退款主事务提交成功后调用，失败仅记日志不回滚退款
+//
+// 参数：
+//   - ctx: 上下文
+//   - refundID: 退款单 ID（日志定位用）
+//   - items: 退款商品明细（仅金额退时为空）
+func (s *RefundService) adjustRefundSales(ctx context.Context, refundID int64, items []*model.RefundItem) {
+	reqItems := make([]*product.AdjustSalesCountItem, 0, len(items))
+	for _, it := range items {
+		if it.SkuID <= 0 || it.Quantity <= 0 {
+			continue
+		}
+		reqItems = append(reqItems, &product.AdjustSalesCountItem{SkuId: it.SkuID, Delta: -it.Quantity})
+	}
+	if len(reqItems) == 0 {
+		return
+	}
+	if _, err := grpcclient.ProductClient.AdjustSalesCount(ctx, &product.AdjustSalesCountReq{Items: reqItems}); err != nil {
+		log.Printf("[refund] 回退销量失败 refund_id=%d err=%v", refundID, err)
+	}
 }
 
 // createRefundLog 写入退款审批日志

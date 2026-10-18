@@ -247,6 +247,10 @@ const actions = computed(() => {
   if (d.status === ORDER_STATUS.STOCKING && d.delivery_type === DELIVERY_TYPE.SELF_PICKUP) {
     list.push({ key: 'verify', label: '核销', type: 'success', run: () => openVerify(d) })
   }
+  // 到店单即买即走：收款即自动完成，正常不会停留在此；兜底提供"完成"入口（无取货码，不适用核销）
+  if ((d.status === ORDER_STATUS.PAID || d.status === ORDER_STATUS.STOCKING) && d.delivery_type === DELIVERY_TYPE.STORE) {
+    list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d) })
+  }
   if (d.status === ORDER_STATUS.SHIPPING) {
     list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d) })
   }

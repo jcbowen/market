@@ -23,6 +23,8 @@ service ProductService {
   rpc UpdateProduct(UpdateProductReq) returns (ProductDetail);
   rpc DeleteProduct(DeleteProductReq) returns (common.CommonResponse);
   rpc UpdateProductStatus(UpdateProductStatusReq) returns (common.CommonResponse);
+  // UpdateProductName 列表页行内改名轻量接口（仅更新 name，避免全量提交覆盖规格/SKU）
+  rpc UpdateProductName(UpdateProductNameReq) returns (common.CommonResponse);
 
   // SKU
   rpc ListSkus(ListSkusReq) returns (ListSkusResp);
@@ -43,6 +45,8 @@ service ProductService {
   // 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
   rpc DeductFlashSaleStock(DeductFlashSaleStockReq) returns (common.CommonResponse);
   rpc ReleaseFlashSaleStock(ReleaseFlashSaleStockReq) returns (common.CommonResponse);
+  // 销量调整（净成交口径）：支付成功累加、取消/退款回退；SKU 行与商品汇总行同事务同步
+  rpc AdjustSalesCount(AdjustSalesCountReq) returns (common.CommonResponse);
 
   // 供应商
   rpc ListSuppliers(ListSuppliersReq) returns (ListSuppliersResp);
@@ -248,6 +252,14 @@ message DeleteProductReq {
 message UpdateProductStatusReq {
   int64 id = 1;
   int32 status = 2;
+}
+
+// UpdateProductNameReq 商品名称更新（列表页行内改名轻量接口）
+message UpdateProductNameReq {
+  int64 id = 1;
+  string name = 2;
+  // 操作者社区语境（>0 时校验商品归属社区，跨社区修改直接拒绝）
+  int64 community_id = 3;
 }
 
 message ProductInfo {
@@ -517,6 +529,19 @@ message ReleaseFlashSaleStockReq {
   int64 sku_id = 2;
   int32 quantity = 3;
   string biz_no = 4; // 幂等业务号（退款单号/cancel:{orderID} 等，与主库存释放同口径）
+}
+
+// AdjustSalesCountItem 销量调整项（SKU 维度）
+message AdjustSalesCountItem {
+  int64 sku_id = 1;
+  // 销量变化量：正=累加（支付成功），负=回退（取消/退款）
+  int32 delta = 2;
+}
+
+// AdjustSalesCountReq 批量调整销量（净成交口径）
+// SKU 行与所属商品汇总行（products.sales_count）同事务同步累加
+message AdjustSalesCountReq {
+  repeated AdjustSalesCountItem items = 1;
 }
 
 // --- 供应商 ---

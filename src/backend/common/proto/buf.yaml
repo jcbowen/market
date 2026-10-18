@@ -1,0 +1,5 @@
+# buf 配置：proto 模块根目录（import 路径以本目录为基准，如 "common/common.proto"）
+# 生成 Go 代码：在本目录执行 `buf generate --path product/product.proto`（按需替换子路径）
+version: v2
+modules:
+  - path: .

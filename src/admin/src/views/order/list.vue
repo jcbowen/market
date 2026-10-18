@@ -178,6 +178,7 @@ import {
   ORDER_STATUS,
   QUERY_STATUS,
   canCancelOrder,
+  deliveryTypeText,
   orderSourceFilterOptions,
   orderSourceTagType,
   orderSourceText,
@@ -292,7 +293,7 @@ const columns: DataTableColumns<Order> = [
     title: '配送方式',
     key: 'delivery_type',
     width: 90,
-    render: (row) => (row.delivery_type === DELIVERY_TYPE.DELIVERY ? '配送' : '自提'),
+    render: (row) => deliveryTypeText(row.delivery_type),
   },
   {
     title: '来源',
@@ -364,6 +365,15 @@ const columns: DataTableColumns<Order> = [
               NButton,
               { size: 'small', type: 'info', secondary: true, onClick: () => openAssign(row) },
               { default: () => (row.delivery_user_id ? '改指派' : '指派') },
+            ),
+          )
+        } else if (row.delivery_type === DELIVERY_TYPE.STORE) {
+          // 到店单即买即走：收款即自动完成，正常不会停留在此；兜底提供"完成"入口（无取货码，不适用核销）
+          buttons.push(
+            h(
+              NButton,
+              { size: 'small', type: 'success', onClick: () => confirmComplete(row) },
+              { default: () => '完成' },
             ),
           )
         } else {
@@ -709,7 +719,7 @@ async function exportCsv() {
     const rows = all.map((row) => [
       row.order_no,
       row.user_name,
-      row.delivery_type === DELIVERY_TYPE.DELIVERY ? '配送' : '自提',
+      deliveryTypeText(row.delivery_type),
       orderSourceText(row.source ?? ORDER_SOURCE.USER),
       row.operator_name || '',
       (row.total_amount ?? 0).toFixed(2),

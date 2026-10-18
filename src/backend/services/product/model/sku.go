@@ -21,8 +21,10 @@ type Sku struct {
 	CostPrice     float64 `gorm:"column:cost_price;type:decimal(10,2);default:0.00;comment:成本价" json:"cost_price"`
 	Stock         int32   `gorm:"column:stock;type:int;default:0;comment:当前库存，默认0" json:"stock"`
 	SafetyStock   int32   `gorm:"column:safety_stock;type:int;default:0;comment:安全库存阈值，默认0" json:"safety_stock"`
-	Image         string  `gorm:"column:image;type:varchar(255);comment:规格图片 URL" json:"image"`
-	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
+	// 规格维度累计销量（净成交口径：支付成功累加，取消/退款回退），与 products.sales_count 同步维护
+	SalesCount int32   `gorm:"column:sales_count;type:int;default:0;comment:累计销量（净成交），默认0" json:"sales_count"`
+	Image      string  `gorm:"column:image;type:varchar(255);comment:规格图片 URL" json:"image"`
+	Status     int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
 	CreatedAt     string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	UpdatedAt     string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
