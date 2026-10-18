@@ -152,7 +152,7 @@ export interface AdminContext {
 /**
  * 创建管理端测试上下文（登录 → 确定社区 → 上下文自动带社区头）
  * 管理端写操作与多数列表接口要求 X-Community-Id 社区语境，统一在此注入；
- * 未指定 communityId 时取 my/communities 第一个
+ * 未指定 communityId 时取 my/communities 中第一个非 AUTO-TEST 社区
  * - 函数名: newAdminContext
  * - 参数: playwright — Playwright 实例；username/password — 管理员凭据（可选）；communityId — 指定社区语境（可选）
  * - 返回: Promise<AdminContext>（api 需调用方 dispose()）
@@ -173,12 +173,17 @@ export async function newAdminContext(
     let cid = communityId ?? 0;
     if (!cid) {
       const resp = await probe.get('/api/v1/admin/my/communities');
-      const body = (await resp.json()) as ApiResponse<{ id: number }[]>;
-      const list = asList<{ id: number }>(body.data);
+      const body = (await resp.json()) as ApiResponse<{ id: number; name?: string }[]>;
+      const list = asList<{ id: number; name?: string }>(body.data);
       if (body.code !== 0 || list.length === 0) {
         throw new Error(`管理端无可选社区，无法建立测试语境 code=${body.code}`);
       }
-      cid = list[0].id;
+      // my/communities 按创建倒序返回，52/55 等模块往轮创建的 AUTO-TEST 空壳社区会占据列表头部
+      // （无在售商品），导致默认语境跨轮复跑时绑错社区（27/38 曾因此报「环境无在售商品」）。
+      // 默认语境跳过 AUTO-TEST 前缀社区，等效于干净环境下的「第一个种子社区」；
+      // 全部社区均为 AUTO-TEST 时兜底取列表首项。
+      const stable = list.find((c) => !String(c.name ?? '').startsWith('AUTO-TEST'));
+      cid = (stable ?? list[0]).id;
     }
     const api = await playwright.request.newContext({
       extraHTTPHeaders: { Authorization: `Bearer ${info.access_token}`, 'X-Community-Id': String(cid) },
@@ -241,13 +246,15 @@ export interface SkuRef {
  * 从环境选取一个有库存的在售 SKU
  * 流程：公开商品列表取第一个在售商品 → GET /api/v1/skus?product_id= 取库存>0 的 SKU
  * - 函数名: pickSku
- * - 参数: api — 请求上下文（鉴权与否均可，走公开接口）；keyword — 可选名称过滤（网关参数名为 keyword）
+ * - 参数: api — 请求上下文（鉴权与否均可，走公开接口）；keyword — 可选名称过滤（网关参数名为 keyword）；
+ *         communityId — 可选社区收敛（公开列表仅认 community_id query，不传则跨社区取，后续按社区操作会报"不属于当前社区"）
  * - 返回: Promise<SkuRef>
  * - 异常: 环境无在售商品/无库存 SKU 时抛出 Error
- * - 使用示例: const sku = await pickSku(api);
+ * - 使用示例: const sku = await pickSku(api, undefined, communityId);
  */
-export async function pickSku(api: APIRequestContext, keyword?: string): Promise<SkuRef> {
+export async function pickSku(api: APIRequestContext, keyword?: string, communityId?: number): Promise<SkuRef> {
   const params: Record<string, string | number> = { page: 1, page_size: 20, status: 1 };
+  if (communityId) params.community_id = communityId;
   if (keyword) params.keyword = keyword;
   const listResp = await api.get('/api/v1/products', { params });
   const listBody = (await listResp.json()) as ApiResponse<PageData<{ id: number; name: string }>>;
@@ -265,8 +272,9 @@ export async function pickSku(api: APIRequestContext, keyword?: string): Promise
 }
 
 /**
- * 确保 SKU 库存充足（管理端入库补足）
+ * 确保 SKU 库存充足（管理端直接入库补足）
  * 多轮测试会持续扣减环境库存，下单类用例前置调用避免"库存不足"误报
+ * 进销存重构后走入库单接口（创建即生效，生成批次并回写移动加权成本）
  * - 函数名: ensureStock
  * - 参数: api — 管理端已认证请求上下文；skuId — SKU ID；qty — 入库数量
  * - 返回: Promise<void>
@@ -274,8 +282,8 @@ export async function pickSku(api: APIRequestContext, keyword?: string): Promise
  * - 使用示例: await ensureStock(adminApi, sku.id, 100);
  */
 export async function ensureStock(api: APIRequestContext, skuId: number, qty: number): Promise<void> {
-  const resp = await api.post('/api/v1/admin/inventory/entries', {
-    data: { type: 1, items: [{ sku_id: skuId, quantity: qty }], remark: 'AUTO-TEST 补库存' },
+  const resp = await api.post('/api/v1/admin/inventory/in-orders', {
+    data: { remark: 'AUTO-TEST 补库存', items: [{ sku_id: skuId, quantity: qty }] },
   });
   const body = (await resp.json()) as ApiResponse;
   if (body.code !== 0) throw new Error(`补库存失败 code=${body.code} message=${body.message}`);

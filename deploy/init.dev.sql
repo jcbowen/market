@@ -150,6 +150,20 @@ VALUES
   (4, 3, 1, 'BANANA-1B', '', '1把约500g', '{"规格":"1把约500g"}', 5.50, 6.90, 3.00, 150, 15, 'https://placehold.co/300x300/yellow/black?text=Banana', 1, NOW(), NOW()),
   (5, 4, 2, 'EGG-30P', '', '30枚/箱', '{"规格":"30枚/箱"}', 12.90, 15.90, 9.50, 100, 10, 'https://placehold.co/300x300/brown/white?text=Egg', 1, NOW(), NOW());
 
+-- ============ 批次库存（FEFO 基础数据） ============
+-- 每个种子 SKU 补一条初始批次，quantity 与 product_skus.stock 一致；
+-- 否则订单扣减走 FEFO 会因「批次库存不足」失败（销售扣减只认 stock_batches）。
+-- expire_date 部分留空（非限期品排最后扣）、部分给近期日期（用于演示临期预警与 FEFO 顺序）。
+INSERT INTO `stock_batches` (`id`, `community_id`, `sku_id`, `batch_no`, `production_date`, `expire_date`, `quantity`, `unit_cost`, `status`, `source_type`, `ref_no`, `created_at`, `updated_at`)
+VALUES
+  (1, 1, 1, 'INIT-TOMATO-500G-A', '2026-09-20', '2026-10-25', 50, 2.00, 1, 1, 'INIT-SEED', NOW(), NOW()),
+  (2, 1, 1, 'INIT-TOMATO-500G-B', '2026-10-01', '2026-11-05', 30, 2.10, 1, 1, 'INIT-SEED', NOW(), NOW()),
+  (3, 1, 2, 'INIT-TOMATO-1000G-A', '2026-09-25', '2026-11-10', 40, 3.80, 1, 1, 'INIT-SEED', NOW(), NOW()),
+  (4, 1, 3, 'INIT-APPLE-1P-A', '2026-09-28', NULL, 200, 1.20, 1, 1, 'INIT-SEED', NOW(), NOW()),
+  (5, 1, 4, 'INIT-BANANA-1B-A', '2026-10-05', '2026-10-18', 100, 3.00, 1, 1, 'INIT-SEED', NOW(), NOW()),
+  (6, 1, 4, 'INIT-BANANA-1B-B', '2026-10-06', NULL, 50, 3.05, 1, 1, 'INIT-SEED', NOW(), NOW()),
+  (7, 2, 5, 'INIT-EGG-30P-A', '2026-10-01', '2026-11-01', 100, 9.50, 1, 1, 'INIT-SEED', NOW(), NOW());
+
 -- ============ Banner 轮播 ============
 -- position：1旧首页(已废弃) 2分类页(现首页)；community_id=0 表示全平台通用
 INSERT INTO `banners` (`id`, `community_id`, `title`, `image_url`, `link_url`, `position`, `sort`, `status`, `start_time`, `end_time`, `created_at`, `updated_at`)

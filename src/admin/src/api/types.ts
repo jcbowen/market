@@ -416,6 +416,7 @@ export interface OrderAddress {
  */
 export interface InventoryLog {
   id: number
+  sku_id: number
   product_id: number
   product_name: string
   type: number
@@ -423,6 +424,10 @@ export interface InventoryLog {
   quantity: number
   before_stock: number
   after_stock: number
+  batch_id: number
+  batch_no: string
+  ref_no: string
+  related_order_id: number
   remark: string
   created_at: string
 }
@@ -474,6 +479,160 @@ export interface PurchaseOrderItem {
   current_stock: number
   safety_stock: number
   suggest_quantity: number
+}
+
+/** 供应商 */
+export interface Supplier {
+  id: number
+  community_id: number
+  name: string
+  contact_name: string
+  phone: string
+  address: string
+  remark: string
+  status: number
+  created_at: string
+}
+
+/** 采购单明细 */
+export interface PurchaseOrderItemRow {
+  id: number
+  sku_id: number
+  sku_code: string
+  spec_name: string
+  product_name: string
+  quantity: number
+  received_quantity: number
+  purchase_price: number
+}
+
+/** 采购单头 */
+export interface PurchaseOrder {
+  id: number
+  purchase_no: string
+  community_id: number
+  supplier_id: number
+  supplier_name: string
+  status: number
+  total_amount: number
+  remark: string
+  operator_id: number
+  created_at: string
+  updated_at: string
+}
+
+/** 采购单详情 */
+export interface PurchaseOrderDetail {
+  info: PurchaseOrder
+  items: PurchaseOrderItemRow[]
+}
+
+/** 入库单明细 */
+export interface StockInOrderItemRow {
+  id: number
+  sku_id: number
+  sku_code: string
+  product_name: string
+  spec_name: string
+  quantity: number
+  unit_cost: number
+  batch_no: string
+  production_date: string
+  expire_date: string
+  batch_id: number
+}
+
+/** 入库单头 */
+export interface StockInOrder {
+  id: number
+  in_no: string
+  community_id: number
+  supplier_id: number
+  supplier_name: string
+  purchase_order_id: number
+  purchase_no: string
+  type: number
+  total_amount: number
+  operator_id: number
+  remark: string
+  created_at: string
+}
+
+/** 入库单详情 */
+export interface StockInOrderDetail {
+  info: StockInOrder
+  items: StockInOrderItemRow[]
+}
+
+/** 出库单头 */
+export interface StockOutOrder {
+  id: number
+  out_no: string
+  community_id: number
+  type: number
+  operator_id: number
+  remark: string
+  created_at: string
+}
+
+/** 出库单明细 */
+export interface StockOutOrderItemRow {
+  id: number
+  sku_id: number
+  sku_code: string
+  product_name: string
+  spec_name: string
+  quantity: number
+}
+
+/** 出库单详情 */
+export interface StockOutOrderDetail {
+  info: StockOutOrder
+  items: StockOutOrderItemRow[]
+}
+
+/** 批次库存 */
+export interface StockBatch {
+  id: number
+  sku_id: number
+  sku_code: string
+  product_name: string
+  spec_name: string
+  batch_no: string
+  production_date: string
+  expire_date: string
+  quantity: number
+  unit_cost: number
+  status: number
+  source_type: number
+  ref_no: string
+  created_at: string
+}
+
+/** 进销存汇总行 */
+export interface InventorySummaryItem {
+  sku_id: number
+  sku_code: string
+  spec_name: string
+  product_name: string
+  opening_stock: number
+  in_quantity: number
+  out_quantity: number
+  closing_stock: number
+  cost_price: number
+  price: number
+}
+
+/** 毛利分析行 */
+export interface ProfitReportItem {
+  sku_id: number
+  sku_code: string
+  spec_name: string
+  product_name: string
+  quantity: number
+  sales_amount: number
+  cost_amount: number
+  profit: number
 }
 
 /**

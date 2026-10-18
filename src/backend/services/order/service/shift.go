@@ -248,7 +248,9 @@ func (s *ShiftService) calcStatistics(ctx context.Context, shiftID int64) (*orde
 	}
 
 	// 收款分组：班内有效订单按支付单 pay_type 汇总
-	// 仅统计支付成功(status=2)的支付单：排除待支付/失败/已关闭支付单，避免重复支付单放大金额
+	// 统计支付成功(2)与已退款(4)的支付单：都代表班内真实收过款（退款单的收款仍计入收入侧，
+	// 扣减由 refund 分组承担，cash_total = 收款 - 退款才能与钱箱实物对上）；
+	// 排除待支付(1)/失败(3)/已关闭(5)（未实际收款），并避免重复支付单放大金额
 	var incomeRows []struct {
 		PayType    int32
 		Amount     float64
@@ -257,7 +259,7 @@ func (s *ShiftService) calcStatistics(ctx context.Context, shiftID int64) (*orde
 	if err := s.db.GetDb().WithContext(ctx).
 		Table("orders").
 		Select("payments.pay_type AS pay_type, COALESCE(SUM(payments.amount),0) AS amount, COUNT(DISTINCT orders.id) AS order_count").
-		Joins("JOIN payments ON payments.order_id = orders.id AND payments.status = 2").
+		Joins("JOIN payments ON payments.order_id = orders.id AND payments.status IN (?)", []int32{2, 4}).
 		Where("orders.shift_id = ? AND orders.status NOT IN ?", shiftID, []int32{1, 6}).
 		Group("payments.pay_type").
 		Scan(&incomeRows).Error; err != nil {

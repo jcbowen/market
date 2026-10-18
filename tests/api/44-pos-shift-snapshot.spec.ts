@@ -58,7 +58,7 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright);
   adminApi = admin.api;
   try {
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, admin.communityId);
     await ensureStock(adminApi, sku.id, 100);
   } catch {
     sku = null;
@@ -201,6 +201,7 @@ test.describe.serial('POS 交班统计快照', () => {
   });
 
   test('6. 交班后重新开工新班次', async () => {
+    if (!shiftId) test.skip(true, '班次未就绪');
     const start = (await (
       await adminApi.post('/api/v1/admin/pos/shifts/start', { data: { note: 'AUTO-TEST 44 新班次' } })
     ).json()) as ApiResponse<ShiftInfo>;

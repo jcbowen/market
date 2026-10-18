@@ -44,19 +44,77 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/product/form.vue'),
         meta: { title: '编辑商品', permission: 'product:update', group: '商品管理', hidden: true },
       },
-      // 库存管理
+      // 库存管理（进销存重构版：工作台/采购/入库/出库/盘点/报表）
       {
         path: 'stock',
-        name: 'StockList',
-        component: () => import('@/views/inventory/list.vue'),
-        meta: { title: '库存列表', permission: 'inventory:view', group: '库存管理' },
+        name: 'StockWorkbench',
+        component: () => import('@/views/inventory/workbench.vue'),
+        meta: { title: '库存工作台', permission: 'inventory:view', group: '库存管理' },
+      },
+      // 采购管理（采购单 + 供应商）
+      {
+        path: 'stock/purchase',
+        name: 'StockPurchase',
+        component: () => import('@/views/inventory/purchase.vue'),
+        meta: { title: '采购管理', permission: 'inventory:view', group: '库存管理' },
       },
       {
-        path: 'stock/records',
-        name: 'StockRecords',
-        component: () => import('@/views/inventory/records.vue'),
-        meta: { title: '库存流水', permission: 'inventory:view', group: '库存管理' },
+        path: 'stock/purchase/create',
+        name: 'PurchaseCreate',
+        component: () => import('@/views/inventory/purchase-form.vue'),
+        meta: { title: '新建采购单', permission: 'inventory:create', group: '库存管理', hidden: true },
       },
+      {
+        path: 'stock/purchase/edit/:id',
+        name: 'PurchaseEdit',
+        component: () => import('@/views/inventory/purchase-form.vue'),
+        meta: { title: '编辑采购单', permission: 'inventory:update', group: '库存管理', hidden: true },
+      },
+      {
+        path: 'stock/purchase/:id',
+        name: 'PurchaseDetail',
+        component: () => import('@/views/inventory/purchase-detail.vue'),
+        meta: { title: '采购单详情', permission: 'inventory:view', group: '库存管理', hidden: true },
+      },
+      // 入库管理
+      {
+        path: 'stock/in',
+        name: 'StockIn',
+        component: () => import('@/views/inventory/in.vue'),
+        meta: { title: '入库管理', permission: 'inventory:view', group: '库存管理' },
+      },
+      {
+        path: 'stock/in/create',
+        name: 'StockInCreate',
+        component: () => import('@/views/inventory/in-form.vue'),
+        meta: { title: '新建入库单', permission: 'inventory:create', group: '库存管理', hidden: true },
+      },
+      {
+        path: 'stock/in/:id',
+        name: 'StockInDetail',
+        component: () => import('@/views/inventory/in-detail.vue'),
+        meta: { title: '入库单详情', permission: 'inventory:view', group: '库存管理', hidden: true },
+      },
+      // 出库管理（报损/领用/调整；销售出库由订单系统自动完成）
+      {
+        path: 'stock/out',
+        name: 'StockOut',
+        component: () => import('@/views/inventory/out.vue'),
+        meta: { title: '出库管理', permission: 'inventory:create', group: '库存管理' },
+      },
+      {
+        path: 'stock/out/create',
+        name: 'StockOutCreate',
+        component: () => import('@/views/inventory/out-form.vue'),
+        meta: { title: '新建出库单', permission: 'inventory:create', group: '库存管理', hidden: true },
+      },
+      {
+        path: 'stock/out/:id',
+        name: 'StockOutDetail',
+        component: () => import('@/views/inventory/out-detail.vue'),
+        meta: { title: '出库单详情', permission: 'inventory:view', group: '库存管理', hidden: true },
+      },
+      // 盘点管理
       {
         path: 'stock/check',
         name: 'StockCheck',
@@ -75,23 +133,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/inventory/check-detail.vue'),
         meta: { title: '盘点详情', permission: 'inventory:view', group: '库存管理', hidden: true },
       },
+      // 报表中心
       {
-        path: 'stock/warnings',
-        name: 'StockWarnings',
-        component: () => import('@/views/inventory/warnings.vue'),
-        meta: { title: '库存预警', permission: 'inventory:view', group: '库存管理' },
-      },
-      {
-        path: 'stock/out',
-        name: 'StockOut',
-        component: () => import('@/views/inventory/out.vue'),
-        meta: { title: '出库管理', permission: 'inventory:create', group: '库存管理' },
-      },
-      {
-        path: 'stock/purchase',
-        name: 'StockPurchase',
-        component: () => import('@/views/inventory/purchase.vue'),
-        meta: { title: '补货建议', permission: 'inventory:view', group: '库存管理' },
+        path: 'stock/reports',
+        name: 'StockReports',
+        component: () => import('@/views/inventory/reports.vue'),
+        meta: { title: '报表中心', permission: 'inventory:view', group: '库存管理' },
       },
       // 订单管理
       {

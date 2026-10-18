@@ -7,13 +7,14 @@ package model
 // 独立 biz_no，互不吞并——修复旧模型按 order_id+sku_id 幂等导致同一订单
 // 同一 SKU 第二笔部分退款释放被跳过的问题
 type StockOpLog struct {
-	ID        int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	OrderID   int64  `gorm:"column:order_id;type:bigint;not null;uniqueIndex:uk_stock_op_order_sku_biz;comment:关联订单 ID" json:"order_id"`
-	SkuID     int64  `gorm:"column:sku_id;type:bigint;not null;uniqueIndex:uk_stock_op_order_sku_biz;comment:SKU ID" json:"sku_id"`
-	OpType    int8   `gorm:"column:op_type;type:tinyint;not null;uniqueIndex:uk_stock_op_order_sku_biz;comment:操作类型 1扣减 2释放" json:"op_type"`
-	BizNo     string `gorm:"column:biz_no;type:varchar(64);not null;default:'';uniqueIndex:uk_stock_op_order_sku_biz;comment:幂等业务号（退款单号/cancel:{orderID}/comp:{orderID}:{skuID}）" json:"biz_no"`
-	Quantity  int32  `gorm:"column:quantity;type:int;not null;comment:本次操作数量" json:"quantity"`
-	CreatedAt string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	OrderID     int64  `gorm:"column:order_id;type:bigint;not null;uniqueIndex:uk_stock_op_order_sku_biz;comment:关联订单 ID" json:"order_id"`
+	SkuID       int64  `gorm:"column:sku_id;type:bigint;not null;uniqueIndex:uk_stock_op_order_sku_biz;comment:SKU ID" json:"sku_id"`
+	OpType      int8   `gorm:"column:op_type;type:tinyint;not null;uniqueIndex:uk_stock_op_order_sku_biz;comment:操作类型 1扣减 2释放 3秒杀扣减 4秒杀释放" json:"op_type"`
+	BizNo       string `gorm:"column:biz_no;type:varchar(64);not null;default:'';uniqueIndex:uk_stock_op_order_sku_biz;comment:幂等业务号（退款单号/cancel:{orderID}/comp:{orderID}:{skuID}）" json:"biz_no"`
+	FlashSaleID int64  `gorm:"column:flash_sale_id;type:bigint;not null;default:0;comment:秒杀商品项 ID（op_type=3/4 记录，供释放定向回补原活动池；0=非秒杀操作）" json:"flash_sale_id"`
+	Quantity    int32  `gorm:"column:quantity;type:int;not null;comment:本次操作数量" json:"quantity"`
+	CreatedAt   string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 }
 
 // TableName 返回库存操作幂等日志表名

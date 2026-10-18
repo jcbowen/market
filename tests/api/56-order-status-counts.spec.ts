@@ -158,7 +158,8 @@ test.describe.serial('订单状态角标统计', () => {
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     let orderId = 0;
     try {
-      orderId = await createSelfPickupOrder(buyerApi);
+      // quantity=2 错开与上一单（qty=1）的重复下单指纹（5s 窗口按 user+社区+配送方式+券+商品列表判重）
+      orderId = await createSelfPickupOrder(buyerApi, 2);
       await payByCash(buyerApi, orderId);
     } finally {
       await buyerApi.dispose();
@@ -186,7 +187,8 @@ test.describe.serial('订单状态角标统计', () => {
     let refundOrderId = 0;
     try {
       // 第三单：支付后立即申请整单退款（订单 → 7 退款中）
-      refundOrderId = await createSelfPickupOrder(buyerApi);
+      // quantity=3 错开与前两单（qty=1/2）的重复下单指纹
+      refundOrderId = await createSelfPickupOrder(buyerApi, 3);
       await payByCash(buyerApi, refundOrderId);
       const refund = (await (
         await buyerApi.post(`/api/v1/orders/${refundOrderId}/refund`, { data: { reason: 'AUTO-TEST 角标售后' } })

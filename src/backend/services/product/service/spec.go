@@ -321,20 +321,23 @@ func (s *ProductService) saveSkus(
 		}
 
 		if skuID > 0 {
-			// 校验 SKU 归属，防止误传其他商品的 ID 导致本商品 SKU 被全部禁用
-			var cnt int64
-			if err := tx.Model(&model.Sku{}).
+			// 校验 SKU 归属，防止误传其他商品的 ID 导致本商品 SKU 被全部禁用；
+			// 同时读取原库存/成本，用于库存增减时同步批次（批次是扣减唯一来源）
+			var old model.Sku
+			if err := tx.Select("id", "stock", "cost_price", "sku_code", "community_id").
 				Where("id = ? AND product_id = ?", skuID, p.ID).
-				Count(&cnt).Error; err != nil {
-				return nil, 0, 0, 0, 0, err
-			}
-			if cnt == 0 {
+				Take(&old).Error; err != nil {
 				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID)
 			}
 			if err := tx.Model(&model.Sku{}).
 				Where("id = ? AND product_id = ?", skuID, p.ID).
 				Updates(updates).Error; err != nil {
 				return nil, 0, 0, 0, 0, err
+			}
+			// 表单直接改汇总库存：调大补「表单调整」批次，调小按 FEFO 扣回批次，
+			// 保证 product_skus.stock 恒等于 Σ 在库批次 quantity（否则后续扣减必失败）
+			if err := syncSkuStockBatches(tx, p.CommunityID, &old, item.Stock); err != nil {
+				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
 			}
 		} else {
 			row := &model.Sku{
@@ -357,6 +360,13 @@ func (s *ProductService) saveSkus(
 				return nil, 0, 0, 0, 0, err
 			}
 			skuID = row.ID
+			// 建品即带初始库存：生成初始批次，保证汇总库存可被 FEFO 扣减
+			if item.Stock > 0 {
+				now := time.Now().Format("2006-01-02 15:04:05")
+				if _, err := createInitBatch(tx, p.CommunityID, skuID, item.Stock, batchUnitCost(item.CostPrice, 0), "INIT", now); err != nil {
+					return nil, 0, 0, 0, 0, err
+				}
+			}
 		}
 
 		keepSkuIDs = append(keepSkuIDs, skuID)
@@ -371,6 +381,107 @@ func (s *ProductService) saveSkus(
 		totalStock += item.Stock
 	}
 	return keepSkuIDs, minPrice, maxPrice, minOriginalPrice, totalStock, nil
+}
+
+// batchUnitCost 批次单位成本取值：表单未填成本（<=0）时回落既有成本，
+// 避免 0 成本批次稀释移动加权平均成本
+// 参数：
+//   - formCost: 表单提交的成本价
+//   - currentCost: SKU 当前成本价（改动前）
+//
+// 返回值：
+//   - float64: 批次单位成本
+func batchUnitCost(formCost, currentCost float64) float64 {
+	if formCost > 0 {
+		return formCost
+	}
+	return currentCost
+}
+
+// createInitBatch 生成来源为「表单/初始」的批次（SourceType=1）
+// 参数：
+//   - tx: GORM 事务对象
+//   - communityID: 社区 ID
+//   - skuID: SKU ID
+//   - quantity: 批次数量
+//   - unitCost: 单位成本
+//   - refNo: 来源单号（如 INIT）
+//   - now: 当前时间串
+//
+// 返回值：
+//   - int64: 生成的批次 ID
+//   - error: 落库错误信息
+func createInitBatch(tx *gorm.DB, communityID, skuID int64, quantity int32, unitCost float64, refNo, now string) (int64, error) {
+	batch := &model.StockBatch{
+		CommunityID: communityID,
+		SkuID:       skuID,
+		Quantity:    quantity,
+		UnitCost:    unitCost,
+		Status:      1,
+		SourceType:  1,
+		RefNo:       refNo,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := tx.Create(batch).Error; err != nil {
+		return 0, err
+	}
+	return batch.ID, nil
+}
+
+// syncSkuStockBatches 将商品表单的汇总库存改动同步到批次库存并落库存流水
+// 调大库存：补一条「表单调整」批次（SourceType=1）；
+// 调小库存：按 FEFO 从既有批次扣回，批次不足时拒绝调低（提示走出库单/盘点调整），
+// 防止汇总库存大于批次合计导致后续扣减失败。
+// 同步落 stock_records 流水（ref_no=FORM，与销售出库的空单号流水区分，
+// 避免毛利报表把表单调低误算为销售），保证进销存报表口径完整。
+// 参数：
+//   - tx: GORM 事务对象
+//   - communityID: 社区 ID
+//   - old: 改动前的 SKU（含原库存与成本）
+//   - newStock: 表单提交的新汇总库存
+//
+// 返回值：
+//   - error: 扣减失败（批次不足）或落库错误
+func syncSkuStockBatches(tx *gorm.DB, communityID int64, old *model.Sku, newStock int32) error {
+	delta := newStock - old.Stock
+	if delta == 0 {
+		return nil
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	recordType := int32(1)
+	batchID := int64(0)
+	if delta > 0 {
+		// 调大库存：补「表单调整」批次
+		var err error
+		if batchID, err = createInitBatch(tx, communityID, old.ID, delta, batchUnitCost(0, old.CostPrice), "INIT", now); err != nil {
+			return err
+		}
+	} else {
+		// 调小库存：按 FEFO 扣回批次（扣减数量为正）
+		sku := &model.Sku{ID: old.ID, SkuCode: old.SkuCode, Stock: old.Stock}
+		takes, err := deductBatches(tx, sku, -delta, now)
+		if err != nil {
+			return fmt.Errorf("库存需调低 %d，批次扣减失败（可改通过出库单或盘点调整库存）：%w", -delta, err)
+		}
+		if len(takes) > 0 {
+			batchID = takes[0].Batch.ID
+		}
+		recordType = 2
+	}
+	record := &model.StockRecord{
+		SkuID:       old.ID,
+		CommunityID: communityID,
+		Type:        recordType,
+		Quantity:    delta,
+		BeforeStock: old.Stock,
+		AfterStock:  newStock,
+		BatchID:     batchID,
+		RefNo:       "FORM",
+		Remark:      "商品表单调整库存",
+		CreatedAt:   now,
+	}
+	return tx.Create(record).Error
 }
 
 // softDeleteSpecs 软删除商品下未保留的规格名与规格值

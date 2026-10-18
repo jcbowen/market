@@ -60,9 +60,16 @@ func (h *CartHandler) GetCart(c *gin.Context) {
 		return
 	}
 
+	// 空购物车归一化为空数组：proto nil slice 直接序列化会输出 items:null，
+	// C 端 cart.items.map/len 与测试轮询均会踩空值崩溃
+	items := resp.Items
+	if items == nil {
+		items = []*cart.CartItem{}
+	}
+
 	var totalAmount float64
 	var totalCount, selectedCount int32
-	for _, item := range resp.Items {
+	for _, item := range items {
 		totalCount += item.Quantity
 		if item.Selected {
 			selectedCount += item.Quantity
@@ -71,7 +78,7 @@ func (h *CartHandler) GetCart(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"items":          resp.Items,
+		"items":          items,
 		"total_amount":   totalAmount,
 		"total_count":    totalCount,
 		"selected_count": selectedCount,

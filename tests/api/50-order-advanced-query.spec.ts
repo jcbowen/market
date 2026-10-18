@@ -81,7 +81,8 @@ async function createAddress(
 /**
  * 买家下配送单并现金支付（配送单写入地址联系人/电话，供 receiver_* 查询锚定）
  * - 函数名: createPaidDeliveryOrder
- * - 参数: buyerToken — 买家 token；skuRef — SKU；name — 联系人；phone — 联系电话；pay — 是否支付
+ * - 参数: buyerToken — 买家 token；skuRef — SKU；name — 联系人；phone — 联系电话；pay — 是否支付；
+ *         extraQty — 在起送门槛折算量上追加的数量（同用户连续多单须错开数量以避免重复下单指纹碰撞）
  * - 返回: Promise<number> 订单 ID
  * - 异常: 业务码非 0 时抛出
  * - 使用示例: const id = await createPaidDeliveryOrder(token, sku, NAME_A, PHONE_A, true);
@@ -92,6 +93,7 @@ async function createPaidDeliveryOrder(
   name: string,
   phone: string,
   pay: boolean,
+  extraQty = 0,
 ): Promise<number> {
   const buyerApi = await newAuthedRequest(globalThis.__pw, buyerToken);
   try {
@@ -99,7 +101,7 @@ async function createPaidDeliveryOrder(
     // 配送单 15 元起送门槛，按单价折算数量
     const skuResp = (await (await buyerApi.get(`/api/v1/skus/${skuRef.id}`)).json()) as ApiResponse<{ price: number }>;
     const price = skuResp.data?.price ?? 0;
-    const qty = price > 0 ? Math.max(Math.ceil(15 / price), 1) : 1;
+    const qty = (price > 0 ? Math.max(Math.ceil(15 / price), 1) : 1) + extraQty;
     const created = assertOk(
       (await (
         await buyerApi.post('/api/v1/orders', {
@@ -148,8 +150,8 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, buyerA.user.community_id);
   adminApi = admin.api;
   try {
-    sku = await pickSku(adminApi);
-    await ensureStock(adminApi, sku.id, 100);
+    sku = await pickSku(adminApi, undefined, buyerA.user.community_id);
+    await ensureStock(adminApi, sku.id, 200);
   } catch {
     sku = null;
   }
@@ -164,7 +166,8 @@ test.describe.serial('管理端订单高级查询', () => {
   test('1. 前置：创建三个订单（甲×2 支付、乙×1 未支付）', async () => {
     test.skip(!sku, '环境无库存 SKU');
     orderA1 = await createPaidDeliveryOrder(buyerA!.access_token, sku!, NAME_A, PHONE_A, true);
-    orderA2 = await createPaidDeliveryOrder(buyerA!.access_token, sku!, NAME_A, PHONE_A, true);
+    // extraQty=1：与 orderA1 同用户同 SKU 背靠背下单，错开数量避免重复下单指纹（5s 窗口）碰撞
+    orderA2 = await createPaidDeliveryOrder(buyerA!.access_token, sku!, NAME_A, PHONE_A, true, 1);
     orderB1 = await createPaidDeliveryOrder(buyerB!.access_token, sku!, NAME_B, PHONE_B, false);
     expect(orderA1).toBeGreaterThan(0);
     expect(orderA2).toBeGreaterThan(0);

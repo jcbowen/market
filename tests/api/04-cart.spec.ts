@@ -18,10 +18,12 @@ interface CartItem {
 
 /** 每个用例组共用一个独立登录用户与其已鉴权请求上下文 */
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;
+let communityId = 0;
 
 test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   const info = await clientLogin(playwright.request, uniquePhone());
   api = await newAuthedRequest(playwright, info.access_token);
+  communityId = info.user.community_id;
 });
 
 test.afterAll(async () => {
@@ -34,7 +36,7 @@ test.describe.serial('购物车', () => {
   let skuId = 0;
 
   test('加购商品成功且出现在购物车', async () => {
-    const sku = await pickSku(api);
+    const sku = await pickSku(api, undefined, communityId);
     productId = sku.product_id;
     skuId = sku.id;
 

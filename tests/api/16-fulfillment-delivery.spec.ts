@@ -64,7 +64,7 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
   try {
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, buyer.user.community_id);
     await ensureStock(adminApi, sku.id, 100);
   } catch {
     sku = null;

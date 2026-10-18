@@ -1,154 +1,104 @@
 <template>
   <n-card title="出库管理">
-    <n-form
-      ref="formRef"
-      :model="form"
-      :rules="rules"
-      label-placement="left"
-      label-width="100"
-      require-mark-placement="right-hanging"
-    >
-      <n-form-item label="出库类型" path="type">
-        <n-select v-model:value="form.type" :options="typeOptions" placeholder="请选择出库类型" />
-      </n-form-item>
-      <n-form-item label="选择 SKU" path="sku_id">
-        <n-select
-          v-model:value="form.sku_id"
-          :options="skuOptions"
-          :loading="loading"
-          filterable
-          placeholder="请选择要出库的 SKU"
-        />
-      </n-form-item>
-      <n-form-item label="出库数量" path="quantity">
-        <n-input-number v-model:value="form.quantity" :min="1" placeholder="请输入出库数量" />
-      </n-form-item>
-      <n-form-item label="备注" path="remark">
-        <n-input v-model:value="form.remark" type="textarea" placeholder="请输入备注" />
-      </n-form-item>
-      <n-form-item>
-        <n-space>
-          <n-button type="primary" :loading="submitting" @click="submit">提交出库</n-button>
-          <n-button @click="reset">重置</n-button>
-        </n-space>
-      </n-form-item>
-    </n-form>
+    <n-space style="margin-bottom: 12px">
+      <n-select v-model:value="outType" :options="typeOptions" placeholder="出库类型" clearable style="width: 140px" />
+      <n-date-picker v-model:value="dateRange" type="daterange" clearable />
+      <n-button type="primary" :loading="loading" @click="loadData">查询</n-button>
+      <n-button type="primary" @click="router.push('/stock/out/create')">新建出库单</n-button>
+    </n-space>
+    <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" @update:page="onPageChange" />
   </n-card>
 </template>
 
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockOut' })
-import { ref, computed, onMounted } from 'vue'
-import { useMessage } from 'naive-ui'
-import type { FormInst, FormRules } from 'naive-ui'
-import { stockOut, getSkuStockList } from '@/api/inventory'
-import { getProductList } from '@/api/product'
-import type { Sku, Product } from '@/api/types'
+import { h, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { NButton, NTag } from 'naive-ui'
+import type { DataTableColumns } from 'naive-ui'
+import { getStockOutOrderList } from '@/api/inventory'
+import type { StockOutOrder } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
- * 库存出库页面
- * 支持销售出库与报损出库，选择 SKU 后提交出库申请
+ * 出库管理页面
+ * 出库单列表（报损/领用/调整），销售出库由订单系统自动完成不在此列
  */
-const message = useMessage()
-const formRef = ref<FormInst | null>(null)
+const router = useRouter()
+const outType = ref<number | null>(null)
+const dateRange = ref<[number, number] | null>(null)
+const list = ref<StockOutOrder[]>([])
 const loading = ref(false)
-const submitting = ref(false)
-const skuList = ref<Sku[]>([])
-const productMap = ref<Record<number, string>>({})
-
-const form = ref({
-  type: 2,
-  sku_id: null as number | null,
-  quantity: 1,
-  remark: '',
-})
+const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
 
 const typeOptions = [
-  { label: '销售出库', value: 2 },
-  { label: '报损出库', value: 3 },
+  { label: '报损', value: 1 },
+  { label: '领用', value: 2 },
+  { label: '调整', value: 3 },
 ]
 
-const skuOptions = computed(() => {
-  return skuList.value.map((sku) => {
-    const productName = productMap.value[sku.product_id] || '未知商品'
-    return {
-      label: `${productName} / ${sku.spec_name || sku.sku_code} / 库存：${sku.stock}`,
-      value: sku.id,
-    }
-  })
-})
-
-const rules: FormRules = {
-  type: { type: 'number', required: true, message: '请选择出库类型', trigger: 'change' },
-  sku_id: { type: 'number', required: true, message: '请选择 SKU', trigger: 'change' },
-  quantity: { type: 'number', required: true, min: 1, message: '出库数量至少为 1', trigger: 'blur' },
+const typeMeta: Record<number, { label: string; type: 'error' | 'info' | 'warning' }> = {
+  1: { label: '报损', type: 'error' },
+  2: { label: '领用', type: 'info' },
+  3: { label: '调整', type: 'warning' },
 }
 
-/**
- * 加载 SKU 库存与商品信息
- * 通过商品 ID 映射补充 SKU 所属商品名称
- */
+const columns: DataTableColumns<StockOutOrder> = [
+  { title: '出库单号', key: 'out_no', width: 180 },
+  {
+    title: '类型',
+    key: 'type',
+    width: 90,
+    render: (row) => {
+      const meta = typeMeta[row.type] ?? { label: String(row.type), type: 'default' as const }
+      return h(NTag, { type: meta.type, size: 'small' }, { default: () => meta.label })
+    },
+  },
+  { title: '备注', key: 'remark', ellipsis: { tooltip: true } },
+  { title: '出库时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.created_at) },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 90,
+    render(row) {
+      return h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => router.push(`/stock/out/${row.id}`) }, { default: () => '详情' })
+    },
+  },
+]
+
+function formatDate(timestamp: number | null) {
+  if (!timestamp) return ''
+  const d = new Date(timestamp)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 async function loadData() {
   loading.value = true
   try {
-    const [skuRes, productRes] = await Promise.all([
-      getSkuStockList({ page: 1, page_size: 1000 }),
-      getProductList({ page: 1, page_size: 1000 }),
-    ])
-    if (skuRes.data.code === 0) {
-      skuList.value = skuRes.data.data.list
+    const params: Record<string, unknown> = {
+      page: pagination.value.page,
+      page_size: pagination.value.pageSize,
+      type: outType.value ?? undefined,
     }
-    if (productRes.data.code === 0) {
-      const map: Record<number, string> = {}
-      productRes.data.data.list.forEach((product: Product) => {
-        map[product.id] = product.name
-      })
-      productMap.value = map
+    if (dateRange.value) {
+      params.start_date = formatDate(dateRange.value[0])
+      params.end_date = formatDate(dateRange.value[1])
+    }
+    const res = await getStockOutOrderList(params as never)
+    if (res.data.code === 0) {
+      list.value = res.data.data.list
+      pagination.value.itemCount = res.data.data.total
     }
   } finally {
     loading.value = false
   }
 }
 
-/**
- * 提交出库
- * 校验表单后调用 stockOut API，成功后重置表单
- */
-async function submit() {
-  if (!formRef.value) return
-  await formRef.value.validate()
-  if (!form.value.sku_id) return
-
-  submitting.value = true
-  try {
-    const res = await stockOut({
-      type: form.value.type,
-      sku_id: form.value.sku_id,
-      quantity: form.value.quantity,
-      remark: form.value.remark,
-    })
-    if (res.data.code === 0) {
-      message.success('出库成功')
-      reset()
-    }
-  } finally {
-    submitting.value = false
-  }
+function onPageChange(page: number) {
+  pagination.value.page = page
+  loadData()
 }
 
-/**
- * 重置表单
- */
-function reset() {
-  form.value = {
-    type: 2,
-    sku_id: null,
-    quantity: 1,
-    remark: '',
-  }
-  formRef.value?.restoreValidation()
-}
-
-onMounted(loadData)
+loadData()
 </script>

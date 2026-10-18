@@ -327,7 +327,7 @@ test.describe.serial('秒杀活动生效', () => {
     }
   });
 
-  test('6. 秒杀价下单：订单总额按秒杀价计算（1.5×2=3.0）', async ({ playwright }) => {
+  test('6. 秒杀价下单：止血开关期间按正常价计算', async ({ playwright }) => {
     test.skip(!productIdB, '环境造数失败');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
@@ -336,9 +336,11 @@ test.describe.serial('秒杀活动生效', () => {
         (await (await buyerApi.get(`/api/v1/orders/${orderId}`)).json()) as ApiResponse<OrderDetail>,
         '订单详情',
       );
-      // 服务端自动取生效秒杀价：total = 1.5×2 = 3.0（新建商品无旧秒杀干扰，可精确断言）
-      expect(detail.total_amount).toBeCloseTo(FLASH_PRICE * 2, 2);
-      expect(detail.total_amount).toBeLessThan(PRICE_B * 2);
+      // 当前口径：order.go flashSalePriceEnabled=false（秒杀价止血，防超卖资损，
+      // 待 DeductFlashStock + LimitPerUser 完整实现后置 true）——订单链路整体不走秒杀价，
+      // 按正常价 5.9×2=11.8 计算。开关打开后应改回断言 total = FLASH_PRICE×2 = 3.0。
+      expect(detail.total_amount, '止血开关期间应按正常价计算').toBeCloseTo(PRICE_B * 2, 2);
+      expect(detail.total_amount, '止血开关期间不应低于秒杀价').toBeGreaterThanOrEqual(FLASH_PRICE * 2);
     } finally {
       await buyerApi.dispose();
     }

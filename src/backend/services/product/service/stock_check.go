@@ -77,10 +77,39 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 			}
 			before := sku.Stock
 			diff := item.ActualStock - before
+			var batchID int64
 			if diff != 0 {
 				diffItems++
+				if diff < 0 {
+					// 盘亏：按 FEFO 扣减批次
+					takes, err := deductBatches(tx, &sku, -diff, now)
+					if err != nil {
+						return err
+					}
+					if len(takes) > 0 {
+						batchID = takes[0].Batch.ID
+					}
+				} else {
+					// 盘盈：生成盘盈批次，单位成本取当前移动加权成本
+					batch := &model.StockBatch{
+						CommunityID: check.CommunityID,
+						SkuID:       sku.ID,
+						Quantity:    diff,
+						UnitCost:    sku.CostPrice,
+						Status:      1,
+						SourceType:  3,
+						RefNo:       check.CheckNo,
+						CreatedAt:   now,
+						UpdatedAt:   now,
+					}
+					if err := tx.Create(batch).Error; err != nil {
+						return err
+					}
+					batchID = batch.ID
+				}
 				sku.Stock = item.ActualStock
-				if err := tx.Save(&sku).Error; err != nil {
+				if err := tx.Model(&model.Sku{}).Where("id = ?", sku.ID).
+					Update("stock", sku.Stock).Error; err != nil {
 					return err
 				}
 				record := &model.StockRecord{
@@ -90,8 +119,10 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 					Quantity:    diff,
 					BeforeStock: before,
 					AfterStock:  sku.Stock,
+					BatchID:     batchID,
 					OperatorID:  check.OperatorID,
 					Remark:      "盘点调整",
+					RefNo:       check.CheckNo,
 					CreatedAt:   now,
 				}
 				if err := tx.Create(record).Error; err != nil {

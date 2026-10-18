@@ -21,10 +21,12 @@ interface OrderInfo {
 }
 
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;
+let communityId = 0;
 
 test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   const info = await clientLogin(playwright.request, uniquePhone());
   api = await newAuthedRequest(playwright, info.access_token);
+  communityId = info.user.community_id;
 });
 
 test.afterAll(async () => {
@@ -59,7 +61,7 @@ test.describe.serial('订单流程', () => {
   let createdOrder: OrderInfo;
 
   test('自提订单创建成功', async () => {
-    sku = await pickSku(api);
+    sku = await pickSku(api, undefined, communityId);
     createdOrder = await createPickupOrder(sku.id, 1);
     expect(createdOrder.id).toBeGreaterThan(0);
     expect(createdOrder.order_no).toBeTruthy();
@@ -82,11 +84,12 @@ test.describe.serial('订单流程', () => {
 
   test('服务端取价：客户端注入 price 被清空', async () => {
     // 纵深防御校验：传 price=0.01 也不影响服务端定价（见 order.go CreateOrder）
+    // quantity=2 错开与首单的重复下单指纹（5s 窗口按 user+社区+配送方式+券+商品列表判重）
     const resp = await api.post('/api/v1/orders', {
       data: {
         delivery_type: 1,
         address_id: 0,
-        items: [{ sku_id: sku.id, quantity: 1, price: 0.01 }],
+        items: [{ sku_id: sku.id, quantity: 2, price: 0.01 }],
       },
     });
     const body = (await resp.json()) as ApiResponse<OrderInfo>;
@@ -121,7 +124,7 @@ test.describe.serial('订单流程', () => {
   });
 
   test('待支付订单可取消', async () => {
-    const fresh = await createPickupOrder(sku.id, 1);
+    const fresh = await createPickupOrder(sku.id, 3);
     const resp = await api.put(`/api/v1/orders/${fresh.id}/cancel`);
     const body = (await resp.json()) as ApiResponse;
     expect(body.code).toBe(0);

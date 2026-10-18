@@ -3,9 +3,12 @@ import { adminLogin } from '../../helpers/e2e';
 
 /**
  * 管理端 E2E 06：库存 / 门店设置 / 附件配置 / 行政区划页面
- * 覆盖：库存六页（列表/流水/盘点/预警/出库/采购建议）与
+ * 覆盖：进销存重构后的库存线页面（工作台含 列表/预警/流水/批次 四个 tab 深链、
+ *       采购/入库/出库/盘点/报表五个独立页）与
  *       门店设置、附件配置、行政区划渲染冒烟；
  *       行政区划关键词搜索做一次真实交互（填入关键词 → 表格过滤）
+ * 说明：旧路径 stock/records、stock/warnings 已随重构并入工作台 tab（?tab= 深链），
+ *       采购建议不再是独立页（采购管理页内的 tab）。
  */
 
 test.describe.serial('库存管理页面', () => {
@@ -14,12 +17,15 @@ test.describe.serial('库存管理页面', () => {
   });
 
   const pages: [string, string][] = [
-    ['/b/#/stock', '库存列表'],
-    ['/b/#/stock/records', '库存流水'],
-    ['/b/#/stock/check', '库存盘点'],
-    ['/b/#/stock/warnings', '库存预警'],
-    ['/b/#/stock/out', '库存出库'],
-    ['/b/#/stock/purchase', '采购建议'],
+    ['/b/#/stock', '库存工作台'],
+    ['/b/#/stock?tab=records', '库存流水'],
+    ['/b/#/stock?tab=warnings', '库存预警'],
+    ['/b/#/stock?tab=batches', '批次库存'],
+    ['/b/#/stock/purchase', '采购管理'],
+    ['/b/#/stock/in', '入库管理'],
+    ['/b/#/stock/out', '出库管理'],
+    ['/b/#/stock/check', '盘点管理'],
+    ['/b/#/stock/reports', '报表中心'],
   ];
 
   for (const [path, label] of pages) {

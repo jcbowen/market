@@ -314,12 +314,12 @@ const menuOptions = computed<MenuOption[]>(() => {
       icon: renderIcon(FileTrayOutline),
       permission: 'inventory:view',
       children: [
-        { label: '库存列表', key: '/stock', permission: 'inventory:view' },
-        { label: '库存流水', key: '/stock/records', permission: 'inventory:view' },
-        { label: '盘点管理', key: '/stock/check', permission: 'inventory:view' },
-        { label: '库存预警', key: '/stock/warnings', permission: 'inventory:view' },
+        { label: '库存工作台', key: '/stock', permission: 'inventory:view' },
+        { label: '采购管理', key: '/stock/purchase', permission: 'inventory:view' },
+        { label: '入库管理', key: '/stock/in', permission: 'inventory:view' },
         { label: '出库管理', key: '/stock/out', permission: 'inventory:create' },
-        { label: '补货建议', key: '/stock/purchase', permission: 'inventory:view' },
+        { label: '盘点管理', key: '/stock/check', permission: 'inventory:view' },
+        { label: '报表中心', key: '/stock/reports', permission: 'inventory:view' },
       ],
     },
     {

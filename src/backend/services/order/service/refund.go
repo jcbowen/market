@@ -1046,6 +1046,15 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 			}); err != nil {
 				return fmt.Errorf("释放库存失败: %w", err)
 			}
+			// 秒杀独立库存回补（非秒杀商品 no-op）
+			if _, err := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
+				OrderId:  o.ID,
+				SkuId:    item.SkuID,
+				Quantity: item.Quantity,
+				BizNo:    refundCompleted.RefundNo,
+			}); err != nil {
+				return fmt.Errorf("释放秒杀库存失败: %w", err)
+			}
 		}
 
 		// 订单去向与类型升级（money 口径）：累计成功退款（含运费）达到实付 → 订单 8 已退款，

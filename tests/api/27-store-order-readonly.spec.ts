@@ -50,7 +50,7 @@ test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   const curBody = (await curResp.json()) as ApiResponse<{ id?: number }>;
   if (!curBody.data?.id) throw new Error('POS 无进行中班次且开工失败，门店单用例无法执行');
 
-  const sku = await pickSku(adminApi);
+  const sku = await pickSku(adminApi, undefined, admin.communityId);
   await ensureStock(adminApi, sku.id, 100);
   globalThis.__sku = sku.id;
 

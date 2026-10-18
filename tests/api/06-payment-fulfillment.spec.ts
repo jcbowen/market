@@ -19,10 +19,12 @@ interface OrderInfo {
 
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;
 let userId: number;
+let communityId = 0;
 
 test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   const info = await clientLogin(playwright.request, uniquePhone());
   userId = info.user.id;
+  communityId = info.user.community_id;
   api = await newAuthedRequest(playwright, info.access_token);
 });
 
@@ -33,13 +35,13 @@ test.afterAll(async () => {
 /**
  * 创建自提订单并 cash 支付（进入待提货状态）
  * - 函数名: createPaidPickupOrder
- * - 参数: skuId — SKU ID
+ * - 参数: skuId — SKU ID；quantity — 数量（同用户连续下单时错开重复指纹，默认 1）
  * - 返回: Promise<OrderInfo>
  * - 异常: 下单/支付失败时抛出 Error
  */
-async function createPaidPickupOrder(skuId: number): Promise<OrderInfo> {
+async function createPaidPickupOrder(skuId: number, quantity = 1): Promise<OrderInfo> {
   const resp = await api.post('/api/v1/orders', {
-    data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity: 1 }] },
+    data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity }] },
   });
   const body = (await resp.json()) as ApiResponse<OrderInfo>;
   if (body.code !== 0) throw new Error(`下单失败 ${body.message}`);
@@ -74,7 +76,7 @@ test.describe('支付单查询与回调安全', () => {
   test('支付单详情仅本人订单可查（归属校验）', async () => {
     let sku;
     try {
-      sku = await pickSku(api);
+      sku = await pickSku(api, undefined, communityId);
     } catch {
       test.skip(true, '环境无可用 SKU');
       return;
@@ -137,12 +139,12 @@ test.describe.serial('履约工作台', () => {
     if (!isFulfiller) test.skip(true, '需要履约人员身份');
     let sku;
     try {
-      sku = await pickSku(api);
+      sku = await pickSku(api, undefined, communityId);
     } catch {
       test.skip(true, '环境无有库存 SKU');
       return;
     }
-    const order = await createPaidPickupOrder(sku.id);
+    const order = await createPaidPickupOrder(sku.id, 2);
     const detail = await getOrder(order.id);
     const wrongCode = '00000000';
     if (detail.pickup_code === wrongCode) test.skip(true, '取货码恰好为 00000000，跳过');
@@ -164,12 +166,12 @@ test.describe.serial('履约工作台', () => {
     if (!isFulfiller) test.skip(true, '需要履约人员身份');
     let sku;
     try {
-      sku = await pickSku(api);
+      sku = await pickSku(api, undefined, communityId);
     } catch {
       test.skip(true, '环境无有库存 SKU');
       return;
     }
-    const order = await createPaidPickupOrder(sku.id);
+    const order = await createPaidPickupOrder(sku.id, 3);
     const detail = await getOrder(order.id);
     const code = detail.pickup_code;
     if (!code) {

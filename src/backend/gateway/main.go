@@ -305,8 +305,6 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/statistics/revenue", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetRevenueReport)
 
 			authAdmin.GET("/inventory/entries", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListStockRecords)
-			authAdmin.POST("/inventory/entries", gwMiddleware.RequirePermission("inventory:create"), adminHandler.StockEntry)
-			authAdmin.POST("/inventory/out", gwMiddleware.RequirePermission("inventory:create"), adminHandler.StockOut)
 			authAdmin.POST("/inventory/purchase-order", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GeneratePurchaseOrder)
 			authAdmin.GET("/inventory/warnings", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GetStockWarnings)
 			authAdmin.GET("/inventory/skus", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListSkuStock)
@@ -314,6 +312,32 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/inventory/checks/:id", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GetStockCheckDetail)
 			authAdmin.POST("/inventory/checks", gwMiddleware.RequirePermission("inventory:create"), adminHandler.CreateStockCheck)
 			authAdmin.POST("/inventory/checks/:id/submit", gwMiddleware.RequirePermission("inventory:update"), adminHandler.SubmitStockCheck)
+
+			// 进销存重构：供应商 / 采购单 / 入库单 / 出库单 / 批次 / 报表
+			authAdmin.GET("/inventory/suppliers", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListSuppliers)
+			authAdmin.POST("/inventory/suppliers", gwMiddleware.RequirePermission("inventory:create"), adminHandler.CreateSupplier)
+			authAdmin.PUT("/inventory/suppliers/:id", gwMiddleware.RequirePermission("inventory:update"), adminHandler.UpdateSupplier)
+			authAdmin.DELETE("/inventory/suppliers/:id", gwMiddleware.RequirePermission("inventory:update"), adminHandler.DeleteSupplier)
+
+			authAdmin.GET("/inventory/purchase-orders", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListPurchaseOrders)
+			authAdmin.POST("/inventory/purchase-orders", gwMiddleware.RequirePermission("inventory:create"), adminHandler.CreatePurchaseOrder)
+			authAdmin.GET("/inventory/purchase-orders/:id", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GetPurchaseOrder)
+			authAdmin.PUT("/inventory/purchase-orders/:id", gwMiddleware.RequirePermission("inventory:update"), adminHandler.UpdatePurchaseOrder)
+			authAdmin.POST("/inventory/purchase-orders/:id/submit", gwMiddleware.RequirePermission("inventory:update"), adminHandler.SubmitPurchaseOrder)
+			authAdmin.POST("/inventory/purchase-orders/:id/cancel", gwMiddleware.RequirePermission("inventory:update"), adminHandler.CancelPurchaseOrder)
+
+			authAdmin.GET("/inventory/in-orders", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListStockInOrders)
+			authAdmin.POST("/inventory/in-orders", gwMiddleware.RequirePermission("inventory:create"), adminHandler.CreateStockInOrder)
+			authAdmin.GET("/inventory/in-orders/:id", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GetStockInOrder)
+
+			authAdmin.GET("/inventory/out-orders", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListStockOutOrders)
+			authAdmin.POST("/inventory/out-orders", gwMiddleware.RequirePermission("inventory:create"), adminHandler.CreateStockOutOrder)
+			authAdmin.GET("/inventory/out-orders/:id", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GetStockOutOrder)
+
+			authAdmin.GET("/inventory/batches", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListStockBatches)
+
+			authAdmin.GET("/inventory/reports/summary", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GetInventorySummaryReport)
+			authAdmin.GET("/inventory/reports/profit", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GetProfitReport)
 
 			authAdmin.GET("/coupons", gwMiddleware.RequirePermission("marketing:view"), adminHandler.ListAdminCoupons)
 			authAdmin.POST("/coupons", gwMiddleware.RequirePermission("marketing:create"), adminHandler.CreateCoupon)

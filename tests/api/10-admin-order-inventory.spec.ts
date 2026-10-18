@@ -18,7 +18,7 @@ test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   api = ctx.api;
   // 取一个有库存的 SKU（公开接口，兼容各环境）
   try {
-    const sku = await pickSku(api);
+    const sku = await pickSku(api, undefined, client.user.community_id);
     skuId = sku.id;
   } catch {
     skuId = 0;
@@ -135,12 +135,13 @@ test.describe.serial('库存管理', () => {
       return;
     }
 
+    // 进销存重构：入库走入库单接口（直接入库，创建即生效）
     const entry = (await (
-      await api.post('/api/v1/admin/inventory/entries', {
-        data: { type: 1, items: [{ sku_id: targetSku, quantity: 10 }], remark: 'AUTO-TEST 入库' },
+      await api.post('/api/v1/admin/inventory/in-orders', {
+        data: { remark: 'AUTO-TEST 入库', items: [{ sku_id: targetSku, quantity: 10 }] },
       })
     ).json()) as ApiResponse;
-    expect(entry.code).toBe(0);
+    expect(entry.code, `入库失败: ${entry.message}`).toBe(0);
 
     const after = (await (
       await api.get('/api/v1/admin/inventory/skus', { params: { page: 1, page_size: 100 } })
@@ -155,11 +156,12 @@ test.describe.serial('库存管理', () => {
 
   test('出库操作成功', async () => {
     test.skip(!targetSku, '环境无 SKU');
-    const resp = await api.post('/api/v1/admin/inventory/out', {
-      data: { type: 2, items: [{ sku_id: targetSku, quantity: 1 }], remark: 'AUTO-TEST 报损出库' },
+    // 进销存重构：出库走出库单接口（type=2 领用）
+    const resp = await api.post('/api/v1/admin/inventory/out-orders', {
+      data: { type: 2, items: [{ sku_id: targetSku, quantity: 1 }], remark: 'AUTO-TEST 领用出库' },
     });
     const body = (await resp.json()) as ApiResponse;
-    expect(body.code).toBe(0);
+    expect(body.code, `出库失败: ${body.message}`).toBe(0);
   });
 
   test('库存预警接口可查', async () => {

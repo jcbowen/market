@@ -83,7 +83,7 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
   try {
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, buyer.user.community_id);
     await ensureStock(adminApi, sku.id, 100);
   } catch {
     sku = null;
@@ -164,7 +164,8 @@ test.describe.serial('后台取消待支付订单', () => {
               delivery_type: 1,
               address_id: 0,
               remark: 'AUTO-TEST 46 现金单取消',
-              items: [{ sku_id: sku!.id, quantity: 1 }],
+              // quantity=2：与测试 1 的待支付自提单（quantity=1）错开，避免重复下单指纹碰撞
+              items: [{ sku_id: sku!.id, quantity: 2 }],
             },
           })
         ).json()) as ApiResponse<OrderResult>,
@@ -188,7 +189,7 @@ test.describe.serial('后台取消待支付订单', () => {
     const detail = await getAdminOrder(cashOrderId);
     expect(detail.status).toBe(6);
     expect(detail.cancel_reason).toBe('AUTO-TEST 46 现金单后台取消');
-    expect(await currentStock(), '取消后库存回补 1 件').toBe(stockBefore + 1);
+    expect(await currentStock(), '取消后库存回补 2 件').toBe(stockBefore + 2);
   });
 
   test('6. 已发货(4)单后台取消被状态机拒绝', async ({ playwright }) => {

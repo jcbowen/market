@@ -2,12 +2,12 @@ import { test, expect, type Playwright } from '@playwright/test';
 import { newAdminContext, pickSku, ensureStock, asList, type ApiResponse, type PageData, type SkuRef } from '../helpers/api';
 
 /**
- * 模块 38：库存批次进阶
- * 覆盖：入库带批次号/生产日期/过期日期 → SKU 库存增加；
- *       库存流水可追溯（batch_no/production_date/expire_date、before/after 库存快照一致）；
- *       出库扣减同样携带批次信息（type=2）；
- *       库存不足出库被拒（stock.go 191-193）
- * 说明：proto StockEntryItem 直传 expire_date（无保质天数字段），过期日由调用方计算
+ * 模块 38：库存批次进阶（进销存重构版）
+ * 覆盖：入库单带批次号/生产日期/过期日期 → SKU 库存增加、生成批次；
+ *       库存流水可追溯（batch_no/ref_no、before/after 库存快照一致）；
+ *       出库单按 FEFO 从批次扣减（type 由单据承载，不再逐行传）；
+ *       出库超库存被拒（批次库存不足）
+ * 说明：入库/出库已单据化，日期格式为 YYYY-MM-DD（后端原样落库 date 列）
  */
 
 interface StockRecord {
@@ -17,9 +17,9 @@ interface StockRecord {
   quantity: number;
   before_stock: number;
   after_stock: number;
+  batch_id?: number;
   batch_no?: string;
-  production_date?: string;
-  expire_date?: string;
+  ref_no?: string;
   remark?: string;
   [k: string]: unknown;
 }
@@ -49,22 +49,21 @@ test.describe.serial('库存批次进阶', () => {
   const batchNo = `AUTO-BATCH-${Date.now()}`;
 
   test('准备：就绪 SKU', async () => {
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, adminCommunityId);
     await ensureStock(adminApi, sku.id, 200);
   });
 
   test('带批次入库 +30：库存增加且流水含批次信息', async () => {
     const before = await skuStock(sku.id, sku.product_id);
-    const resp = await adminApi.post('/api/v1/admin/inventory/entries', {
+    const resp = await adminApi.post('/api/v1/admin/inventory/in-orders', {
       data: {
-        type: 1,
         remark: 'AUTO-TEST 38 批次入库',
         items: [{
           sku_id: sku.id,
           quantity: 30,
           batch_no: batchNo,
-          production_date: '2026-10-01 00:00:00',
-          expire_date: '2027-10-01 00:00:00',
+          production_date: '2026-10-01',
+          expire_date: '2027-10-01',
         }],
       },
     });
@@ -73,7 +72,7 @@ test.describe.serial('库存批次进阶', () => {
     expect(await skuStock(sku.id, sku.product_id)).toBe(before + 30);
   });
 
-  test('流水可追溯：最新入库记录批次/日期/快照一致', async () => {
+  test('流水可追溯：最新入库记录批次号/快照一致', async () => {
     const resp = await adminApi.get('/api/v1/admin/inventory/entries', { params: { page: 1, page_size: 20, sku_id: sku.id } });
     const body = (await resp.json()) as ApiResponse<PageData<StockRecord>>;
     expect(body.code).toBe(0);
@@ -81,26 +80,35 @@ test.describe.serial('库存批次进阶', () => {
     expect(record, '流水应包含本次批次记录').toBeTruthy();
     expect(record!.type).toBe(1);
     expect(record!.quantity).toBe(30);
-    expect(record!.production_date, '生产日期应落库').toBeTruthy();
-    expect(record!.expire_date, '过期日期应落库').toBeTruthy();
+    expect(record!.ref_no, '入库流水应带入库单号').toBeTruthy();
     // 快照自洽：after - before = quantity
     expect(record!.after_stock - record!.before_stock).toBe(30);
   });
 
-  test('带批次出库 -10：库存扣减且流水可追溯', async () => {
+  test('批次可查：入库生成的批次在批次列表可见', async () => {
+    const resp = await adminApi.get('/api/v1/admin/inventory/batches', { params: { page: 1, page_size: 50, keyword: batchNo } });
+    const body = (await resp.json()) as ApiResponse<PageData<{ batch_no: string; quantity: number; production_date: string; expire_date: string }>>;
+    expect(body.code).toBe(0);
+    const batch = asList(body.data).find((b) => b.batch_no === batchNo);
+    expect(batch, '批次列表应包含本次入库批次').toBeTruthy();
+    expect(batch!.quantity).toBe(30);
+    expect(batch!.production_date).toContain('2026-10-01');
+    expect(batch!.expire_date).toContain('2027-10-01');
+  });
+
+  test('出库单扣减 -10：库存减少且流水可追溯（FEFO）', async () => {
     const before = await skuStock(sku.id, sku.product_id);
-    const resp = await adminApi.post('/api/v1/admin/inventory/out', {
+    const resp = await adminApi.post('/api/v1/admin/inventory/out-orders', {
       data: {
         type: 2,
         remark: 'AUTO-TEST 38 批次出库',
-        items: [{ sku_id: sku.id, quantity: 10, batch_no: batchNo }],
+        items: [{ sku_id: sku.id, quantity: 10 }],
       },
     });
     const body = (await resp.json()) as ApiResponse;
     expect(body.code, `批次出库失败: ${body.message}`).toBe(0);
     expect(await skuStock(sku.id, sku.product_id)).toBe(before - 10);
 
-    // StockOutItem 设计上不含 batch_no（proto 字段），出库流水按 remark + type=2 定位
     const records = (await (await adminApi.get('/api/v1/admin/inventory/entries', { params: { page: 1, page_size: 20, sku_id: sku.id } })).json()) as ApiResponse<PageData<StockRecord>>;
     const record = asList<StockRecord>(records.data).find((r) => r.type === 2 && r.remark?.includes('AUTO-TEST 38 批次出库'));
     expect(record, '出库流水应包含本次记录').toBeTruthy();
@@ -110,7 +118,7 @@ test.describe.serial('库存批次进阶', () => {
 
   test('出库超库存被拒', async () => {
     const before = await skuStock(sku.id, sku.product_id);
-    const resp = await adminApi.post('/api/v1/admin/inventory/out', {
+    const resp = await adminApi.post('/api/v1/admin/inventory/out-orders', {
       data: {
         type: 2,
         remark: 'AUTO-TEST 38 超库存出库',

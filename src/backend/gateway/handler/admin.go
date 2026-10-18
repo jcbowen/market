@@ -2494,39 +2494,10 @@ func (h *AdminHandler) ListStockRecords(c *gin.Context) {
 	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
 }
 
-// StockEntryReq 商品入库请求
-type StockEntryReq struct {
-	Type   int32                     `json:"type" binding:"required"`
-	Items  []*product.StockEntryItem `json:"items" binding:"required"`
-	Remark string                    `json:"remark"`
-}
-
-// StockEntry 商品入库
-// 参数：
-//   - c: gin 上下文
-func (h *AdminHandler) StockEntry(c *gin.Context) {
-	var req StockEntryReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, errcode.ParamError)
-		return
-	}
-
-	uc := appcontext.GetUserContext(c)
-	_, err := h.productClient.StockEntry(c.Request.Context(), &product.StockEntryReq{
-		CommunityId: h.getAdminCommunityID(c),
-		Type:        req.Type,
-		Items:       req.Items,
-		OperatorId:  uc.UserID,
-		Remark:      req.Remark,
-	})
-	if err != nil {
-		response.GRPCError(c, err)
-		return
-	}
-	response.Success(c, gin.H{"success": true})
-}
-
 // GetStockWarnings 获取库存预警列表
+// 预警为运营告警清单，需全量返回（RPC 层即无分页语义）；
+// 历史问题：曾在此临时分页（默认 page_size=10），导致前端仪表盘计数恒 0、
+// 工作台表格拿到 {list,total} 包装对象而非数组、调用方不传分页参数时丢数据
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetStockWarnings(c *gin.Context) {
@@ -2537,27 +2508,11 @@ func (h *AdminHandler) GetStockWarnings(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
-	if page < 1 {
-		page = 1
+	list := resp.List
+	if list == nil {
+		list = []*product.StockWarningInfo{}
 	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
-
-	total := len(resp.List)
-	start := (page - 1) * pageSize
-	end := start + pageSize
-	if start > total {
-		start = total
-	}
-	if end > total {
-		end = total
-	}
-
-	response.SuccessWithPage(c, resp.List[start:end], total, page, pageSize)
+	response.Success(c, list)
 }
 
 // ListSkuStock 获取当前社区 SKU 库存列表
@@ -2672,38 +2627,6 @@ func (h *AdminHandler) CreateStockCheck(c *gin.Context) {
 		return
 	}
 	response.Success(c, check)
-}
-
-// StockOutReq 库存出库请求
-type StockOutReq struct {
-	Type   int32                   `json:"type" binding:"required"`
-	Items  []*product.StockOutItem `json:"items" binding:"required"`
-	Remark string                  `json:"remark"`
-}
-
-// StockOut 库存出库（销售出库/报损出库）
-// 参数：
-//   - c: gin 上下文
-func (h *AdminHandler) StockOut(c *gin.Context) {
-	var req StockOutReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, errcode.ParamError)
-		return
-	}
-
-	uc := appcontext.GetUserContext(c)
-	_, err := h.productClient.StockOut(c.Request.Context(), &product.StockOutReq{
-		CommunityId: h.getAdminCommunityID(c),
-		Type:        req.Type,
-		Items:       req.Items,
-		OperatorId:  uc.UserID,
-		Remark:      req.Remark,
-	})
-	if err != nil {
-		response.GRPCError(c, err)
-		return
-	}
-	response.Success(c, gin.H{"success": true})
 }
 
 // GeneratePurchaseOrder 生成补货建议单

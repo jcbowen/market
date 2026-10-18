@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -15,10 +16,12 @@ import (
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
 
-// stockOpTypeDeduct/stockOpTypeRelease 幂等日志操作类型
+// 幂等日志操作类型（stock_op_logs.op_type）
 const (
-	stockOpTypeDeduct int8 = 1 // 扣减
-	stockOpTypeRelease int8 = 2 // 释放
+	stockOpTypeDeduct       int8 = 1 // 主库存扣减（下单）
+	stockOpTypeRelease      int8 = 2 // 主库存释放（取消/退款/超时）
+	stockOpTypeFlashDeduct  int8 = 3 // 秒杀库存扣减
+	stockOpTypeFlashRelease int8 = 4 // 秒杀库存释放
 )
 
 // StockService 库存业务服务
@@ -41,10 +44,18 @@ func NewStockService(db *mysql.Instance, expireWarningDays int) *StockService {
 	return &StockService{db: db, expireWarningDays: expireWarningDays}
 }
 
-// DeductStock 扣减库存（幂等）
+// batchTake 单批次扣减结果（供流水逐批次落账）
+type batchTake struct {
+	Batch model.StockBatch
+	Take  int32
+}
+
+// DeductStock 扣减库存（幂等，FEFO 批次扣减）
 // 以 order_id + sku_id + 操作类型 唯一约束实现幂等：同一订单对同一 SKU 的重复
 // 扣减请求（如 gRPC 超时重试）直接返回当前库存，不重复扣减。
-// 幂等日志与扣减在同一事务内写入，扣减失败时日志一并回滚。
+// 扣减顺序：有效期批次按过期日期升序先出（FEFO），无有效期批次按批次创建顺序后出。
+// product_skus.stock 为汇总列，在同一事务内与批次同步维护。
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 扣减请求
@@ -88,23 +99,40 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 		if sku.Stock < req.Quantity {
 			return bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足", sku.SkuCode))
 		}
+
 		before := sku.Stock
-		sku.Stock -= req.Quantity
-		if err := tx.Save(&sku).Error; err != nil {
+		takes, err := deductBatches(tx, &sku, req.Quantity, now)
+		if err != nil {
 			return err
 		}
-		record := &model.StockRecord{
-			SkuID:          sku.ID,
-			CommunityID:    sku.CommunityID,
-			Type:           2,
-			Quantity:       -req.Quantity,
-			BeforeStock:    before,
-			AfterStock:     sku.Stock,
-			RelatedOrderID: req.OrderId,
-			CreatedAt:      now,
-		}
-		if err := tx.Create(record).Error; err != nil {
+		// 汇总库存同步落库：deductBatches 仅扣减内存中的 sku.Stock，
+		// 必须显式 UPDATE product_skus.stock，否则汇总列永远不降
+		//（库存校验形同虚设导致超卖，且低库存预警永不触发）
+		if err := tx.Model(&model.Sku{}).Where("id = ?", sku.ID).
+			Update("stock", sku.Stock).Error; err != nil {
 			return err
+		}
+		// 逐批次落流水账
+		running := before
+		for _, t := range takes {
+			running -= t.Take
+			record := &model.StockRecord{
+				SkuID:          sku.ID,
+				CommunityID:    sku.CommunityID,
+				Type:           2,
+				Quantity:       -t.Take,
+				BeforeStock:    running + t.Take,
+				AfterStock:     running,
+				BatchID:        t.Batch.ID,
+				BatchNo:        t.Batch.BatchNo,
+				ProductionDate: t.Batch.ProductionDate,
+				ExpireDate:     t.Batch.ExpireDate,
+				RelatedOrderID: req.OrderId,
+				CreatedAt:      now,
+			}
+			if err := tx.Create(record).Error; err != nil {
+				return err
+			}
 		}
 		success = true
 		remain = sku.Stock
@@ -113,9 +141,12 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 	return success, remain, err
 }
 
-// ReleaseStock 释放库存（幂等）
-// 以 order_id + sku_id + 操作类型 唯一约束实现幂等：取消/退款/超时关单等
+// ReleaseStock 释放库存（幂等，回补生成调整批次）
+// 以 order_id + sku_id + 操作类型 + biz_no 唯一约束实现幂等：取消/退款/超时关单等
 // 多条链路对同一订单同一 SKU 的重复释放请求只会生效一次，防止超量回补。
+// 回补的库存无法对应原批次（销售时未指定），统一生成"释放回补"批次，
+// 单位成本取 SKU 当前移动加权平均成本。
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 释放请求
@@ -149,7 +180,23 @@ func (s *StockService) ReleaseStock(ctx context.Context, req *product.ReleaseSto
 		}
 		before := sku.Stock
 		sku.Stock += req.Quantity
-		if err := tx.Save(&sku).Error; err != nil {
+		if err := tx.Model(&model.Sku{}).Where("id = ?", sku.ID).Updates(map[string]interface{}{
+			"stock": sku.Stock,
+		}).Error; err != nil {
+			return err
+		}
+		batch := &model.StockBatch{
+			CommunityID: sku.CommunityID,
+			SkuID:       sku.ID,
+			Quantity:    req.Quantity,
+			UnitCost:    sku.CostPrice,
+			Status:      1,
+			SourceType:  2,
+			RefNo:       req.BizNo,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		if err := tx.Create(batch).Error; err != nil {
 			return err
 		}
 		record := &model.StockRecord{
@@ -159,65 +206,273 @@ func (s *StockService) ReleaseStock(ctx context.Context, req *product.ReleaseSto
 			Quantity:       req.Quantity,
 			BeforeStock:    before,
 			AfterStock:     sku.Stock,
+			BatchID:        batch.ID,
 			RelatedOrderID: req.OrderId,
+			RefNo:          req.BizNo,
 			CreatedAt:      now,
 		}
 		return tx.Create(record).Error
 	})
 }
 
-// StockEntry 库存调整（入库/出库）
+// DeductFlashSaleStock 扣减秒杀活动库存（幂等）
+// flash_sale_items.stock 独立于主库存，仅作秒杀活动的限量池；
+// 幂等键 op_type=3（与主库存扣减区分），重复请求直接成功。
+// 无生效秒杀活动时直接 no-op（订单侧对全部明细统一调用，非秒杀商品不应报错）。
 // 参数：
 //   - ctx: 上下文
-//   - req: 入库/出库请求
+//   - req: 扣减请求
 //
 // 返回值：
-//   - error: 错误信息
-func (s *StockService) StockEntry(ctx context.Context, req *product.StockEntryReq) error {
+//   - error: 错误信息（秒杀库存不足时返回错误，由订单侧补偿回滚）
+func (s *StockService) DeductFlashSaleStock(ctx context.Context, req *product.DeductFlashSaleStockReq) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, item := range req.Items {
-			var sku model.Sku
-			if err := tx.Clauses(lockClause()).First(&sku, item.SkuId).Error; err != nil {
-				return err
-			}
-			before := sku.Stock
+		now := time.Now()
+		// 先找生效秒杀项：无生效活动说明是非秒杀商品，直接 no-op（不落幂等日志，
+		// 释放侧据此判断是否需要回补）
+		item, err := lockActiveFlashSaleItem(tx, req.SkuId, now)
+		if err != nil {
+			return err
+		}
+		if item == nil {
+			return nil
+		}
 
-			recordType := req.Type
-			if recordType == 0 {
-				recordType = 1
-			}
-			quantity := item.Quantity
-			if recordType == 2 {
-				if sku.Stock < quantity {
-					return fmt.Errorf("SKU %d 库存不足，当前库存 %d", sku.ID, sku.Stock)
-				}
-				quantity = -quantity
-			}
+		nowStr := now.Format("2006-01-02 15:04:05")
+		opLog := &model.StockOpLog{
+			OrderID:     req.OrderId,
+			SkuID:       req.SkuId,
+			OpType:      stockOpTypeFlashDeduct,
+			FlashSaleID: item.ID,
+			Quantity:    req.Quantity,
+			CreatedAt:   nowStr,
+		}
+		res := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(opLog)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
+		}
 
-			sku.Stock += quantity
-			if err := tx.Save(&sku).Error; err != nil {
-				return err
-			}
-			record := &model.StockRecord{
-				SkuID:          sku.ID,
-				CommunityID:    req.CommunityId,
-				Type:           recordType,
-				Quantity:       quantity,
-				BeforeStock:    before,
-				AfterStock:     sku.Stock,
-				BatchNo:        item.BatchNo,
-				ProductionDate: strPtr(item.ProductionDate),
-				ExpireDate:     strPtr(item.ExpireDate),
-				OperatorID:     req.OperatorId,
-				Remark:         req.Remark,
-				CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
-			}
-			if err := tx.Create(record).Error; err != nil {
-				return err
-			}
+		if item.Stock < req.Quantity {
+			return bizerr.New(codes.ResourceExhausted, "秒杀库存不足")
+		}
+		// 条件更新防并发超卖（行锁已加，双保险）
+		r := tx.Model(&model.FlashSaleItem{}).
+			Where("id = ? AND stock >= ?", item.ID, req.Quantity).
+			Updates(map[string]interface{}{
+				"stock":      item.Stock - req.Quantity,
+				"sold_count": item.SoldCount + req.Quantity,
+			})
+		if r.Error != nil {
+			return r.Error
+		}
+		if r.RowsAffected == 0 {
+			return bizerr.New(codes.ResourceExhausted, "秒杀库存不足")
 		}
 		return nil
 	})
+}
+
+// ReleaseFlashSaleStock 释放秒杀活动库存（幂等）
+// 仅当该订单该 SKU 存在秒杀扣减日志时才释放（订单侧对全部明细统一调用，
+// 非秒杀商品自动 no-op，无需订单表记录秒杀标记）。
+// 参数：
+//   - ctx: 上下文
+//   - req: 释放请求
+//
+// 返回值：
+//   - error: 错误信息
+func (s *StockService) ReleaseFlashSaleStock(ctx context.Context, req *product.ReleaseFlashSaleStockReq) error {
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 无秒杀扣减记录：非秒杀商品，直接成功
+		var deductLog model.StockOpLog
+		err := tx.Where("order_id = ? AND sku_id = ? AND op_type = ?", req.OrderId, req.SkuId, stockOpTypeFlashDeduct).
+			First(&deductLog).Error
+		if err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil
+			}
+			return err
+		}
+
+		now := time.Now()
+		opLog := &model.StockOpLog{
+			OrderID:   req.OrderId,
+			SkuID:     req.SkuId,
+			OpType:    stockOpTypeFlashRelease,
+			BizNo:     req.BizNo,
+			Quantity:  req.Quantity,
+			CreatedAt: now.Format("2006-01-02 15:04:05"),
+		}
+		res := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(opLog)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
+		}
+
+		// 优先按扣减日志记录的活动商品 ID 定向回补：同 SKU 多活动先后/并发时，
+		// 活动结束后的退款也能回补到当初扣减的活动池，避免 A 扣 B 补的池错位；
+		// 日志缺失（历史数据/活动项被删）时回落到现有定位逻辑
+		item, err := lockFlashSaleItemByID(tx, deductLog.FlashSaleID, req.SkuId)
+		if err != nil {
+			return err
+		}
+		if item == nil {
+			item, err = lockFlashSaleItemForRelease(tx, req.SkuId, now)
+			if err != nil {
+				return err
+			}
+		}
+		return tx.Model(&model.FlashSaleItem{}).Where("id = ?", item.ID).
+			Updates(map[string]interface{}{
+				"stock":      item.Stock + req.Quantity,
+				"sold_count": item.SoldCount - req.Quantity,
+			}).Error
+	})
+}
+
+// lockActiveFlashSaleItem 锁定 SKU 当前生效秒杀活动的商品项
+// 无生效秒杀活动时返回 (nil, nil)，调用方据此走 no-op 路径。
+// 参数：
+//   - tx: 事务
+//   - skuID: SKU ID
+//   - now: 当前时间（判定活动时效）
+//
+// 返回值：
+//   - *model.FlashSaleItem: 秒杀商品项（已加行锁）；无生效活动时 nil
+//   - error: 错误信息
+func lockActiveFlashSaleItem(tx *gorm.DB, skuID int64, now time.Time) (*model.FlashSaleItem, error) {
+	nowStr := now.Format("2006-01-02 15:04:05")
+	var item model.FlashSaleItem
+	err := tx.Clauses(lockClause()).
+		Joins("JOIN flash_sales fs ON fs.id = flash_sale_items.flash_sale_id").
+		Where("flash_sale_items.sku_id = ? AND flash_sale_items.status = 1", skuID).
+		Where("fs.status = 1 AND fs.start_time <= ? AND fs.end_time >= ?", nowStr, nowStr).
+		Order("flash_sale_items.id ASC").
+		First(&item).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+// lockFlashSaleItemByID 按扣减日志记录的活动商品 ID 定位秒杀项（带行锁）
+// 校验 SKU 归属一致，防止脏日志回补到其他 SKU 的活动池；活动项已被删时返回 (nil, nil)，
+// 调用方据此走回落定位逻辑。
+// 参数：
+//   - tx: 事务
+//   - itemID: 秒杀商品项 ID（取自幂等日志 flash_sale_id）
+//   - skuID: SKU ID（归属校验）
+//
+// 返回值：
+//   - *model.FlashSaleItem: 秒杀商品项（已加行锁）；未找到时 nil
+//   - error: 错误信息
+func lockFlashSaleItemByID(tx *gorm.DB, itemID, skuID int64) (*model.FlashSaleItem, error) {
+	if itemID <= 0 {
+		return nil, nil
+	}
+	var item model.FlashSaleItem
+	err := tx.Clauses(lockClause()).
+		Where("id = ? AND sku_id = ?", itemID, skuID).
+		First(&item).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+// lockFlashSaleItemForRelease 释放时定位秒杀商品项
+// 优先取当前生效活动；活动已结束时回落到该 SKU 最近的一条秒杀商品项
+// （退款可能发生在活动结束后，仍需回补）。
+// 参数：
+//   - tx: 事务
+//   - skuID: SKU ID
+//   - now: 当前时间
+//
+// 返回值：
+//   - *model.FlashSaleItem: 秒杀商品项（已加行锁）
+//   - error: 错误信息
+func lockFlashSaleItemForRelease(tx *gorm.DB, skuID int64, now time.Time) (*model.FlashSaleItem, error) {
+	nowStr := now.Format("2006-01-02 15:04:05")
+	var item model.FlashSaleItem
+	err := tx.Clauses(lockClause()).
+		Joins("JOIN flash_sales fs ON fs.id = flash_sale_items.flash_sale_id").
+		Where("flash_sale_items.sku_id = ?", skuID).
+		Order(fmt.Sprintf("CASE WHEN fs.status = 1 AND fs.start_time <= '%s' AND fs.end_time >= '%s' THEN 0 ELSE 1 END ASC, flash_sale_items.id DESC", nowStr, nowStr)).
+		First(&item).Error
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// deductBatches 按 FEFO 从批次扣减数量并同步 SKU 汇总库存（调用方须已锁 SKU 行）
+// 参数：
+//   - tx: 事务
+//   - sku: SKU 模型（行锁持有中，函数内更新其 Stock 汇总）
+//   - quantity: 扣减数量（正数）
+//   - now: 当前时间字符串（updated_at 用）
+//
+// 返回值：
+//   - []batchTake: 各批次扣减明细
+//   - error: 批次合计与汇总不一致或更新失败
+func deductBatches(tx *gorm.DB, sku *model.Sku, quantity int32, now string) ([]batchTake, error) {
+	var batches []model.StockBatch
+	// FEFO：有有效期批次按过期日期升序先出，无有效期批次排最后按创建顺序
+	if err := tx.Clauses(lockClause()).
+		Where("sku_id = ? AND quantity > 0", sku.ID).
+		Order("expire_date IS NULL ASC, expire_date ASC, id ASC").
+		Find(&batches).Error; err != nil {
+		return nil, err
+	}
+
+	remaining := quantity
+	takes := make([]batchTake, 0, len(batches))
+	for _, b := range batches {
+		if remaining <= 0 {
+			break
+		}
+		take := b.Quantity
+		if take > remaining {
+			take = remaining
+		}
+		takes = append(takes, batchTake{Batch: b, Take: take})
+		remaining -= take
+	}
+	if remaining > 0 {
+		return nil, fmt.Errorf("SKU %s 批次库存不一致：汇总 %d 大于批次合计", sku.SkuCode, sku.Stock)
+	}
+
+	for i := range takes {
+		t := &takes[i]
+		t.Batch.Quantity -= t.Take
+		status := int32(1)
+		if t.Batch.Quantity <= 0 {
+			t.Batch.Quantity = 0
+			status = 0
+		}
+		t.Batch.Status = status
+		if err := tx.Model(&model.StockBatch{}).Where("id = ?", t.Batch.ID).
+			Updates(map[string]interface{}{
+				"quantity":   t.Batch.Quantity,
+				"status":     status,
+				"updated_at": now,
+			}).Error; err != nil {
+			return nil, err
+		}
+	}
+	sku.Stock -= quantity
+	return takes, nil
 }
 
 // ListStockRecords 查询库存流水
@@ -266,6 +521,7 @@ func (s *StockService) ListStockRecords(ctx context.Context, req *product.ListSt
 
 // GetStockWarnings 获取库存预警
 // 同时检查低库存（warning_type=1）与临期（warning_type=2）两种情况，同一 SKU 可能产生两条预警记录。
+// 临期预警按批次库存（在库批次的最小过期日期）精确计算。
 // 参数：
 //   - ctx: 上下文
 //   - communityID: 社区 ID
@@ -283,7 +539,7 @@ func (s *StockService) GetStockWarnings(ctx context.Context, communityID int64) 
 		return nil, err
 	}
 
-	// 按 SKU 聚合最早未过期批次日期
+	// 按 SKU 聚合最早未过期在库批次日期
 	earliestExpireDate, err := s.getEarliestExpireDateBySku(ctx, communityID)
 	if err != nil {
 		return nil, err
@@ -315,7 +571,7 @@ func (s *StockService) GetStockWarnings(ctx context.Context, communityID int64) 
 			})
 		}
 
-		// 临期预警：当前库存大于 0 且存在即将过期的批次
+		// 临期预警：当前库存大于 0 且存在即将过期的在库批次
 		if sku.Stock > 0 {
 			if expireDate, ok := earliestExpireDate[sku.ID]; ok && expireDate != "" {
 				if expireDate <= deadline {
@@ -336,7 +592,7 @@ func (s *StockService) GetStockWarnings(ctx context.Context, communityID int64) 
 	return warnings, nil
 }
 
-// getEarliestExpireDateBySku 查询各 SKU 最早未过期的批次过期日期
+// getEarliestExpireDateBySku 查询各 SKU 最早未过期的在库批次过期日期
 // 参数：
 //   - ctx: 上下文
 //   - communityID: 社区 ID，<=0 时查询全部社区
@@ -349,9 +605,9 @@ func (s *StockService) getEarliestExpireDateBySku(ctx context.Context, community
 		SkuID      int64  `gorm:"column:sku_id"`
 		ExpireDate string `gorm:"column:expire_date"`
 	}
-	db := s.db.GetDb().WithContext(ctx).Model(&model.StockRecord{}).
+	db := s.db.GetDb().WithContext(ctx).Model(&model.StockBatch{}).
 		Select("sku_id", "MIN(expire_date) as expire_date").
-		Where("expire_date IS NOT NULL").
+		Where("quantity > 0 AND expire_date IS NOT NULL").
 		Where("expire_date >= ?", time.Now().Format("2006-01-02"))
 	if communityID > 0 {
 		db = db.Where("community_id = ?", communityID)
@@ -387,30 +643,6 @@ func (s *StockService) getProductNames(ctx context.Context, productIDs []int64) 
 		names[p.ID] = p.Name
 	}
 	return names
-}
-
-// StockOut 库存出库（销售出库/报损出库）
-// 参数：
-//   - ctx: 上下文
-//   - req: 出库请求
-//
-// 返回值：
-//   - error: 错误信息
-func (s *StockService) StockOut(ctx context.Context, req *product.StockOutReq) error {
-	items := make([]*product.StockEntryItem, 0, len(req.Items))
-	for _, item := range req.Items {
-		items = append(items, &product.StockEntryItem{
-			SkuId:    item.SkuId,
-			Quantity: item.Quantity,
-		})
-	}
-	return s.StockEntry(ctx, &product.StockEntryReq{
-		CommunityId: req.CommunityId,
-		Type:        req.Type,
-		Items:       items,
-		OperatorId:  req.OperatorId,
-		Remark:      req.Remark,
-	})
 }
 
 // GeneratePurchaseOrder 生成补货建议单
@@ -469,14 +701,43 @@ func ToStockRecordInfo(r *model.StockRecord) *product.StockRecordInfo {
 		Quantity:       r.Quantity,
 		BeforeStock:    r.BeforeStock,
 		AfterStock:     r.AfterStock,
+		BatchId:        r.BatchID,
 		BatchNo:        r.BatchNo,
 		ProductionDate: ptrString(r.ProductionDate),
 		ExpireDate:     ptrString(r.ExpireDate),
 		RelatedOrderId: r.RelatedOrderID,
+		RefNo:          r.RefNo,
 		OperatorId:     r.OperatorID,
 		Remark:         r.Remark,
 		CreatedAt:      r.CreatedAt,
 	}
+}
+
+// movingAverageCost 计算移动加权平均成本（保留两位小数）
+// 参数：
+//   - oldQty: 变动前库存数量
+//   - oldCost: 变动前单位成本
+//   - inQty: 入库数量
+//   - inCost: 入库单价
+//
+// 返回值：
+//   - float64: 新的移动加权平均成本
+func movingAverageCost(oldQty int32, oldCost float64, inQty int32, inCost float64) float64 {
+	total := int64(oldQty) + int64(inQty)
+	if total <= 0 || inQty <= 0 {
+		return round2(oldCost)
+	}
+	return round2((float64(oldQty)*oldCost + float64(inQty)*inCost) / float64(total))
+}
+
+// round2 四舍五入保留两位小数
+// 参数：
+//   - v: 原值
+//
+// 返回值：
+//   - float64: 保留两位小数后的值
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }
 
 // ptrString 将字符串指针安全转换为字符串
@@ -505,6 +766,17 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// invalidArg 构造用户输入/业务规则类错误（gRPC InvalidArgument）
+// 参数：
+//   - format: 格式串
+//   - args: 格式参数
+//
+// 返回值：
+//   - error: bizerr 错误
+func invalidArg(format string, args ...interface{}) error {
+	return bizerr.New(codes.InvalidArgument, fmt.Sprintf(format, args...))
 }
 
 // lockClause 返回悲观锁子句

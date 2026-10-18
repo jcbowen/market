@@ -193,16 +193,16 @@ test.describe.serial('临期与低库存预警', () => {
   test('6. 入库临期批次产生 warning_type=2 预警', async () => {
     // 过期日期取明天（≤ 3 天临期阈值），批次数量 8 保证 stock>0
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // 进销存重构：走入库单接口，日期格式 YYYY-MM-DD
     const entry = (await (
-      await adminApi.post('/api/v1/admin/inventory/entries', {
+      await adminApi.post('/api/v1/admin/inventory/in-orders', {
         data: {
-          type: 1,
           remark: 'AUTO-TEST 45 临期入库',
           items: [{
             sku_id: skuId,
             quantity: 8,
             batch_no: batchNo,
-            expire_date: `${tomorrow} 00:00:00`,
+            expire_date: tomorrow,
           }],
         },
       })
@@ -217,8 +217,9 @@ test.describe.serial('临期与低库存预警', () => {
 
   test('7. 库存清零触发 warning_type=1 低库存，临期记录消失', async () => {
     const stock = await currentStock();
+    // 进销存重构：走出库单接口（type=2 领用，FEFO 扣减）
     const out = (await (
-      await adminApi.post('/api/v1/admin/inventory/out', {
+      await adminApi.post('/api/v1/admin/inventory/out-orders', {
         data: { type: 2, items: [{ sku_id: skuId, quantity: stock }], remark: 'AUTO-TEST 45 清零出库' },
       })
     ).json()) as ApiResponse;

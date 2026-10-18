@@ -213,10 +213,11 @@ test.describe.serial('常买商品统计', () => {
     let refundOrderId = 0;
     try {
       // 下单支付后立即申请退款（订单 → 7 退款中）
+      // quantity=98 错开与上一单（99）的重复下单指纹（5s 窗口按 user+社区+配送方式+券+商品列表判重）
       const order = assertOk(
         (await (
           await buyerApi.post('/api/v1/orders', {
-            data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuA!.id, quantity: 99 }] },
+            data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuA!.id, quantity: 98 }] },
           })
         ).json()) as ApiResponse<OrderResult>,
         'C 端下单',

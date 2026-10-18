@@ -68,7 +68,7 @@ test.beforeAll(async ({ playwright }) => {
   );
   adminId = info.id;
   try {
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, homeCommunityId);
     await ensureStock(adminApi, sku.id, 20);
   } catch {
     sku = null;
@@ -76,6 +76,9 @@ test.beforeAll(async ({ playwright }) => {
 });
 
 test.afterAll(async () => {
+  // 清理：删除隔离社区，避免 my/communities 列表头被 AUTO-TEST 空壳社区占据
+  // （后续模块从 my/communities 取列表首项作默认社区，污染会导致社区语境错位）
+  if (otherCommunityId) await adminApi.delete(`/api/v1/admin/communities/${otherCommunityId}`);
   await adminApi?.dispose();
 });
 

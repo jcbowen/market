@@ -78,7 +78,7 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
   try {
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, buyer.user.community_id);
     await ensureStock(adminApi, sku.id, 100);
   } catch {
     sku = null;
@@ -187,6 +187,7 @@ test.describe.serial('退款拒绝链路', () => {
   });
 
   test('9. 收尾拒绝第二次申请，原因落库', async () => {
+    if (!orderId) test.skip(true, '订单未创建');
     const detail = await getAdminOrder(orderId);
     const pending = detail.refunds?.find((r) => r.status === 1);
     if (!pending) test.skip(true, '无待审核退款单');

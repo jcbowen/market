@@ -33,11 +33,43 @@ service ProductService {
   // 库存
   rpc DeductStock(DeductStockReq) returns (DeductStockResp);
   rpc ReleaseStock(ReleaseStockReq) returns (common.CommonResponse);
-  rpc StockEntry(StockEntryReq) returns (common.CommonResponse);
-  rpc StockOut(StockOutReq) returns (common.CommonResponse);
   rpc ListStockRecords(ListStockRecordsReq) returns (ListStockRecordsResp);
   rpc GetStockWarnings(GetStockWarningsReq) returns (ListStockWarningsResp);
   rpc GeneratePurchaseOrder(GeneratePurchaseOrderReq) returns (GeneratePurchaseOrderResp);
+  // 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
+  rpc DeductFlashSaleStock(DeductFlashSaleStockReq) returns (common.CommonResponse);
+  rpc ReleaseFlashSaleStock(ReleaseFlashSaleStockReq) returns (common.CommonResponse);
+
+  // 供应商
+  rpc ListSuppliers(ListSuppliersReq) returns (ListSuppliersResp);
+  rpc CreateSupplier(CreateSupplierReq) returns (SupplierInfo);
+  rpc UpdateSupplier(UpdateSupplierReq) returns (SupplierInfo);
+  rpc DeleteSupplier(DeleteSupplierReq) returns (common.CommonResponse);
+
+  // 采购单
+  rpc CreatePurchaseOrder(CreatePurchaseOrderReq) returns (PurchaseOrderDetail);
+  rpc UpdatePurchaseOrder(UpdatePurchaseOrderReq) returns (PurchaseOrderDetail);
+  rpc SubmitPurchaseOrder(SubmitPurchaseOrderReq) returns (common.CommonResponse);
+  rpc CancelPurchaseOrder(CancelPurchaseOrderReq) returns (common.CommonResponse);
+  rpc ListPurchaseOrders(ListPurchaseOrdersReq) returns (ListPurchaseOrdersResp);
+  rpc GetPurchaseOrder(GetPurchaseOrderReq) returns (PurchaseOrderDetail);
+
+  // 入库单（创建即生效：生成批次 + 回写汇总库存 + 移动加权平均成本）
+  rpc CreateStockInOrder(CreateStockInOrderReq) returns (StockInOrderDetail);
+  rpc ListStockInOrders(ListStockInOrdersReq) returns (ListStockInOrdersResp);
+  rpc GetStockInOrder(GetStockInOrderReq) returns (StockInOrderDetail);
+
+  // 出库单（报损/领用/调整，后端枚举校验）
+  rpc CreateStockOutOrder(CreateStockOutOrderReq) returns (StockOutOrderDetail);
+  rpc ListStockOutOrders(ListStockOutOrdersReq) returns (ListStockOutOrdersResp);
+  rpc GetStockOutOrder(GetStockOutOrderReq) returns (StockOutOrderDetail);
+
+  // 批次库存
+  rpc ListStockBatches(ListStockBatchesReq) returns (ListStockBatchesResp);
+
+  // 报表
+  rpc GetInventorySummaryReport(GetInventorySummaryReportReq) returns (GetInventorySummaryReportResp);
+  rpc GetProfitReport(GetProfitReportReq) returns (GetProfitReportResp);
 
   // 盘点
   rpc CreateStockCheck(CreateStockCheckReq) returns (StockCheckInfo);
@@ -387,36 +419,6 @@ message ReleaseStockReq {
   string biz_no = 4;
 }
 
-message StockEntryItem {
-  int64 sku_id = 1;
-  int32 quantity = 2;
-  string batch_no = 3;
-  string production_date = 4;
-  string expire_date = 5;
-}
-
-message StockEntryReq {
-  int64 community_id = 1;
-  int32 type = 2;
-  repeated StockEntryItem items = 3;
-  int64 operator_id = 4;
-  string remark = 5;
-}
-
-message StockOutItem {
-  int64 sku_id = 1;
-  int32 quantity = 2;
-  string remark = 3;
-}
-
-message StockOutReq {
-  int64 community_id = 1;
-  int32 type = 2;
-  repeated StockOutItem items = 3;
-  int64 operator_id = 4;
-  string remark = 5;
-}
-
 message ListStockRecordsReq {
   int64 community_id = 1;
   int64 sku_id = 2;
@@ -440,6 +442,8 @@ message StockRecordInfo {
   int64 operator_id = 11;
   string remark = 12;
   string created_at = 13;
+  int64 batch_id = 14; // 批次 ID（0=无批次语境）
+  string ref_no = 15;  // 来源单据号（入库单号/出库单号等）
 }
 
 message ListStockRecordsResp {
@@ -482,6 +486,360 @@ message GeneratePurchaseOrderReq {
 
 message GeneratePurchaseOrderResp {
   repeated PurchaseOrderItem items = 1;
+}
+
+// --- 秒杀库存 ---
+message DeductFlashSaleStockReq {
+  int64 order_id = 1;
+  int64 sku_id = 2;
+  int32 quantity = 3;
+}
+
+message ReleaseFlashSaleStockReq {
+  int64 order_id = 1;
+  int64 sku_id = 2;
+  int32 quantity = 3;
+  string biz_no = 4; // 幂等业务号（退款单号/cancel:{orderID} 等，与主库存释放同口径）
+}
+
+// --- 供应商 ---
+message SupplierInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string name = 3;
+  string contact_name = 4;
+  string phone = 5;
+  string address = 6;
+  string remark = 7;
+  int32 status = 8;
+  string created_at = 9;
+}
+
+message ListSuppliersReq {
+  int64 community_id = 1;
+  string keyword = 2;
+  int32 status = 3; // 0=全部
+  common.Pagination pagination = 4;
+}
+
+message ListSuppliersResp {
+  repeated SupplierInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message CreateSupplierReq {
+  int64 community_id = 1;
+  string name = 2;
+  string contact_name = 3;
+  string phone = 4;
+  string address = 5;
+  string remark = 6;
+}
+
+message UpdateSupplierReq {
+  int64 id = 1;
+  int64 community_id = 2; // 归属校验语境
+  string name = 3;
+  string contact_name = 4;
+  string phone = 5;
+  string address = 6;
+  string remark = 7;
+  int32 status = 8;
+}
+
+message DeleteSupplierReq {
+  int64 id = 1;
+  int64 community_id = 2;
+}
+
+// --- 采购单 ---
+message PurchaseOrderItemReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  double purchase_price = 3;
+}
+
+message CreatePurchaseOrderReq {
+  int64 community_id = 1;
+  int64 supplier_id = 2;
+  int64 operator_id = 3;
+  string remark = 4;
+  bool submit_now = 5; // true=创建后直接下单（跳过草稿态）
+  repeated PurchaseOrderItemReq items = 6;
+}
+
+message UpdatePurchaseOrderReq {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 supplier_id = 3;
+  string remark = 4;
+  repeated PurchaseOrderItemReq items = 5; // 全量替换，仅草稿态可改
+}
+
+message SubmitPurchaseOrderReq {
+  int64 id = 1;
+  int64 community_id = 2;
+}
+
+message CancelPurchaseOrderReq {
+  int64 id = 1;
+  int64 community_id = 2;
+}
+
+message PurchaseOrderItemInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string spec_name = 4;
+  string product_name = 5;
+  int32 quantity = 6;
+  int32 received_quantity = 7;
+  double purchase_price = 8;
+}
+
+message PurchaseOrderInfo {
+  int64 id = 1;
+  string purchase_no = 2;
+  int64 community_id = 3;
+  int64 supplier_id = 4;
+  string supplier_name = 5;
+  int32 status = 6;
+  double total_amount = 7;
+  string remark = 8;
+  int64 operator_id = 9;
+  string created_at = 10;
+  string updated_at = 11;
+}
+
+message PurchaseOrderDetail {
+  PurchaseOrderInfo info = 1;
+  repeated PurchaseOrderItemInfo items = 2;
+}
+
+message ListPurchaseOrdersReq {
+  int64 community_id = 1;
+  int32 status = 2; // 0=全部
+  int64 supplier_id = 3;
+  string keyword = 4; // 按采购单号模糊
+  common.Pagination pagination = 5;
+}
+
+message ListPurchaseOrdersResp {
+  repeated PurchaseOrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetPurchaseOrderReq {
+  int64 id = 1;
+}
+
+// --- 入库单 ---
+message StockInOrderItemReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  double unit_cost = 3; // 入库单价（成本），0 时回落 SKU 当前成本价
+  string batch_no = 4;
+  string production_date = 5;
+  string expire_date = 6;
+}
+
+message CreateStockInOrderReq {
+  int64 community_id = 1;
+  int64 supplier_id = 2;
+  int64 purchase_order_id = 3; // 0=直接入库
+  int64 operator_id = 4;
+  string remark = 5;
+  repeated StockInOrderItemReq items = 6;
+}
+
+message StockInOrderInfo {
+  int64 id = 1;
+  string in_no = 2;
+  int64 community_id = 3;
+  int64 supplier_id = 4;
+  string supplier_name = 5;
+  int64 purchase_order_id = 6;
+  string purchase_no = 7;
+  int32 type = 8;
+  double total_amount = 9;
+  int64 operator_id = 10;
+  string remark = 11;
+  string created_at = 12;
+}
+
+message StockInOrderItemInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  int32 quantity = 6;
+  double unit_cost = 7;
+  string batch_no = 8;
+  string production_date = 9;
+  string expire_date = 10;
+  int64 batch_id = 11;
+}
+
+message StockInOrderDetail {
+  StockInOrderInfo info = 1;
+  repeated StockInOrderItemInfo items = 2;
+}
+
+message ListStockInOrdersReq {
+  int64 community_id = 1;
+  int64 purchase_order_id = 2;
+  string start_date = 3;
+  string end_date = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListStockInOrdersResp {
+  repeated StockInOrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetStockInOrderReq {
+  int64 id = 1;
+}
+
+// --- 出库单 ---
+message StockOutOrderItemReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+}
+
+message CreateStockOutOrderReq {
+  int64 community_id = 1;
+  int32 type = 2; // 1报损 2领用 3调整出库
+  int64 operator_id = 3;
+  string remark = 4;
+  repeated StockOutOrderItemReq items = 5;
+}
+
+message StockOutOrderInfo {
+  int64 id = 1;
+  string out_no = 2;
+  int64 community_id = 3;
+  int32 type = 4;
+  int64 operator_id = 5;
+  string remark = 6;
+  string created_at = 7;
+}
+
+message StockOutOrderItemInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  int32 quantity = 6;
+}
+
+message StockOutOrderDetail {
+  StockOutOrderInfo info = 1;
+  repeated StockOutOrderItemInfo items = 2;
+}
+
+message ListStockOutOrdersReq {
+  int64 community_id = 1;
+  int32 type = 2; // 0=全部
+  string start_date = 3;
+  string end_date = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListStockOutOrdersResp {
+  repeated StockOutOrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetStockOutOrderReq {
+  int64 id = 1;
+}
+
+// --- 批次库存 ---
+message StockBatchInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  string batch_no = 6;
+  string production_date = 7;
+  string expire_date = 8;
+  int32 quantity = 9;
+  double unit_cost = 10;
+  int32 status = 11;
+  int32 source_type = 12;
+  string ref_no = 13;
+  string created_at = 14;
+}
+
+message ListStockBatchesReq {
+  int64 community_id = 1;
+  int64 sku_id = 2;
+  string keyword = 3; // 商品名/SKU 编码/批次号模糊
+  bool in_stock_only = 4; // 仅在库（quantity>0）
+  common.Pagination pagination = 5;
+}
+
+message ListStockBatchesResp {
+  repeated StockBatchInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// --- 进销存报表 ---
+// InventorySummaryItem 进销存汇总行：期初 + 入 - 出 = 期末（口径取自 stock_records）
+message InventorySummaryItem {
+  int64 sku_id = 1;
+  string sku_code = 2;
+  string spec_name = 3;
+  string product_name = 4;
+  int32 opening_stock = 5;
+  int32 in_quantity = 6;  // 期间入库合计（type=1）
+  int32 out_quantity = 7; // 期间出库合计（type=2 绝对值）
+  int32 closing_stock = 8;
+  double cost_price = 9;  // 当前移动加权成本
+  double price = 10;      // 当前售价
+}
+
+message GetInventorySummaryReportReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+  string keyword = 4;
+  common.Pagination pagination = 5;
+}
+
+message GetInventorySummaryReportResp {
+  repeated InventorySummaryItem list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// ProfitReportItem 毛利分析行（近似口径：期间销售出库数量 × 当前售价/当前成本）
+message ProfitReportItem {
+  int64 sku_id = 1;
+  string sku_code = 2;
+  string spec_name = 3;
+  string product_name = 4;
+  int32 quantity = 5;       // 期间销售数量（type=2 且无出库单号的记录）
+  double sales_amount = 6;  // 销售额（当前售价估算）
+  double cost_amount = 7;   // 销售成本（当前成本估算）
+  double profit = 8;
+}
+
+message GetProfitReportReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+  string keyword = 4;
+  common.Pagination pagination = 5;
+}
+
+message GetProfitReportResp {
+  repeated ProfitReportItem list = 1;
+  common.PaginationResponse pagination = 2;
 }
 
 // --- 盘点 ---

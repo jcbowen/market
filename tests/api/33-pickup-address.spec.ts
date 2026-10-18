@@ -100,10 +100,10 @@ test.afterAll(async () => {
   await adminApi?.dispose();
 });
 
-/** C 端下自提单（默认待支付，地址卡展示不依赖支付） */
-async function createPickupOrder(): Promise<OrderDetail['id']> {
+/** C 端下自提单（默认待支付，地址卡展示不依赖支付；quantity 错开同用户连续下单的重复指纹） */
+async function createPickupOrder(quantity = 1): Promise<OrderDetail['id']> {
   const resp = await clientApi.post('/api/v1/orders', {
-    data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity: 1 }] },
+    data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity }] },
   });
   const body = (await resp.json()) as ApiResponse<{ id: number }>;
   expect(body.code, `下单失败: ${body.message}`).toBe(0);
@@ -113,7 +113,7 @@ async function createPickupOrder(): Promise<OrderDetail['id']> {
 test.describe.serial('自提单自提点地址展示', () => {
   test('未配置自提点：地址卡回退社区地址，联系人为社区名称', async () => {
     test.skip(!skuId, '测试社区商品未就绪');
-    const orderId = await createPickupOrder();
+    const orderId = await createPickupOrder(1);
     const detail = (await (await clientApi.get(`/api/v1/orders/${orderId}`)).json()) as ApiResponse<OrderDetail>;
     expect(detail.code).toBe(0);
     expect(detail.data!.address.detail, '未配置 pickup_address 应回退社区地址').toContain('AUTO-TEST 回退地址-');
@@ -139,7 +139,7 @@ test.describe.serial('自提单自提点地址展示', () => {
     })).json()) as ApiResponse;
     expect(upd.code, `更新社区自提点失败: ${upd.message}`).toBe(0);
 
-    const orderId = await createPickupOrder();
+    const orderId = await createPickupOrder(2);
     const detail = (await (await clientApi.get(`/api/v1/orders/${orderId}`)).json()) as ApiResponse<OrderDetail>;
     expect(detail.code).toBe(0);
     expect(detail.data!.address.detail, '配置后应展示自提点地址').toBe(pickup);

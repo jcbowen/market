@@ -58,6 +58,11 @@ test.afterAll(async () => {
 test.describe.serial('全局账号与社区管理员卸任', () => {
   let accountId = 0;
   let communityId = 0;
+  // describe 级收尾：删除本用例创建的隔离社区，避免 my/communities 列表头被
+  // AUTO-TEST 空壳社区占据（后续模块取列表首项作默认社区，会整体错位）
+  test.afterAll(async () => {
+    if (communityId) await superApi?.delete(`/api/v1/admin/communities/${communityId}`);
+  });
   let resetAt = false;
 
   test('1. 新建不任职账号（AccountOnly）', async () => {

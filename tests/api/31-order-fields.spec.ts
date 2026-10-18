@@ -41,10 +41,12 @@ const TOLERANCE_SEC = 120; // 时钟/时序容差
 
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
+let communityId = 0;
 
 test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   const info = await clientLogin(playwright.request, uniquePhone());
   api = await newAuthedRequest(playwright, info.access_token);
+  communityId = info.user.community_id;
   const admin = await newAdminContext(playwright, undefined, undefined, info.user.community_id);
   adminApi = admin.api;
 
@@ -90,7 +92,7 @@ test.describe.serial('订单字段进阶', () => {
   let memberId = 0;
 
   test('准备：就绪 SKU 与会员', async ({ playwright }) => {
-    const sku = await pickSku(api);
+    const sku = await pickSku(api, undefined, communityId);
     skuId = sku.id;
     productId = sku.product_id;
     await ensureStock(adminApi, skuId, 100);
@@ -123,7 +125,8 @@ test.describe.serial('订单字段进阶', () => {
   });
 
   test('已支付单 expire_at 为空（仅待支付返回）', async () => {
-    const order = await createPickupOrder(skuId);
+    // quantity=2 错开与上一单的重复下单指纹（5s 窗口按 user+社区+配送方式+券+商品列表判重）
+    const order = await createPickupOrder(skuId, 2);
     const pay = (await (await api.post('/api/v1/payments', { data: { order_id: order.id, channel: 'cash' } })).json()) as ApiResponse;
     expect(pay.code).toBe(0);
     const detail = (await (await api.get(`/api/v1/orders/${order.id}`)).json()) as ApiResponse<Order>;
@@ -143,7 +146,7 @@ test.describe.serial('订单字段进阶', () => {
 
   test('聚合状态 9：造退款单后列表只返回售后单（7/8）', async () => {
     // 造一笔退款单：自提支付 → 申请退款 → status=7
-    const order = await createPickupOrder(skuId);
+    const order = await createPickupOrder(skuId, 3);
     await api.post('/api/v1/payments', { data: { order_id: order.id, channel: 'cash' } });
     await api.post(`/api/v1/orders/${order.id}/refund`, { data: { reason: 'AUTO-TEST 聚合状态 9 造数' } });
 

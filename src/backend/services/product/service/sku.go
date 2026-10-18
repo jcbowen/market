@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
@@ -90,7 +91,20 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 		Barcode:     strings.TrimSpace(req.Barcode),
 		Status:      1,
 	}
-	if err := s.db.GetDb().WithContext(ctx).Create(sku).Error; err != nil {
+	// 建品与初始批次同事务：批次库存是扣减的唯一来源，汇总库存必须有对应批次，
+	// 批次落库失败时连同 SKU 一并回滚，避免产生"有汇总库存无批次"的不可售 SKU
+	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(sku).Error; err != nil {
+			return err
+		}
+		if req.Stock > 0 {
+			now := time.Now().Format("2006-01-02 15:04:05")
+			if _, err := createInitBatch(tx, req.CommunityId, sku.ID, req.Stock, req.CostPrice, "INIT", now); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return sku, nil

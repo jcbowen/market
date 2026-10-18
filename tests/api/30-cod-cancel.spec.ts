@@ -27,10 +27,12 @@ interface RefundRecord {
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
 let skuRef: SkuRef | null = null;
+let communityId = 0;
 
 test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   const info = await clientLogin(playwright.request, uniquePhone());
   api = await newAuthedRequest(playwright, info.access_token);
+  communityId = info.user.community_id;
   const admin = await newAdminContext(playwright, undefined, undefined, info.user.community_id);
   adminApi = admin.api;
 });
@@ -58,7 +60,7 @@ test.describe.serial('货到付款取消：未发货直接取消', () => {
   let stockBefore = 0;
 
   test('准备：就绪 SKU 并创建收货地址', async () => {
-    skuRef = await pickSku(api);
+    skuRef = await pickSku(api, undefined, communityId);
     await ensureStock(adminApi, skuRef.id, 100);
     const addr = (await (await api.post('/api/v1/user/addresses', {
       data: {

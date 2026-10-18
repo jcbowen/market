@@ -29,20 +29,22 @@ interface PaymentResp {
 }
 
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;
+let buyerCommunityId = 0;
 
 test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   const info = await clientLogin(playwright.request, uniquePhone());
   api = await newAuthedRequest(playwright, info.access_token);
+  buyerCommunityId = info.user.community_id;
 });
 
 test.afterAll(async () => {
   await api?.dispose();
 });
 
-/** 创建自提待支付订单 */
-async function createPickupOrder(skuId: number): Promise<Order> {
+/** 创建自提待支付订单（quantity 错开同用户连续下单的重复指纹） */
+async function createPickupOrder(skuId: number, quantity = 1): Promise<Order> {
   const resp = await api.post('/api/v1/orders', {
-    data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity: 1 }] },
+    data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity }] },
   });
   const body = (await resp.json()) as ApiResponse<Order>;
   if (body.code !== 0) throw new Error(`创建订单失败 code=${body.code} message=${body.message}`);
@@ -66,10 +68,10 @@ test.describe.serial('支付单幂等', () => {
   test('准备：就绪可下单 SKU（优先环境商品，缺失时自建兜底）', async ({ playwright }) => {
     const { newAdminContext, pickSku, ensureStock } = await import('../helpers/api');
     const { autoName } = await import('../helpers/data');
-    const admin = await newAdminContext(playwright);
+    const admin = await newAdminContext(playwright, undefined, undefined, buyerCommunityId);
     try {
       try {
-        const sku = await pickSku(admin.api);
+        const sku = await pickSku(admin.api, undefined, buyerCommunityId);
         skuId = sku.id;
         await ensureStock(admin.api, skuId, 50);
       } catch {
@@ -96,7 +98,7 @@ test.describe.serial('支付单幂等', () => {
 
   test('未配置渠道（wechat）发起支付被拒', async () => {
     test.skip(wechatAvailable, '环境已配置微信渠道，跳过未配置渠道负向用例');
-    const fresh = await createPickupOrder(skuId);
+    const fresh = await createPickupOrder(skuId, 1);
     try {
       const resp = await api.post('/api/v1/payments', { data: { order_id: fresh.id, channel: 'wechat' } });
       const body = (await resp.json()) as ApiResponse;
@@ -107,7 +109,7 @@ test.describe.serial('支付单幂等', () => {
   });
 
   test('cash 支付创建即成功（货到付款口径，无待支付态）', async () => {
-    const fresh = await createPickupOrder(skuId);
+    const fresh = await createPickupOrder(skuId, 2);
     const resp = await api.post('/api/v1/payments', { data: { order_id: fresh.id, channel: 'cash' } });
     const body = (await resp.json()) as ApiResponse<PaymentResp>;
     expect(body.code, `cash 支付失败: ${body.message}`).toBe(0);
@@ -117,7 +119,7 @@ test.describe.serial('支付单幂等', () => {
   });
 
   test('已支付订单再次发起支付被状态机拦截', async () => {
-    const fresh = await createPickupOrder(skuId);
+    const fresh = await createPickupOrder(skuId, 3);
     const payResp = await api.post('/api/v1/payments', { data: { order_id: fresh.id, channel: 'cash' } });
     const payBody = (await payResp.json()) as ApiResponse<PaymentResp>;
     expect(payBody.code, `首次支付失败: ${payBody.message}`).toBe(0);
@@ -131,7 +133,7 @@ test.describe.serial('支付单幂等', () => {
 
   test('（条件）待支付单重复发起同渠道支付复用同一支付单号', async () => {
     test.skip(!wechatAvailable, '环境未配置微信渠道，复用逻辑无法实测');
-    const fresh = await createPickupOrder(skuId);
+    const fresh = await createPickupOrder(skuId, 4);
     const first = (await (await api.post('/api/v1/payments', { data: { order_id: fresh.id, channel: 'wechat' } })).json()) as ApiResponse<PaymentResp>;
     expect(first.code, `首次微信支付失败: ${first.message}`).toBe(0);
     const second = (await (await api.post('/api/v1/payments', { data: { order_id: fresh.id, channel: 'wechat' } })).json()) as ApiResponse<PaymentResp>;

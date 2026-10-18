@@ -12,9 +12,8 @@
       <n-space v-if="detail.info.status === 1" vertical>
         <n-card title="添加盘点项" size="small">
           <n-space>
-            <n-input-number v-model:value="addProductId" placeholder="商品 ID" style="width: 140px" @update:value="onAddProductChange" />
-            <n-select v-model:value="addSkuId" :options="addSkuOptions" placeholder="选择 SKU" style="width: 220px" :disabled="!addSkuOptions.length" />
-            <n-input-number v-model:value="addActualStock" placeholder="实盘库存" style="width: 140px" />
+            <SkuPicker v-model="addSkuId" @change="onAddSkuChange" />
+            <n-input-number v-model:value="addActualStock" placeholder="实盘库存" :min="0" :precision="0" style="width: 140px" />
             <n-button type="primary" @click="addItem">添加</n-button>
           </n-space>
         </n-card>
@@ -29,7 +28,8 @@ import { ref, onMounted, h } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NInputNumber } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getInventoryCheckDetail, submitInventoryCheck, getSkuList } from '@/api/inventory'
+import { getInventoryCheckDetail, submitInventoryCheck } from '@/api/inventory'
+import SkuPicker from './components/SkuPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
 import type { Sku, StockCheckDetail, StockCheckItem } from '@/api/types'
 
@@ -43,10 +43,8 @@ const id = Number(route.params.id)
 const detail = ref<StockCheckDetail | null>(null)
 const submitting = ref(false)
 
-const addProductId = ref<number | undefined>(undefined)
 const addSkuId = ref<number | undefined>(undefined)
 const addActualStock = ref<number | undefined>(undefined)
-const addSkuOptions = ref<{ label: string; value: number }[]>([])
 const addSkuMap = ref<Record<number, Sku>>({})
 
 function createColumns(): DataTableColumns<StockCheckItem> {
@@ -105,22 +103,9 @@ async function loadDetail() {
   }
 }
 
-async function onAddProductChange(productId: number | null) {
-  addSkuId.value = undefined
-  addSkuOptions.value = []
-  addSkuMap.value = {}
-  if (!productId) return
-
-  try {
-    const res = await getSkuList(productId)
-    const list: Sku[] = res.data.data || []
-    addSkuMap.value = Object.fromEntries(list.map((sku) => [sku.id, sku]))
-    addSkuOptions.value = list.map((sku) => ({
-      label: `${sku.sku_code || sku.id} ${sku.spec_name || ''}`.trim(),
-      value: sku.id,
-    }))
-  } catch {
-    // 加载失败时选项为空，由调用方处理
+async function onAddSkuChange(sku: Sku | null) {
+  if (sku) {
+    addSkuMap.value[sku.id] = sku
   }
 }
 
@@ -142,11 +127,8 @@ function addItem() {
     created_at: '',
   })
 
-  addProductId.value = undefined
   addSkuId.value = undefined
   addActualStock.value = undefined
-  addSkuOptions.value = []
-  addSkuMap.value = {}
 }
 
 function removeItem(index: number) {

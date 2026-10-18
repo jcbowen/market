@@ -50,16 +50,18 @@ async function createAddress(buyerApi: Awaited<ReturnType<typeof newAuthedReques
 /**
  * 买家下送货上门单并现金支付
  * 配送单有起送金额门槛（15 元），按 SKU 单价折算满足门槛的数量
+ * extraQty：在基准量上追加的数量，用于错开重复下单指纹（5s 窗口，同用户同 SKU 必须不同数量）
  */
 async function createPaidDeliveryOrder(
   buyerApi: Awaited<ReturnType<typeof newAuthedRequest>>,
   sku: SkuRef,
   addressId: number,
   pay: boolean,
+  extraQty = 0,
 ): Promise<number> {
   const skuResp = (await (await buyerApi.get(`/api/v1/skus/${sku.id}`)).json()) as ApiResponse<{ price: number }>;
   const price = skuResp.data?.price ?? 0;
-  const qty = price > 0 ? Math.max(Math.ceil(15 / price), 1) : 1;
+  const qty = (price > 0 ? Math.max(Math.ceil(15 / price), 1) : 1) + extraQty;
   const created = assertOk(
     (await (
       await buyerApi.post('/api/v1/orders', {
@@ -90,8 +92,8 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
   try {
-    sku = await pickSku(adminApi);
-    await ensureStock(adminApi, sku.id, 100);
+    sku = await pickSku(adminApi, undefined, buyer.user.community_id);
+    await ensureStock(adminApi, sku.id, 200);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       addressId = await createAddress(buyerApi);
@@ -191,7 +193,8 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     let pendingId = 0;
     try {
-      pendingId = await createPaidDeliveryOrder(buyerApi, sku!, addressId, false);
+      // extraQty=1：与测试 1 的同 SKU 配送单错开数量，避免 5s 窗口内重复下单指纹碰撞
+      pendingId = await createPaidDeliveryOrder(buyerApi, sku!, addressId, false, 1);
       const resp = await buyerApi.post(`/api/v1/orders/${pendingId}/receive`, { data: {} });
       const body = (await resp.json()) as ApiResponse;
       expect(body.code, '待支付(1)订单不应允许确认收货').not.toBe(0);

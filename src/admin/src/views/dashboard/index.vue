@@ -353,7 +353,7 @@ const todoItems = computed<TodoItem[]>(() => [
     key: 'stock_warning',
     label: '库存预警',
     count: stockWarningCount.value,
-    path: '/stock/warnings',
+    path: '/stock?tab=warnings',
     icon: AlertCircleOutline,
     color: '#7c6cf0',
     bg: 'rgba(124, 108, 240, 0.1)',

@@ -13,6 +13,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
+	"github.com/jcbowen/market/src/backend/services/product/model"
 	"github.com/jcbowen/market/src/backend/services/product/service"
 )
 
@@ -25,6 +26,10 @@ type server struct {
 	pricingService    *service.PricingService
 	stockService      *service.StockService
 	stockCheckService *service.StockCheckService
+	stockBillService  *service.StockBillService
+	supplierService   *service.SupplierService
+	purchaseService   *service.PurchaseService
+	reportService     *service.ReportService
 	marketingService  *service.MarketingService
 	bannerService     *service.BannerService
 	attachmentService *service.AttachmentService
@@ -49,6 +54,10 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 		pricingService:    service.NewPricingService(db),
 		stockService:      service.NewStockService(db, cfg.Business.ExpireWarningDays),
 		stockCheckService: service.NewStockCheckService(db),
+		stockBillService:  service.NewStockBillService(db),
+		supplierService:   service.NewSupplierService(db),
+		purchaseService:   service.NewPurchaseService(db),
+		reportService:     service.NewReportService(db),
 		marketingService:  service.NewMarketingService(db),
 		bannerService:     service.NewBannerService(db),
 		attachmentService: attachmentService,
@@ -361,12 +370,240 @@ func (s *server) ReleaseStock(ctx stdctx.Context, req *product.ReleaseStockReq) 
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
-// StockEntry 入库
-func (s *server) StockEntry(ctx stdctx.Context, req *product.StockEntryReq) (*common.CommonResponse, error) {
-	if err := s.stockService.StockEntry(ctx, req); err != nil {
+// DeductFlashSaleStock 扣减秒杀库存
+func (s *server) DeductFlashSaleStock(ctx stdctx.Context, req *product.DeductFlashSaleStockReq) (*common.CommonResponse, error) {
+	if err := s.stockService.DeductFlashSaleStock(ctx, req); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ReleaseFlashSaleStock 释放秒杀库存
+func (s *server) ReleaseFlashSaleStock(ctx stdctx.Context, req *product.ReleaseFlashSaleStockReq) (*common.CommonResponse, error) {
+	if err := s.stockService.ReleaseFlashSaleStock(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ==================== 供应商 ====================
+
+// ListSuppliers 查询供应商列表
+func (s *server) ListSuppliers(ctx stdctx.Context, req *product.ListSuppliersReq) (*product.ListSuppliersResp, error) {
+	return s.supplierService.ListSuppliers(ctx, req)
+}
+
+// CreateSupplier 创建供应商
+func (s *server) CreateSupplier(ctx stdctx.Context, req *product.CreateSupplierReq) (*product.SupplierInfo, error) {
+	sp, err := s.supplierService.CreateSupplier(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return sp, nil
+}
+
+// UpdateSupplier 更新供应商
+func (s *server) UpdateSupplier(ctx stdctx.Context, req *product.UpdateSupplierReq) (*product.SupplierInfo, error) {
+	sp, err := s.supplierService.UpdateSupplier(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return sp, nil
+}
+
+// DeleteSupplier 删除供应商
+func (s *server) DeleteSupplier(ctx stdctx.Context, req *product.DeleteSupplierReq) (*common.CommonResponse, error) {
+	if err := s.supplierService.DeleteSupplier(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ==================== 采购单 ====================
+
+// CreatePurchaseOrder 创建采购单
+func (s *server) CreatePurchaseOrder(ctx stdctx.Context, req *product.CreatePurchaseOrderReq) (*product.PurchaseOrderDetail, error) {
+	detail, err := s.purchaseService.CreatePurchaseOrder(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return detail, nil
+}
+
+// UpdatePurchaseOrder 更新采购单（仅草稿）
+func (s *server) UpdatePurchaseOrder(ctx stdctx.Context, req *product.UpdatePurchaseOrderReq) (*product.PurchaseOrderDetail, error) {
+	detail, err := s.purchaseService.UpdatePurchaseOrder(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return detail, nil
+}
+
+// SubmitPurchaseOrder 提交采购单（草稿→已下单）
+func (s *server) SubmitPurchaseOrder(ctx stdctx.Context, req *product.SubmitPurchaseOrderReq) (*common.CommonResponse, error) {
+	if err := s.purchaseService.SubmitPurchaseOrder(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// CancelPurchaseOrder 取消采购单
+func (s *server) CancelPurchaseOrder(ctx stdctx.Context, req *product.CancelPurchaseOrderReq) (*common.CommonResponse, error) {
+	if err := s.purchaseService.CancelPurchaseOrder(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// ListPurchaseOrders 查询采购单列表
+func (s *server) ListPurchaseOrders(ctx stdctx.Context, req *product.ListPurchaseOrdersReq) (*product.ListPurchaseOrdersResp, error) {
+	return s.purchaseService.ListPurchaseOrders(ctx, req)
+}
+
+// GetPurchaseOrder 查询采购单详情
+func (s *server) GetPurchaseOrder(ctx stdctx.Context, req *product.GetPurchaseOrderReq) (*product.PurchaseOrderDetail, error) {
+	detail, err := s.purchaseService.GetPurchaseOrder(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return detail, nil
+}
+
+// ==================== 入库单 / 出库单 / 批次 ====================
+
+// CreateStockInOrder 创建入库单
+func (s *server) CreateStockInOrder(ctx stdctx.Context, req *product.CreateStockInOrderReq) (*product.StockInOrderDetail, error) {
+	order, items, err := s.stockBillService.CreateStockInOrder(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return s.buildStockInOrderDetail(ctx, order, items)
+}
+
+// ListStockInOrders 查询入库单列表
+func (s *server) ListStockInOrders(ctx stdctx.Context, req *product.ListStockInOrdersReq) (*product.ListStockInOrdersResp, error) {
+	list, total, err := s.stockBillService.ListStockInOrders(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+
+	page, pageSize := 1, 10
+	if req.Pagination != nil {
+		page = int(req.Pagination.Page)
+		pageSize = int(req.Pagination.PageSize)
+	}
+	resp := &product.ListStockInOrdersResp{
+		List: make([]*product.StockInOrderInfo, 0, len(list)),
+		Pagination: &common.PaginationResponse{
+			Total:    int32(total),
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+	}
+	// 列表页不带明细，供应商名/采购单号由 gateway 或详情页回填；此处回填供应商名
+	for _, o := range list {
+		resp.List = append(resp.List, toStockInOrderInfo(o))
+	}
+	return resp, nil
+}
+
+// GetStockInOrder 查询入库单详情
+func (s *server) GetStockInOrder(ctx stdctx.Context, req *product.GetStockInOrderReq) (*product.StockInOrderDetail, error) {
+	detail, err := s.stockBillService.GetStockInOrder(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return detail, nil
+}
+
+// buildStockInOrderDetail 组装入库单创建响应（复用详情查询的回填逻辑）
+func (s *server) buildStockInOrderDetail(ctx stdctx.Context, order *model.StockInOrder, items []*model.StockInOrderItem) (*product.StockInOrderDetail, error) {
+	return s.stockBillService.GetStockInOrder(ctx, &product.GetStockInOrderReq{Id: order.ID})
+}
+
+// toStockInOrderInfo 入库单模型转 proto（列表页基础字段）
+func toStockInOrderInfo(o *model.StockInOrder) *product.StockInOrderInfo {
+	return &product.StockInOrderInfo{
+		Id:              o.ID,
+		InNo:            o.InNo,
+		CommunityId:     o.CommunityID,
+		SupplierId:      o.SupplierID,
+		PurchaseOrderId: o.PurchaseOrderID,
+		Type:            o.Type,
+		TotalAmount:     o.TotalAmount,
+		OperatorId:      o.OperatorID,
+		Remark:          o.Remark,
+		CreatedAt:       o.CreatedAt,
+	}
+}
+
+// CreateStockOutOrder 创建出库单
+func (s *server) CreateStockOutOrder(ctx stdctx.Context, req *product.CreateStockOutOrderReq) (*product.StockOutOrderDetail, error) {
+	order, _, err := s.stockBillService.CreateStockOutOrder(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return s.stockBillService.GetStockOutOrder(ctx, &product.GetStockOutOrderReq{Id: order.ID})
+}
+
+// ListStockOutOrders 查询出库单列表
+func (s *server) ListStockOutOrders(ctx stdctx.Context, req *product.ListStockOutOrdersReq) (*product.ListStockOutOrdersResp, error) {
+	list, total, err := s.stockBillService.ListStockOutOrders(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+
+	page, pageSize := 1, 10
+	if req.Pagination != nil {
+		page = int(req.Pagination.Page)
+		pageSize = int(req.Pagination.PageSize)
+	}
+	resp := &product.ListStockOutOrdersResp{
+		List: make([]*product.StockOutOrderInfo, 0, len(list)),
+		Pagination: &common.PaginationResponse{
+			Total:    int32(total),
+			Page:     int32(page),
+			PageSize: int32(pageSize),
+		},
+	}
+	for _, o := range list {
+		resp.List = append(resp.List, &product.StockOutOrderInfo{
+			Id:         o.ID,
+			OutNo:      o.OutNo,
+			CommunityId: o.CommunityID,
+			Type:       o.Type,
+			OperatorId: o.OperatorID,
+			Remark:     o.Remark,
+			CreatedAt:  o.CreatedAt,
+		})
+	}
+	return resp, nil
+}
+
+// GetStockOutOrder 查询出库单详情
+func (s *server) GetStockOutOrder(ctx stdctx.Context, req *product.GetStockOutOrderReq) (*product.StockOutOrderDetail, error) {
+	detail, err := s.stockBillService.GetStockOutOrder(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return detail, nil
+}
+
+// ListStockBatches 查询批次库存
+func (s *server) ListStockBatches(ctx stdctx.Context, req *product.ListStockBatchesReq) (*product.ListStockBatchesResp, error) {
+	return s.stockBillService.ListStockBatches(ctx, req)
+}
+
+// ==================== 报表 ====================
+
+// GetInventorySummaryReport 进销存汇总报表
+func (s *server) GetInventorySummaryReport(ctx stdctx.Context, req *product.GetInventorySummaryReportReq) (*product.GetInventorySummaryReportResp, error) {
+	return s.reportService.GetInventorySummaryReport(ctx, req)
+}
+
+// GetProfitReport 毛利分析报表
+func (s *server) GetProfitReport(ctx stdctx.Context, req *product.GetProfitReportReq) (*product.GetProfitReportResp, error) {
+	return s.reportService.GetProfitReport(ctx, req)
 }
 
 // ListStockRecords 查询库存流水
@@ -404,13 +641,6 @@ func (s *server) GetStockWarnings(ctx stdctx.Context, req *product.GetStockWarni
 	return &product.ListStockWarningsResp{List: list}, nil
 }
 
-// StockOut 库存出库
-func (s *server) StockOut(ctx stdctx.Context, req *product.StockOutReq) (*common.CommonResponse, error) {
-	if err := s.stockService.StockOut(ctx, req); err != nil {
-		return nil, bizerr.ToStatus(err)
-	}
-	return &common.CommonResponse{Code: 0, Message: "success"}, nil
-}
 
 // GeneratePurchaseOrder 生成补货建议单
 func (s *server) GeneratePurchaseOrder(ctx stdctx.Context, req *product.GeneratePurchaseOrderReq) (*product.GeneratePurchaseOrderResp, error) {

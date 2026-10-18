@@ -61,12 +61,13 @@ let sku: SkuRef | null = null;
 /**
  * 创建待支付自提单（不支付，订单状态 1）
  * - 函数名: createPendingOrder
- * - 参数: playwright — Playwright 工厂；remark — 订单备注
+ * - 参数: playwright — Playwright 工厂；remark — 订单备注；quantity — 购买数量（默认 1，
+ *         同用户连续多单须错开数量以避免重复下单指纹碰撞）
  * - 返回: Promise<number> 订单 ID（失败时断言抛出）
  * - 异常: 下单业务码非 0 时经 assertOk 抛出
  * - 使用示例: const id = await createPendingOrder(playwright, 'AUTO-TEST 49');
  */
-async function createPendingOrder(playwright: Playwright, remark: string): Promise<number> {
+async function createPendingOrder(playwright: Playwright, remark: string, quantity = 1): Promise<number> {
   const buyerApi = await newAuthedRequest(playwright, buyerToken);
   try {
     const created = assertOk(
@@ -76,7 +77,7 @@ async function createPendingOrder(playwright: Playwright, remark: string): Promi
             delivery_type: 1,
             address_id: 0,
             remark,
-            items: [{ sku_id: sku!.id, quantity: 1 }],
+            items: [{ sku_id: sku!.id, quantity }],
           },
         })
       ).json()) as ApiResponse<OrderResult>,
@@ -130,7 +131,7 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
   try {
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, buyer.user.community_id);
     await ensureStock(adminApi, sku.id, 50);
   } catch {
     sku = null;
@@ -242,7 +243,8 @@ test.describe.serial('通用状态流转', () => {
               delivery_type: 1,
               address_id: 0,
               remark: 'AUTO-TEST 49 自提直接完成',
-              items: [{ sku_id: sku!.id, quantity: 1 }],
+              // quantity=2：与测试 1 的主线单（quantity=1）错开，避免重复下单指纹碰撞
+              items: [{ sku_id: sku!.id, quantity: 2 }],
             },
           })
         ).json()) as ApiResponse<OrderResult>,
@@ -267,7 +269,8 @@ test.describe.serial('通用状态流转', () => {
   test('11. 已取消(6) 单再流转被拒（10004）', async ({ playwright }) => {
     test.skip(!sku, '环境无库存 SKU');
     // 构造已取消单：待支付单走后台专用取消接口（取消语义由 46 号覆盖）
-    const cancelOrderId = await createPendingOrder(playwright, 'AUTO-TEST 49 已取消单');
+    // quantity=3：与测试 1（1）/测试 10（2）错开，避免重复下单指纹碰撞
+    const cancelOrderId = await createPendingOrder(playwright, 'AUTO-TEST 49 已取消单', 3);
     const cancelled = (await (
       await adminApi.post(`/api/v1/admin/orders/${cancelOrderId}/cancel`, {
         data: { reason: 'AUTO-TEST 49 构造终态' },

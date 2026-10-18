@@ -330,6 +330,9 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 	// 已成功扣减库存的商品下标：事务失败时逐项补偿释放（扣减在 product 服务已落库，
 	// 本地事务回滚不会同步回滚远端扣减）
 	deductedIdx := make([]int, 0, len(req.Items))
+	// 已成功扣减秒杀库存的商品下标：非秒杀商品在 product 侧 no-op 成功，同样进入列表
+	//（释放侧对无秒杀扣减日志的请求自动 no-op，多一次空 RPC 但行为无害）
+	flashDeductedIdx := make([]int, 0, len(req.Items))
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(orderModel).Error; err != nil {
 			return err
@@ -350,6 +353,16 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 				return fmt.Errorf("扣减库存失败: %w", err)
 			}
 			deductedIdx = append(deductedIdx, i)
+
+			// 秒杀独立库存：命中秒杀价的商品在 product 侧自动识别扣减（无生效秒杀时 no-op）
+			if _, err = grpcclient.ProductClient.DeductFlashSaleStock(ctx, &product.DeductFlashSaleStockReq{
+				OrderId:  orderModel.ID,
+				SkuId:    item.SkuId,
+				Quantity: item.Quantity,
+			}); err != nil {
+				return fmt.Errorf("扣减秒杀库存失败: %w", err)
+			}
+			flashDeductedIdx = append(flashDeductedIdx, i)
 		}
 		if userCouponID > 0 {
 			if _, err := grpcclient.ProductClient.UseCoupon(ctx, &product.UseCouponReq{
@@ -377,6 +390,18 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 				BizNo:    fmt.Sprintf("comp:%d:%d", orderModel.ID, item.SkuId),
 			}); rErr != nil {
 				log.Printf("下单失败补偿释放库存失败（订单 %d, SKU %d）: %v", orderModel.ID, item.SkuId, rErr)
+			}
+		}
+		// 秒杀库存同样在远端已提交：一并回补（非秒杀商品由 product 侧幂等日志判无后 no-op）
+		for _, idx := range flashDeductedIdx {
+			item := req.Items[idx]
+			if _, rErr := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
+				OrderId:  orderModel.ID,
+				SkuId:    item.SkuId,
+				Quantity: item.Quantity,
+				BizNo:    fmt.Sprintf("comp:%d:%d", orderModel.ID, item.SkuId),
+			}); rErr != nil {
+				log.Printf("下单失败补偿释放秒杀库存失败（订单 %d, SKU %d）: %v", orderModel.ID, item.SkuId, rErr)
 			}
 		}
 		// 优惠券核销同样在远端已提交：一并回补，保证换号重试时同一张券可再次使用
@@ -695,6 +720,15 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 			}); err != nil {
 				return fmt.Errorf("释放库存失败: %w", err)
 			}
+			// 秒杀独立库存回补（非秒杀商品 no-op）
+			if _, err := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
+				OrderId:  o.ID,
+				SkuId:    item.SkuID,
+				Quantity: item.Quantity,
+				BizNo:    fmt.Sprintf("cancel:%d", o.ID),
+			}); err != nil {
+				return fmt.Errorf("释放秒杀库存失败: %w", err)
+			}
 		}
 
 		// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）
@@ -967,6 +1001,15 @@ func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *mode
 			BizNo:    fmt.Sprintf("cancel:%d", o.ID),
 		}); err != nil {
 			return fmt.Errorf("释放库存失败: %w", err)
+		}
+		// 秒杀独立库存回补（非秒杀商品 no-op）
+		if _, err := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
+			OrderId:  o.ID,
+			SkuId:    item.SkuID,
+			Quantity: item.Quantity,
+			BizNo:    fmt.Sprintf("cancel:%d", o.ID),
+		}); err != nil {
+			return fmt.Errorf("释放秒杀库存失败: %w", err)
 		}
 	}
 

@@ -39,11 +39,30 @@ const (
 	ProductService_GetSkuById_FullMethodName                    = "/product.ProductService/GetSkuById"
 	ProductService_DeductStock_FullMethodName                   = "/product.ProductService/DeductStock"
 	ProductService_ReleaseStock_FullMethodName                  = "/product.ProductService/ReleaseStock"
-	ProductService_StockEntry_FullMethodName                    = "/product.ProductService/StockEntry"
-	ProductService_StockOut_FullMethodName                      = "/product.ProductService/StockOut"
 	ProductService_ListStockRecords_FullMethodName              = "/product.ProductService/ListStockRecords"
 	ProductService_GetStockWarnings_FullMethodName              = "/product.ProductService/GetStockWarnings"
 	ProductService_GeneratePurchaseOrder_FullMethodName         = "/product.ProductService/GeneratePurchaseOrder"
+	ProductService_DeductFlashSaleStock_FullMethodName          = "/product.ProductService/DeductFlashSaleStock"
+	ProductService_ReleaseFlashSaleStock_FullMethodName         = "/product.ProductService/ReleaseFlashSaleStock"
+	ProductService_ListSuppliers_FullMethodName                 = "/product.ProductService/ListSuppliers"
+	ProductService_CreateSupplier_FullMethodName                = "/product.ProductService/CreateSupplier"
+	ProductService_UpdateSupplier_FullMethodName                = "/product.ProductService/UpdateSupplier"
+	ProductService_DeleteSupplier_FullMethodName                = "/product.ProductService/DeleteSupplier"
+	ProductService_CreatePurchaseOrder_FullMethodName           = "/product.ProductService/CreatePurchaseOrder"
+	ProductService_UpdatePurchaseOrder_FullMethodName           = "/product.ProductService/UpdatePurchaseOrder"
+	ProductService_SubmitPurchaseOrder_FullMethodName           = "/product.ProductService/SubmitPurchaseOrder"
+	ProductService_CancelPurchaseOrder_FullMethodName           = "/product.ProductService/CancelPurchaseOrder"
+	ProductService_ListPurchaseOrders_FullMethodName            = "/product.ProductService/ListPurchaseOrders"
+	ProductService_GetPurchaseOrder_FullMethodName              = "/product.ProductService/GetPurchaseOrder"
+	ProductService_CreateStockInOrder_FullMethodName            = "/product.ProductService/CreateStockInOrder"
+	ProductService_ListStockInOrders_FullMethodName             = "/product.ProductService/ListStockInOrders"
+	ProductService_GetStockInOrder_FullMethodName               = "/product.ProductService/GetStockInOrder"
+	ProductService_CreateStockOutOrder_FullMethodName           = "/product.ProductService/CreateStockOutOrder"
+	ProductService_ListStockOutOrders_FullMethodName            = "/product.ProductService/ListStockOutOrders"
+	ProductService_GetStockOutOrder_FullMethodName              = "/product.ProductService/GetStockOutOrder"
+	ProductService_ListStockBatches_FullMethodName              = "/product.ProductService/ListStockBatches"
+	ProductService_GetInventorySummaryReport_FullMethodName     = "/product.ProductService/GetInventorySummaryReport"
+	ProductService_GetProfitReport_FullMethodName               = "/product.ProductService/GetProfitReport"
 	ProductService_CreateStockCheck_FullMethodName              = "/product.ProductService/CreateStockCheck"
 	ProductService_SubmitStockCheck_FullMethodName              = "/product.ProductService/SubmitStockCheck"
 	ProductService_ListStockChecks_FullMethodName               = "/product.ProductService/ListStockChecks"
@@ -118,11 +137,37 @@ type ProductServiceClient interface {
 	// 库存
 	DeductStock(ctx context.Context, in *DeductStockReq, opts ...grpc.CallOption) (*DeductStockResp, error)
 	ReleaseStock(ctx context.Context, in *ReleaseStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
-	StockEntry(ctx context.Context, in *StockEntryReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
-	StockOut(ctx context.Context, in *StockOutReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	ListStockRecords(ctx context.Context, in *ListStockRecordsReq, opts ...grpc.CallOption) (*ListStockRecordsResp, error)
 	GetStockWarnings(ctx context.Context, in *GetStockWarningsReq, opts ...grpc.CallOption) (*ListStockWarningsResp, error)
 	GeneratePurchaseOrder(ctx context.Context, in *GeneratePurchaseOrderReq, opts ...grpc.CallOption) (*GeneratePurchaseOrderResp, error)
+	// 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
+	DeductFlashSaleStock(ctx context.Context, in *DeductFlashSaleStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	ReleaseFlashSaleStock(ctx context.Context, in *ReleaseFlashSaleStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 供应商
+	ListSuppliers(ctx context.Context, in *ListSuppliersReq, opts ...grpc.CallOption) (*ListSuppliersResp, error)
+	CreateSupplier(ctx context.Context, in *CreateSupplierReq, opts ...grpc.CallOption) (*SupplierInfo, error)
+	UpdateSupplier(ctx context.Context, in *UpdateSupplierReq, opts ...grpc.CallOption) (*SupplierInfo, error)
+	DeleteSupplier(ctx context.Context, in *DeleteSupplierReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 采购单
+	CreatePurchaseOrder(ctx context.Context, in *CreatePurchaseOrderReq, opts ...grpc.CallOption) (*PurchaseOrderDetail, error)
+	UpdatePurchaseOrder(ctx context.Context, in *UpdatePurchaseOrderReq, opts ...grpc.CallOption) (*PurchaseOrderDetail, error)
+	SubmitPurchaseOrder(ctx context.Context, in *SubmitPurchaseOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	CancelPurchaseOrder(ctx context.Context, in *CancelPurchaseOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	ListPurchaseOrders(ctx context.Context, in *ListPurchaseOrdersReq, opts ...grpc.CallOption) (*ListPurchaseOrdersResp, error)
+	GetPurchaseOrder(ctx context.Context, in *GetPurchaseOrderReq, opts ...grpc.CallOption) (*PurchaseOrderDetail, error)
+	// 入库单（创建即生效：生成批次 + 回写汇总库存 + 移动加权平均成本）
+	CreateStockInOrder(ctx context.Context, in *CreateStockInOrderReq, opts ...grpc.CallOption) (*StockInOrderDetail, error)
+	ListStockInOrders(ctx context.Context, in *ListStockInOrdersReq, opts ...grpc.CallOption) (*ListStockInOrdersResp, error)
+	GetStockInOrder(ctx context.Context, in *GetStockInOrderReq, opts ...grpc.CallOption) (*StockInOrderDetail, error)
+	// 出库单（报损/领用/调整，后端枚举校验）
+	CreateStockOutOrder(ctx context.Context, in *CreateStockOutOrderReq, opts ...grpc.CallOption) (*StockOutOrderDetail, error)
+	ListStockOutOrders(ctx context.Context, in *ListStockOutOrdersReq, opts ...grpc.CallOption) (*ListStockOutOrdersResp, error)
+	GetStockOutOrder(ctx context.Context, in *GetStockOutOrderReq, opts ...grpc.CallOption) (*StockOutOrderDetail, error)
+	// 批次库存
+	ListStockBatches(ctx context.Context, in *ListStockBatchesReq, opts ...grpc.CallOption) (*ListStockBatchesResp, error)
+	// 报表
+	GetInventorySummaryReport(ctx context.Context, in *GetInventorySummaryReportReq, opts ...grpc.CallOption) (*GetInventorySummaryReportResp, error)
+	GetProfitReport(ctx context.Context, in *GetProfitReportReq, opts ...grpc.CallOption) (*GetProfitReportResp, error)
 	// 盘点
 	CreateStockCheck(ctx context.Context, in *CreateStockCheckReq, opts ...grpc.CallOption) (*StockCheckInfo, error)
 	SubmitStockCheck(ctx context.Context, in *SubmitStockCheckReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
@@ -378,26 +423,6 @@ func (c *productServiceClient) ReleaseStock(ctx context.Context, in *ReleaseStoc
 	return out, nil
 }
 
-func (c *productServiceClient) StockEntry(ctx context.Context, in *StockEntryReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.CommonResponse)
-	err := c.cc.Invoke(ctx, ProductService_StockEntry_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *productServiceClient) StockOut(ctx context.Context, in *StockOutReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.CommonResponse)
-	err := c.cc.Invoke(ctx, ProductService_StockOut_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *productServiceClient) ListStockRecords(ctx context.Context, in *ListStockRecordsReq, opts ...grpc.CallOption) (*ListStockRecordsResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListStockRecordsResp)
@@ -422,6 +447,216 @@ func (c *productServiceClient) GeneratePurchaseOrder(ctx context.Context, in *Ge
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GeneratePurchaseOrderResp)
 	err := c.cc.Invoke(ctx, ProductService_GeneratePurchaseOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) DeductFlashSaleStock(ctx context.Context, in *DeductFlashSaleStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_DeductFlashSaleStock_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ReleaseFlashSaleStock(ctx context.Context, in *ReleaseFlashSaleStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_ReleaseFlashSaleStock_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ListSuppliers(ctx context.Context, in *ListSuppliersReq, opts ...grpc.CallOption) (*ListSuppliersResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSuppliersResp)
+	err := c.cc.Invoke(ctx, ProductService_ListSuppliers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) CreateSupplier(ctx context.Context, in *CreateSupplierReq, opts ...grpc.CallOption) (*SupplierInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupplierInfo)
+	err := c.cc.Invoke(ctx, ProductService_CreateSupplier_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) UpdateSupplier(ctx context.Context, in *UpdateSupplierReq, opts ...grpc.CallOption) (*SupplierInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SupplierInfo)
+	err := c.cc.Invoke(ctx, ProductService_UpdateSupplier_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) DeleteSupplier(ctx context.Context, in *DeleteSupplierReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_DeleteSupplier_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) CreatePurchaseOrder(ctx context.Context, in *CreatePurchaseOrderReq, opts ...grpc.CallOption) (*PurchaseOrderDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PurchaseOrderDetail)
+	err := c.cc.Invoke(ctx, ProductService_CreatePurchaseOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) UpdatePurchaseOrder(ctx context.Context, in *UpdatePurchaseOrderReq, opts ...grpc.CallOption) (*PurchaseOrderDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PurchaseOrderDetail)
+	err := c.cc.Invoke(ctx, ProductService_UpdatePurchaseOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) SubmitPurchaseOrder(ctx context.Context, in *SubmitPurchaseOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_SubmitPurchaseOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) CancelPurchaseOrder(ctx context.Context, in *CancelPurchaseOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_CancelPurchaseOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ListPurchaseOrders(ctx context.Context, in *ListPurchaseOrdersReq, opts ...grpc.CallOption) (*ListPurchaseOrdersResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPurchaseOrdersResp)
+	err := c.cc.Invoke(ctx, ProductService_ListPurchaseOrders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) GetPurchaseOrder(ctx context.Context, in *GetPurchaseOrderReq, opts ...grpc.CallOption) (*PurchaseOrderDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PurchaseOrderDetail)
+	err := c.cc.Invoke(ctx, ProductService_GetPurchaseOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) CreateStockInOrder(ctx context.Context, in *CreateStockInOrderReq, opts ...grpc.CallOption) (*StockInOrderDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StockInOrderDetail)
+	err := c.cc.Invoke(ctx, ProductService_CreateStockInOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ListStockInOrders(ctx context.Context, in *ListStockInOrdersReq, opts ...grpc.CallOption) (*ListStockInOrdersResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStockInOrdersResp)
+	err := c.cc.Invoke(ctx, ProductService_ListStockInOrders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) GetStockInOrder(ctx context.Context, in *GetStockInOrderReq, opts ...grpc.CallOption) (*StockInOrderDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StockInOrderDetail)
+	err := c.cc.Invoke(ctx, ProductService_GetStockInOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) CreateStockOutOrder(ctx context.Context, in *CreateStockOutOrderReq, opts ...grpc.CallOption) (*StockOutOrderDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StockOutOrderDetail)
+	err := c.cc.Invoke(ctx, ProductService_CreateStockOutOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ListStockOutOrders(ctx context.Context, in *ListStockOutOrdersReq, opts ...grpc.CallOption) (*ListStockOutOrdersResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStockOutOrdersResp)
+	err := c.cc.Invoke(ctx, ProductService_ListStockOutOrders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) GetStockOutOrder(ctx context.Context, in *GetStockOutOrderReq, opts ...grpc.CallOption) (*StockOutOrderDetail, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StockOutOrderDetail)
+	err := c.cc.Invoke(ctx, ProductService_GetStockOutOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ListStockBatches(ctx context.Context, in *ListStockBatchesReq, opts ...grpc.CallOption) (*ListStockBatchesResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListStockBatchesResp)
+	err := c.cc.Invoke(ctx, ProductService_ListStockBatches_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) GetInventorySummaryReport(ctx context.Context, in *GetInventorySummaryReportReq, opts ...grpc.CallOption) (*GetInventorySummaryReportResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetInventorySummaryReportResp)
+	err := c.cc.Invoke(ctx, ProductService_GetInventorySummaryReport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) GetProfitReport(ctx context.Context, in *GetProfitReportReq, opts ...grpc.CallOption) (*GetProfitReportResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProfitReportResp)
+	err := c.cc.Invoke(ctx, ProductService_GetProfitReport_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -905,11 +1140,37 @@ type ProductServiceServer interface {
 	// 库存
 	DeductStock(context.Context, *DeductStockReq) (*DeductStockResp, error)
 	ReleaseStock(context.Context, *ReleaseStockReq) (*common.CommonResponse, error)
-	StockEntry(context.Context, *StockEntryReq) (*common.CommonResponse, error)
-	StockOut(context.Context, *StockOutReq) (*common.CommonResponse, error)
 	ListStockRecords(context.Context, *ListStockRecordsReq) (*ListStockRecordsResp, error)
 	GetStockWarnings(context.Context, *GetStockWarningsReq) (*ListStockWarningsResp, error)
 	GeneratePurchaseOrder(context.Context, *GeneratePurchaseOrderReq) (*GeneratePurchaseOrderResp, error)
+	// 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
+	DeductFlashSaleStock(context.Context, *DeductFlashSaleStockReq) (*common.CommonResponse, error)
+	ReleaseFlashSaleStock(context.Context, *ReleaseFlashSaleStockReq) (*common.CommonResponse, error)
+	// 供应商
+	ListSuppliers(context.Context, *ListSuppliersReq) (*ListSuppliersResp, error)
+	CreateSupplier(context.Context, *CreateSupplierReq) (*SupplierInfo, error)
+	UpdateSupplier(context.Context, *UpdateSupplierReq) (*SupplierInfo, error)
+	DeleteSupplier(context.Context, *DeleteSupplierReq) (*common.CommonResponse, error)
+	// 采购单
+	CreatePurchaseOrder(context.Context, *CreatePurchaseOrderReq) (*PurchaseOrderDetail, error)
+	UpdatePurchaseOrder(context.Context, *UpdatePurchaseOrderReq) (*PurchaseOrderDetail, error)
+	SubmitPurchaseOrder(context.Context, *SubmitPurchaseOrderReq) (*common.CommonResponse, error)
+	CancelPurchaseOrder(context.Context, *CancelPurchaseOrderReq) (*common.CommonResponse, error)
+	ListPurchaseOrders(context.Context, *ListPurchaseOrdersReq) (*ListPurchaseOrdersResp, error)
+	GetPurchaseOrder(context.Context, *GetPurchaseOrderReq) (*PurchaseOrderDetail, error)
+	// 入库单（创建即生效：生成批次 + 回写汇总库存 + 移动加权平均成本）
+	CreateStockInOrder(context.Context, *CreateStockInOrderReq) (*StockInOrderDetail, error)
+	ListStockInOrders(context.Context, *ListStockInOrdersReq) (*ListStockInOrdersResp, error)
+	GetStockInOrder(context.Context, *GetStockInOrderReq) (*StockInOrderDetail, error)
+	// 出库单（报损/领用/调整，后端枚举校验）
+	CreateStockOutOrder(context.Context, *CreateStockOutOrderReq) (*StockOutOrderDetail, error)
+	ListStockOutOrders(context.Context, *ListStockOutOrdersReq) (*ListStockOutOrdersResp, error)
+	GetStockOutOrder(context.Context, *GetStockOutOrderReq) (*StockOutOrderDetail, error)
+	// 批次库存
+	ListStockBatches(context.Context, *ListStockBatchesReq) (*ListStockBatchesResp, error)
+	// 报表
+	GetInventorySummaryReport(context.Context, *GetInventorySummaryReportReq) (*GetInventorySummaryReportResp, error)
+	GetProfitReport(context.Context, *GetProfitReportReq) (*GetProfitReportResp, error)
 	// 盘点
 	CreateStockCheck(context.Context, *CreateStockCheckReq) (*StockCheckInfo, error)
 	SubmitStockCheck(context.Context, *SubmitStockCheckReq) (*common.CommonResponse, error)
@@ -1032,12 +1293,6 @@ func (UnimplementedProductServiceServer) DeductStock(context.Context, *DeductSto
 func (UnimplementedProductServiceServer) ReleaseStock(context.Context, *ReleaseStockReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReleaseStock not implemented")
 }
-func (UnimplementedProductServiceServer) StockEntry(context.Context, *StockEntryReq) (*common.CommonResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method StockEntry not implemented")
-}
-func (UnimplementedProductServiceServer) StockOut(context.Context, *StockOutReq) (*common.CommonResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method StockOut not implemented")
-}
 func (UnimplementedProductServiceServer) ListStockRecords(context.Context, *ListStockRecordsReq) (*ListStockRecordsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListStockRecords not implemented")
 }
@@ -1046,6 +1301,69 @@ func (UnimplementedProductServiceServer) GetStockWarnings(context.Context, *GetS
 }
 func (UnimplementedProductServiceServer) GeneratePurchaseOrder(context.Context, *GeneratePurchaseOrderReq) (*GeneratePurchaseOrderResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GeneratePurchaseOrder not implemented")
+}
+func (UnimplementedProductServiceServer) DeductFlashSaleStock(context.Context, *DeductFlashSaleStockReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeductFlashSaleStock not implemented")
+}
+func (UnimplementedProductServiceServer) ReleaseFlashSaleStock(context.Context, *ReleaseFlashSaleStockReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseFlashSaleStock not implemented")
+}
+func (UnimplementedProductServiceServer) ListSuppliers(context.Context, *ListSuppliersReq) (*ListSuppliersResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSuppliers not implemented")
+}
+func (UnimplementedProductServiceServer) CreateSupplier(context.Context, *CreateSupplierReq) (*SupplierInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateSupplier not implemented")
+}
+func (UnimplementedProductServiceServer) UpdateSupplier(context.Context, *UpdateSupplierReq) (*SupplierInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateSupplier not implemented")
+}
+func (UnimplementedProductServiceServer) DeleteSupplier(context.Context, *DeleteSupplierReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSupplier not implemented")
+}
+func (UnimplementedProductServiceServer) CreatePurchaseOrder(context.Context, *CreatePurchaseOrderReq) (*PurchaseOrderDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePurchaseOrder not implemented")
+}
+func (UnimplementedProductServiceServer) UpdatePurchaseOrder(context.Context, *UpdatePurchaseOrderReq) (*PurchaseOrderDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdatePurchaseOrder not implemented")
+}
+func (UnimplementedProductServiceServer) SubmitPurchaseOrder(context.Context, *SubmitPurchaseOrderReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitPurchaseOrder not implemented")
+}
+func (UnimplementedProductServiceServer) CancelPurchaseOrder(context.Context, *CancelPurchaseOrderReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelPurchaseOrder not implemented")
+}
+func (UnimplementedProductServiceServer) ListPurchaseOrders(context.Context, *ListPurchaseOrdersReq) (*ListPurchaseOrdersResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPurchaseOrders not implemented")
+}
+func (UnimplementedProductServiceServer) GetPurchaseOrder(context.Context, *GetPurchaseOrderReq) (*PurchaseOrderDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPurchaseOrder not implemented")
+}
+func (UnimplementedProductServiceServer) CreateStockInOrder(context.Context, *CreateStockInOrderReq) (*StockInOrderDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateStockInOrder not implemented")
+}
+func (UnimplementedProductServiceServer) ListStockInOrders(context.Context, *ListStockInOrdersReq) (*ListStockInOrdersResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStockInOrders not implemented")
+}
+func (UnimplementedProductServiceServer) GetStockInOrder(context.Context, *GetStockInOrderReq) (*StockInOrderDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetStockInOrder not implemented")
+}
+func (UnimplementedProductServiceServer) CreateStockOutOrder(context.Context, *CreateStockOutOrderReq) (*StockOutOrderDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateStockOutOrder not implemented")
+}
+func (UnimplementedProductServiceServer) ListStockOutOrders(context.Context, *ListStockOutOrdersReq) (*ListStockOutOrdersResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStockOutOrders not implemented")
+}
+func (UnimplementedProductServiceServer) GetStockOutOrder(context.Context, *GetStockOutOrderReq) (*StockOutOrderDetail, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetStockOutOrder not implemented")
+}
+func (UnimplementedProductServiceServer) ListStockBatches(context.Context, *ListStockBatchesReq) (*ListStockBatchesResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListStockBatches not implemented")
+}
+func (UnimplementedProductServiceServer) GetInventorySummaryReport(context.Context, *GetInventorySummaryReportReq) (*GetInventorySummaryReportResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetInventorySummaryReport not implemented")
+}
+func (UnimplementedProductServiceServer) GetProfitReport(context.Context, *GetProfitReportReq) (*GetProfitReportResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProfitReport not implemented")
 }
 func (UnimplementedProductServiceServer) CreateStockCheck(context.Context, *CreateStockCheckReq) (*StockCheckInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateStockCheck not implemented")
@@ -1545,42 +1863,6 @@ func _ProductService_ReleaseStock_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ProductService_StockEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StockEntryReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ProductServiceServer).StockEntry(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ProductService_StockEntry_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ProductServiceServer).StockEntry(ctx, req.(*StockEntryReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ProductService_StockOut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StockOutReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ProductServiceServer).StockOut(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: ProductService_StockOut_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ProductServiceServer).StockOut(ctx, req.(*StockOutReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _ProductService_ListStockRecords_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListStockRecordsReq)
 	if err := dec(in); err != nil {
@@ -1631,6 +1913,384 @@ func _ProductService_GeneratePurchaseOrder_Handler(srv interface{}, ctx context.
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ProductServiceServer).GeneratePurchaseOrder(ctx, req.(*GeneratePurchaseOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_DeductFlashSaleStock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeductFlashSaleStockReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).DeductFlashSaleStock(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_DeductFlashSaleStock_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).DeductFlashSaleStock(ctx, req.(*DeductFlashSaleStockReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ReleaseFlashSaleStock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseFlashSaleStockReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ReleaseFlashSaleStock(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ReleaseFlashSaleStock_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ReleaseFlashSaleStock(ctx, req.(*ReleaseFlashSaleStockReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ListSuppliers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSuppliersReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListSuppliers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListSuppliers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListSuppliers(ctx, req.(*ListSuppliersReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_CreateSupplier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateSupplierReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).CreateSupplier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_CreateSupplier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).CreateSupplier(ctx, req.(*CreateSupplierReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_UpdateSupplier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateSupplierReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).UpdateSupplier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_UpdateSupplier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).UpdateSupplier(ctx, req.(*UpdateSupplierReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_DeleteSupplier_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteSupplierReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).DeleteSupplier(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_DeleteSupplier_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).DeleteSupplier(ctx, req.(*DeleteSupplierReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_CreatePurchaseOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePurchaseOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).CreatePurchaseOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_CreatePurchaseOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).CreatePurchaseOrder(ctx, req.(*CreatePurchaseOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_UpdatePurchaseOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdatePurchaseOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).UpdatePurchaseOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_UpdatePurchaseOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).UpdatePurchaseOrder(ctx, req.(*UpdatePurchaseOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_SubmitPurchaseOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitPurchaseOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).SubmitPurchaseOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_SubmitPurchaseOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).SubmitPurchaseOrder(ctx, req.(*SubmitPurchaseOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_CancelPurchaseOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelPurchaseOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).CancelPurchaseOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_CancelPurchaseOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).CancelPurchaseOrder(ctx, req.(*CancelPurchaseOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ListPurchaseOrders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPurchaseOrdersReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListPurchaseOrders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListPurchaseOrders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListPurchaseOrders(ctx, req.(*ListPurchaseOrdersReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_GetPurchaseOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPurchaseOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetPurchaseOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetPurchaseOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetPurchaseOrder(ctx, req.(*GetPurchaseOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_CreateStockInOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateStockInOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).CreateStockInOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_CreateStockInOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).CreateStockInOrder(ctx, req.(*CreateStockInOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ListStockInOrders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStockInOrdersReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListStockInOrders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListStockInOrders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListStockInOrders(ctx, req.(*ListStockInOrdersReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_GetStockInOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStockInOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetStockInOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetStockInOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetStockInOrder(ctx, req.(*GetStockInOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_CreateStockOutOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateStockOutOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).CreateStockOutOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_CreateStockOutOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).CreateStockOutOrder(ctx, req.(*CreateStockOutOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ListStockOutOrders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStockOutOrdersReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListStockOutOrders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListStockOutOrders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListStockOutOrders(ctx, req.(*ListStockOutOrdersReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_GetStockOutOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStockOutOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetStockOutOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetStockOutOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetStockOutOrder(ctx, req.(*GetStockOutOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ListStockBatches_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListStockBatchesReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListStockBatches(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListStockBatches_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListStockBatches(ctx, req.(*ListStockBatchesReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_GetInventorySummaryReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetInventorySummaryReportReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetInventorySummaryReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetInventorySummaryReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetInventorySummaryReport(ctx, req.(*GetInventorySummaryReportReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_GetProfitReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProfitReportReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetProfitReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetProfitReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetProfitReport(ctx, req.(*GetProfitReportReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2529,14 +3189,6 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ProductService_ReleaseStock_Handler,
 		},
 		{
-			MethodName: "StockEntry",
-			Handler:    _ProductService_StockEntry_Handler,
-		},
-		{
-			MethodName: "StockOut",
-			Handler:    _ProductService_StockOut_Handler,
-		},
-		{
 			MethodName: "ListStockRecords",
 			Handler:    _ProductService_ListStockRecords_Handler,
 		},
@@ -2547,6 +3199,90 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GeneratePurchaseOrder",
 			Handler:    _ProductService_GeneratePurchaseOrder_Handler,
+		},
+		{
+			MethodName: "DeductFlashSaleStock",
+			Handler:    _ProductService_DeductFlashSaleStock_Handler,
+		},
+		{
+			MethodName: "ReleaseFlashSaleStock",
+			Handler:    _ProductService_ReleaseFlashSaleStock_Handler,
+		},
+		{
+			MethodName: "ListSuppliers",
+			Handler:    _ProductService_ListSuppliers_Handler,
+		},
+		{
+			MethodName: "CreateSupplier",
+			Handler:    _ProductService_CreateSupplier_Handler,
+		},
+		{
+			MethodName: "UpdateSupplier",
+			Handler:    _ProductService_UpdateSupplier_Handler,
+		},
+		{
+			MethodName: "DeleteSupplier",
+			Handler:    _ProductService_DeleteSupplier_Handler,
+		},
+		{
+			MethodName: "CreatePurchaseOrder",
+			Handler:    _ProductService_CreatePurchaseOrder_Handler,
+		},
+		{
+			MethodName: "UpdatePurchaseOrder",
+			Handler:    _ProductService_UpdatePurchaseOrder_Handler,
+		},
+		{
+			MethodName: "SubmitPurchaseOrder",
+			Handler:    _ProductService_SubmitPurchaseOrder_Handler,
+		},
+		{
+			MethodName: "CancelPurchaseOrder",
+			Handler:    _ProductService_CancelPurchaseOrder_Handler,
+		},
+		{
+			MethodName: "ListPurchaseOrders",
+			Handler:    _ProductService_ListPurchaseOrders_Handler,
+		},
+		{
+			MethodName: "GetPurchaseOrder",
+			Handler:    _ProductService_GetPurchaseOrder_Handler,
+		},
+		{
+			MethodName: "CreateStockInOrder",
+			Handler:    _ProductService_CreateStockInOrder_Handler,
+		},
+		{
+			MethodName: "ListStockInOrders",
+			Handler:    _ProductService_ListStockInOrders_Handler,
+		},
+		{
+			MethodName: "GetStockInOrder",
+			Handler:    _ProductService_GetStockInOrder_Handler,
+		},
+		{
+			MethodName: "CreateStockOutOrder",
+			Handler:    _ProductService_CreateStockOutOrder_Handler,
+		},
+		{
+			MethodName: "ListStockOutOrders",
+			Handler:    _ProductService_ListStockOutOrders_Handler,
+		},
+		{
+			MethodName: "GetStockOutOrder",
+			Handler:    _ProductService_GetStockOutOrder_Handler,
+		},
+		{
+			MethodName: "ListStockBatches",
+			Handler:    _ProductService_ListStockBatches_Handler,
+		},
+		{
+			MethodName: "GetInventorySummaryReport",
+			Handler:    _ProductService_GetInventorySummaryReport_Handler,
+		},
+		{
+			MethodName: "GetProfitReport",
+			Handler:    _ProductService_GetProfitReport_Handler,
 		},
 		{
 			MethodName: "CreateStockCheck",

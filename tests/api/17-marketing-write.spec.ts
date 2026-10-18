@@ -40,11 +40,13 @@ interface Banner {
 }
 
 let api: Awaited<ReturnType<typeof newAdminContext>>['api'];
+let communityId = 0;
 let buyer: ClientLoginInfo | null = null;
 
 test.beforeAll(async ({ playwright }) => {
   const ctx = await newAdminContext(playwright);
   api = ctx.api;
+  communityId = ctx.communityId;
   buyer = (await clientLogin(playwright.request, uniquePhone())) as ClientLoginInfo;
 });
 
@@ -198,7 +200,7 @@ test.describe.serial('秒杀与包邮写操作', () => {
 
   test.beforeAll(async () => {
     try {
-      const sku: SkuRef = await pickSku(api);
+      const sku: SkuRef = await pickSku(api, undefined, communityId);
       skuId = sku.id;
     } catch {
       skuId = 0;

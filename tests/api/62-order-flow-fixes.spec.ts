@@ -67,7 +67,7 @@ test.describe.serial('P1#6 单品数量上限校验', () => {
     api = await newAuthedRequest(playwright, buyer.access_token);
     const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
     try {
-      sku = await pickSku(admin.api);
+      sku = await pickSku(admin.api, undefined, buyer.user.community_id);
       await ensureStock(admin.api, sku.id, 2000);
     } finally {
       await admin.api.dispose();
@@ -116,7 +116,7 @@ test.describe.serial('P1#5 重复下单防护（5s 指纹窗口）', () => {
     api = await newAuthedRequest(playwright, buyer.access_token);
     const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
     try {
-      sku = await pickSku(admin.api);
+      sku = await pickSku(admin.api, undefined, buyer.user.community_id);
       await ensureStock(admin.api, sku.id, 50);
     } finally {
       await admin.api.dispose();
@@ -180,7 +180,7 @@ test.describe.serial('P1#4 下单成功后服务端清理购物车', () => {
     api = await newAuthedRequest(playwright, buyer.access_token);
     const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
     try {
-      sku = await pickSku(admin.api);
+      sku = await pickSku(admin.api, undefined, buyer.user.community_id);
       await ensureStock(admin.api, sku.id, 20);
     } finally {
       await admin.api.dispose();
@@ -207,7 +207,7 @@ test.describe.serial('P1#4 下单成功后服务端清理购物车', () => {
     expect(addBody.code, `加购失败: ${addBody.message}`).toBe(0);
 
     const cartBefore = (await (await api.get('/api/v1/cart')).json()) as ApiResponse<{ items: CartItem[] }>;
-    expect(cartBefore.data?.items.some((i) => i.sku_id === sku.id), '加购后购物车应含该 SKU').toBe(true);
+    expect((cartBefore.data?.items ?? []).some((i) => i.sku_id === sku.id), '加购后购物车应含该 SKU').toBe(true);
 
     const orderBody = assertOk(
       (await (
@@ -224,7 +224,7 @@ test.describe.serial('P1#4 下单成功后服务端清理购物车', () => {
     for (let i = 0; i < 15; i++) {
       await new Promise((r) => setTimeout(r, 200));
       const cart = (await (await api.get('/api/v1/cart')).json()) as ApiResponse<{ items: CartItem[] }>;
-      if (!cart.data?.items.some((it) => it.sku_id === sku.id)) {
+      if (!(cart.data?.items ?? []).some((it) => it.sku_id === sku.id)) {
         cleared = true;
         break;
       }
@@ -246,7 +246,7 @@ test.describe.serial('P0#2 整单退款回补优惠券', () => {
     adminApi = admin.api;
     buyerApi = await newAuthedRequest(playwright, buyer.access_token);
 
-    sku = await pickSku(adminApi);
+    sku = await pickSku(adminApi, undefined, admin.communityId);
     await ensureStock(adminApi, sku.id, 20);
 
     const coupon = assertOk(
@@ -350,7 +350,7 @@ test.describe.serial('P3#15 取货码防暴力破解', () => {
     adminApi = admin.api;
     buyerApi = await newAuthedRequest(playwright, buyer.access_token);
 
-    const sku = await pickSku(adminApi);
+    const sku = await pickSku(adminApi, undefined, buyer.user.community_id);
     await ensureStock(adminApi, sku.id, 10);
 
     const created = assertOk(
