@@ -180,6 +180,7 @@ import CancelOrderModal from './components/CancelOrderModal.vue'
 import RefundModal from './components/RefundModal.vue'
 import type { Order } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
+import { reopenModal } from '@/utils/modal'
 import {
   DELIVERY_TYPE,
   ORDER_SOURCE,
@@ -238,7 +239,7 @@ function openUserOrders(row: Order) {
  */
 function openUserOrdersOf(user: { id: number; nickname?: string }) {
   userOrdersUser.value = { id: user.id, nickname: user.nickname }
-  userOrdersVisible.value = true
+  reopenModal(userOrdersVisible)
 }
 
 const shipVisible = ref(false)
@@ -560,12 +561,12 @@ function buildQuery() {
 }
 
 /**
- * 打开订单详情弹窗
+ * 打开订单详情弹窗（含会员订单弹窗 open-order 事件转发；已开时重挂载置顶并重载）
  * @param id 订单 ID
  */
 function openDetail(id: number) {
   detailId.value = id
-  detailVisible.value = true
+  reopenModal(detailVisible)
 }
 
 /**

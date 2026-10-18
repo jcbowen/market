@@ -62,6 +62,7 @@ import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 import UserOrdersModal from './components/UserOrdersModal.vue'
 import OrderDetailModal from '@/views/order/detail.vue'
+import { reopenModal } from '@/utils/modal'
 import type { DataTableColumns } from 'naive-ui'
 import type { User } from '@/api/types'
 
@@ -212,21 +213,21 @@ function openOrders(row: User) {
 }
 
 /**
- * 打开会员订单弹窗（轻量用户对象，含订单详情弹窗 view-user 事件转发）
+ * 打开会员订单弹窗（轻量用户对象，含订单详情弹窗 view-user 事件转发；已开时重挂载置顶）
  * @param user 会员 ID 与昵称
  */
 function openOrdersOf(user: { id: number; nickname?: string }) {
   ordersUser.value = { id: user.id, nickname: user.nickname }
-  showOrdersModal.value = true
+  reopenModal(showOrdersModal)
 }
 
 /**
- * 打开订单详情弹窗（含会员订单弹窗 open-order 事件转发）
+ * 打开订单详情弹窗（含会员订单弹窗 open-order 事件转发；已开时重挂载置顶并重载）
  * @param id 订单 ID
  */
 function openOrderDetail(id: number) {
   detailId.value = id
-  detailVisible.value = true
+  reopenModal(detailVisible)
 }
 
 /**

@@ -196,6 +196,7 @@ import { useAuthStore } from '@/stores/auth'
 import RefundModal from '@/views/order/components/RefundModal.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import OrderDetailModal from '@/views/order/detail.vue'
+import { reopenModal } from '@/utils/modal'
 
 /**
  * 订单查询 Tab（收银台内）
@@ -389,16 +390,16 @@ const orderDetailId = ref<number | null>(null)
  */
 function openUserOrdersOf(user: { id: number; nickname?: string }) {
   userOrdersUser.value = { id: user.id, nickname: user.nickname }
-  showUserOrders.value = true
+  reopenModal(showUserOrders)
 }
 
 /**
- * 打开订单详情弹窗（含会员订单弹窗 open-order 事件转发）
+ * 打开订单详情弹窗（含会员订单弹窗 open-order 事件转发；已开时重挂载置顶并重载）
  * @param id 订单 ID
  */
 function openOrderDetail(id: number) {
   orderDetailId.value = id
-  showOrderDetail.value = true
+  reopenModal(showOrderDetail)
 }
 
 /**

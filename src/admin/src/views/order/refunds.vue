@@ -59,6 +59,7 @@ import OrderDetailModal from './detail.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import type { Refund, RefundItem } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
+import { reopenModal } from '@/utils/modal'
 import { REFUND_STATUS, refundStatusMap } from '@/constants/order'
 
 /**
@@ -86,7 +87,7 @@ const userOrdersUser = ref<{ id: number; nickname?: string } | null>(null)
  */
 function openUserOrdersOf(user: { id: number; nickname?: string }) {
   userOrdersUser.value = { id: user.id, nickname: user.nickname }
-  userOrdersVisible.value = true
+  reopenModal(userOrdersVisible)
 }
 
 const rejectVisible = ref(false)
@@ -276,7 +277,7 @@ function renderExpandItems(row: Refund) {
  */
 function openOrderDetail(orderId: number) {
   detailId.value = orderId
-  detailVisible.value = true
+  reopenModal(detailVisible)
 }
 
 /**

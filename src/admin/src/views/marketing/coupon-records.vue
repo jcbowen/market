@@ -48,6 +48,7 @@ import { getCouponList, getCouponRecords } from '@/api/marketing'
 import OrderDetailModal from '@/views/order/detail.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import type { Coupon, CouponRecord } from '@/api/types'
+import { reopenModal } from '@/utils/modal'
 
 /**
  * 优惠券领取/发放记录页（M②期）
@@ -111,7 +112,7 @@ function openUserOrders(row: CouponRecord) {
  */
 function openUserOrdersOf(user: { id: number; nickname?: string }) {
   userOrdersUser.value = { id: user.id, nickname: user.nickname }
-  showUserOrders.value = true
+  reopenModal(showUserOrders)
 }
 
 // --- 订单详情弹窗（点击「查看订单」打开） ---
@@ -124,7 +125,7 @@ const orderDetailId = ref<number | null>(null)
  */
 function openOrderDetail(orderId: number) {
   orderDetailId.value = orderId
-  showOrderDetail.value = true
+  reopenModal(showOrderDetail)
 }
 
 /** 门槛列：0 显示「无门槛」 */
