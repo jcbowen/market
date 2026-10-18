@@ -49,6 +49,11 @@ export interface AdminInfo {
   community_id?: number
   /** 任职的全部社区 ID 列表（超管为空数组，表示不限制社区） */
   community_ids?: number[]
+  /** 绑定的会员 ID（0/null=未绑定；绑定后该会员在任职社区即履约人员） */
+  user_id?: number | null
+  /** 绑定会员的昵称/手机号（列表展示与编辑回显用） */
+  user_nickname?: string
+  user_phone?: string
 }
 
 /**
@@ -680,8 +685,6 @@ export interface User {
   community_id: number
   community_name: string
   status: number
-  /** 是否本社区履约人员（B 履约工作台） */
-  is_fulfiller?: boolean
   created_at: string
   last_login_at?: string
 }

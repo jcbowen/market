@@ -141,21 +141,6 @@ export function setUserStatus(id: number, status: number) {
 }
 
 /**
- * 设置/取消会员在本社区的履约人员标记（B 履约工作台）
- * 履约人员可送货上门 + 自提核销
- * @param id 会员 ID
- * @param isFulfiller true 设为履约人员 false 取消
- * @returns 操作结果
- */
-export function setUserFulfiller(id: number, isFulfiller: boolean) {
-  return request<ApiResult<null>>({
-    url: `/api/v1/admin/users/${id}/fulfiller`,
-    method: 'PUT',
-    data: { is_fulfiller: isFulfiller },
-  })
-}
-
-/**
  * 获取会员常买商品排行（会员订单弹窗板块）
  * 按该会员有效订单（已支付及之后，排除待支付/取消/退款）统计，按购买次数降序
  * @param id 会员 ID
@@ -172,6 +157,7 @@ export function getUserFrequentProducts(id: number, params: PageParams) {
 
 /**
  * 获取本社区履约人员列表（订单指派弹窗数据源）
+ * 履约人员 = 本社区任职且绑定会员的员工（配置入口在员工编辑页）
  * @returns 履约人员列表（user_id/nickname/phone）
  */
 export function getFulfillers() {

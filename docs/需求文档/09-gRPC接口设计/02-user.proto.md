@@ -69,8 +69,7 @@ service UserService {
   rpc CreateMember(CreateMemberReq) returns (CreateMemberResp);
 
   // --- 履约人员（B 社区履约工作台） ---
-  // 设置/取消某社区履约人员标记（后台会员管理操作）
-  rpc SetFulfiller(SetFulfillerReq) returns (common.CommonResponse);
+  // 履约人员 = 本社区任职且绑定了会员的员工（admin_users.user_id），配置入口在员工编辑页
   // 列出某社区全部履约人员（后台订单指派弹窗数据源）
   rpc ListFulfillers(ListFulfillersReq) returns (ListFulfillersResp);
   // 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
@@ -116,8 +115,6 @@ message UserInfo {
   string created_at = 12;
   // 当前过滤语境下的社区名称（ListUsers 按社区过滤时由服务端填充）
   string community_name = 13;
-  // 是否当前语境社区的履约人员（B 履约工作台，ListUsers 按社区过滤时填充）
-  bool is_fulfiller = 14;
 }
 
 message UpdateUserProfileReq {
@@ -361,6 +358,11 @@ message AdminInfo {
   bool is_super = 14;
   // 在查询语境社区内担任的角色列表（ListAdmins 按社区语境填充）
   repeated RoleInfo roles = 15;
+  // 绑定的会员 ID（0=未绑定；绑定后该会员在任职社区即履约人员）
+  int64 user_id = 16;
+  // 绑定会员的昵称/手机号（列表展示与编辑回显用，ListAdmins 批量填充）
+  string user_nickname = 17;
+  string user_phone = 18;
 }
 
 message ListAdminsReq {
@@ -394,6 +396,8 @@ message CreateAdminReq {
   bool account_only = 10;
   // 指定为目标社区的内置社区管理员（服务端自动解析/创建内置角色，忽略 role_ids）
   bool assign_community_admin = 11;
+  // 创建时绑定的会员 ID（0=不绑定；绑定后该会员在任职社区即履约人员）
+  int64 user_id = 12;
   // 操作者是否超管（网关注入；决定能否分配内置社区管理员角色）
   bool operator_is_super = 9;
 }
@@ -415,6 +419,8 @@ message UpdateAdminReq {
   bool operator_is_super = 9;
   // 仅更新状态（超管账号管理：停用/启用，不触碰姓名/手机号/角色任职）
   bool update_status_only = 10;
+  // 绑定的会员 ID（三态：未传=不改动；0=解绑；>0=绑定/换绑该会员）
+  optional int64 user_id = 11;
 }
 
 message DeleteAdminReq {
@@ -636,14 +642,6 @@ message CreateMemberResp {
 
 // --- 履约人员（B 社区履约工作台） ---
 
-// SetFulfillerReq 设置/取消履约人员请求
-message SetFulfillerReq {
-  int64 user_id = 1;
-  int64 community_id = 2;
-  // true=设为履约人员（送货上门 + 自提核销） false=取消
-  bool is_fulfiller = 3;
-}
-
 // FulfillerInfo 履约人员信息（指派弹窗展示）
 message FulfillerInfo {
   int64 user_id = 1;
@@ -676,7 +674,7 @@ message CheckFulfillerResp {
 - `GetRole` / `ListRoles(ListRolesReq)`：角色详情与分语境列表；`community_id>0` 返回该社区私有角色，`0` 仅返回全局角色，`include_global=true`（超管视角）附带全局角色。
 - `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/backfill，重复记录不报错。
 - `SetUserStatus` / `CreateMember`：会员拉黑/恢复与按手机号幂等注册（收银台与后台均可用）。`CreateMember` 以手机号为唯一键：未注册时新建会员并归属当前社区语境；已注册时不报错，复用既有会员并把 `user_communities` 关联到当前社区，`source` 标记关联来源（`admin` 后台添加 / `pos` 收银台，缺省 `admin`）。响应 `CreateMemberResp` 返回 `user`（注册或复用的会员信息）与 `is_new`（是否本次新注册）。
-- `SetFulfiller` / `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）标记、列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。
+- `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。履约人员 = 本社区任职中且绑定会员的员工（`CreateAdminReq.user_id` / `UpdateAdminReq.user_id` 配置，随任职增减自动生效），不再有独立的会员侧标记。
 
 ### 客户端渠道管理（2026-10-18 新增 RPC）
 

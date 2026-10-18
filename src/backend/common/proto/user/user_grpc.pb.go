@@ -59,7 +59,6 @@ const (
 	UserService_MarkUserCommunity_FullMethodName         = "/user.UserService/MarkUserCommunity"
 	UserService_SetUserStatus_FullMethodName             = "/user.UserService/SetUserStatus"
 	UserService_CreateMember_FullMethodName              = "/user.UserService/CreateMember"
-	UserService_SetFulfiller_FullMethodName              = "/user.UserService/SetFulfiller"
 	UserService_ListFulfillers_FullMethodName            = "/user.UserService/ListFulfillers"
 	UserService_CheckFulfiller_FullMethodName            = "/user.UserService/CheckFulfiller"
 	UserService_ListClientChannels_FullMethodName        = "/user.UserService/ListClientChannels"
@@ -124,8 +123,7 @@ type UserServiceClient interface {
 	// CreateMember 注册会员（手机号幂等注册到指定社区，已注册时复用并关联）
 	CreateMember(ctx context.Context, in *CreateMemberReq, opts ...grpc.CallOption) (*CreateMemberResp, error)
 	// --- 履约人员（B 社区履约工作台） ---
-	// 设置/取消某社区履约人员标记（后台会员管理操作）
-	SetFulfiller(ctx context.Context, in *SetFulfillerReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 履约人员 = 本社区任职且绑定了会员的员工（admin_users.user_id），配置入口在员工编辑页
 	// 列出某社区全部履约人员（后台订单指派弹窗数据源）
 	ListFulfillers(ctx context.Context, in *ListFulfillersReq, opts ...grpc.CallOption) (*ListFulfillersResp, error)
 	// 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
@@ -540,16 +538,6 @@ func (c *userServiceClient) CreateMember(ctx context.Context, in *CreateMemberRe
 	return out, nil
 }
 
-func (c *userServiceClient) SetFulfiller(ctx context.Context, in *SetFulfillerReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.CommonResponse)
-	err := c.cc.Invoke(ctx, UserService_SetFulfiller_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *userServiceClient) ListFulfillers(ctx context.Context, in *ListFulfillersReq, opts ...grpc.CallOption) (*ListFulfillersResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFulfillersResp)
@@ -675,8 +663,7 @@ type UserServiceServer interface {
 	// CreateMember 注册会员（手机号幂等注册到指定社区，已注册时复用并关联）
 	CreateMember(context.Context, *CreateMemberReq) (*CreateMemberResp, error)
 	// --- 履约人员（B 社区履约工作台） ---
-	// 设置/取消某社区履约人员标记（后台会员管理操作）
-	SetFulfiller(context.Context, *SetFulfillerReq) (*common.CommonResponse, error)
+	// 履约人员 = 本社区任职且绑定了会员的员工（admin_users.user_id），配置入口在员工编辑页
 	// 列出某社区全部履约人员（后台订单指派弹窗数据源）
 	ListFulfillers(context.Context, *ListFulfillersReq) (*ListFulfillersResp, error)
 	// 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
@@ -817,9 +804,6 @@ func (UnimplementedUserServiceServer) SetUserStatus(context.Context, *SetUserSta
 }
 func (UnimplementedUserServiceServer) CreateMember(context.Context, *CreateMemberReq) (*CreateMemberResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateMember not implemented")
-}
-func (UnimplementedUserServiceServer) SetFulfiller(context.Context, *SetFulfillerReq) (*common.CommonResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetFulfiller not implemented")
 }
 func (UnimplementedUserServiceServer) ListFulfillers(context.Context, *ListFulfillersReq) (*ListFulfillersResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFulfillers not implemented")
@@ -1565,24 +1549,6 @@ func _UserService_CreateMember_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _UserService_SetFulfiller_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SetFulfillerReq)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(UserServiceServer).SetFulfiller(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: UserService_SetFulfiller_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UserServiceServer).SetFulfiller(ctx, req.(*SetFulfillerReq))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _UserService_ListFulfillers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFulfillersReq)
 	if err := dec(in); err != nil {
@@ -1871,10 +1837,6 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateMember",
 			Handler:    _UserService_CreateMember_Handler,
-		},
-		{
-			MethodName: "SetFulfiller",
-			Handler:    _UserService_SetFulfiller_Handler,
 		},
 		{
 			MethodName: "ListFulfillers",

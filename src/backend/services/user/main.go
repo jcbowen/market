@@ -28,6 +28,13 @@ func main() {
 	if err := autoMigrate(db); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
+	// 一次性清理：is_fulfiller 废弃列（履约人员已改为员工绑定会员，见 admin_users.user_id）；
+	// HasColumn 守卫使清理逻辑跑完一次后即为空操作
+	if db.GetDb().Migrator().HasColumn(&model.UserCommunity{}, "is_fulfiller") {
+		if err := db.GetDb().Migrator().DropColumn(&model.UserCommunity{}, "is_fulfiller"); err != nil {
+			log.Printf("清理 user_communities.is_fulfiller 废弃列失败（不阻塞启动）: %v", err)
+		}
+	}
 	// 存量会员-社区关联幂等回填（users.community_id > 0 且无关联记录的会员）
 	if err := service.NewUserService(db).BackfillUserCommunities(stdctx.Background()); err != nil {
 		log.Printf("会员-社区关联回填失败（不阻塞启动）: %v", err)

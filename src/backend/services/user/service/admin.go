@@ -207,12 +207,18 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 			return err
 		}
 
+		// 创建/复用账号后绑定会员（>0 时绑定，绑定后即履约人员）
+		if req.UserId > 0 {
+			if err := s.bindMemberTx(tx, a.ID, req.UserId); err != nil {
+				return err
+			}
+		}
 		return replaceAssignmentsTx(tx, a.ID, req.CommunityId, req.RoleIds, req.OperatorIsSuper)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return a, nil
+	return s.getAdminByID(ctx, a.ID)
 }
 
 // UpdateAdmin 更新员工（账号资料 + 指定社区的角色任职）
@@ -263,6 +269,12 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 		if err := tx.Save(a).Error; err != nil {
 			return err
 		}
+		// 绑定会员（三态：未传=不改动；0=解绑；>0=绑定/换绑）
+		if req.UserId != nil {
+			if err := s.bindMemberTx(tx, a.ID, *req.UserId); err != nil {
+				return err
+			}
+		}
 		if req.CommunityId > 0 && req.RoleIds != nil {
 			return replaceAssignmentsTx(tx, a.ID, req.CommunityId, req.RoleIds, req.OperatorIsSuper)
 		}
@@ -271,7 +283,49 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 	if err != nil {
 		return nil, err
 	}
-	return a, nil
+	return s.getAdminByID(ctx, req.Id)
+}
+
+// bindMemberTx 在给定事务内绑定/解绑员工的会员身份
+// 绑定后该会员在员工全部任职社区获得履约人员身份（随任职增减自动生效）；
+// userID = 0 表示解绑；>0 时校验会员存在且未被其他员工绑定（唯一索引兜底防并发）
+//
+// 参数：
+//   - tx: gorm 事务
+//   - adminID: 员工 ID
+//   - userID: 会员 ID（0=解绑）
+//
+// 返回：
+//   - error: 错误信息
+func (s *AdminService) bindMemberTx(tx *gorm.DB, adminID, userID int64) error {
+	if userID < 0 {
+		return fmt.Errorf("参数错误")
+	}
+	if userID == 0 {
+		// 解绑：仅清空本人的绑定，不影响其他员工
+		return tx.Model(&model.Admin{}).
+			Where("id = ? AND user_id IS NOT NULL", adminID).
+			Update("user_id", nil).Error
+	}
+	var member model.User
+	if err := tx.First(&member, userID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("会员不存在（ID %d）", userID)
+		}
+		return err
+	}
+	var cnt int64
+	if err := tx.Model(&model.Admin{}).
+		Where("user_id = ? AND id <> ?", userID, adminID).
+		Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return fmt.Errorf("该会员已绑定其他员工")
+	}
+	return tx.Model(&model.Admin{}).
+		Where("id = ?", adminID).
+		Update("user_id", userID).Error
 }
 
 // DeleteAdmin 移除员工在指定社区的任职（账号保留，不影响其在其他社区的任职）
@@ -358,6 +412,33 @@ func (s *AdminService) UpdateLoginInfo(ctx context.Context, id int64, ip string)
 			"last_login_at": time.Now().Format("2006-01-02 15:04:05"),
 			"last_login_ip": ip,
 		}).Error
+}
+
+// ListMembersByIDs 批量查询会员（员工列表展示绑定会员昵称/手机号用）
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: 会员 ID 列表
+//
+// 返回：
+//   - map[int64]*model.User: 会员 ID → 会员模型
+//   - error: 错误信息
+func (s *AdminService) ListMembersByIDs(ctx context.Context, ids []int64) (map[int64]*model.User, error) {
+	result := make(map[int64]*model.User, len(ids))
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var members []*model.User
+	if err := s.db.GetDb().WithContext(ctx).
+		Select("id, nickname, phone").
+		Where("id IN ?", ids).
+		Find(&members).Error; err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		result[m.ID] = m
+	}
+	return result, nil
 }
 
 // getAdminByID 根据 ID 查询管理员
@@ -666,6 +747,10 @@ func ToAdminInfo(a *model.Admin, communityIDs []int64, roles []*model.Role) *use
 		LastLoginAt:  ptrString(a.LastLoginAt),
 		LastLoginIp:  a.LastLoginIP,
 		IsSuper:      a.IsSuper,
+	}
+	// 绑定的会员 ID（0=未绑定；绑定后该会员在任职社区即履约人员）
+	if a.UserID != nil {
+		info.UserId = *a.UserID
 	}
 	// 旧单角色字段兼容填充：前端仅用 role_code 判定超管
 	if a.IsSuper {

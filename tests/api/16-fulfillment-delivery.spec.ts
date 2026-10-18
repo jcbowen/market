@@ -15,9 +15,10 @@ import { uniquePhone } from '../helpers/data';
 
 /**
  * 模块 16：订单配送协同
- * 覆盖：后台设置履约人员 → 买家下配送单 → 后台指派配送员 →
- *       履约工作台可见 → 开始配送 → 送达拍照 → 取消履约身份
- * 说明：履约人员与买家均走 C 端手机号直登；履约接口要求操作者为本社区履约人员
+ * 覆盖：创建员工并绑定履约会员 → 买家下配送单 → 后台指派配送员 →
+ *       履约工作台可见 → 开始配送 → 送达拍照 → 解绑履约会员
+ * 说明：履约人员 = 本社区任职且绑定会员的员工（员工编辑页配置）；
+ *       履约人员与买家均走 C 端手机号直登，履约接口要求操作者为本社区履约人员
  */
 
 interface OrderResult {
@@ -51,7 +52,11 @@ async function newClientUser(playwright: Playwright): Promise<ClientLoginInfo> {
 }
 
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
+/** 管理端语境社区 ID（与履约人员/买家同社区） */
+let adminCommunityId = 0;
 let fulfiller: ClientLoginInfo | null = null;
+/** 绑定履约会员的员工账号 ID（清理阶段解绑用） */
+let staffId = 0;
 let buyerToken = '';
 let sku: SkuRef | null = null;
 
@@ -60,9 +65,10 @@ test.beforeAll(async ({ playwright }) => {
   fulfiller = await newClientUser(playwright);
   const buyer = await newClientUser(playwright);
   buyerToken = buyer.access_token;
-  // 管理端语境必须与 C 端用户同社区，否则设置履约/指派后履约接口按"非本社区履约人员"拒绝
+  // 管理端语境必须与 C 端用户同社区，否则绑定会员/指派后履约接口按"非本社区履约人员"拒绝
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
+  adminCommunityId = admin.communityId;
   try {
     sku = await pickSku(adminApi, undefined, buyer.user.community_id);
     await ensureStock(adminApi, sku.id, 100);
@@ -79,13 +85,28 @@ test.describe.serial('配送协同全链路', () => {
   let orderId = 0;
   let fulfillOrderId = 0;
 
-  test('后台设置履约人员', async () => {
+  test('创建员工并绑定履约会员', async () => {
     test.skip(!fulfiller, '履约账号未创建');
-    const resp = await adminApi.put(`/api/v1/admin/users/${fulfiller!.user.id}/fulfiller`, {
-      data: { is_fulfiller: true },
+    // 履约人员 = 本社区任职且绑定会员的员工：取本社区内置社区管理员角色建员工，创建时绑定会员
+    const rolesResp = await adminApi.get('/api/v1/admin/roles', {
+      params: { community_id: adminCommunityId },
     });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `设置履约人员失败: ${body.message}`).toBe(0);
+    const rolesBody = (await rolesResp.json()) as ApiResponse<{ id: number; code?: string }[] | { list: { id: number; code?: string }[] }>;
+    const builtin = asList<{ id: number; code?: string }>(rolesBody.data).find((r) => r.code === 'community_admin');
+    expect(builtin, '本社区无内置社区管理员角色').toBeTruthy();
+    const resp = await adminApi.post('/api/v1/admin/admins', {
+      data: {
+        username: `auto_ff_${uniquePhone()}`,
+        password: 'Ff123456',
+        real_name: 'AUTO-TEST 履约员工',
+        role_ids: [builtin!.id],
+        user_id: fulfiller!.user.id,
+      },
+    });
+    const body = (await resp.json()) as ApiResponse<{ id?: number }>;
+    expect(body.code, `创建履约员工失败: ${body.message}`).toBe(0);
+    staffId = body.data?.id ?? 0;
+    expect(staffId).toBeGreaterThan(0);
   });
 
   test('履约人员状态查询为 true', async ({ playwright }) => {
@@ -235,12 +256,12 @@ test.describe.serial('配送协同全链路', () => {
     }
   });
 
-  test('清理：取消履约身份', async () => {
-    if (!fulfiller) test.skip(true, '履约账号未创建');
-    const resp = await adminApi.put(`/api/v1/admin/users/${fulfiller!.user.id}/fulfiller`, {
-      data: { is_fulfiller: false },
+  test('清理：解绑履约会员', async () => {
+    if (!staffId) test.skip(true, '履约员工未创建');
+    const resp = await adminApi.put(`/api/v1/admin/admins/${staffId}`, {
+      data: { user_id: 0 },
     });
     const body = (await resp.json()) as ApiResponse;
-    expect(body.code).toBe(0);
+    expect(body.code, `解绑履约会员失败: ${body.message}`).toBe(0);
   });
 });

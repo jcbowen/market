@@ -42,6 +42,8 @@ export function createAdmin(data: {
   real_name?: string
   phone?: string
   role_ids: number[]
+  /** 创建时绑定的会员 ID（0=不绑定；绑定后该会员在任职社区即履约人员） */
+  user_id?: number
 }) {
   return request<ApiResult<AdminInfo>>({
     url: '/api/v1/admin/admins',
@@ -53,7 +55,7 @@ export function createAdmin(data: {
 /**
  * 更新员工（资料 + 当前社区角色任职）
  * @param id 员工 ID
- * @param data 员工数据
+ * @param data 员工数据（user_id 三态：未传=不改动；0=解绑；>0=绑定/换绑）
  * @returns 更新结果
  */
 export function updateAdmin(
@@ -63,6 +65,8 @@ export function updateAdmin(
     phone?: string
     status?: number
     role_ids?: number[]
+    /** 绑定的会员 ID（三态：未传=不改动；0=解绑；>0=绑定/换绑） */
+    user_id?: number | null
   },
 ) {
   return request<ApiResult<AdminInfo>>({

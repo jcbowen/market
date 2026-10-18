@@ -341,6 +341,8 @@ type CreateAdminReq struct {
 	RealName string  `json:"real_name"`
 	Phone    string  `json:"phone"`
 	RoleIDs  []int64 `json:"role_ids" binding:"required,min=1"`
+	// 创建时绑定的会员 ID（0=不绑定；绑定后该会员在任职社区即履约人员）
+	UserID int64 `json:"user_id"`
 }
 
 // CreateAdmin 创建员工（在当前社区任职）
@@ -361,6 +363,7 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		Phone:           req.Phone,
 		CommunityId:     h.getAdminCommunityID(c),
 		RoleIds:         req.RoleIDs,
+		UserId:          req.UserID,
 		OperatorIsSuper: uc.Role == "super_admin",
 	})
 	if err != nil {
@@ -376,6 +379,8 @@ type UpdateAdminReq struct {
 	Phone    string  `json:"phone"`
 	Status   int32   `json:"status"`
 	RoleIDs  []int64 `json:"role_ids"`
+	// 绑定的会员 ID（三态：未传=不改动；0=解绑；>0=绑定/换绑）
+	UserID *int64 `json:"user_id"`
 }
 
 // UpdateAdmin 更新员工
@@ -402,10 +407,12 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 		return
 	}
 
-	// 普通管理员改自己资料时不允许动角色任职
+	// 普通管理员改自己资料时不允许动角色任职与会员绑定
 	var roleIDs []int64
+	var userID *int64
 	if isSuper {
 		roleIDs = req.RoleIDs
+		userID = req.UserID
 	}
 
 	admin, err := h.userClient.UpdateAdmin(c.Request.Context(), &user.UpdateAdminReq{
@@ -415,6 +422,7 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 		Status:          req.Status,
 		CommunityId:     h.getAdminCommunityID(c),
 		RoleIds:         roleIDs,
+		UserId:          userID,
 		OperatorIsSuper: isSuper,
 	})
 	if err != nil {
@@ -1740,47 +1748,8 @@ func (h *AdminHandler) AdminVerifyPickup(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// --- 履约工作台（B）：履约人员配置 + 订单指派 ---
-
-// SetFulfillerReq 设置履约人员请求
-type SetFulfillerReq struct {
-	// true=设为履约人员（送货上门 + 自提核销） false=取消
-	IsFulfiller bool `json:"is_fulfiller"`
-}
-
-// SetFulfiller 设置/取消会员在本社区的履约人员标记
-//
-// 接口: PUT /api/v1/admin/users/:id/fulfiller（权限 user:update）
-//
-// 参数：
-//   - c: gin 上下文
-func (h *AdminHandler) SetFulfiller(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || id <= 0 {
-		response.Error(c, errcode.ParamError)
-		return
-	}
-	var req SetFulfillerReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, errcode.ParamError)
-		return
-	}
-	uc := appcontext.GetUserContext(c)
-	communityID := h.getAdminCommunityID(c)
-	if communityID <= 0 {
-		response.Error(c, errcode.ParamError, "缺少社区语境")
-		return
-	}
-	if _, err := h.userClient.SetFulfiller(c.Request.Context(), &user.SetFulfillerReq{
-		UserId:      id,
-		CommunityId: communityID,
-		IsFulfiller: req.IsFulfiller,
-	}); err != nil {
-		response.GRPCError(c, err)
-		return
-	}
-	response.Success(c, gin.H{"success": true, "operator_id": uc.UserID})
-}
+// --- 履约工作台（B）：订单指派 ---
+// 履约人员 = 本社区任职且绑定会员的员工，配置入口在员工编辑页（绑定 admin_users.user_id）
 
 // ListFulfillers 列出本社区履约人员（订单指派弹窗数据源）
 //
@@ -3546,7 +3515,6 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"community_id":   u.CommunityId,
 			"community_name": u.CommunityName,
 			"status":         u.Status,
-			"is_fulfiller":   u.IsFulfiller,
 			"last_login_at":  u.LastLoginAt,
 			"created_at":     u.CreatedAt,
 		})
@@ -4241,6 +4209,11 @@ func (h *AdminHandler) toAdminVO(admin *user.AdminInfo) gin.H {
 		"status":        admin.Status,
 		"last_login_at": admin.LastLoginAt,
 		"last_login_ip": admin.LastLoginIp,
+		// 绑定的会员 ID（0=未绑定；绑定后该会员在任职社区即履约人员）
+		"user_id": admin.UserId,
+		// 绑定会员的昵称/手机号（列表展示与编辑回显用；未绑定或会员不存在时为空）
+		"user_nickname": admin.UserNickname,
+		"user_phone":    admin.UserPhone,
 	}
 }
 

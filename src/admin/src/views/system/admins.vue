@@ -26,6 +26,20 @@
       <n-input v-model:value="form.real_name" placeholder="真实姓名" />
       <n-input v-model:value="form.phone" placeholder="手机号" />
       <n-select v-model:value="form.role_ids" multiple :options="roleOptions" placeholder="本社区角色（可多选）" />
+      <n-select
+        v-model:value="form.user_id"
+        :options="memberOptions"
+        :loading="memberLoading"
+        filterable
+        remote
+        clearable
+        placeholder="关联会员（选填；绑定后该会员在任职社区即履约人员）"
+        @search="searchMembers"
+        @clear="searchMembers('')"
+      />
+      <n-alert v-if="isEdit" type="info" :show-icon="false">
+        关联会员在员工全部任职社区获得履约人员身份（送货上门 + 自提核销），随任职变动自动增减。
+      </n-alert>
       <n-select v-if="isEdit" v-model:value="form.status" :options="statusOptions" placeholder="账号状态" />
       <n-alert v-if="assignBuiltinWarn" type="warning" :show-icon="false">
         该员工担任「社区管理员」，此角色不在上方列表中：如需更换社区管理员，请超级管理员在「系统管理 → 社区管理 → 编辑社区」中操作
@@ -43,6 +57,7 @@ import { NButton, NSpace, NTag } from 'naive-ui'
 import { useMessage, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getAdminList, createAdmin, updateAdmin, deleteAdmin, getRoleList } from '@/api/admin'
+import { getUserList } from '@/api/user'
 import { useAuthStore } from '@/stores/auth'
 import type { AdminInfo, Role } from '@/api/types'
 
@@ -50,7 +65,8 @@ import type { AdminInfo, Role } from '@/api/types'
  * 员工管理页面（多社区任职模型）
  * - 列表为当前社区的任职员工（随顶栏社区切换而变化）
  * - 添加员工：username 已存在则复用账号追加任职，否则新建账号
- * - 编辑：资料 + 本社区角色任职（多角色，全量覆盖）
+ * - 编辑：资料 + 本社区角色任职（多角色，全量覆盖）+ 关联会员绑定
+ * - 关联会员：绑定后该会员在员工全部任职社区即履约人员（B 履约工作台）
  * - 移除：仅删除本社区任职，账号与其他社区任职保留
  */
 const message = useMessage()
@@ -73,6 +89,8 @@ const form = ref<{
   phone: string
   status: number
   role_ids: number[]
+  /** 关联会员 ID（null=未选择） */
+  user_id: number | null
 }>({
   username: '',
   password: '',
@@ -80,7 +98,13 @@ const form = ref<{
   phone: '',
   status: 1,
   role_ids: [],
+  user_id: null,
 })
+/** 编辑打开时的绑定值（未变化则不提交 user_id，保持后端"未传=不改动"语义） */
+const initialUserId = ref<number | null>(null)
+/** 关联会员远程搜索选项 */
+const memberOptions = ref<{ label: string; value: number }[]>([])
+const memberLoading = ref(false)
 
 const statusOptions = [
   { label: '正常', value: 1 },
@@ -118,6 +142,20 @@ const columns = computed<DataTableColumns<AdminInfo>>(() => [
       }),
   },
   {
+    title: '关联会员',
+    key: 'user_id',
+    render: (row) =>
+      h(NSpace, { size: 'small', align: 'center' }, {
+        default: () =>
+          row.user_id
+            ? [
+                h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '履约' }),
+                h('span', null, row.user_phone ? `${row.user_nickname || '未设置昵称'}（${row.user_phone}）` : row.user_nickname),
+              ]
+            : h('span', { style: 'color: #999' }, '-'),
+      }),
+  },
+  {
     title: '状态',
     key: 'status',
     render(row) {
@@ -146,6 +184,25 @@ async function loadRoles() {
   }
 }
 
+/**
+ * 远程搜索会员（关联会员选择器数据源）
+ * @param query 关键词（昵称/手机号），空串时加载默认列表
+ */
+async function searchMembers(query: string) {
+  memberLoading.value = true
+  try {
+    const res = await getUserList({ page: 1, page_size: 20, keyword: query || undefined })
+    if (res.data.code === 0) {
+      memberOptions.value = (res.data.data.list ?? []).map((u) => ({
+        label: u.phone ? `${u.nickname || '未设置昵称'}（${u.phone}）` : u.nickname || `会员 #${u.id}`,
+        value: u.id,
+      }))
+    }
+  } finally {
+    memberLoading.value = false
+  }
+}
+
 async function loadData() {
   loading.value = true
   try {
@@ -162,7 +219,10 @@ async function loadData() {
 
 function openCreate() {
   isEdit.value = false
-  form.value = { username: '', password: '', real_name: '', phone: '', status: 1, role_ids: [] }
+  form.value = { username: '', password: '', real_name: '', phone: '', status: 1, role_ids: [], user_id: null }
+  initialUserId.value = null
+  memberOptions.value = []
+  searchMembers('')
   showModal.value = true
 }
 
@@ -176,6 +236,18 @@ function edit(row: AdminInfo) {
     phone: row.phone ?? '',
     status: row.status,
     role_ids: (row.roles ?? []).map((r) => r.id),
+    user_id: row.user_id ?? null,
+  }
+  initialUserId.value = row.user_id ?? null
+  // 编辑回显：用列表返回的绑定会员昵称/手机号预置选项
+  memberOptions.value = []
+  if (row.user_id) {
+    memberOptions.value = [
+      {
+        label: row.user_phone ? `${row.user_nickname || '未设置昵称'}（${row.user_phone}）` : row.user_nickname || `会员 #${row.user_id}`,
+        value: row.user_id,
+      },
+    ]
   }
   showModal.value = true
 }
@@ -191,12 +263,24 @@ async function submit() {
   }
 
   if (isEdit.value && form.value.id) {
-    const res = await updateAdmin(form.value.id, {
+    // 绑定值有变化才提交（未传=后端不改动；0=解绑；>0=绑定/换绑）
+    const payload: {
+      real_name: string
+      phone: string
+      status: number
+      role_ids: number[]
+      user_id?: number
+    } = {
       real_name: form.value.real_name,
       phone: form.value.phone,
       status: form.value.status,
       role_ids: form.value.role_ids,
-    })
+    }
+    if (form.value.user_id !== initialUserId.value) {
+      // 三态语义：null（清空选择）→ 0 提交表示解绑；>0 表示绑定/换绑；不提交表示不改动
+      payload.user_id = form.value.user_id ?? 0
+    }
+    const res = await updateAdmin(form.value.id, payload)
     if (res.data.code === 0) {
       message.success('保存成功')
       showModal.value = false
@@ -211,6 +295,7 @@ async function submit() {
     real_name: form.value.real_name,
     phone: form.value.phone,
     role_ids: form.value.role_ids,
+    user_id: form.value.user_id ?? 0,
   })
   if (res.data.code === 0) {
     message.success('保存成功')

@@ -124,15 +124,7 @@ func (s *server) MarkUserCommunity(ctx stdctx.Context, req *user.MarkUserCommuni
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
-// SetFulfiller 设置/取消履约人员标记（B 履约工作台）
-func (s *server) SetFulfiller(ctx stdctx.Context, req *user.SetFulfillerReq) (*common.CommonResponse, error) {
-	if err := s.userService.SetFulfiller(ctx, req); err != nil {
-		return nil, bizerr.ToStatus(err)
-	}
-	return &common.CommonResponse{Code: 0, Message: "success"}, nil
-}
-
-// ListFulfillers 列出某社区全部履约人员
+// ListFulfillers 列出某社区全部履约人员（本社区任职且绑定会员的员工）
 func (s *server) ListFulfillers(ctx stdctx.Context, req *user.ListFulfillersReq) (*user.ListFulfillersResp, error) {
 	list, err := s.userService.ListFulfillers(ctx, req.CommunityId)
 	if err != nil {
@@ -374,6 +366,18 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 		return nil, bizerr.ToStatus(err)
 	}
 
+	// 批量加载绑定会员（员工列表「关联会员」列展示 + 编辑回显用）
+	memberIDs := make([]int64, 0, len(list))
+	for _, a := range list {
+		if a.UserID != nil {
+			memberIDs = append(memberIDs, *a.UserID)
+		}
+	}
+	memberByID, err := s.adminService.ListMembersByIDs(ctx, memberIDs)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+
 	resp := &user.ListAdminsResp{
 		List: make([]*user.AdminInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -390,7 +394,12 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 			}
 		}
 		communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, a.ID)
-		resp.List = append(resp.List, service.ToAdminInfo(a, communityIDs, roles))
+		info := service.ToAdminInfo(a, communityIDs, roles)
+		if m := memberByID[info.UserId]; m != nil {
+			info.UserNickname = m.Nickname
+			info.UserPhone = m.Phone
+		}
+		resp.List = append(resp.List, info)
 	}
 	return resp, nil
 }

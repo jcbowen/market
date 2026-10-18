@@ -54,7 +54,7 @@ func (s *OrderService) AssignDelivery(ctx context.Context, req *order.AssignDeli
 			return err
 		}
 		if check == nil || !check.IsFulfiller {
-			return bizerr.New(codes.FailedPrecondition, "该用户不是本社区履约人员，请先在会员管理中设置")
+			return bizerr.New(codes.FailedPrecondition, "该用户不是本社区履约人员，请先在员工管理中为其绑定会员")
 		}
 	}
 

@@ -66,8 +66,7 @@ service UserService {
   rpc CreateMember(CreateMemberReq) returns (CreateMemberResp);
 
   // --- 履约人员（B 社区履约工作台） ---
-  // 设置/取消某社区履约人员标记（后台会员管理操作）
-  rpc SetFulfiller(SetFulfillerReq) returns (common.CommonResponse);
+  // 履约人员 = 本社区任职且绑定了会员的员工（admin_users.user_id），配置入口在员工编辑页
   // 列出某社区全部履约人员（后台订单指派弹窗数据源）
   rpc ListFulfillers(ListFulfillersReq) returns (ListFulfillersResp);
   // 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
@@ -124,8 +123,6 @@ message UserInfo {
   string created_at = 12;
   // 当前过滤语境下的社区名称（ListUsers 按社区过滤时由服务端填充）
   string community_name = 13;
-  // 是否当前语境社区的履约人员（B 履约工作台，ListUsers 按社区过滤时填充）
-  bool is_fulfiller = 14;
 }
 
 message UpdateUserProfileReq {
@@ -369,6 +366,11 @@ message AdminInfo {
   bool is_super = 14;
   // 在查询语境社区内担任的角色列表（ListAdmins 按社区语境填充）
   repeated RoleInfo roles = 15;
+  // 绑定的会员 ID（0=未绑定；绑定后该会员在任职社区即履约人员）
+  int64 user_id = 16;
+  // 绑定会员的昵称/手机号（列表展示与编辑回显用，ListAdmins 批量填充）
+  string user_nickname = 17;
+  string user_phone = 18;
 }
 
 message ListAdminsReq {
@@ -402,6 +404,8 @@ message CreateAdminReq {
   bool account_only = 10;
   // 指定为目标社区的内置社区管理员（服务端自动解析/创建内置角色，忽略 role_ids）
   bool assign_community_admin = 11;
+  // 创建时绑定的会员 ID（0=不绑定；绑定后该会员在任职社区即履约人员）
+  int64 user_id = 12;
   // 操作者是否超管（网关注入；决定能否分配内置社区管理员角色）
   bool operator_is_super = 9;
 }
@@ -423,6 +427,8 @@ message UpdateAdminReq {
   bool operator_is_super = 9;
   // 仅更新状态（超管账号管理：停用/启用，不触碰姓名/手机号/角色任职）
   bool update_status_only = 10;
+  // 绑定的会员 ID（三态：未传=不改动；0=解绑；>0=绑定/换绑该会员）
+  optional int64 user_id = 11;
 }
 
 message DeleteAdminReq {
@@ -643,14 +649,6 @@ message CreateMemberResp {
 }
 
 // --- 履约人员（B 社区履约工作台） ---
-
-// SetFulfillerReq 设置/取消履约人员请求
-message SetFulfillerReq {
-  int64 user_id = 1;
-  int64 community_id = 2;
-  // true=设为履约人员（送货上门 + 自提核销） false=取消
-  bool is_fulfiller = 3;
-}
 
 // FulfillerInfo 履约人员信息（指派弹窗展示）
 message FulfillerInfo {
