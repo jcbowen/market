@@ -125,7 +125,7 @@ func isChannelUsable(channel string, cfg *payment.PayConfig) bool {
 	case "wechat":
 		return cfg.WechatPaymentReady
 	case "alipay":
-		return false
+		return cfg.AlipayReady
 	case "cash":
 		return true
 	default:
@@ -177,6 +177,28 @@ func wechatPayReadyOnClient(clientCode string, clientChannels map[string]*user.C
 	}
 }
 
+// alipayPayReadyOnClient 判断支付宝支付在指定客户端渠道上的能力是否就绪
+// h5 走手机网站支付（跳转支付宝收银台）恒就绪；
+// mp（微信小程序）/gzh（公众号网页）处于微信生态内无法唤起支付宝；
+// app 需 App 支付 SDK（未接入），均视为未就绪
+// 参数：
+//   - clientCode: 客户端渠道 code
+//   - clientChannels: 客户端渠道索引，nil 时按存量口径放行
+//
+// 返回值：
+//   - bool: 是否就绪
+func alipayPayReadyOnClient(clientCode string, clientChannels map[string]*user.ClientChannelInfo) bool {
+	switch clientCode {
+	case channel.H5:
+		return true
+	case channel.MP, channel.GZH, channel.APP:
+		return false
+	default:
+		// 未知渠道保持存量行为（未带渠道头的旧客户端）
+		return true
+	}
+}
+
 // isChannelUsableOnClient 判断支付渠道在指定客户端渠道上是否可用
 // 支付配置的适用渠道勾选（空=全部）与客户端渠道能力就绪取交集
 // 参数：
@@ -201,7 +223,7 @@ func isChannelUsableOnClient(payChannel, clientCode string, cfg *payment.PayConf
 		if len(cfg.AlipayClientChannels) > 0 && !containsString(cfg.AlipayClientChannels, clientCode) {
 			return false
 		}
-		return false
+		return alipayPayReadyOnClient(clientCode, clientChannels)
 	default:
 		// cash 等无需第三方配置的渠道全客户端可用
 		return true
@@ -503,4 +525,31 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 		return
 	}
 	c.String(http.StatusOK, "<xml><return_code><![CDATA[SUCCESS]]></return_code></xml>")
+}
+
+// AlipayCallback 支付宝支付回调
+// 解析 POST form 参数后交由 payment 服务做 RSA2 验签与状态流转，
+// 按支付宝规范返回纯文本 success/failure：仅业务受理成功返回 success，
+// 其余（验签失败/参数缺失/DB 异常）返回 failure 触发支付宝按通知策略重发
+// 参数：
+//   - c: gin 上下文
+func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
+	if err := c.Request.ParseForm(); err != nil {
+		c.String(http.StatusOK, "failure")
+		return
+	}
+	params := make(map[string]string, len(c.Request.PostForm))
+	for k, v := range c.Request.PostForm {
+		if len(v) > 0 {
+			params[k] = v[0]
+		}
+	}
+
+	_, err := h.paymentClient.HandleAlipayCallback(c.Request.Context(), &payment.AlipayCallbackReq{Params: params})
+	if err != nil {
+		log.Printf("支付宝回调处理失败: %v", err)
+		c.String(http.StatusOK, "failure")
+		return
+	}
+	c.String(http.StatusOK, "success")
 }

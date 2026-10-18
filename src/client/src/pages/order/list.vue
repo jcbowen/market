@@ -262,7 +262,7 @@ async function onPay(order: Order) {
     }
     if (!channel) return
     const outcome = await payOrder(order.id, channel.channel)
-    notifyPayOutcome(outcome)
+    notifyPayOutcome(outcome, channel.channel)
     resetAndReload()
   } catch {
     // request 已统一提示错误

@@ -60,6 +60,32 @@ func TestWechatPayReadyOnClient(t *testing.T) {
 	}
 }
 
+// TestAlipayPayReadyOnClient 支付宝支付按客户端渠道的能力就绪判定
+// 覆盖：h5 手机网站支付恒就绪、微信生态渠道拒绝、App 链路未接入、未知渠道存量口径放行
+func TestAlipayPayReadyOnClient(t *testing.T) {
+	mpReady := &user.ClientChannelInfo{Code: channel.MP, Enabled: true, Configured: true}
+
+	cases := []struct {
+		name     string
+		code     string
+		channels map[string]*user.ClientChannelInfo
+		want     bool
+	}{
+		{"h5 恒就绪", channel.H5, nil, true},
+		{"微信小程序内无法唤起", channel.MP, map[string]*user.ClientChannelInfo{channel.MP: mpReady}, false},
+		{"公众号链路无法唤起", channel.GZH, map[string]*user.ClientChannelInfo{channel.GZH: mpReady}, false},
+		{"App 支付未接入", channel.APP, nil, false},
+		{"未知渠道存量口径放行", "wx", nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := alipayPayReadyOnClient(tc.code, tc.channels); got != tc.want {
+				t.Fatalf("alipayPayReadyOnClient(%q) = %v, want %v", tc.code, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestIsChannelUsableOnClient 支付渠道在客户端渠道上的交集过滤
 // 覆盖：未带渠道头不过滤、勾选命中/未命中、空勾选=全渠道兼容、cash 恒可用、非法渠道头
 func TestIsChannelUsableOnClient(t *testing.T) {
@@ -82,6 +108,8 @@ func TestIsChannelUsableOnClient(t *testing.T) {
 		{"微信勾选命中 mp", "wechat", channel.MP, true},
 		{"微信勾选未命中 h5", "wechat", channel.H5, false},
 		{"现金渠道全客户端可用", "cash", channel.APP, true},
+		{"支付宝勾选命中 h5 且能力就绪", "alipay", channel.H5, true},
+		{"支付宝勾选命中但微信生态拒绝", "alipay", channel.MP, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,8 +124,7 @@ func TestIsChannelUsableOnClient(t *testing.T) {
 	if !isChannelUsableOnClient("wechat", channel.H5, emptyCfg, channels) {
 		t.Fatalf("空勾选时应全渠道放行: wechat@h5 want true")
 	}
-	// alipay 渠道整体未开放，即使勾选命中也恒为不可用
-	if isChannelUsableOnClient("alipay", channel.H5, cfg, channels) {
-		t.Fatalf("alipay 渠道未开放应恒为 false")
+	if !isChannelUsableOnClient("alipay", channel.H5, emptyCfg, channels) {
+		t.Fatalf("空勾选时应全渠道放行: alipay@h5 want true")
 	}
 }

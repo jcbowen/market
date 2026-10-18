@@ -273,6 +273,19 @@ func (s *server) UpdateProductStatus(ctx stdctx.Context, req *product.UpdateProd
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// BatchUpdateProductStatus 批量上下架（管理端列表多选操作）
+func (s *server) BatchUpdateProductStatus(ctx stdctx.Context, req *product.BatchUpdateProductStatusReq) (*common.CommonResponse, error) {
+	if err := s.productService.BatchUpdateProductStatus(ctx, req.GetIds(), req.GetStatus(), req.GetCommunityId()); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// GetProductStatusStats 商品状态统计（口径与列表筛选一致，供管理端 Tab 计数）
+func (s *server) GetProductStatusStats(ctx stdctx.Context, req *product.GetProductStatusStatsReq) (*product.GetProductStatusStatsResp, error) {
+	return s.productService.GetProductStatusStats(ctx, req)
+}
+
 // UpdateProductName 更新商品名称（列表页行内改名轻量接口）
 func (s *server) UpdateProductName(ctx stdctx.Context, req *product.UpdateProductNameReq) (*common.CommonResponse, error) {
 	if err := s.productService.UpdateProductName(ctx, req.GetId(), req.GetName(), req.GetCommunityId()); err != nil {

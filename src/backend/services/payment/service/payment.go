@@ -24,6 +24,8 @@ import (
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 	wegopayment "github.com/jcbowen/wego/payment"
+
+	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
 )
 
 // PaymentService 支付业务服务
@@ -37,6 +39,10 @@ type PaymentService struct {
 	payCfg *model.PayConfig
 
 	wechatPayClient *wegopayment.Client
+
+	// alipayExecutor 支付宝通用执行器（V2 pageExecute + V3 API 共享），
+	// 随支付配置热更新整体重建；nil 表示未配置或配置不完整
+	alipayExecutor *alipaysdk.GenericExecuteApi
 }
 
 // NewPaymentService 创建支付业务服务
@@ -233,7 +239,7 @@ func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.
 }
 
 // HandleAlipayCallback 处理支付宝支付回调
-// 解析回调参数，更新支付单状态，并同步订单状态为已支付
+// RSA2 验签（支付宝公钥）后解析回调参数，更新支付单状态，并同步订单状态为已支付
 // 参数：
 //   - ctx: 上下文
 //   - req: 支付宝回调请求
@@ -241,7 +247,7 @@ func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) HandleAlipayCallback(ctx context.Context, req *payment.AlipayCallbackReq) error {
-	params, err := parseAlipayCallback(req.Params)
+	params, err := s.parseAlipayCallback(req.Params)
 	if err != nil {
 		return err
 	}

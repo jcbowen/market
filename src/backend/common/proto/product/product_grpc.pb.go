@@ -33,6 +33,8 @@ const (
 	ProductService_UpdateProduct_FullMethodName                 = "/product.ProductService/UpdateProduct"
 	ProductService_DeleteProduct_FullMethodName                 = "/product.ProductService/DeleteProduct"
 	ProductService_UpdateProductStatus_FullMethodName           = "/product.ProductService/UpdateProductStatus"
+	ProductService_BatchUpdateProductStatus_FullMethodName      = "/product.ProductService/BatchUpdateProductStatus"
+	ProductService_GetProductStatusStats_FullMethodName         = "/product.ProductService/GetProductStatusStats"
 	ProductService_UpdateProductName_FullMethodName             = "/product.ProductService/UpdateProductName"
 	ProductService_ListSkus_FullMethodName                      = "/product.ProductService/ListSkus"
 	ProductService_SearchSkus_FullMethodName                    = "/product.ProductService/SearchSkus"
@@ -132,6 +134,10 @@ type ProductServiceClient interface {
 	UpdateProduct(ctx context.Context, in *UpdateProductReq, opts ...grpc.CallOption) (*ProductDetail, error)
 	DeleteProduct(ctx context.Context, in *DeleteProductReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	UpdateProductStatus(ctx context.Context, in *UpdateProductStatusReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// BatchUpdateProductStatus 批量上下架（管理端列表多选操作，不触碰已删除商品）
+	BatchUpdateProductStatus(ctx context.Context, in *BatchUpdateProductStatusReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// GetProductStatusStats 商品状态统计（口径与列表筛选条件一致，供 Tab 计数展示）
+	GetProductStatusStats(ctx context.Context, in *GetProductStatusStatsReq, opts ...grpc.CallOption) (*GetProductStatusStatsResp, error)
 	// UpdateProductName 列表页行内改名轻量接口（仅更新 name，避免全量提交覆盖规格/SKU）
 	UpdateProductName(ctx context.Context, in *UpdateProductNameReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// SKU
@@ -368,6 +374,26 @@ func (c *productServiceClient) UpdateProductStatus(ctx context.Context, in *Upda
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.CommonResponse)
 	err := c.cc.Invoke(ctx, ProductService_UpdateProductStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) BatchUpdateProductStatus(ctx context.Context, in *BatchUpdateProductStatusReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, ProductService_BatchUpdateProductStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) GetProductStatusStats(ctx context.Context, in *GetProductStatusStatsReq, opts ...grpc.CallOption) (*GetProductStatusStatsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProductStatusStatsResp)
+	err := c.cc.Invoke(ctx, ProductService_GetProductStatusStats_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1173,6 +1199,10 @@ type ProductServiceServer interface {
 	UpdateProduct(context.Context, *UpdateProductReq) (*ProductDetail, error)
 	DeleteProduct(context.Context, *DeleteProductReq) (*common.CommonResponse, error)
 	UpdateProductStatus(context.Context, *UpdateProductStatusReq) (*common.CommonResponse, error)
+	// BatchUpdateProductStatus 批量上下架（管理端列表多选操作，不触碰已删除商品）
+	BatchUpdateProductStatus(context.Context, *BatchUpdateProductStatusReq) (*common.CommonResponse, error)
+	// GetProductStatusStats 商品状态统计（口径与列表筛选条件一致，供 Tab 计数展示）
+	GetProductStatusStats(context.Context, *GetProductStatusStatsReq) (*GetProductStatusStatsResp, error)
 	// UpdateProductName 列表页行内改名轻量接口（仅更新 name，避免全量提交覆盖规格/SKU）
 	UpdateProductName(context.Context, *UpdateProductNameReq) (*common.CommonResponse, error)
 	// SKU
@@ -1323,6 +1353,12 @@ func (UnimplementedProductServiceServer) DeleteProduct(context.Context, *DeleteP
 }
 func (UnimplementedProductServiceServer) UpdateProductStatus(context.Context, *UpdateProductStatusReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateProductStatus not implemented")
+}
+func (UnimplementedProductServiceServer) BatchUpdateProductStatus(context.Context, *BatchUpdateProductStatusReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BatchUpdateProductStatus not implemented")
+}
+func (UnimplementedProductServiceServer) GetProductStatusStats(context.Context, *GetProductStatusStatsReq) (*GetProductStatusStatsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProductStatusStats not implemented")
 }
 func (UnimplementedProductServiceServer) UpdateProductName(context.Context, *UpdateProductNameReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateProductName not implemented")
@@ -1809,6 +1845,42 @@ func _ProductService_UpdateProductStatus_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ProductServiceServer).UpdateProductStatus(ctx, req.(*UpdateProductStatusReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_BatchUpdateProductStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchUpdateProductStatusReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).BatchUpdateProductStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_BatchUpdateProductStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).BatchUpdateProductStatus(ctx, req.(*BatchUpdateProductStatusReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_GetProductStatusStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProductStatusStatsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).GetProductStatusStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_GetProductStatusStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).GetProductStatusStats(ctx, req.(*GetProductStatusStatsReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3275,6 +3347,14 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateProductStatus",
 			Handler:    _ProductService_UpdateProductStatus_Handler,
+		},
+		{
+			MethodName: "BatchUpdateProductStatus",
+			Handler:    _ProductService_BatchUpdateProductStatus_Handler,
+		},
+		{
+			MethodName: "GetProductStatusStats",
+			Handler:    _ProductService_GetProductStatusStats_Handler,
 		},
 		{
 			MethodName: "UpdateProductName",

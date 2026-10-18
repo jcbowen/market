@@ -1408,11 +1408,17 @@ func (h *AdminHandler) ListAdminProducts(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 	categoryID, _ := strconv.ParseInt(c.DefaultQuery("category_id", "0"), 10, 64)
 	keyword := c.Query("keyword")
+	// 商品状态精确过滤（选品/收银台传 status=1 只取上架商品）
+	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
+	// 展示状态过滤（Tab）：0 不过滤，1=在售中 2=已售罄 3=仓库中
+	statusFilter, _ := strconv.Atoi(c.DefaultQuery("status_filter", "0"))
 
 	resp, err := h.productClient.ListProducts(c.Request.Context(), &product.ListProductsReq{
-		CommunityId: h.getAdminCommunityID(c),
-		CategoryId:  categoryID,
-		Keyword:     keyword,
+		CommunityId:  h.getAdminCommunityID(c),
+		CategoryId:   categoryID,
+		Keyword:      keyword,
+		Status:       int32(status),
+		StatusFilter: int32(statusFilter),
 		Pagination: &common.Pagination{
 			Page:     int32(page),
 			PageSize: int32(pageSize),
@@ -1647,6 +1653,55 @@ func (h *AdminHandler) DeleteProduct(c *gin.Context) {
 // 指针 required 仅校验字段已提供，0/1 均有效
 type UpdateProductStatusReq struct {
 	Status *int32 `json:"status" binding:"required"`
+}
+
+// BatchUpdateProductStatusReq 批量上下架请求体
+type BatchUpdateProductStatusReq struct {
+	IDs    []int64 `json:"ids" binding:"required,min=1"`
+	Status *int32  `json:"status" binding:"required"`
+}
+
+// BatchUpdateProductStatus 批量上下架商品
+// 单条 UPDATE 完成，不触碰已删除商品
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) BatchUpdateProductStatus(c *gin.Context) {
+	var req BatchUpdateProductStatusReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	_, err := h.productClient.BatchUpdateProductStatus(c.Request.Context(), &product.BatchUpdateProductStatusReq{
+		Ids:         req.IDs,
+		Status:      *req.Status,
+		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, nil)
+}
+
+// GetProductStatusStats 商品状态统计（口径与列表筛选条件一致，供 Tab 计数展示）
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GetProductStatusStats(c *gin.Context) {
+	categoryID, _ := strconv.ParseInt(c.DefaultQuery("category_id", "0"), 10, 64)
+
+	resp, err := h.productClient.GetProductStatusStats(c.Request.Context(), &product.GetProductStatusStatsReq{
+		CommunityId: h.getAdminCommunityID(c),
+		CategoryId:  categoryID,
+		Keyword:     c.Query("keyword"),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
 }
 
 // UpdateProductStatus 更新商品状态
@@ -4397,14 +4452,6 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 		return
 	}
 
-	// 支付宝保持关闭，即使前端传入也过滤掉
-	var filtered []string
-	for _, ch := range req.EnabledChannels {
-		if ch != "alipay" {
-			filtered = append(filtered, ch)
-		}
-	}
-
 	// 微信 AppID 单一来源为渠道管理 mp 渠道：保存时强制以渠道实时值覆盖（未配置则清空），
 	// 前端不再提供 AppID/AppSecret 输入入口；AppSecret 为支付链路无关的历史字段，空值透传保留原值
 	wechatAppID := ""
@@ -4413,7 +4460,7 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 	}
 
 	_, err := h.paymentClient.SavePayConfig(c.Request.Context(), &payment.PayConfig{
-		EnabledChannels:    filtered,
+		EnabledChannels:    req.EnabledChannels,
 		WechatAppId:        wechatAppID,
 		WechatAppSecret:    req.Wechat.AppSecret,
 		WechatMchId:        req.Wechat.MchID,

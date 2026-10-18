@@ -1,7 +1,7 @@
 <template>
   <n-card title="支付配置">
     <n-spin :show="paymentLoading">
-      <!-- 渠道卡片：启用的在前按展示顺序排列，移动后卡片顺序即时重排；支付宝暂未开放，显示禁用态 -->
+      <!-- 渠道卡片：启用的在前按展示顺序排列，移动后卡片顺序即时重排 -->
       <div class="channel-cards">
         <div
           v-for="ch in sortedCards"
@@ -16,12 +16,11 @@
           <div class="card-status">
             <n-tag v-if="!ch.available" size="small" :bordered="false">暂未开放</n-tag>
             <span v-else-if="ch.value === 'cash'" class="status-text ok">无需配置</span>
-            <span
-              v-else-if="ch.value === 'wechat'"
-              class="status-text"
-              :class="paymentForm.wechat_payment_ready ? 'ok' : 'warn'"
-            >
+            <span v-else-if="ch.value === 'wechat'" class="status-text" :class="paymentForm.wechat_payment_ready ? 'ok' : 'warn'">
               {{ paymentForm.wechat_payment_ready ? '已配置' : '未配置' }}
+            </span>
+            <span v-else-if="ch.value === 'alipay'" class="status-text" :class="paymentForm.alipay_ready ? 'ok' : 'warn'">
+              {{ paymentForm.alipay_ready ? '已配置' : '未配置' }}
             </span>
             <span v-else class="status-text">—</span>
           </div>
@@ -43,7 +42,7 @@
       </div>
       <n-text depth="3" class="form-hint">卡片从左到右的排列顺序即 C 端收银台的展示顺序，通过上移/下移调整；开关与顺序调整后即时保存生效。未配置的渠道需先点击卡片完成配置后再启用。</n-text>
 
-      <!-- 配置弹窗：微信为完整表单；支付宝/货到付款仅提示 -->
+      <!-- 配置弹窗：微信/支付宝为完整表单；货到付款仅提示 -->
       <n-modal v-model:show="showConfigModal" preset="card" :title="modalTitle" style="width: 680px; max-width: 92vw">
         <template v-if="modalChannel === 'wechat'">
           <n-alert v-if="!paymentForm.wechat_payment_ready" type="warning" style="margin-bottom: 16px;">
@@ -133,9 +132,87 @@
           </n-grid>
         </template>
 
-        <n-alert v-else-if="modalChannel === 'alipay'" type="info">
-          支付宝支付暂未开放，开放后将在此提供配置入口。
-        </n-alert>
+        <template v-else-if="modalChannel === 'alipay'">
+          <n-alert v-if="!paymentForm.alipay_ready" type="warning" style="margin-bottom: 16px;">
+            当前支付宝支付配置不完整，C 端不会展示支付宝支付选项
+          </n-alert>
+          <n-alert v-else type="success" style="margin-bottom: 16px;">
+            支付宝支付配置完整，C 端可正常展示
+          </n-alert>
+
+          <n-alert type="info" style="margin-bottom: 16px;">
+            请将下方异步通知地址配置到支付宝开放平台（应用详情 → 开发设置 → 接口加签与消息校验），
+            加签方式选择「公钥模式」，将应用私钥与支付宝公钥填入下方对应项。配置后支付结果才能通知到本系统。
+          </n-alert>
+          <div class="url-guide-row">
+            <n-text code>{{ paymentForm.suggested_urls.alipay_notify_url }}</n-text>
+            <n-button size="small" type="primary" secondary @click="copyURL(paymentForm.suggested_urls.alipay_notify_url)">复制</n-button>
+          </div>
+
+          <n-grid cols="1 m:2" :x-gap="16" responsive="screen" style="margin-top: 8px;">
+            <n-grid-item>
+              <n-form-item label="支付宝 AppID">
+                <n-input v-model:value="paymentForm.alipay.app_id" placeholder="开放平台应用 AppID" />
+              </n-form-item>
+            </n-grid-item>
+            <n-grid-item>
+              <n-form-item label="异步通知 URL">
+                <n-input v-model:value="paymentForm.alipay.notify_url" placeholder="建议使用上方生成的回调地址" />
+              </n-form-item>
+            </n-grid-item>
+            <n-grid-item :span="2">
+              <n-form-item label="支付完成回跳 URL">
+                <n-input v-model:value="paymentForm.alipay.return_url" placeholder="支付完成后浏览器回跳的 C 端 H5 地址，可留空" />
+              </n-form-item>
+            </n-grid-item>
+            <n-grid-item :span="2">
+              <n-form-item label="支付宝公钥">
+                <n-input
+                  v-model:value="paymentForm.alipay.alipay_public_key"
+                  type="textarea"
+                  :rows="3"
+                  placeholder="开放平台「接口加签方式」中查看的支付宝公钥内容，用于回调验签"
+                />
+              </n-form-item>
+            </n-grid-item>
+            <n-grid-item :span="2">
+              <n-form-item label="应用私钥（接口加签私钥）">
+                <div class="cert-upload-row">
+                  <n-upload
+                    :show-file-list="false"
+                    accept=".pem,.key,.txt,.crt"
+                    :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', options)"
+                  >
+                    <n-button type="primary" secondary :loading="alipayCertUploading">上传私钥文件</n-button>
+                  </n-upload>
+                  <n-tag v-if="paymentForm.alipay_cert_uploaded" type="success" size="small">已上传应用私钥</n-tag>
+                  <n-tag v-else type="warning" size="small">未上传</n-tag>
+                </div>
+              </n-form-item>
+            </n-grid-item>
+            <n-grid-item :span="2">
+              <n-form-item label="适用客户端渠道">
+                <div class="client-channel-box">
+                  <n-checkbox-group v-model:value="paymentForm.alipay_client_channels">
+                    <n-checkbox
+                      v-for="opt in alipayChannelOptions"
+                      :key="opt.code"
+                      :value="opt.code"
+                      :disabled="!opt.enabled"
+                      style="margin-right: 16px;"
+                    >
+                      {{ opt.label }}
+                    </n-checkbox>
+                  </n-checkbox-group>
+                  <n-text depth="3" class="client-channel-hint">
+                    勾选支付宝支付在哪些客户端渠道展示与可用；全部不勾选 = 所有已启用客户端渠道均可用（兼容口径）。
+                    微信生态（小程序/公众号）内无法唤起支付宝、App 支付 SDK 未接入，这些渠道勾选后也不会展示。
+                  </n-text>
+                </div>
+              </n-form-item>
+            </n-grid-item>
+          </n-grid>
+        </template>
 
         <n-alert v-else-if="modalChannel === 'cash'" type="success">
           货到付款无需配置参数，开通后 C 端按渠道顺序展示。
@@ -150,6 +227,15 @@
               :loading="paymentSaving"
               :disabled="!authStore.isSuperAdmin && !authStore.hasPermission('settings:update')"
               @click="saveWechatConfig"
+            >
+              保存配置
+            </n-button>
+            <n-button
+              v-else-if="modalChannel === 'alipay'"
+              type="primary"
+              :loading="paymentSaving"
+              :disabled="!authStore.isSuperAdmin && !authStore.hasPermission('settings:update')"
+              @click="saveAlipayConfig"
             >
               保存配置
             </n-button>
@@ -173,7 +259,7 @@ import { useAuthStore } from '@/stores/auth'
 /**
  * 支付配置页面
  * 卡片式渠道管理：卡片展示支付方式与配置状态，点击弹窗修改配置；
- * 开关/顺序调整即时保存；支付宝暂未开放，卡片显示禁用态（配置区块保留便于后续开放）
+ * 开关/顺序调整即时保存
  */
 const message = useMessage()
 const authStore = useAuthStore()
@@ -181,18 +267,19 @@ const authStore = useAuthStore()
 const paymentLoading = ref(false)
 const paymentSaving = ref(false)
 const wechatCertUploading = ref(false)
+const alipayCertUploading = ref(false)
 
 interface ChannelCardItem {
   value: string
   label: string
-  /** 是否可开通（支付宝暂未开放） */
+  /** 是否可开通 */
   available: boolean
 }
 
-/** 渠道卡片定义（支付宝禁用展示；后续开放时将 available 置 true 即恢复完整交互） */
+/** 渠道卡片定义 */
 const channelCards: ChannelCardItem[] = [
   { value: 'wechat', label: '微信支付', available: true },
-  { value: 'alipay', label: '支付宝', available: false },
+  { value: 'alipay', label: '支付宝', available: true },
   { value: 'cash', label: '货到付款', available: true },
 ]
 
@@ -248,6 +335,19 @@ const clientChannelOptions = computed(() =>
   })),
 )
 
+/** 支付宝适用客户端渠道勾选项：微信生态渠道/App 标注不可用原因 */
+const alipayChannelOptions = computed(() =>
+  clientChannels.value.map((ch) => ({
+    code: ch.code,
+    label:
+      `${ch.name}` +
+      `${ch.code === 'mp' || ch.code === 'gzh' ? '（微信生态内无法唤起）' : ''}` +
+      `${ch.code === 'app' ? '（App 支付未接入）' : ''}` +
+      `${ch.enabled ? '' : '（未启用）'}`,
+    enabled: ch.enabled,
+  })),
+)
+
 /** 已启用渠道的顺序（数组顺序即 C 端收银台展示顺序，保存时写入 enabled_channels） */
 const enabledOrder = ref<string[]>([])
 
@@ -265,11 +365,12 @@ function channelOrder(value: string): number {
 }
 
 /**
- * 渠道是否满足启用条件：微信须配置就绪，其余可用渠道默认可启用
+ * 渠道是否满足启用条件：微信/支付宝须配置就绪，其余可用渠道默认可启用
  * @param value 渠道标识
  */
 function channelReady(value: string): boolean {
   if (value === 'wechat') return paymentForm.wechat_payment_ready
+  if (value === 'alipay') return paymentForm.alipay_ready
   return true
 }
 
@@ -279,7 +380,10 @@ function channelReady(value: string): boolean {
  */
 function switchDisabled(ch: ChannelCardItem): boolean {
   if (!ch.available) return true
-  if (ch.value === 'wechat' && !paymentForm.wechat_payment_ready && !enabledOrder.value.includes(ch.value)) {
+  const notReady =
+    (ch.value === 'wechat' && !paymentForm.wechat_payment_ready) ||
+    (ch.value === 'alipay' && !paymentForm.alipay_ready)
+  if (notReady && !enabledOrder.value.includes(ch.value)) {
     return true
   }
   return false
@@ -290,10 +394,6 @@ function switchDisabled(ch: ChannelCardItem): boolean {
  * @param ch 渠道卡片项
  */
 function onCardClick(ch: ChannelCardItem) {
-  if (!ch.available) {
-    message.info('支付宝支付暂未开放，敬请期待')
-    return
-  }
   if (ch.value === 'cash') {
     message.info('货到付款无需配置参数')
     return
@@ -387,6 +487,21 @@ async function saveWechatConfig() {
 }
 
 /**
+ * 弹窗内保存支付宝支付配置，成功后刷新就绪状态并关闭弹窗
+ */
+async function saveAlipayConfig() {
+  paymentSaving.value = true
+  try {
+    await updatePaymentSetting(buildPayload())
+    message.success('支付宝支付配置已保存')
+    await loadPaymentSetting()
+    showConfigModal.value = false
+  } finally {
+    paymentSaving.value = false
+  }
+}
+
+/**
  * 加载支付配置
  */
 async function loadPaymentSetting() {
@@ -394,8 +509,7 @@ async function loadPaymentSetting() {
   try {
     const res = await getPaymentSetting()
     const data = res.data.data
-    // 支付宝暂未开放：存量配置中的 alipay 不参与启用顺序
-    enabledOrder.value = data.enabled_channels.filter((ch: string) => ch !== 'alipay')
+    enabledOrder.value = data.enabled_channels
     paymentForm.wechat = data.wechat
     paymentForm.alipay = data.alipay
     paymentForm.wechat_payment_ready = data.wechat_payment_ready
@@ -423,7 +537,8 @@ async function handleCertUpload(channel: string, options: UploadCustomRequestOpt
     return
   }
 
-  wechatCertUploading.value = true
+  const uploading = channel === 'wechat' ? wechatCertUploading : alipayCertUploading
+  uploading.value = true
   try {
     const res = await uploadPaymentCert(channel, 'private_key', file)
     message.success(res.data.message || '证书上传成功')
@@ -433,7 +548,7 @@ async function handleCertUpload(channel: string, options: UploadCustomRequestOpt
     options.onError()
     throw err
   } finally {
-    wechatCertUploading.value = false
+    uploading.value = false
   }
 }
 

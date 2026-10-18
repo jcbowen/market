@@ -97,10 +97,27 @@
         </view>
       </view>
       <!-- 自提无配送环节，不展示配送费行，避免"免运费"造成误解 -->
-      <view class="extra-item" @click="onSelectChannel">
+      <!-- 支付方式：直接列出渠道单选，默认选中第一个（无需弹层选择） -->
+      <view class="extra-item">
         <text>支付方式</text>
-        <text class="extra-value">{{ selectedChannelName }}</text>
-        <u-icon name="arrow-right" size="14" color="#999999" />
+        <view v-if="channels.length" class="channel-list">
+          <view
+            v-for="channel in channels"
+            :key="channel.channel"
+            class="channel-option"
+            @click="selectedChannel = channel"
+          >
+            <view
+              class="channel-radio"
+              :class="{ checked: selectedChannel?.channel === channel.channel }"
+            />
+            <text
+              class="channel-option-text"
+              :class="{ active: selectedChannel?.channel === channel.channel }"
+            >{{ channel.name }}</text>
+          </view>
+        </view>
+        <text v-else class="channel-empty">暂无可用支付方式</text>
       </view>
       <view class="extra-item">
         <text>备注</text>
@@ -477,10 +494,6 @@ const totalDiscount = computed(() => {
   return fullReductionDiscount.value + couponDiscount.value
 })
 
-const selectedChannelName = computed(() => {
-  return selectedChannel.value?.name || '请选择支付方式'
-})
-
 onLoad((query) => {
   productId.value = Number(query?.productId) || 0
   skuId.value = Number(query?.skuId) || 0
@@ -717,26 +730,6 @@ function onPickCoupon(coupon: UserCoupon | null) {
 }
 
 /**
- * 选择支付方式
- * 当前仅开启货到付款时自动选中，多渠道时弹出 ActionSheet（渠道数有限，暂不超 6 项上限）
- */
-function onSelectChannel() {
-  if (!channels.value.length) {
-    uni.showToast({ title: '暂无可用支付方式', icon: 'none' })
-    return
-  }
-  uni.showActionSheet({
-    itemList: channels.value.map((item) => item.name),
-    success: (res) => {
-      selectedChannel.value = channels.value[res.tapIndex]
-    },
-    fail: () => {
-      // 用户取消或超限失败，静默即可
-    },
-  })
-}
-
-/**
  * 下单成功后清理购物车：
  * 删除本次结算对应的服务端购物车项，并同步清理本地购物车与角标
  * 本地购物车按结算社区清理（跨社区结算时非当前社区）
@@ -811,7 +804,7 @@ async function onSubmit() {
     await clearSettledCart()
     userStore.setAddress(null)
     const outcome = await payOrder(res.data.id, selectedChannel.value.channel)
-    notifyPayOutcome(outcome)
+    notifyPayOutcome(outcome, selectedChannel.value.channel)
     // redirectTo 替换当前确认页：返回键/滑动返回直接回到进入确认页前的页面，
     // 避免再回到确认页看到已结算商品或重复下单
     uni.redirectTo({ url: `/pages/order/detail?id=${res.data.id}` })
@@ -1012,6 +1005,55 @@ async function onSubmit() {
 /* 金额类明细（商品总额）用深色，与灰色占位文案区分 */
 .amount-value {
   color: #333333;
+}
+
+/* 支付方式内联单选：右侧横向排列渠道，圆点样式与配送方式一致 */
+.channel-list {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 24rpx;
+  margin-left: 12rpx;
+}
+
+.channel-option {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.channel-radio {
+  width: 32rpx;
+  height: 32rpx;
+  box-sizing: border-box;
+  border: 2rpx solid #cccccc;
+  border-radius: 50%;
+  background-color: transparent;
+  transition: all 0.2s;
+}
+
+.channel-radio.checked {
+  border: 9rpx solid #07c160;
+}
+
+.channel-option-text {
+  font-size: 26rpx;
+  color: #333333;
+}
+
+.channel-option-text.active {
+  color: #07c160;
+  font-weight: bold;
+}
+
+/* 无可用渠道时的占位提示 */
+.channel-empty {
+  flex: 1;
+  text-align: right;
+  margin-right: 12rpx;
+  font-size: 26rpx;
+  color: #999999;
 }
 
 /* 免配送费试算展示：右对齐两行（金额+活动进度提示） */

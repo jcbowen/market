@@ -1,13 +1,27 @@
 <template>
   <n-card title="商品列表">
     <n-space vertical>
-      <n-space>
-        <n-input v-model:value="keyword" placeholder="商品名称" clearable />
-        <n-select v-model:value="categoryId" :options="categoryOptions" placeholder="商品分类" clearable style="width: 160px" />
-        <n-button type="primary" @click="loadData">查询</n-button>
+      <!-- 状态 Tab：带统计计数，口径与列表筛选一致，随关键词/分类联动 -->
+      <n-tabs v-model:value="statusFilter" type="line" :tabs="statusTabs" @update:value="onSearch" />
+      <n-space align="center">
+        <n-input v-model:value="keyword" placeholder="商品名称" clearable @keyup.enter="onSearch" @clear="onSearch" />
+        <n-select v-model:value="categoryId" :options="categoryOptions" placeholder="商品分类" clearable style="width: 160px" @update:value="onSearch" />
+        <n-button type="primary" @click="onSearch">查询</n-button>
         <n-button @click="router.push('/products/create')">新增商品</n-button>
+        <!-- 批量上下架：选中后按选中项状态动态显示可用操作 -->
+        <template v-if="checkedRowKeys.length > 0">
+          <n-button v-if="showBatchOn" size="small" type="success" @click="batchToggle(1)">批量上架</n-button>
+          <n-button v-if="showBatchOff" size="small" type="warning" @click="batchToggle(0)">批量下架</n-button>
+        </template>
       </n-space>
-      <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" />
+      <n-data-table
+        v-model:checked-row-keys="checkedRowKeys"
+        :columns="columns"
+        :data="list"
+        :loading="loading"
+        :pagination="pagination"
+        :row-key="rowKey"
+      />
     </n-space>
   </n-card>
 </template>
@@ -15,27 +29,68 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'ProductList' })
-import { ref, onMounted, onActivated, h, reactive } from 'vue'
+import { ref, onMounted, onActivated, h, reactive, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NButton, NInput, NSpace, NTag, createDiscreteApi } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getProductList, getCategoryList, updateProductStatus, deleteProduct, updateProductName } from '@/api/product'
+import { getProductList, getCategoryList, updateProductStatus, deleteProduct, updateProductName, batchUpdateProductStatus, getProductStatusStats } from '@/api/product'
 import type { Product, Category } from '@/api/types'
 
 /**
  * 商品列表页面
- * 展示商品分页数据，支持搜索、分类筛选、上下架、删除、
- * 多规格标注、价格区间展示与名称行内改名
+ * 展示商品分页数据，支持状态 Tab 筛选（带统计）、搜索、分类筛选、
+ * 上下架（单条/批量）、删除、多规格标注、价格区间展示与名称行内改名
  */
 const router = useRouter()
 const route = useRoute()
-const { message } = createDiscreteApi(['message'])
+const { message, dialog } = createDiscreteApi(['message', 'dialog'])
 const keyword = ref('')
 const categoryId = ref<number | null>(null)
 const categoryOptions = ref<Array<{ label: string; value: number }>>([])
 const list = ref<Product[]>([])
 const loading = ref(false)
 const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
+
+// 状态 Tab 筛选：值与后端 status_filter 口径一致（0 全部 1 在售中 2 已售罄 3 仓库中）
+const statusFilter = ref('0')
+const stats = ref<{ total: number; on_sale: number; sold_out: number; warehouse: number } | null>(null)
+const statusTabs = computed(() => [
+  { name: '0', label: `全部 ${stats.value?.total ?? 0}` },
+  { name: '1', label: `在售中 ${stats.value?.on_sale ?? 0}` },
+  { name: '2', label: `已售罄 ${stats.value?.sold_out ?? 0}` },
+  { name: '3', label: `仓库中 ${stats.value?.warehouse ?? 0}` },
+])
+
+// 多选与批量上下架：按钮按选中项状态动态显示（存在非该状态的行才显示对应操作）
+const checkedRowKeys = ref<number[]>([])
+const rowKey = (row: Product) => row.id
+const selectedRows = computed(() => list.value.filter((row) => checkedRowKeys.value.includes(row.id)))
+const showBatchOn = computed(() => selectedRows.value.some((row) => row.status !== 1))
+const showBatchOff = computed(() => selectedRows.value.some((row) => row.status !== 0))
+
+/**
+ * 触发搜索/切换状态 Tab：重置页码后按当前条件加载（统计随 loadData 同步刷新）
+ */
+function onSearch() {
+  pagination.value.page = 1
+  loadData()
+}
+
+/**
+ * 加载状态统计（口径与列表筛选一致，关键词/分类变化时随列表同步刷新）
+ * 统计失败只由拦截器弹提示，不阻塞列表加载
+ */
+async function loadStats() {
+  try {
+    const res = await getProductStatusStats({
+      keyword: keyword.value,
+      category_id: categoryId.value || undefined,
+    })
+    if (res.data.code === 0) stats.value = res.data.data
+  } catch {
+    // 失败提示由 request 拦截器统一弹出；Tab 计数维持上次值
+  }
+}
 
 // 名称列行内编辑状态：编辑中商品 ID → 草稿名（不污染列表数据）
 const editingNames = reactive<Record<number, string>>({})
@@ -94,6 +149,7 @@ function priceText(row: Product): string {
 }
 
 const columns: DataTableColumns<Product> = [
+  { type: 'selection' },
   { title: 'ID', key: 'id', width: 80 },
   {
     title: '商品名称',
@@ -140,7 +196,8 @@ const columns: DataTableColumns<Product> = [
     key: 'status',
     width: 90,
     render(row) {
-      return h(NTag, { type: row.status === 1 ? 'success' : 'default' }, { default: () => (row.status === 1 ? '上架' : '下架') })
+      const meta = displayStatusMeta(row)
+      return h(NTag, { type: meta.type }, { default: () => meta.label })
     },
   },
   {
@@ -159,6 +216,20 @@ const columns: DataTableColumns<Product> = [
   },
 ]
 
+/**
+ * 商品展示状态（复合口径）：上架且有库存=在售中，上架无库存=已售罄，下架=仓库中
+ * @param row 当前行商品
+ * @returns 状态标签文本与 Tag 类型（success/warning/default）
+ */
+function displayStatusMeta(row: Product): { label: string; type: 'success' | 'warning' | 'default' } {
+  if (row.status === 1) {
+    return (row.stock ?? 0) > 0
+      ? { label: '在售中', type: 'success' }
+      : { label: '已售罄', type: 'warning' }
+  }
+  return { label: '仓库中', type: 'default' }
+}
+
 async function loadCategories() {
   const res = await getCategoryList()
   if (res.data.code === 0) {
@@ -174,20 +245,54 @@ async function loadData() {
       page_size: pagination.value.pageSize,
       keyword: keyword.value,
       category_id: categoryId.value || undefined,
+      status_filter: Number(statusFilter.value) || undefined,
     })
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
+    // 统计与列表同条件刷新（数据变更/筛选变化共用此入口）
+    await loadStats()
   } finally {
     // 请求异常时也必须关闭 loading，避免页面永久转圈
     loading.value = false
+    // 数据已变化，清空跨请求残留的多选，避免批量操作命中不可见行
+    checkedRowKeys.value = []
   }
 }
 
+/**
+ * 单条上下架切换，成功后刷新列表与统计
+ * @param row 当前行商品
+ */
 async function toggleStatus(row: Product) {
   const res = await updateProductStatus(row.id, row.status === 1 ? 0 : 1)
   if (res.data.code === 0) loadData()
+}
+
+/**
+ * 批量上下架（带确认弹窗），成功后刷新列表与统计并清空选中
+ * @param status 目标状态：1 上架，0 下架
+ */
+function batchToggle(status: number) {
+  const ids = [...checkedRowKeys.value]
+  dialog.warning({
+    title: '批量操作确认',
+    content: `确定将选中的 ${ids.length} 件商品${status === 1 ? '上架' : '下架'}吗？`,
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await batchUpdateProductStatus(ids, status)
+        if (res.data.code === 0) {
+          message.success(`已${status === 1 ? '上架' : '下架'} ${ids.length} 件商品`)
+          loadData()
+        }
+      } catch {
+        // 失败提示由 request 拦截器统一弹出；弹窗保持打开供重试
+      }
+    },
+  })
 }
 
 async function remove(row: Product) {

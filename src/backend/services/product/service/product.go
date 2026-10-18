@@ -55,32 +55,21 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 	}
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{})
-	if req.Status > 0 {
-		db = db.Where("status = ?", req.Status)
-	} else {
-		db = db.Where("status != ?", 2)
-	}
-	if req.CommunityId > 0 {
-		db = db.Where("community_id = ?", req.CommunityId)
-	}
-	if req.CategoryId > 0 {
-		db = db.Where("category_id = ?", req.CategoryId)
-	}
-	if req.Keyword != "" {
-		// 关键字双通道匹配：商品名模糊匹配 OR SKU 条形码精确命中
-		// 条码为纯数字时才走子查询，避免无谓的 IN 查询
-		if isDigits(req.Keyword) {
-			sub := s.db.GetDb().WithContext(ctx).Model(&model.Sku{}).
-				Select("product_id").
-				Where("barcode = ? AND status = 1", req.Keyword)
-			if req.CommunityId > 0 {
-				sub = sub.Where("community_id = ?", req.CommunityId)
-			}
-			db = db.Where("name like ? OR id IN (?)", "%"+req.Keyword+"%", sub)
+	switch req.StatusFilter {
+	case 1: // 在售中：上架且有库存
+		db = db.Where("status = 1 AND stock > 0")
+	case 2: // 已售罄：上架但无库存
+		db = db.Where("status = 1 AND stock <= 0")
+	case 3: // 仓库中：下架（无论库存）
+		db = db.Where("status = 0")
+	default:
+		if req.Status > 0 {
+			db = db.Where("status = ?", req.Status)
 		} else {
-			db = db.Where("name like ?", "%"+req.Keyword+"%")
+			db = db.Where("status != ?", 2)
 		}
 	}
+	db = s.applyProductFilters(ctx, db, req.CommunityId, req.CategoryId, req.Keyword)
 
 	var total int64
 	if err := db.Count(&total).Error; err != nil {
@@ -123,6 +112,114 @@ func isDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// applyProductFilters 按社区/分类/关键词构造商品过滤条件（列表与状态统计共用口径）
+// 关键字双通道匹配：商品名模糊匹配 OR SKU 条形码精确命中；
+// 条码为纯数字时才走子查询，避免无谓的 IN 查询
+//
+// 参数：
+//   - ctx: 上下文
+//   - db: 已挂载 Model 的查询构建器
+//   - communityId: 社区 ID（0=不过滤）
+//   - categoryId: 分类 ID（0=不过滤）
+//   - keyword: 关键词（空=不过滤）
+//
+// 返回值：
+//   - *gorm.DB: 追加过滤条件后的查询构建器
+func (s *ProductService) applyProductFilters(ctx context.Context, db *gorm.DB, communityId, categoryId int64, keyword string) *gorm.DB {
+	if communityId > 0 {
+		db = db.Where("community_id = ?", communityId)
+	}
+	if categoryId > 0 {
+		db = db.Where("category_id = ?", categoryId)
+	}
+	if keyword != "" {
+		if isDigits(keyword) {
+			sub := s.db.GetDb().WithContext(ctx).Model(&model.Sku{}).
+				Select("product_id").
+				Where("barcode = ? AND status = 1", keyword)
+			if communityId > 0 {
+				sub = sub.Where("community_id = ?", communityId)
+			}
+			db = db.Where("name like ? OR id IN (?)", "%"+keyword+"%", sub)
+		} else {
+			db = db.Where("name like ?", "%"+keyword+"%")
+		}
+	}
+	return db
+}
+
+// GetProductStatusStats 商品状态统计（口径与列表筛选一致，供管理端 Tab 计数）
+// 单条聚合查询完成四项统计：全部（排除已删除）/ 在售中 / 已售罄 / 仓库中
+//
+// 参数：
+//   - ctx: 上下文
+//   - req: 统计请求（community_id/keyword/category_id 与列表筛选条件一致）
+//
+// 返回值：
+//   - *product.GetProductStatusStatsResp: 各状态计数（各状态互斥，合计=total）
+//   - error: 错误信息
+//
+// 使用示例：
+//
+//	resp, err := svc.GetProductStatusStats(ctx, &product.GetProductStatusStatsReq{CommunityId: 1})
+func (s *ProductService) GetProductStatusStats(ctx context.Context, req *product.GetProductStatusStatsReq) (*product.GetProductStatusStatsResp, error) {
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{})
+	db = s.applyProductFilters(ctx, db, req.CommunityId, req.CategoryId, req.Keyword)
+
+	var row struct {
+		Total     int64
+		OnSale    int64
+		SoldOut   int64
+		Warehouse int64
+	}
+	err := db.Session(&gorm.Session{}).
+		Select(`COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status = 1 AND stock > 0 THEN 1 ELSE 0 END), 0) AS on_sale,
+			COALESCE(SUM(CASE WHEN status = 1 AND stock <= 0 THEN 1 ELSE 0 END), 0) AS sold_out,
+			COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) AS warehouse`).
+		Where("status != ?", 2).
+		Scan(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &product.GetProductStatusStatsResp{
+		Total:     row.Total,
+		OnSale:    row.OnSale,
+		SoldOut:   row.SoldOut,
+		Warehouse: row.Warehouse,
+	}, nil
+}
+
+// BatchUpdateProductStatus 批量上下架（管理端列表多选操作）
+// 单条 UPDATE 完成，不触碰已删除商品（status=2）；communityId>0 时仅更新归属该社区的商品
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: 商品 ID 列表（非空）
+//   - status: 目标状态（0 下架 / 1 上架）
+//   - communityId: 操作者社区语境（0=跳过归属过滤）
+//
+// 返回值：
+//   - error: 参数非法/数据库错误
+//
+// 使用示例：
+//
+//	err := svc.BatchUpdateProductStatus(ctx, []int64{1, 2, 3}, 0, 456)
+func (s *ProductService) BatchUpdateProductStatus(ctx context.Context, ids []int64, status int32, communityId int64) error {
+	if len(ids) == 0 {
+		return bizerr.New(codes.InvalidArgument, "请选择要操作的商品")
+	}
+	if status != 0 && status != 1 {
+		return bizerr.New(codes.InvalidArgument, "目标状态非法")
+	}
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{}).
+		Where("id IN ? AND status <> ?", ids, 2)
+	if communityId > 0 {
+		db = db.Where("community_id = ?", communityId)
+	}
+	return db.Update("status", status).Error
 }
 
 // BuildCategoryNames 批量查询商品列表的分类名称

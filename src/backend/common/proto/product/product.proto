@@ -23,6 +23,10 @@ service ProductService {
   rpc UpdateProduct(UpdateProductReq) returns (ProductDetail);
   rpc DeleteProduct(DeleteProductReq) returns (common.CommonResponse);
   rpc UpdateProductStatus(UpdateProductStatusReq) returns (common.CommonResponse);
+  // BatchUpdateProductStatus 批量上下架（管理端列表多选操作，不触碰已删除商品）
+  rpc BatchUpdateProductStatus(BatchUpdateProductStatusReq) returns (common.CommonResponse);
+  // GetProductStatusStats 商品状态统计（口径与列表筛选条件一致，供 Tab 计数展示）
+  rpc GetProductStatusStats(GetProductStatusStatsReq) returns (GetProductStatusStatsResp);
   // UpdateProductName 列表页行内改名轻量接口（仅更新 name，避免全量提交覆盖规格/SKU）
   rpc UpdateProductName(UpdateProductNameReq) returns (common.CommonResponse);
 
@@ -196,6 +200,7 @@ message ListProductsReq {
   string sort = 4;
   common.Pagination pagination = 5;
   int32 status = 6; // 商品状态过滤：0 不过滤（默认排除已删除），大于 0 时精确匹配（1 上架）
+  int32 status_filter = 7; // 展示状态过滤（管理端 Tab）：0 不过滤，1=在售中(status=1且stock>0)，2=已售罄(status=1且stock<=0)，3=仓库中(status=0)
 }
 
 message GetProductReq {
@@ -252,6 +257,28 @@ message DeleteProductReq {
 message UpdateProductStatusReq {
   int64 id = 1;
   int32 status = 2;
+}
+
+// BatchUpdateProductStatusReq 批量上下架请求（管理端列表多选操作）
+message BatchUpdateProductStatusReq {
+  repeated int64 ids = 1; // 商品 ID 列表
+  int32 status = 2;       // 目标状态：1 上架，0 下架
+  int64 community_id = 3; // 操作者社区语境（>0 时仅更新归属该社区的商品）
+}
+
+// GetProductStatusStatsReq 商品状态统计请求（筛选口径与列表查询一致）
+message GetProductStatusStatsReq {
+  int64 community_id = 1;
+  string keyword = 2;
+  int64 category_id = 3;
+}
+
+// GetProductStatusStatsResp 商品状态统计响应（各状态互斥，合计=total）
+message GetProductStatusStatsResp {
+  int64 total = 1;     // 全部（排除已删除）
+  int64 on_sale = 2;   // 在售中：status=1 且 stock>0
+  int64 sold_out = 3;  // 已售罄：status=1 且 stock<=0
+  int64 warehouse = 4; // 仓库中：status=0
 }
 
 // UpdateProductNameReq 商品名称更新（列表页行内改名轻量接口）

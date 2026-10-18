@@ -168,8 +168,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.POST("/auth/refresh", authHandler.RefreshToken)
 
 			public.POST("/payments/callback/wechat", paymentHandler.WechatCallback)
-			// 支付宝回调路由已下线：渠道尚未真实接入（isChannelUsable 对 alipay 恒为 false），
-			// 回调解析无 RSA2 验签，公开暴露可被伪造支付成功；接入官方 SDK 并实现验签后再开放
+			// 支付宝回调：payment 服务内先做 RSA2 验签（支付宝公钥），验签失败拒绝处理
+			public.POST("/payments/callback/alipay", paymentHandler.AlipayCallback)
 			public.GET("/payments/channels", paymentHandler.PaymentChannels)
 		}
 
@@ -266,6 +266,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/products/:id", gwMiddleware.RequirePermission("product:update"), adminHandler.UpdateProduct)
 			authAdmin.DELETE("/products/:id", gwMiddleware.RequirePermission("product:delete"), adminHandler.DeleteProduct)
 			authAdmin.POST("/products/:id/status", gwMiddleware.RequirePermission("product:update"), adminHandler.UpdateProductStatus)
+			authAdmin.POST("/products/batch-status", gwMiddleware.RequirePermission("product:update"), adminHandler.BatchUpdateProductStatus)
+			authAdmin.GET("/products/status-stats", gwMiddleware.RequirePermission("product:view"), adminHandler.GetProductStatusStats)
 			authAdmin.PUT("/products/:id/name", gwMiddleware.RequirePermission("product:update"), adminHandler.UpdateProductName)
 
 			authAdmin.GET("/orders", gwMiddleware.RequirePermission("order:view"), adminHandler.ListAdminOrders)

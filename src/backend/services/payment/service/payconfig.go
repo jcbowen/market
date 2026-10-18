@@ -12,6 +12,8 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 	wegopayment "github.com/jcbowen/wego/payment"
+
+	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
 )
 
 // payCertMaxSize 证书文件大小上限（64KB，PEM 文件通常不超过 10KB）
@@ -251,6 +253,17 @@ func (s *PaymentService) getWechatPayClient() *wegopayment.Client {
 	return s.wechatPayClient
 }
 
+// getAlipayExecutor 获取当前支付宝通用执行器快照
+// 读取时持有读锁；执行器指针一经发布即不再原地修改，返回后可安全在锁外调用
+//
+// 返回值：
+//   - *alipaysdk.GenericExecuteApi: 支付宝执行器，未配置或配置不完整时为 nil
+func (s *PaymentService) getAlipayExecutor() *alipaysdk.GenericExecuteApi {
+	s.payMu.RLock()
+	defer s.payMu.RUnlock()
+	return s.alipayExecutor
+}
+
 // wechatConfigOf 将支付配置行转换为微信支付配置载体
 // 参数：
 //   - cfg: 支付配置行，可为 nil
@@ -291,7 +304,8 @@ func alipayConfigOf(cfg *model.PayConfig) config.AlipayConfig {
 	}
 }
 
-// applyPayConfig 应用配置到内存：更新缓存副本并按需重建微信支付客户端
+// applyPayConfig 应用配置到内存：更新缓存副本并按需重建微信支付客户端与支付宝执行器
+// 微信与支付宝各自独立构建互不影响（一方配置缺失不阻断另一方）
 // 调用方必须已持有 s.payMu 写锁
 // 参数：
 //   - row: 最新支付配置行
@@ -299,28 +313,31 @@ func (s *PaymentService) applyPayConfig(row *model.PayConfig) {
 	cfgCopy := *row
 	s.payCfg = &cfgCopy
 
-	// 配置不完整时置空客户端，C 端渠道接口会相应隐藏微信支付
+	// 微信支付客户端：配置不完整时置空，C 端渠道接口会相应隐藏微信支付
 	wechat := wechatConfigOf(&cfgCopy)
 	if !wechat.IsPaymentConfigured() {
 		s.wechatPayClient = nil
-		return
+	} else {
+		// NewClientE 在配置异常时返回错误，失败时置空客户端，C 端渠道接口会相应隐藏微信支付
+		client, err := wegopayment.NewClientE(&wegopayment.Config{
+			AppID:        wechat.AppID,
+			MchID:        wechat.MchID,
+			APIV3Key:     wechat.APIV3Key,
+			CertSerialNo: wechat.CertSerialNo,
+			PrivateKey:   wechat.PrivateKey,
+			NotifyURL:    wechat.NotifyURL,
+		})
+		if err != nil {
+			log.Printf("重建微信支付客户端失败: %v", err)
+			s.wechatPayClient = nil
+		} else {
+			s.wechatPayClient = client
+		}
 	}
 
-	// NewClientE 在配置异常时返回错误，失败时置空客户端，C 端渠道接口会相应隐藏微信支付
-	client, err := wegopayment.NewClientE(&wegopayment.Config{
-		AppID:        wechat.AppID,
-		MchID:        wechat.MchID,
-		APIV3Key:     wechat.APIV3Key,
-		CertSerialNo: wechat.CertSerialNo,
-		PrivateKey:   wechat.PrivateKey,
-		NotifyURL:    wechat.NotifyURL,
-	})
-	if err != nil {
-		log.Printf("重建微信支付客户端失败: %v", err)
-		s.wechatPayClient = nil
-		return
-	}
-	s.wechatPayClient = client
+	// 支付宝执行器：公钥模式（AppID + 应用私钥 + 支付宝公钥），
+	// 配置不完整或构建失败时置 nil，C 端渠道接口会相应隐藏支付宝支付
+	s.alipayExecutor = buildAlipayExecutor(alipayConfigOf(&cfgCopy))
 }
 
 // allowedExtList 生成允许的证书扩展名提示列表

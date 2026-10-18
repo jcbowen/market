@@ -28,6 +28,19 @@ export const isApp = (): boolean => {
 }
 
 /**
+ * 当前是否为微信内置浏览器（仅 H5 环境有意义，按 UA 判断）
+ * 微信内置浏览器无法唤起支付宝 App，且新签约手机网站支付产品已无
+ * 「继续浏览器付款」兜底入口，选择支付宝时需商户侧引导转系统浏览器
+ * @returns 是否为微信内置浏览器（非 H5 环境恒为 false）
+ */
+export const isWeixinBrowser = (): boolean => {
+  // #ifdef H5
+  return /MicroMessenger/i.test(navigator.userAgent)
+  // #endif
+  return false
+}
+
+/**
  * 当前客户端渠道标识（与后台「渠道管理」的渠道 code 对应）
  * 构建期由条件编译决定：MP-WEIXIN → mp；APP-PLUS → app；其余（H5）→ h5。
  * 公众号（gzh）需 OAuth 授权后才可识别，授权链路开放前 H5 统一上报 h5。
