@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -527,25 +529,41 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 	c.String(http.StatusOK, "<xml><return_code><![CDATA[SUCCESS]]></return_code></xml>")
 }
 
+// alipayNotifyBodyLimit 支付宝异步通知请求体体积上限。
+// 通知参数为扁平 form，正常体量在 2KB 以内；设置上限防止异常大报文耗尽内存。
+const alipayNotifyBodyLimit = 64 << 10
+
 // AlipayCallback 支付宝支付回调
-// 解析 POST form 参数后交由 payment 服务做 RSA2 验签与状态流转，
+// 直接读取 raw body 并以 url 编码解析通知参数（不依赖 Content-Type，
+// 支付宝部分场景投递的通知并不带 application/x-www-form-urlencoded，
+// 交给 c.Request.ParseForm 会得到空参数、导致永远返回 failure 引发无限重发），
+// 再交由 payment 服务做 RSA2 验签与状态流转，
 // 按支付宝规范返回纯文本 success/failure：仅业务受理成功返回 success，
 // 其余（验签失败/参数缺失/DB 异常）返回 failure 触发支付宝按通知策略重发
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
-	if err := c.Request.ParseForm(); err != nil {
+	// 多读 1 字节用于判定是否超限，避免整包读入超大报文
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, alipayNotifyBodyLimit+1))
+	if err != nil || len(body) > alipayNotifyBodyLimit {
+		log.Printf("支付宝回调读取请求体失败或超限: %v len=%d", err, len(body))
 		c.String(http.StatusOK, "failure")
 		return
 	}
-	params := make(map[string]string, len(c.Request.PostForm))
-	for k, v := range c.Request.PostForm {
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		log.Printf("支付宝回调解析通知参数失败: %v", err)
+		c.String(http.StatusOK, "failure")
+		return
+	}
+	params := make(map[string]string, len(values))
+	for k, v := range values {
 		if len(v) > 0 {
 			params[k] = v[0]
 		}
 	}
 
-	_, err := h.paymentClient.HandleAlipayCallback(c.Request.Context(), &payment.AlipayCallbackReq{Params: params})
+	_, err = h.paymentClient.HandleAlipayCallback(c.Request.Context(), &payment.AlipayCallbackReq{Params: params})
 	if err != nil {
 		log.Printf("支付宝回调处理失败: %v", err)
 		c.String(http.StatusOK, "failure")

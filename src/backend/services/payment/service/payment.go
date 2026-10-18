@@ -227,6 +227,10 @@ func (s *PaymentService) GetPayment(ctx context.Context, orderID int64) (*model.
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.WechatCallbackReq) error {
+	// 回调前先检测配置版本：验签与解密依赖渠道客户端，未承接过下单的实例若沿用启动时的空配置，
+	// 会把合法通知判为验签失败
+	s.getPayConfigCached(ctx)
+
 	headers := make(http.Header)
 	for k, v := range req.Headers {
 		headers.Set(k, v)
@@ -247,6 +251,9 @@ func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) HandleAlipayCallback(ctx context.Context, req *payment.AlipayCallbackReq) error {
+	// 验签用的支付宝公钥来自配置缓存，先按版本号刷新，避免未承接过下单的实例因空配置拒绝合法通知
+	s.getPayConfigCached(ctx)
+
 	params, err := s.parseAlipayCallback(req.Params)
 	if err != nil {
 		return err
@@ -280,6 +287,10 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 	if p.PayType == 3 || p.PayType == 4 {
 		return s.recordCashRefund(ctx, req, p)
 	}
+
+	// 渠道退款前检测配置版本：执行器/客户端随配置热更新重建，
+	// 未承接过下单的实例若沿用启动时的空配置会把可用渠道判为未配置而退款失败
+	s.getPayConfigCached(ctx)
 
 	now := time.Now().Format("2006-01-02 15:04:05")
 	refund := &model.RefundPayment{
@@ -518,7 +529,7 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 // 三重防护（微信/支付宝回调通用）：
 //  1. 金额强制比对：回调金额与应付金额统一换算为分后比对，不一致拒绝确认（防伪造回调少付）
 //  2. 条件更新幂等：仅 status=1（待支付）可流转为已支付，重复/并发回调安全
-//  3. 终态兜底：非待支付状态的回调直接忽略并记日志
+//  3. 终态兜底：非待支付状态的回调直接忽略；已关闭(5) 的迟到成功回调记 CRITICAL 日志（资金挂账需人工退款）
 //
 // 两阶段设计：事务内仅更新支付单状态（快、无外部依赖），事务提交后再 RPC 同步订单状态；
 // 避免事务持锁期间依赖 order-service（慢/宕机时不会拖垮支付服务连接池）。
@@ -553,7 +564,16 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 		}
 		// 终态兜底：已支付/已关闭等状态的回调直接忽略
 		if p.Status != 1 {
-			log.Printf("支付回调忽略非待支付单: payment_no=%s status=%d", p.PaymentNo, p.Status)
+			if p.Status == 5 {
+				// 已关闭（订单取消/超时后关闭）却收到成功通知：钱已收、订单已取消，
+				// 属资金挂账，必须人工在渠道侧核对退款，故升级为 CRITICAL 供告警接入；
+				// 已支付等状态的重复通知是正常幂等，仍按普通日志忽略以免淹没告警
+				log.Printf("[CRITICAL] 已关闭支付单收到成功回调（订单已取消而用户仍完成付款，需人工对账退款）: "+
+					"payment_no=%s order_id=%d amount=%.2f transaction_id=%s",
+					p.PaymentNo, p.OrderID, p.Amount, params.TransactionID)
+			} else {
+				log.Printf("支付回调忽略非待支付单: payment_no=%s status=%d", p.PaymentNo, p.Status)
+			}
 			return nil
 		}
 		// 金额强制比对（统一换算为分，规避浮点精度误差）
