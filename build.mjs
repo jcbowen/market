@@ -18,12 +18,34 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createContext, parseAutoFix, preflightGoModules, runWithRepair } from './deps-tools.mjs';
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUILD_DIR = path.join(ROOT_DIR, 'bin');
 const BACKEND_DIR = path.join(ROOT_DIR, 'src', 'backend');
+
+// 版本号注入路径：common/version.AppVersion（-ldflags -X 完整变量名）
+const VERSION_VAR_PATH = 'github.com/jcbowen/market/src/backend/common/version.AppVersion';
+
+// resolveAppVersion 解析构建时注入的项目版本号
+// 取值优先级：环境变量 APP_VERSION（CI tag 发布时注入 GITHUB_REF_NAME / 手动指定）
+// → 本地 git 仓库最近可达 tag（git describe，要求当前 HEAD 可达至少一个 tag）
+// → 兜底 dev（无 git 或无 tag 的环境，如从源码包构建）
+// 返回：
+//   - string: 版本号（如 v0.1.3）
+function resolveAppVersion() {
+  if (process.env.APP_VERSION) return process.env.APP_VERSION;
+  try {
+    return execSync('git describe --tags --abbrev=0', { cwd: ROOT_DIR, encoding: 'utf8' }).trim();
+  } catch {
+    return 'dev';
+  }
+}
+
+const APP_VERSION = resolveAppVersion();
+const LDFLAGS = `-X ${VERSION_VAR_PATH}=${APP_VERSION}`;
 
 const ctx = createContext({ rootDir: ROOT_DIR, autoFix: parseAutoFix(process.argv.slice(2)) });
 
@@ -82,7 +104,7 @@ function safeCleanDir(target) {
 async function buildOne(goos, arch, svc) {
   const ext = goos === 'windows' ? '.exe' : '';
   const out = path.join(BUILD_DIR, `${goos}-${arch}`, svc + ext);
-  await runWithRepair(ctx, 'go', ['build', '-o', out, srcDirOf(svc)], {
+  await runWithRepair(ctx, 'go', ['build', '-ldflags', LDFLAGS, '-o', out, srcDirOf(svc)], {
     cwd: BACKEND_DIR,
     env: { ...ctx.goEnv, GOOS: goos, GOARCH: arch },
     step: `构建 ${svc}（${goos}/${arch}）`,
@@ -103,6 +125,9 @@ fs.mkdirSync(path.join(BUILD_DIR, 'static'), { recursive: true });
 // 编译前预检 Go 模块依赖（本地 replace 路径、go.mod/go.sum 一致性）
 console.log('==> 预检 Go 模块依赖...');
 await preflightGoModules(ctx);
+
+// 注入版本号统一展示，便于确认产物版本来源
+console.log(`==> 注入版本号: ${APP_VERSION}`);
 
 // 逐平台组合编译
 for (const [goos, arch] of PLATFORMS) {

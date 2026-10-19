@@ -241,6 +241,9 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/auth/info", adminHandler.Info)
 			// 当前账号可进入的社区列表（社区选择页用，仅要求登录）
 			authAdmin.GET("/my/communities", adminHandler.MyCommunities)
+			// 系统信息（管理后台「关于」页）：版本号 + MySQL/Redis 版本，仅要求登录
+			aboutHandler := handler.NewAboutHandler(cfg)
+			authAdmin.GET("/about", aboutHandler.Get)
 			authAdmin.GET("/dashboard", gwMiddleware.RequirePermission("dashboard:view"), adminHandler.GetDashboard)
 			authAdmin.GET("/roles", gwMiddleware.RequirePermission("role:view"), adminHandler.ListRoles)
 			authAdmin.POST("/roles", gwMiddleware.RequirePermission("role:create"), adminHandler.CreateRole)

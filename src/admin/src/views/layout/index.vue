@@ -422,6 +422,8 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
         { label: '账号管理', key: '/system/accounts', permission: 'admin:view', superOnly: true },
         { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
         { label: '行政区划', key: '/system/regions', permission: 'region:view' },
+        // 关于页：系统信息展示，登录即可访问（系统空间整体仅超管可达）
+        { label: '关于系统', key: '/system/about' },
       ],
     },
     {

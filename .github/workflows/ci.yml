@@ -188,7 +188,8 @@ jobs:
         run: go test ./... -count=1
 
       # 交叉编译 7 个产物（linux/darwin/windows × amd64/arm64 共 6 平台组合），
-      # 二进制名与 build.mjs SERVICES 保持一致；Windows 产物带 .exe 后缀
+      # 二进制名与 build.mjs SERVICES 保持一致；Windows 产物带 .exe 后缀。
+      # 版本号经 -ldflags 注入 common/version.AppVersion（tag 名），供管理后台「关于」页展示
       - name: 交叉编译后端（linux/darwin/windows amd64/arm64）
         working-directory: src/backend
         run: |
@@ -198,7 +199,9 @@ jobs:
             for svc in gateway services/user services/product services/order services/cart services/payment cmd/market-admin; do
               name=$(basename $svc); [ "$name" != "gateway" ] && name="${name}-service"
               [ "$svc" = "cmd/market-admin" ] && name="market-admin"
-              CGO_ENABLED=0 GOOS=$goos GOARCH=$arch go build -o ../../bin/${goos}-${arch}/${name}${ext} ./${svc}/
+              CGO_ENABLED=0 GOOS=$goos GOARCH=$arch go build \
+                -ldflags "-X github.com/jcbowen/market/src/backend/common/version.AppVersion=${GITHUB_REF_NAME}" \
+                -o ../../bin/${goos}-${arch}/${name}${ext} ./${svc}/
             done
           done
 
