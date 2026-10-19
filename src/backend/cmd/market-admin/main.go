@@ -97,10 +97,7 @@ func runInit(timeoutSec int) {
 	// 等待 admin_users 表就绪：user-service 启动时 AutoMigrate 建表，
 	// 此前表不存在属正常现象，轮询直至超时
 	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
-	for {
-		if db.Migrator().HasTable(&model.Admin{}) {
-			break
-		}
+	for !db.Migrator().HasTable(&model.Admin{}) {
 		if time.Now().After(deadline) {
 			fmt.Println("==> [market-admin] 等待 admin_users 表超时（user-service 可能未完成自动迁移），放弃本次初始化")
 			fmt.Println("    稍后可执行: docker exec <容器名> ./market-admin init  重试")
