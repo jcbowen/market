@@ -318,18 +318,33 @@ jobs:
           fi
           echo "Release ID: ${RELEASE_ID}"
 
+          # 幂等保护：重跑或部分成功后重试时，同名资产已存在会返回 422，先查列表跳过
+          EXISTING_ASSETS=$(curl -sS "${API}/${REPO}/releases/${RELEASE_ID}/assets?per_page=100" -H "$AUTH") || true
           for f in package/*.tar.gz package/*.zip; do
             name=$(basename "${f}")
+            if echo "${EXISTING_ASSETS}" | grep -q "\"name\": *\"${name}\""; then
+              echo "资产 ${name} 已存在，跳过"
+              continue
+            fi
             echo "上传 ${name} ..."
             if [[ "${GITHUB_SERVER_URL}" == *github.com* ]]; then
               # GitHub 资产上传只接受 raw binary（文档要求 application/octet-stream），
               # multipart 的 attachment 字段是 Gitea 写法，GitHub 端会校验失败
-              curl -sS -f -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+              RESP_CODE=$(curl -sS -o /tmp/upload_resp -w "%{http_code}" \
+                -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
                 -H "$AUTH" -H "Content-Type: application/octet-stream" \
-                --data-binary "@${f}" > /dev/null
+                --data-binary "@${f}") || RESP_CODE="000"
             else
-              curl -sS -f -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
-                -H "$AUTH" -F "attachment=@${f}" > /dev/null
+              RESP_CODE=$(curl -sS -o /tmp/upload_resp -w "%{http_code}" \
+                -X POST "${UPLOAD_API}/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+                -H "$AUTH" -F "attachment=@${f}") || RESP_CODE="000"
             fi
+            # 成功状态码两端一致均为 201；失败时打印响应体便于定位（如 422 already_exists）
+            if [[ "${RESP_CODE}" != "201" ]]; then
+              echo "上传 ${name} 失败（HTTP ${RESP_CODE}），响应体："
+              cat /tmp/upload_resp || true
+              exit 1
+            fi
+            echo "上传完成：${name}"
           done
           echo "发布完成：${GITHUB_SERVER_URL%/}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
