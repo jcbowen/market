@@ -10,9 +10,15 @@
           <div class="hero-name">社区商超</div>
           <div class="hero-desc">社区团购与门店收银一体化系统</div>
         </div>
-        <n-tag type="success" size="large" round :bordered="false" class="hero-version">
-          {{ about?.version || '—' }}
-        </n-tag>
+        <div class="hero-version-wrap">
+          <n-tag type="success" size="large" round :bordered="false" class="hero-version">
+            {{ about?.version || '—' }}
+          </n-tag>
+          <!-- 更新检测：仅在启用且发现新版本时提示最新版号 -->
+          <n-tag v-if="update?.enabled && update.has_update" size="small" round :bordered="false" class="hero-update">
+            发现新版本 {{ update.latest_version }}
+          </n-tag>
+        </div>
       </div>
     </n-card>
 
@@ -82,12 +88,13 @@
 import { onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { GitNetworkOutline, LogoDocker, MailOutline, ServerOutline, StorefrontOutline } from '@vicons/ionicons5'
-import { getAbout, type SystemAbout } from '@/api/about'
+import { getAbout, getUpdateCheck, type SystemAbout, type UpdateCheck } from '@/api/about'
 
 /**
  * 关于页面
  * 展示项目版本号（编译时注入 git tag）、运行时 MySQL/Redis 真实版本、
- * 部署运行方式说明与技术支持邮箱；版本数据来自 /api/v1/admin/about
+ * 部署运行方式与技术支持邮箱；版本数据来自 /api/v1/admin/about，
+ * 更新提示来自 /api/v1/admin/about/updates（Docker Hub 最新版本比对）
  */
 const message = useMessage()
 
@@ -95,6 +102,7 @@ const message = useMessage()
 const SUPPORT_EMAIL = 'jiuqi@jiuchet.com'
 
 const about = ref<SystemAbout | null>(null)
+const update = ref<UpdateCheck | null>(null)
 const loading = ref(true)
 
 /**
@@ -122,7 +130,8 @@ async function copyEmail() {
 }
 
 /**
- * 加载系统信息（版本号 + MySQL/Redis 版本）
+ * 加载系统信息（版本号 + MySQL/Redis 版本）与更新检测结果
+ * 更新检测独立异步加载（外网请求较慢），失败静默不打扰主信息展示
  */
 async function loadAbout() {
   try {
@@ -130,6 +139,12 @@ async function loadAbout() {
     about.value = res.data.data
   } finally {
     loading.value = false
+  }
+  try {
+    const res = await getUpdateCheck()
+    update.value = res.data.data
+  } catch {
+    // 检测失败静默：不提示更新即可
   }
 }
 
@@ -175,11 +190,21 @@ onMounted(loadAbout)
     font-size: 13px;
     color: rgba(255, 255, 255, 0.85);
   }
-  .hero-version {
+  .hero-version-wrap {
     flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .hero-version {
     font-weight: 600;
     background: rgba(255, 255, 255, 0.92);
     color: #05a04f;
+  }
+  .hero-update {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
   }
 }
 .deploy-item {

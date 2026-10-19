@@ -244,6 +244,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 系统信息（管理后台「关于」页）：版本号 + MySQL/Redis 版本，仅要求登录
 			aboutHandler := handler.NewAboutHandler(cfg)
 			authAdmin.GET("/about", aboutHandler.Get)
+			// 更新检测（Docker Hub 最新版本比对，需环境变量 DOCKERHUB_REPO 启用），仅要求登录
+			authAdmin.GET("/about/updates", aboutHandler.LatestVersion)
 			authAdmin.GET("/dashboard", gwMiddleware.RequirePermission("dashboard:view"), adminHandler.GetDashboard)
 			authAdmin.GET("/roles", gwMiddleware.RequirePermission("role:view"), adminHandler.ListRoles)
 			authAdmin.POST("/roles", gwMiddleware.RequirePermission("role:create"), adminHandler.CreateRole)

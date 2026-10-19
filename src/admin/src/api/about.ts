@@ -28,3 +28,29 @@ export function getAbout() {
     method: 'GET',
   })
 }
+
+/**
+ * 更新检测结果
+ */
+export interface UpdateCheck {
+  /** 是否启用检测（服务端未配置 DOCKERHUB_REPO 时为 false，前端不展示检测） */
+  enabled: boolean
+  /** 是否存在更新（Docker Hub 最新稳定版 > 当前编译版本） */
+  has_update: boolean
+  /** Docker Hub 上的最新稳定版本号（如 0.1.5），检测失败或未启用时为空串 */
+  latest_version: string
+  /** 检测失败原因（成功时为空串，前端据此决定是否静默） */
+  error: string
+}
+
+/**
+ * 获取更新检测结果
+ * 服务端经 Docker Hub Registry API 比对最新发布版本，带缓存（成功 6h / 失败 10min）
+ * @returns 更新检测结果
+ */
+export function getUpdateCheck() {
+  return request<ApiResult<UpdateCheck>>({
+    url: '/api/v1/admin/about/updates',
+    method: 'GET',
+  })
+}
