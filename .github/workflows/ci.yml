@@ -2,7 +2,8 @@
 # Release 产物：linux/darwin/windows × amd64/arm64 共 6 平台包（tar.gz，Windows 为 zip），内含 6 个服务二进制 + 前端产物 + config.yaml
 # 说明：后端 Go module 位于 src/backend，前端位于 src/admin 与 src/client
 # Gitea Actions 与 GitHub Actions 语法兼容，本文件在 GitHub 与 Gitea（act_runner）上均可运行；
-# 注意 checkout v5 起 Action 运行时为 Node 24，要求 act_runner ≥ 2.327.1，Gitea 侧 runner 过旧需先升级；
+# 注意 checkout v5 与 docker 三件套（setup-qemu/setup-buildx/login v4 起）的 Action
+# 运行时均为 Node 24，要求 act_runner ≥ 2.327.1，Gitea 侧 runner 过旧需先升级；
 # tag 发布步骤已做平台适配（API 域名差异见「创建 Release 并上传产物」步骤注释）
 name: CI
 
@@ -258,15 +259,15 @@ jobs:
       # 时可参照本段改造（需先在 Gitea 配置 registry 账号 secrets）
       - name: 设置 QEMU（多架构构建）
         if: ${{ contains(github.server_url, 'github.com') }}
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: 设置 Buildx
         if: ${{ contains(github.server_url, 'github.com') }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: 登录 GHCR
         if: ${{ contains(github.server_url, 'github.com') }}
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
