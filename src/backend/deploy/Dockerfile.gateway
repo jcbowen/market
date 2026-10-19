@@ -12,7 +12,9 @@ RUN adduser -D -u 10001 appuser
 WORKDIR /app
 
 # 复制预编译的 gateway 二进制（Linux 交叉编译产物）
-COPY bin/linux/gateway ./gateway
+# build.mjs 按 bin/{os}-{arch}/ 布局输出，amd64/arm64 由 BuildKit 的 TARGETARCH 自动注入
+ARG TARGETARCH
+COPY bin/linux-${TARGETARCH}/gateway ./gateway
 
 # 复制前端编译产物（非源码）
 COPY bin/static ./static

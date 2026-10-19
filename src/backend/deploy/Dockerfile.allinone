@@ -1,0 +1,70 @@
+# market 一体化镜像（all-in-one）
+# 单容器运行 MySQL 8.0 + Redis 7 + gateway + 五个微服务 + 前端静态资源，
+# 对外仅暴露 18080，数据全部经宿主机 bind mount 持久化（重装镜像不丢数据）。
+#
+# 构建前提：先执行 `node build.mjs` 产出 bin/linux-{amd64,arm64} 与 bin/static，
+# 再用 buildx 多架构构建（见根目录 build-image.mjs）：
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -f src/backend/deploy/Dockerfile.allinone -t <registry>/market:1.0.0 --push .
+#
+# 运行示例（数据目录需先创建，Linux 宿主无需手动 chown——entrypoint 以 root
+# 引导并完成授权）：
+#   docker run -d --name market --restart unless-stopped -p 18080:18080 \
+#     -e MYSQL_ROOT_PASSWORD='<强口令>' -e REDIS_PASSWORD='<强口令>' \
+#     -e JWT_SECRET='<随机强密钥>' -e APP_ENV=production \
+#     -v /opt/market/data/mysql:/var/lib/mysql \
+#     -v /opt/market/data/redis:/data \
+#     -v /opt/market/data/attachment:/app/attachment \
+#     -v /opt/market/data/runtime:/app/runtime \
+#     -v /opt/market/data/logs:/app/logs \
+#     -v /opt/market/data/geoip:/app/data/geoip:ro \
+#     <registry>/market:1.0.0
+FROM ubuntu:24.04
+
+# TARGETARCH 由 BuildKit 按目标平台自动注入（amd64/arm64），从 build.mjs
+# 输出的 bin/linux-{arch} 目录取对应架构产物
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Shanghai \
+    CONFIG_FILE=/app/runtime/config.market-admin.yaml \
+    MARKET_ADMIN_CREDENTIALS_FILE=/app/runtime/admin_credentials.json
+
+# mysql-server: Ubuntu noble 源为 MySQL 8.0.x（与原 mysql:8.0 镜像同大版本）；
+# redis-server: 7.x（与原 redis:7 镜像同大版本）；包管理器自动创建 mysql/redis 系统用户
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       mysql-server redis-server ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+# 业务进程（6 个 Go 二进制 + market-admin）以固定 UID 10001 运行；
+# mysqld/redis 使用发行版内置 mysql/redis 用户。entrypoint 以 root 引导，
+# 启动时对 bind mount 目录按属主自动授权
+RUN useradd --system --uid 10001 appuser
+
+WORKDIR /app
+
+COPY bin/linux-${TARGETARCH}/gateway ./gateway
+COPY bin/linux-${TARGETARCH}/user-service ./user-service
+COPY bin/linux-${TARGETARCH}/product-service ./product-service
+COPY bin/linux-${TARGETARCH}/order-service ./order-service
+COPY bin/linux-${TARGETARCH}/cart-service ./cart-service
+COPY bin/linux-${TARGETARCH}/payment-service ./payment-service
+COPY bin/linux-${TARGETARCH}/market-admin ./market-admin
+
+# 前端静态资源与配置模板打包进镜像（发布即完整可跑）
+COPY bin/static ./static
+COPY bin/config.allinone.yaml ./config.yaml
+COPY src/backend/deploy/entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh ./gateway ./user-service ./product-service \
+    ./order-service ./cart-service ./payment-service ./market-admin
+
+EXPOSE 18080
+
+# 健康检查：网关 HTTP 端口 TCP 探活（Ubuntu 无默认 nc，用 bash /dev/tcp）；
+# start-period 放宽到 120s：首启需完成 MySQL 初始化 + 各服务 AutoMigrate
+HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=10 \
+    CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080' || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

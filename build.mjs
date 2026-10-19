@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// 社区商超后端构建脚本（三平台交叉编译）
+// 社区商超后端构建脚本（多平台交叉编译）
 //
-// 1. 交叉编译 gateway 及各微服务的 Windows / macOS / Linux 二进制，
-//    按平台存放到 bin/ 下的二级目录：
-//      bin/darwin/    macOS (arm64)
-//      bin/linux/     Linux (arm64)
-//      bin/windows/   Windows (amd64，.exe 后缀)
+// 1. 交叉编译 gateway、各微服务与 market-admin 管理工具，
+//    按平台组合存放到 bin/{os}-{arch}/ 二级目录（与 CI Release 打包布局一致）：
+//      bin/linux-amd64/  bin/linux-arm64/    Linux
+//      bin/darwin-amd64/ bin/darwin-arm64/   macOS
+//      bin/windows-amd64/ bin/windows-arm64/ Windows（.exe 后缀）
 // 2. 编译完成后，自动将与本机环境一致的二进制复制一份到 bin/ 根目录，便于直接运行。
 //
 // 平台与架构在下方 PLATFORMS 列表中维护，无需在编译时传递环境参数。
@@ -27,11 +27,15 @@ const BACKEND_DIR = path.join(ROOT_DIR, 'src', 'backend');
 
 const ctx = createContext({ rootDir: ROOT_DIR, autoFix: parseAutoFix(process.argv.slice(2)) });
 
-// 目标平台列表（OS/ARCH），每个 OS 对应 bin/ 下一个二级目录
+// 目标平台列表（OS/ARCH）：每个组合对应 bin/{os}-{arch}/ 一个目录，
+// 覆盖 Linux/macOS/Windows × amd64/arm64，供 CI Release 打包与多架构 Docker 镜像构建取用
 const PLATFORMS = [
-  ['darwin', 'arm64'],
+  ['linux', 'amd64'],
   ['linux', 'arm64'],
+  ['darwin', 'amd64'],
+  ['darwin', 'arm64'],
   ['windows', 'amd64'],
+  ['windows', 'arm64'],
 ];
 
 // 服务列表：二进制名
@@ -42,11 +46,13 @@ const SERVICES = [
   'order-service',
   'cart-service',
   'payment-service',
+  'market-admin',
 ];
 
 // 服务二进制名 -> 源码目录
 function srcDirOf(svc) {
   if (svc === 'gateway') return './gateway/';
+  if (svc === 'market-admin') return './cmd/market-admin/';
   return `./services/${svc.replace(/-service$/, '')}/`;
 }
 
@@ -67,15 +73,15 @@ function safeCleanDir(target) {
  * 交叉编译单个服务，失败时按依赖诊断自动修复并重试。
  *
  * @param {string} goos 目标系统（darwin/linux/windows）
- * @param {string} arch 目标架构（arm64/amd64）
+ * @param {string} arch 目标架构（amd64/arm64）
  * @param {string} svc  服务二进制名（gateway、user-service 等）
  * @returns {void} 编译成功即返回
  * @throws 依赖修复后仍失败时由 runWithRepair 结束进程
- * @example buildOne('linux', 'arm64', 'gateway');
+ * @example buildOne('linux', 'amd64', 'gateway');
  */
 async function buildOne(goos, arch, svc) {
   const ext = goos === 'windows' ? '.exe' : '';
-  const out = path.join(BUILD_DIR, goos, svc + ext);
+  const out = path.join(BUILD_DIR, `${goos}-${arch}`, svc + ext);
   await runWithRepair(ctx, 'go', ['build', '-o', out, srcDirOf(svc)], {
     cwd: BACKEND_DIR,
     env: { ...ctx.goEnv, GOOS: goos, GOARCH: arch },
@@ -98,11 +104,11 @@ fs.mkdirSync(path.join(BUILD_DIR, 'static'), { recursive: true });
 console.log('==> 预检 Go 模块依赖...');
 await preflightGoModules(ctx);
 
-// 逐平台编译
+// 逐平台组合编译
 for (const [goos, arch] of PLATFORMS) {
   console.log(`==> 构建 ${goos}/${arch} ...`);
-  safeCleanDir(path.join(BUILD_DIR, goos));
-  fs.mkdirSync(path.join(BUILD_DIR, goos), { recursive: true });
+  safeCleanDir(path.join(BUILD_DIR, `${goos}-${arch}`));
+  fs.mkdirSync(path.join(BUILD_DIR, `${goos}-${arch}`), { recursive: true });
   for (const svc of SERVICES) {
     console.log(`    构建 ${svc} ...`);
     await buildOne(goos, arch, svc);
@@ -118,7 +124,7 @@ if (localMatch) {
   console.log(`==> 复制本机（${LOCAL_OS}/${LOCAL_ARCH}）二进制到 ${BUILD_DIR}${path.sep} ...`);
   for (const svc of SERVICES) {
     fs.copyFileSync(
-      path.join(BUILD_DIR, LOCAL_OS, svc + ext),
+      path.join(BUILD_DIR, `${LOCAL_OS}-${LOCAL_ARCH}`, svc + ext),
       path.join(BUILD_DIR, svc + ext),
     );
   }

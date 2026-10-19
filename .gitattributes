@@ -1,0 +1,5 @@
+# Shell 脚本强制 LF：entrypoint.sh 打包进 Linux 镜像执行，
+# Windows checkout 经 autocrlf 转 CRLF 会导致容器内 /bin/bash^M 解析失败
+*.sh text eol=lf
+*.dockerfile text eol=lf
+Dockerfile* text eol=lf

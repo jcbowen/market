@@ -10,9 +10,12 @@ RUN adduser -D -u 10001 appuser
 
 WORKDIR /app
 
-# 通过构建参数指定服务名，从宿主机 bin/linux 目录复制预编译二进制
+# 通过构建参数指定服务名，从宿主机 bin/linux-{arch} 目录复制预编译二进制
+# （build.mjs 按 bin/{os}-{arch}/ 布局输出，amd64/arm64 由 BuildKit 的
+#  TARGETARCH 自动注入：Docker Desktop/服务器按目标平台取对应产物）
 ARG SERVICE_NAME
-COPY bin/linux/${SERVICE_NAME}-service ./service
+ARG TARGETARCH
+COPY bin/linux-${TARGETARCH}/${SERVICE_NAME}-service ./service
 
 # 服务 gRPC 监听端口：5 个微服务共用本 Dockerfile，但各自监听 50051~50055
 # （与 bin/config.docker.yaml 的 *_service.grpc_port 同源），端口由

@@ -8,6 +8,8 @@ node_modules/
 bin/*
 !bin/config.docker.yaml
 !bin/config.yaml
+# 一体化镜像（all-in-one）配置模板：地址为 127.0.0.1，见 docs 部署方案
+!bin/config.allinone.yaml
 *.exe
 *.dll
 *.so
@@ -61,6 +63,8 @@ npm-debug.log*
 *.tmp
 *.temp
 .cache/
+# all-in-one 镜像本地验证的临时数据目录（可随时手动删除）
+.tmp-allinone-test*/
 
 # === Playwright 测试产物 ===
 test-results/
