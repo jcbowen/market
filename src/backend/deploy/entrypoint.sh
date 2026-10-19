@@ -164,9 +164,36 @@ prepare_dir /data "$(id -u redis)"
 # 6 个进程共享同一文件会产生回写竞态——后写者覆盖、半写被并发读取导致
 # 解析失败回落结构体默认值（dbname=dbname / grpc_port=0 → 服务崩溃），
 # 与 compose 部署「每容器 cp 一份私有 config.runtime.yaml」同一原理
+#
+# 源配置机制：/app/runtime/config.yaml（宿主机 ./data/runtime/config.yaml，
+# bind mount 持久化）是用户可编辑的唯一配置源。首次启动从镜像内置模板
+# 生成，此后每次启动以它为模板分发各进程副本——用户只改这一份文件并重启
+# 容器即全量生效。命名刻意避开 config.*.yaml 通配，不被下方口令回填 sed
+# 触碰，保持「密码空占位、由环境变量注入」的安全模型。
+# 内容无效（空文件/缺关键节）时告警并回退内置模板分发，避免重蹈
+# 「挂载空文件 → 配置解析失败回落默认值 → 服务崩溃」的事故
+SOURCE_CONFIG=$RUNTIME_DIR/config.yaml
+if [ -s "$SOURCE_CONFIG" ] \
+   && grep -q '^web_server:' "$SOURCE_CONFIG" \
+   && grep -q '^db:' "$SOURCE_CONFIG" \
+   && grep -q '^redis:' "$SOURCE_CONFIG"; then
+  CONFIG_TEMPLATE=$SOURCE_CONFIG
+  log "使用宿主机源配置: $SOURCE_CONFIG"
+else
+  if [ -f "$SOURCE_CONFIG" ]; then
+    log "警告: 源配置 $SOURCE_CONFIG 内容无效（空文件或缺少 web_server/db/redis 配置节），本次使用内置模板分发"
+  fi
+  CONFIG_TEMPLATE=/app/config.yaml
+  # 首启生成源配置供后续编辑；空文件（如误创建）会被内置模板内容覆盖修复
+  if [ ! -s "$SOURCE_CONFIG" ]; then
+    cp -f /app/config.yaml "$SOURCE_CONFIG"
+    log "已生成源配置 $SOURCE_CONFIG（宿主机 ./data/runtime/config.yaml，可直接编辑，重启容器生效）"
+  fi
+fi
+
 SERVICES_LIST="user-service product-service order-service cart-service payment-service gateway market-admin"
 for svc in $SERVICES_LIST; do
-  cp -f /app/config.yaml "$RUNTIME_DIR/config.$svc.yaml"
+  cp -f "$CONFIG_TEMPLATE" "$RUNTIME_DIR/config.$svc.yaml"
 done
 
 # 回填真实口令到各副本：框架回写发生在环境变量覆盖之前（文件恒为空占位），
