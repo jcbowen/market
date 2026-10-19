@@ -263,12 +263,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '行政区划', permission: 'region:view', group: '系统管理', space: 'system' },
       },
       // 关于页：系统信息展示（版本号 / MySQL·Redis 版本 / 部署方式 / 技术支持），
-      // 不设 permission（登录即可），系统空间整体仅超管可达（见路由守卫）
+      // 不设 permission（登录即可），系统空间整体仅超管可达（见路由守卫）；
+      // 左侧菜单拍平为系统空间末尾的一级菜单（不归属任何分组），故不设 meta.group
       {
         path: 'system/about',
         name: 'SystemAbout',
         component: () => import('@/views/system/about.vue'),
-        meta: { title: '关于系统', group: '系统管理', space: 'system' },
+        meta: { title: '关于系统', space: 'system' },
       },
       {
         path: 'system/banners',

@@ -9,7 +9,7 @@ export interface SystemAbout {
   version: string
   /** 运行模式：production 生产环境 / development 开发环境（APP_ENV 环境变量，未设置视为开发） */
   app_env: string
-  /** 部署运行方式（运行时自动检测）：docker 容器内运行 / binary 二进制直接运行 */
+  /** 部署运行方式（运行时自动检测）：all-in-one 一体化容器 / compose 多容器编排 / binary 二进制直接运行 */
   deploy_mode: string
   /** MySQL 服务器版本（运行时真实查询），查询失败时为空串 */
   mysql_version: string

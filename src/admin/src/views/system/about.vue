@@ -38,25 +38,27 @@
       </n-descriptions>
     </n-card>
 
-    <!-- 部署运行方式：运行时自动检测结果 -->
+    <!-- 部署运行方式：运行时自动检测结果（all-in-one / compose / binary 三态） -->
     <n-card title="部署运行方式" :bordered="false">
       <div class="deploy-item">
         <div class="deploy-title">
           <n-icon size="16" color="#07c160">
-            <logo-docker v-if="about?.deploy_mode === 'docker'" />
+            <logo-docker v-if="about?.deploy_mode === 'all-in-one'" />
+            <git-network-outline v-else-if="about?.deploy_mode === 'compose'" />
             <server-outline v-else />
           </n-icon>
           <n-spin v-if="loading" :size="14" />
-          <template v-else-if="about?.deploy_mode === 'docker'">
-            Docker 容器运行
-          </template>
+          <template v-else-if="about?.deploy_mode === 'all-in-one'">Docker 一体化容器运行</template>
+          <template v-else-if="about?.deploy_mode === 'compose'">Docker 多容器编排运行</template>
           <template v-else>二进制直接运行</template>
         </div>
         <div class="deploy-desc">
           {{
-            about?.deploy_mode === 'docker'
-              ? '当前服务运行于 Docker 容器内（一体化镜像：容器内承载 MySQL、Redis、全部后端服务与前端静态资源）'
-              : '当前服务以二进制方式直接运行于宿主机（MySQL / Redis 由部署环境提供）'
+            about?.deploy_mode === 'all-in-one'
+              ? '当前服务运行于 Docker 一体化容器内（单容器承载 MySQL、Redis、全部后端服务与前端静态资源）'
+              : about?.deploy_mode === 'compose'
+                ? '当前服务以 Docker Compose 多容器方式运行（MySQL、Redis 与各服务独立容器，经容器网络互通）'
+                : '当前服务以二进制方式直接运行于宿主机（MySQL / Redis 由部署环境提供）'
           }}
         </div>
       </div>
@@ -79,7 +81,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { LogoDocker, MailOutline, ServerOutline, StorefrontOutline } from '@vicons/ionicons5'
+import { GitNetworkOutline, LogoDocker, MailOutline, ServerOutline, StorefrontOutline } from '@vicons/ionicons5'
 import { getAbout, type SystemAbout } from '@/api/about'
 
 /**

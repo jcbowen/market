@@ -24,11 +24,13 @@
       </div>
       <n-menu
         :value="activeKey"
+        :expanded-keys="expandedKeys"
         :collapsed="collapsed"
         :collapsed-width="64"
         :collapsed-icon-size="22"
         :options="currentMenuOptions"
         @update:value="onMenuChange"
+        @update:expanded-keys="onExpandedKeysChange"
       />
     </n-layout-sider>
 
@@ -105,7 +107,7 @@ import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { MenuOption } from 'naive-ui'
-import { MenuOutline, PersonCircleOutline, HomeOutline, GridOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, SettingsOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, ArrowBackOutline } from '@vicons/ionicons5'
+import { MenuOutline, PersonCircleOutline, HomeOutline, GridOutline, CubeOutline, CartOutline, PeopleOutline, GiftOutline, BarChartOutline, FileTrayOutline, StorefrontOutline, SettingsOutline, InformationCircleOutline, EllipsisHorizontal, LocationOutline, ChevronDownOutline, ArrowBackOutline } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
@@ -422,8 +424,6 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
         { label: '账号管理', key: '/system/accounts', permission: 'admin:view', superOnly: true },
         { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
         { label: '行政区划', key: '/system/regions', permission: 'region:view' },
-        // 关于页：系统信息展示，登录即可访问（系统空间整体仅超管可达）
-        { label: '关于系统', key: '/system/about' },
       ],
     },
     {
@@ -440,22 +440,26 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
     },
   ]
 
-  return groups
-    .map((group) => {
-      const children = group.children.filter(
-        (child) =>
-          (!child.permission || checkPermission(child.permission)) &&
-          (!child.superOnly || authStore.isSuperAdmin),
-      )
-      if (children.length === 0) return null
-      return {
-        label: group.label,
-        key: group.key,
-        icon: renderIcon(group.icon),
-        children: children.map((child) => ({ label: child.label, key: child.key })),
-      }
-    })
-    .filter(Boolean) as MenuOption[]
+  return [
+    ...(groups
+      .map((group) => {
+        const children = group.children.filter(
+          (child) =>
+            (!child.permission || checkPermission(child.permission)) &&
+            (!child.superOnly || authStore.isSuperAdmin),
+        )
+        if (children.length === 0) return null
+        return {
+          label: group.label,
+          key: group.key,
+          icon: renderIcon(group.icon),
+          children: children.map((child) => ({ label: child.label, key: child.key })),
+        }
+      })
+      .filter(Boolean) as MenuOption[]),
+    // 关于系统：单页拍平为一级菜单，置于系统空间末尾（不归属任何分组，后续若扩展可独立成组）
+    { label: '关于系统', key: '/system/about', icon: renderIcon(InformationCircleOutline) },
+  ]
 })
 
 /** 是否处于系统管理空间（路由 meta.space = 'system'），此时左侧菜单整体替换为系统管理菜单 */
@@ -463,6 +467,94 @@ const isSystemSpace = computed(() => route.meta.space === 'system')
 
 /** 当前侧边栏菜单：系统空间用系统菜单，业务空间用业务菜单 */
 const currentMenuOptions = computed(() => (isSystemSpace.value ? systemMenuOptions.value : menuOptions.value))
+
+// --- 菜单展开态：受控 + 持久化 ---
+// n-menu 的展开态默认由组件内部控制，刷新即全折叠；此处改为受控并持久化，
+// 使刷新后恢复用户上次的展开选择，且当前页所属分组始终自动展开
+
+/** 菜单展开态的 localStorage 持久化键 */
+const MENU_EXPANDED_KEY = 'admin_menu_expanded_keys'
+
+/**
+ * 首次进入（无持久化记录）时的默认展开组
+ * 业务空间取日常最高频三组（订单/库存/商品），系统空间取超管落地页所在组（系统管理）
+ */
+const DEFAULT_EXPANDED_KEYS = ['/orders', '/stock', '/products', 'sys-group-system']
+
+/**
+ * 读取持久化的菜单展开态
+ * 无记录（首次进入）或记录损坏时回落默认展开组
+ * @returns 展开的菜单组 key 列表
+ */
+function readExpandedKeys(): string[] {
+  try {
+    const raw = localStorage.getItem(MENU_EXPANDED_KEY)
+    if (raw === null) return [...DEFAULT_EXPANDED_KEYS]
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return [...DEFAULT_EXPANDED_KEYS]
+    return parsed.filter((k): k is string => typeof k === 'string')
+  } catch {
+    // 隐私模式/存储禁用等场景静默回落默认值
+    return [...DEFAULT_EXPANDED_KEYS]
+  }
+}
+
+/**
+ * 持久化菜单展开态
+ * 写入失败（隐私模式/容量不足等）静默降级为仅本次会话生效
+ * @param keys 展开的菜单组 key 列表
+ */
+function persistExpandedKeys(keys: string[]) {
+  try {
+    localStorage.setItem(MENU_EXPANDED_KEY, JSON.stringify(keys))
+  } catch {
+    // 静默降级：不持久化，刷新后回到默认展开组
+  }
+}
+
+/** 菜单展开态（受控）：刷新后恢复用户上次选择，无记录时用默认展开组 */
+const expandedKeys = ref<string[]>(readExpandedKeys())
+
+/**
+ * 路由路径 → 所属菜单组 key
+ * 遍历当前空间已按权限过滤的菜单，支持 hidden 详情页按前缀归属
+ * （如 /orders/123 → 订单管理、/system/admins → 门店管理）；
+ * 不在菜单内的路由（如 /settings/profile）返回 null
+ * @param path 当前路由 path
+ * @returns 所属菜单组 key；无匹配返回 null
+ */
+function resolveGroupKey(path: string): string | null {
+  for (const group of currentMenuOptions.value) {
+    const hit = group.children?.some(
+      (child) => path === child.key || path.startsWith(`${child.key}/`),
+    )
+    if (hit) return String(group.key)
+  }
+  return null
+}
+
+// 路由变化：当前页所属分组自动展开（强制展开，即使用户此前手动收起过，保证刷新后看得见当前页位置）
+watch(
+  () => route.path,
+  (path) => {
+    const key = resolveGroupKey(path)
+    if (key && !expandedKeys.value.includes(key)) {
+      expandedKeys.value = [...expandedKeys.value, key]
+      persistExpandedKeys(expandedKeys.value)
+    }
+  },
+  { immediate: true },
+)
+
+/**
+ * 菜单展开态变更（用户手动展开/收起）：同步受控状态并持久化
+ * @param keys 新的展开组 key 列表
+ */
+function onExpandedKeysChange(keys: Array<string | number>) {
+  const next = keys.map(String)
+  expandedKeys.value = next
+  persistExpandedKeys(next)
+}
 
 /** 是否可进入系统管理空间：仅超管（系统级权限点不对社区分配，社区管理员只见业务菜单） */
 const canEnterSystem = computed(() => authStore.isSuperAdmin)

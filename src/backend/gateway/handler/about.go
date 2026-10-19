@@ -59,24 +59,59 @@ func (h *AboutHandler) Get(c *gin.Context) {
 	})
 }
 
-// detectDeployMode 检测当前实际部署运行方式
-// 以 /.dockerenv 标记文件为准（Docker 官方运行时在容器根目录创建），
-// 兜底解析 /proc/1/cgroup 是否包含容器运行时标识；均未命中视为二进制直接运行
-// （Windows/裸机 systemd 等场景 /proc 不存在，直接归入 binary）
+// detectDeployMode 检测当前实际部署运行方式（三态）
+// 1. 非容器环境（无 /.dockerenv 且 /proc/1/cgroup 无容器运行时标识）→ binary（二进制直接运行）
+// 2. 容器内且同容器可见 mysqld/redis-server 进程 → all-in-one（一体化容器，全套服务同容器）
+// 3. 容器内且无上述进程 → compose（多容器编排，MySQL/Redis 在独立容器，经网络连接）
+// 说明：同一 PID namespace 内进程互相可见，故「能否看到 mysqld」可区分一体/多容器；
+// Windows/裸机 systemd 场景 /proc 不存在，直接归入 binary
 // 返回：
-//   - string: "docker"（容器内运行）或 "binary"（二进制直接运行）
+//   - string: "all-in-one"（一体化容器）/ "compose"（多容器编排）/ "binary"（二进制直接运行）
 func detectDeployMode() string {
+	inContainer := false
 	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return "docker"
-	}
-	if cgroup, err := os.ReadFile("/proc/1/cgroup"); err == nil {
-		for marker := range strings.SplitSeq(string(cgroup), "\n") {
-			if strings.Contains(marker, "docker") || strings.Contains(marker, "containerd") {
-				return "docker"
+		inContainer = true
+	} else if cgroup, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		for line := range strings.SplitSeq(string(cgroup), "\n") {
+			if strings.Contains(line, "docker") || strings.Contains(line, "containerd") {
+				inContainer = true
+				break
 			}
 		}
 	}
-	return "binary"
+	if !inContainer {
+		return "binary"
+	}
+	if hasDBProcessInContainer() {
+		return "all-in-one"
+	}
+	return "compose"
+}
+
+// hasDBProcessInContainer 检测当前容器内是否运行着 MySQL/Redis 服务进程
+// 遍历 /proc 数字目录读取各进程 comm（进程名，world-readable，非 root 也可读），
+// 命中 mysqld 或 redis-server 即认为全套服务跑在同一容器（一体化镜像特征）
+// 返回：
+//   - bool: 是否存在数据库服务进程
+func hasDBProcessInContainer() bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name()[0] < '0' || e.Name()[0] > '9' {
+			continue
+		}
+		comm, err := os.ReadFile("/proc/" + e.Name() + "/comm")
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(string(comm))
+		if name == "mysqld" || name == "redis-server" {
+			return true
+		}
+	}
+	return false
 }
 
 // mysqlVersion 查询 MySQL 服务器版本（SELECT VERSION()）
