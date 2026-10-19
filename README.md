@@ -30,6 +30,8 @@ market/
 
 ## 快速开始
 
+### 本地开发
+
 ```bash
 # 一键启动（依赖检查 → 前后端构建 → 镜像构建 → 启动 → 测试数据初始化）
 node start-all.mjs
@@ -40,6 +42,74 @@ node start-all.mjs
 | 管理后台 | http://localhost:18080/b/ | admin / admin123（仅本地） |
 | C 端 H5 | http://localhost:18080/s/ | 13800138000 / 验证码 123456 |
 | 健康检查 | http://localhost:18080/health | HTTP 200 |
+
+### 服务器快速部署（Docker 一体化镜像）
+
+单容器承载 MySQL + Redis + 全部服务 + 前端，数据落宿主机 `./data/`，升级镜像不丢数据。服务器装好 Docker 后三步上线：
+
+1. 新建部署目录与 `docker-compose.yml`（内容如下，**三个口令必改**）：
+
+```yaml
+services:
+  market:
+    # latest 随每次发版自动更新；需锁版本时到 GitHub Releases 页取最新 tag 替换
+    image: jcbowen/market:latest        # 国内推荐 Docker Hub；备选 ghcr.io/jcbowen/market:latest
+    container_name: market
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "18080:18080"
+    environment:
+      APP_ENV: production
+      MYSQL_ROOT_PASSWORD: "改成强口令"      # 仅首次初始化生效，之后不可变更
+      REDIS_PASSWORD: "改成强口令"
+      JWT_SECRET: "改成至少32位随机字符串"
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      - ./data/redis:/data
+      - ./data/attachment:/app/attachment
+      - ./data/runtime:/app/runtime
+      - ./data/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/18080"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+```
+
+2. 启动并观察初始化日志（首启含 MySQL 初始化与自动迁移，初始超管密码输出在日志中）：
+
+```bash
+mkdir -p data/{mysql,redis,attachment,runtime,logs}
+docker compose up -d && docker logs -f market
+```
+
+3. 访问 `http://<服务器IP>:18080/b/` 进入管理后台。
+
+日常升级：`docker compose pull && docker compose up -d`，数据原样保留；回滚把镜像 tag 改回历史版本号（如 `v0.1.3`）再 `up -d` 即可。完整说明（HTTPS 反代、数据备份、初始账号管理、外部数据库等）见 [docs/需求文档/10-部署方案/03-生产环境部署.md](docs/需求文档/10-部署方案/03-生产环境部署.md)。
+
+### 服务器部署（二进制，无 Docker）
+
+服务器无法使用 Docker 时，直接下载 CI 发布的二进制包（含 6 个服务二进制 + `config.yaml` 模板 + 前端静态资源）：
+
+```bash
+VERSION=v0.1.3   # 替换为 GitHub Releases 页最新 tag；按服务器架构选择 amd64 / arm64
+wget "https://github.com/jcbowen/market/releases/download/${VERSION}/market-${VERSION}-linux-amd64.tar.gz"
+tar -xzf "market-${VERSION}-linux-amd64.tar.gz" -C /opt
+mv "/opt/market-${VERSION}-linux-amd64" /opt/market
+```
+
+准备 MySQL（空库 `market`、utf8mb4，**无需建表**——服务启动时 GORM AutoMigrate 自动建表）与 Redis，编辑 `/opt/market/config.yaml` 填入生产配置（db/redis/jwt 等）后启动：
+
+```bash
+cd /opt/market && mkdir -p logs
+for svc in user-service product-service order-service cart-service payment-service gateway; do
+  CONFIG_FILE=/opt/market/config.yaml nohup ./${svc} > logs/${svc}.log 2>&1 &
+done
+```
+
+初始后台账号、systemd 托管、支付/短信配置等完整说明见 [docs/需求文档/10-部署方案/03-生产环境部署.md](docs/需求文档/10-部署方案/03-生产环境部署.md)。
 
 要点：
 
