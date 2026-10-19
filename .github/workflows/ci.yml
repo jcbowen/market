@@ -113,7 +113,13 @@ jobs:
           cache-dependency-path: src/admin/package-lock.json
 
       - name: 安装依赖
-        run: npm ci
+        run: |
+          for i in 1 2 3; do
+            if npm ci; then break; fi
+            echo "npm ci 第 ${i} 次失败（多为网络抖动），10s 后重试"
+            if [[ ${i} -eq 3 ]]; then exit 1; fi
+            sleep 10
+          done
 
       - name: 构建（含 vue-tsc 类型检查）
         run: npm run build
@@ -135,7 +141,13 @@ jobs:
           cache-dependency-path: src/client/package-lock.json
 
       - name: 安装依赖
-        run: npm ci
+        run: |
+          for i in 1 2 3; do
+            if npm ci; then break; fi
+            echo "npm ci 第 ${i} 次失败（多为网络抖动），10s 后重试"
+            if [[ ${i} -eq 3 ]]; then exit 1; fi
+            sleep 10
+          done
 
       - name: 构建 H5
         run: npm run build:h5
@@ -201,13 +213,23 @@ jobs:
       - name: 构建管理端前端
         working-directory: src/admin
         run: |
-          npm ci
+          for i in 1 2 3; do
+            if npm ci; then break; fi
+            echo "npm ci 第 ${i} 次失败（多为网络抖动），10s 后重试"
+            if [[ ${i} -eq 3 ]]; then exit 1; fi
+            sleep 10
+          done
           npm run build
 
       - name: 构建 C 端 H5
         working-directory: src/client
         run: |
-          npm ci
+          for i in 1 2 3; do
+            if npm ci; then break; fi
+            echo "npm ci 第 ${i} 次失败（多为网络抖动），10s 后重试"
+            if [[ ${i} -eq 3 ]]; then exit 1; fi
+            sleep 10
+          done
           npm run build:h5
 
       # 打包：解压后得到 market-{ver}-{os}-{arch}/ 目录，布局对齐部署文档 9.3.5 的 /opt/market；
