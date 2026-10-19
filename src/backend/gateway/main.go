@@ -409,6 +409,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 全局账号管理（系统管理空间，处理器内强制超管）：仅管账号本身，任职走各社区员工管理
 			authAdmin.GET("/accounts", adminHandler.ListAllAccounts)
 			authAdmin.POST("/accounts", adminHandler.CreateAccount)
+			authAdmin.GET("/accounts/:id/assignments", adminHandler.GetAccountAssignments)
 			authAdmin.PUT("/accounts/:id/status", adminHandler.UpdateAccountStatus)
 			authAdmin.PUT("/accounts/:id/password", adminHandler.ResetAccountPassword)
 

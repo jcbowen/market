@@ -32,6 +32,34 @@
       <n-button type="primary" @click="submitResetPassword">确定</n-button>
     </n-space>
   </n-modal>
+
+  <!-- 任职详情弹窗：点击「任职社区数」查看该账号在各社区担任的角色 -->
+  <n-modal
+    v-model:show="showAssignModal"
+    :title="`任职社区与角色 - ${assignAccount}`"
+    preset="card"
+    style="width: 520px; max-width: 90vw"
+  >
+    <n-spin :show="assignLoading">
+      <n-empty v-if="!assignLoading && assignments.length === 0" description="该账号未在任何社区任职" />
+      <n-space v-else vertical :size="14">
+        <div v-for="(item, index) in assignments" :key="item.community_id">
+          <n-text strong>{{ item.community_name || `社区 ${item.community_id}` }}</n-text>
+          <n-space :size="6" style="margin-top: 6px">
+            <n-tag
+              v-for="role in item.roles"
+              :key="role.id"
+              size="small"
+              :type="role.code === 'community_admin' ? 'warning' : 'default'"
+            >
+              {{ role.name }}
+            </n-tag>
+          </n-space>
+          <n-divider v-if="index < assignments.length - 1" style="margin: 12px 0 0" />
+        </div>
+      </n-space>
+    </n-spin>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -40,8 +68,8 @@ defineOptions({ name: 'AccountList' })
 import { ref, onMounted, h } from 'vue'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getAccountList, createAccount, updateAccountStatus, resetAccountPassword } from '@/api/user'
-import type { Account } from '@/api/types'
+import { getAccountList, createAccount, updateAccountStatus, resetAccountPassword, getAccountAssignments } from '@/api/user'
+import type { Account, AccountAssignment } from '@/api/types'
 
 /**
  * 账号管理页面（系统管理空间，超管专用）
@@ -59,6 +87,10 @@ const showModal = ref(false)
 const form = ref({ username: '', password: '', real_name: '', phone: '' })
 const showResetModal = ref(false)
 const resetForm = ref({ id: 0, username: '', password: '' })
+const showAssignModal = ref(false)
+const assignLoading = ref(false)
+const assignAccount = ref('')
+const assignments = ref<AccountAssignment[]>([])
 
 const columns: DataTableColumns<Account> = [
   { title: 'ID', key: 'id', width: 80 },
@@ -83,7 +115,15 @@ const columns: DataTableColumns<Account> = [
     title: '任职社区数',
     key: 'community_ids',
     width: 100,
-    render: (row) => (row.is_super ? '全部' : String(row.community_ids?.length ?? 0)),
+    render: (row) => {
+      if (row.is_super) return '全部'
+      // 点击查看任职详情：社区及各社区角色
+      return h(
+        NButton,
+        { text: true, type: 'primary', onClick: () => openAssignments(row) },
+        { default: () => String(row.community_ids?.length ?? 0) },
+      )
+    },
   },
   { title: '最后登录', key: 'last_login_at', width: 160 },
   {
@@ -183,6 +223,25 @@ function confirmStatus(row: Account, status: number) {
       loadData()
     },
   })
+}
+
+/**
+ * 打开任职详情弹窗并加载该账号的任职社区与角色
+ * @param row 目标账号
+ */
+async function openAssignments(row: Account) {
+  assignAccount.value = row.real_name || row.username
+  assignments.value = []
+  showAssignModal.value = true
+  assignLoading.value = true
+  try {
+    const res = await getAccountAssignments(row.id)
+    if (res.data.code === 0) {
+      assignments.value = res.data.data
+    }
+  } finally {
+    assignLoading.value = false
+  }
 }
 
 /**

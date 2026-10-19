@@ -722,6 +722,27 @@ export interface Account {
 }
 
 /**
+ * 账号任职社区角色项
+ */
+export interface AccountAssignmentRole {
+  id: number
+  name: string
+  /** community_admin 为内置社区管理员角色 */
+  code: string
+}
+
+/**
+ * 账号任职详情项（账号管理·任职社区弹窗）
+ * 一项 = 一个任职社区及其在该社区的全部角色
+ */
+export interface AccountAssignment {
+  community_id: number
+  community_name: string
+  /** 在该社区担任的角色列表 */
+  roles: AccountAssignmentRole[]
+}
+
+/**
  * 优惠券商品范围项
  * scope_type：1全场 2指定分类 3指定商品 4排除分类 5排除商品；无行=全场通用
  */

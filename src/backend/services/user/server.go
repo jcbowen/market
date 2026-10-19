@@ -2,6 +2,7 @@ package main
 
 import (
 	stdctx "context"
+	"slices"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
@@ -144,7 +145,7 @@ func (s *server) CheckFulfiller(ctx stdctx.Context, req *user.CheckFulfillerReq)
 
 // SetUserStatus 设置会员状态（拉黑/恢复）
 func (s *server) SetUserStatus(ctx stdctx.Context, req *user.SetUserStatusReq) (*common.CommonResponse, error) {
-	if err := s.userService.SetUserStatus(ctx, req.Id, req.Status); err != nil {
+	if err := s.userService.SetUserStatus(ctx, req.Id, req.Status, req.CommunityId); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
@@ -432,6 +433,52 @@ func (s *server) DeleteAdmin(ctx stdctx.Context, req *user.DeleteAdminReq) (*com
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// GetAdminAssignments 查询账号任职的全部社区与角色（账号管理页任职详情弹窗）
+// 超管返回空列表（不受社区限制）；普通账号按社区 ID 升序返回
+func (s *server) GetAdminAssignments(ctx stdctx.Context, req *user.GetAdminAssignmentsReq) (*user.GetAdminAssignmentsResp, error) {
+	assignments, communityNames, err := s.adminService.ListAdminAssignments(ctx, req.AdminId)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+
+	// 批量加载任职行涉及的角色
+	roleIDSet := make(map[int64]struct{})
+	for _, rows := range assignments {
+		for _, row := range rows {
+			roleIDSet[row.RoleID] = struct{}{}
+		}
+	}
+	roleIDs := make([]int64, 0, len(roleIDSet))
+	for id := range roleIDSet {
+		roleIDs = append(roleIDs, id)
+	}
+	rolesByID, err := s.roleService.GetRolesByIDs(ctx, roleIDs)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+
+	communityIDs := make([]int64, 0, len(assignments))
+	for id := range assignments {
+		communityIDs = append(communityIDs, id)
+	}
+	slices.Sort(communityIDs)
+
+	resp := &user.GetAdminAssignmentsResp{List: make([]*user.AdminAssignment, 0, len(communityIDs))}
+	for _, communityID := range communityIDs {
+		item := &user.AdminAssignment{
+			CommunityId:   communityID,
+			CommunityName: communityNames[communityID],
+		}
+		for _, row := range assignments[communityID] {
+			if r := rolesByID[row.RoleID]; r != nil {
+				item.Roles = append(item.Roles, service.ToRoleInfo(r))
+			}
+		}
+		resp.List = append(resp.List, item)
+	}
+	return resp, nil
+}
+
 // ChangeAdminPassword 修改管理员密码（force=true 时跳过旧密码校验，须由网关校验超管身份）
 func (s *server) ChangeAdminPassword(ctx stdctx.Context, req *user.ChangeAdminPasswordReq) (*common.CommonResponse, error) {
 	if err := s.adminService.ChangeAdminPassword(ctx, req.Id, req.OldPassword, req.NewPassword, req.Force); err != nil {
@@ -462,6 +509,9 @@ func (s *server) GetRole(ctx stdctx.Context, req *user.GetRoleReq) (*user.RoleIn
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	if err := service.EnsureScope(req.GetCommunityId(), r.CommunityID, "角色"); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
 	return service.ToRoleInfo(r), nil
 }
 
@@ -488,7 +538,7 @@ func (s *server) UpdateRole(ctx stdctx.Context, req *user.UpdateRoleReq) (*user.
 
 // DeleteRole 删除角色
 func (s *server) DeleteRole(ctx stdctx.Context, req *user.DeleteRoleReq) (*common.CommonResponse, error) {
-	if err := s.roleService.DeleteRole(ctx, req.Id); err != nil {
+	if err := s.roleService.DeleteRole(ctx, req.Id, req.CommunityId); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil

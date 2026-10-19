@@ -46,6 +46,8 @@ service UserService {
   rpc CreateAdmin(CreateAdminReq) returns (AdminInfo);
   rpc UpdateAdmin(UpdateAdminReq) returns (AdminInfo);
   rpc DeleteAdmin(DeleteAdminReq) returns (common.CommonResponse);
+  // 查询账号任职的全部社区与角色（账号管理页任职详情弹窗，超管专用）
+  rpc GetAdminAssignments(GetAdminAssignmentsReq) returns (GetAdminAssignmentsResp);
   rpc ChangeAdminPassword(ChangeAdminPasswordReq) returns (common.CommonResponse);
   // GetAdminContext 实时解析管理员在指定社区的权限上下文（任职角色权限并集）
   rpc GetAdminContext(GetAdminContextReq) returns (AdminContextInfo);
@@ -437,6 +439,25 @@ message DeleteAdminReq {
   int64 community_id = 2;
 }
 
+// GetAdminAssignmentsReq 账号任职详情查询
+message GetAdminAssignmentsReq {
+  // 管理员（账号）ID
+  int64 admin_id = 1;
+}
+
+// AdminAssignment 单个任职社区及其角色列表
+message AdminAssignment {
+  int64 community_id = 1;
+  string community_name = 2;
+  // 在该社区担任的角色列表
+  repeated RoleInfo roles = 3;
+}
+
+message GetAdminAssignmentsResp {
+  // 按社区 ID 升序
+  repeated AdminAssignment list = 1;
+}
+
 message ChangeAdminPasswordReq {
   int64 id = 1;
   string old_password = 2;
@@ -486,6 +507,8 @@ message ListRolesResp {
 
 message GetRoleReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验角色归属社区（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message CreateRoleReq {
@@ -503,10 +526,14 @@ message UpdateRoleReq {
   string code = 3;
   repeated string permissions = 4;
   string description = 5;
+  // 操作者社区语境：>0 时服务端强校验角色归属社区，防止跨社区改角色权限（超管传 0 放行）
+  int64 community_id = 6;
 }
 
 message DeleteRoleReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验角色归属社区（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 // --- 行政区划 ---
@@ -625,6 +652,8 @@ message SetUserStatusReq {
   int64 id = 1;
   // 0 拉黑 1 正常
   int32 status = 2;
+  // 操作者社区语境：>0 时校验会员与本社区的任职/绑定关系，防止跨社区拉黑他社区会员（超管传 0 放行）
+  int64 community_id = 3;
 }
 
 // CreateMemberReq 注册会员请求

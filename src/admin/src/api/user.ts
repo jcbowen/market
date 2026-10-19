@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { ApiResult, Account, Community, FrequentProduct, PageParams, PageResult, User } from './types'
+import type { ApiResult, Account, AccountAssignment, Community, FrequentProduct, PageParams, PageResult, User } from './types'
 
 /**
  * 用户管理相关 API
@@ -231,6 +231,19 @@ export function resetAccountPassword(id: number, newPassword: string) {
     url: `/api/v1/admin/accounts/${id}/password`,
     method: 'PUT',
     data: { new_password: newPassword },
+  })
+}
+
+/**
+ * 查询账号任职的社区与角色列表（超管，任职社区数弹窗用）
+ * 按社区 ID 升序返回；超管账号返回空列表（不受社区限制）
+ * @param id 账号 ID
+ * @returns 按社区分组的任职列表
+ */
+export function getAccountAssignments(id: number) {
+  return request<ApiResult<AccountAssignment[]>>({
+    url: `/api/v1/admin/accounts/${id}/assignments`,
+    method: 'GET',
   })
 }
 

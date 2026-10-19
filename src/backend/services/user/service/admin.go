@@ -496,6 +496,59 @@ func (s *AdminService) ListAdminCommunityIDs(ctx context.Context, adminID int64)
 	return ids, nil
 }
 
+// ListAdminAssignments 查询管理员全部社区任职行（含社区名称）
+// 供账号管理页「任职社区数」详情弹窗使用；超管返回空（不受社区限制，无任职行）
+//
+// 参数：
+//   - ctx: 上下文
+//   - adminID: 管理员 ID
+//
+// 返回：
+//   - map[int64][]*model.AdminCommunity: 社区 ID → 该社区任职行列表（按行 ID 升序）
+//   - map[int64]string: 社区 ID → 社区名称
+//   - error: 错误信息
+func (s *AdminService) ListAdminAssignments(ctx context.Context, adminID int64) (map[int64][]*model.AdminCommunity, map[int64]string, error) {
+	a, err := s.getAdminByID(ctx, adminID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if a.IsSuper {
+		return nil, nil, nil
+	}
+
+	var rows []*model.AdminCommunity
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("admin_id = ?", adminID).
+		Order("community_id asc, id asc").
+		Find(&rows).Error; err != nil {
+		return nil, nil, err
+	}
+
+	assignments := make(map[int64][]*model.AdminCommunity)
+	communityIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := assignments[row.CommunityID]; !ok {
+			communityIDs = append(communityIDs, row.CommunityID)
+		}
+		assignments[row.CommunityID] = append(assignments[row.CommunityID], row)
+	}
+
+	names := make(map[int64]string, len(communityIDs))
+	if len(communityIDs) > 0 {
+		var communities []*model.Community
+		if err := s.db.GetDb().WithContext(ctx).
+			Select("id, name").
+			Where("id IN ?", communityIDs).
+			Find(&communities).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, c := range communities {
+			names[c.ID] = c.Name
+		}
+	}
+	return assignments, names, nil
+}
+
 // GetAdminContext 实时解析管理员在指定社区的权限上下文
 // 超管不受社区约束；普通管理员权限 = 该社区全部任职角色的权限并集，
 // 再与本社区权限上限（内置社区管理员角色的权限集）取交集——
@@ -570,7 +623,53 @@ func (s *AdminService) GetAdminContext(ctx context.Context, adminID, communityID
 		permissions = intersectPermissions(permissions, ceilingPerms)
 	}
 
+	// 通配符只属于超管内置角色：经上限交集后仍残留 "*" 的（存量 ["*"] 上限、
+	// 内置角色尚未配置的社区），展开为社区默认权限集合，
+	// 避免社区管理员自建含 "*" 或 settings:* 的角色后读写全局支付配置（商户号 / APIv3Key）
+	permissions = expandCommunityPermissions(permissions)
+
 	return false, roleIDs, permissions, true, nil
+}
+
+// expandCommunityPermissions 将残留的 "*" 通配展开为社区默认权限集合
+// 上限交集已把 "*" 收敛为"已配置上限"社区的权限集，此处只处理交集未生效的社区：
+// 用 DefaultCommunityAdminPermissions 兜底，其中不含 community/region/settings 等系统级权限点
+//
+// 参数：
+//   - permissions: 上限交集后的有效权限
+//
+// 返回：
+//   - []string: 不含通配符的权限列表（保序去重）
+func expandCommunityPermissions(permissions []string) []string {
+	hasWildcard := false
+	for _, p := range permissions {
+		if p == "*" {
+			hasWildcard = true
+			break
+		}
+	}
+	if !hasWildcard {
+		return permissions
+	}
+
+	result := make([]string, 0, len(permissions)+len(DefaultCommunityAdminPermissions))
+	seen := make(map[string]struct{}, len(permissions))
+	for _, p := range permissions {
+		if p == "*" {
+			continue
+		}
+		if _, ok := seen[p]; !ok {
+			seen[p] = struct{}{}
+			result = append(result, p)
+		}
+	}
+	for _, p := range DefaultCommunityAdminPermissions {
+		if _, ok := seen[p]; !ok {
+			seen[p] = struct{}{}
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 // intersectPermissions 有效权限与社区权限上限取交集

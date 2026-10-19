@@ -49,6 +49,8 @@ service UserService {
   rpc CreateAdmin(CreateAdminReq) returns (AdminInfo);
   rpc UpdateAdmin(UpdateAdminReq) returns (AdminInfo);
   rpc DeleteAdmin(DeleteAdminReq) returns (common.CommonResponse);
+  // GetAdminAssignments 查询账号任职的全部社区与角色（账号管理页任职详情弹窗，超管专用）
+  rpc GetAdminAssignments(GetAdminAssignmentsReq) returns (GetAdminAssignmentsResp);
   rpc ChangeAdminPassword(ChangeAdminPasswordReq) returns (common.CommonResponse);
   // GetAdminContext 实时解析管理员在指定社区的权限上下文（任职角色权限并集）
   rpc GetAdminContext(GetAdminContextReq) returns (AdminContextInfo);
@@ -427,6 +429,25 @@ message DeleteAdminReq {
   int64 id = 1;
   // 任职社区语境：>0 仅移除该社区任职（账号保留）；0 移除全部任职
   int64 community_id = 2;
+}
+
+// GetAdminAssignmentsReq 账号任职详情查询
+message GetAdminAssignmentsReq {
+  // 管理员（账号）ID
+  int64 admin_id = 1;
+}
+
+// AdminAssignment 单个任职社区及其角色列表
+message AdminAssignment {
+  int64 community_id = 1;
+  string community_name = 2;
+  // 在该社区担任的角色列表
+  repeated RoleInfo roles = 3;
+}
+
+message GetAdminAssignmentsResp {
+  // 按社区 ID 升序
+  repeated AdminAssignment list = 1;
 }
 
 message ChangeAdminPasswordReq {

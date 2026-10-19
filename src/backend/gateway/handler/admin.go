@@ -294,6 +294,21 @@ func (h *AdminHandler) ensureOrderInCommunity(c *gin.Context, orderID int64) err
 	return nil
 }
 
+// scopeCommunityID 返回下发给下游服务做归属校验的社区 ID
+// 服务端各按 ID 操作的 RPC 采用「CommunityId>0 才校验」的约定（同 order 退款族），
+// 超管跨社区操作时返回 0 表示放行，普通管理员返回其当前操作社区
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - int64: 用于社区校验的社区 ID，0 表示跳过
+func (h *AdminHandler) scopeCommunityID(c *gin.Context) int64 {
+	if appcontext.GetUserContext(c).Role == "super_admin" {
+		return 0
+	}
+	return h.getAdminCommunityID(c)
+}
+
 // containsInt64 判断 int64 切片是否包含指定元素
 // 参数：
 //   - list: int64 切片
@@ -694,6 +709,46 @@ func (h *AdminHandler) ResetAccountPassword(c *gin.Context) {
 	response.Success(c, gin.H{"id": id})
 }
 
+// GetAccountAssignments 查询账号任职的社区与角色（超管专用，账号管理页任职详情弹窗）
+// 按社区 ID 升序返回各任职社区及其角色列表；超管账号返回空列表（不受社区限制）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) GetAccountAssignments(c *gin.Context) {
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	resp, err := h.userClient.GetAdminAssignments(c.Request.Context(), &user.GetAdminAssignmentsReq{AdminId: id})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	list := make([]gin.H, 0, len(resp.List))
+	for _, item := range resp.List {
+		roles := make([]gin.H, 0, len(item.Roles))
+		for _, r := range item.Roles {
+			roles = append(roles, gin.H{
+				"id":   r.Id,
+				"name": r.Name,
+				"code": r.Code,
+			})
+		}
+		list = append(list, gin.H{
+			"community_id":   item.CommunityId,
+			"community_name": item.CommunityName,
+			"roles":          roles,
+		})
+	}
+	response.Success(c, list)
+}
+
 // ListCommunityAdmins 查询社区现任管理员（超管专用，社区编辑页使用）
 // 仅返回担任该社区内置社区管理员角色的账号
 // 参数：
@@ -977,7 +1032,7 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
 	isSuper := uc.Role == "super_admin"
 
-	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id})
+	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -1009,6 +1064,8 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 		Code:        req.Code,
 		Permissions: req.Permissions,
 		Description: req.Description,
+
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -1031,7 +1088,7 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
 	isSuper := uc.Role == "super_admin"
 
-	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id})
+	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -1043,7 +1100,7 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 		}
 	}
 
-	_, err = h.userClient.DeleteRole(c.Request.Context(), &user.DeleteRoleReq{Id: id})
+	_, err = h.userClient.DeleteRole(c.Request.Context(), &user.DeleteRoleReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -1192,7 +1249,8 @@ func (h *AdminHandler) UpdateCommunityPermissions(c *gin.Context) {
 }
 
 // validatePermissionsSubset 校验权限点列表不超出操作者在指定社区的权限范围
-// 操作者权限含 "*" 通配（或为超管场景不调用此函数）时放行
+// 超管不调用此函数；普通管理员的有效权限已在用户服务侧展开（不再下发 "*" 通配），
+// 故此处保留的通配判断仅作兜底，实际会走逐点比对，拒绝把系统级权限授予社区角色
 // 参数：
 //   - c: gin 上下文
 //   - communityID: 社区语境
@@ -1349,11 +1407,12 @@ func (h *AdminHandler) UpdateCategory(c *gin.Context) {
 	}
 
 	resp, err := h.productClient.UpdateCategory(c.Request.Context(), &product.UpdateCategoryReq{
-		Id:     id,
-		Name:   req.Name,
-		Icon:   req.Icon,
-		Sort:   req.Sort,
-		Status: req.Status,
+		Id:          id,
+		Name:        req.Name,
+		Icon:        req.Icon,
+		Sort:        req.Sort,
+		Status:      req.Status,
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -1372,7 +1431,7 @@ func (h *AdminHandler) DeleteCategory(c *gin.Context) {
 		return
 	}
 
-	_, err = h.productClient.DeleteCategory(c.Request.Context(), &product.DeleteCategoryReq{Id: id})
+	_, err = h.productClient.DeleteCategory(c.Request.Context(), &product.DeleteCategoryReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -1392,7 +1451,7 @@ func (h *AdminHandler) GetAdminProduct(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.productClient.GetProduct(c.Request.Context(), &product.GetProductReq{Id: id})
+	resp, err := h.productClient.GetProduct(c.Request.Context(), &product.GetProductReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -1464,19 +1523,19 @@ type SkuItemReqItem struct {
 
 // CreateProductReq 创建商品请求
 type CreateProductReq struct {
-	CategoryID  int64             `json:"category_id" binding:"required"`
-	Name        string            `json:"name" binding:"required"`
-	Description string            `json:"description"`
-	CoverImage  string            `json:"cover_image"`
-	Images      []string          `json:"images"`
-	Unit        string            `json:"unit"`
-	IsMultiSpec bool              `json:"is_multi_spec"`
-	MinBuy      int32             `json:"min_buy"`
-	Sort        int32             `json:"sort"`
-	ShowSales   *bool             `json:"show_sales"`
-	VirtualSales int32            `json:"virtual_sales"`
-	Specs       []*SpecReqItem    `json:"specs"`
-	SkuItems    []*SkuItemReqItem `json:"sku_items"`
+	CategoryID   int64             `json:"category_id" binding:"required"`
+	Name         string            `json:"name" binding:"required"`
+	Description  string            `json:"description"`
+	CoverImage   string            `json:"cover_image"`
+	Images       []string          `json:"images"`
+	Unit         string            `json:"unit"`
+	IsMultiSpec  bool              `json:"is_multi_spec"`
+	MinBuy       int32             `json:"min_buy"`
+	Sort         int32             `json:"sort"`
+	ShowSales    *bool             `json:"show_sales"`
+	VirtualSales int32             `json:"virtual_sales"`
+	Specs        []*SpecReqItem    `json:"specs"`
+	SkuItems     []*SkuItemReqItem `json:"sku_items"`
 }
 
 // toProtoSpecs 转换规格树为 proto 结构
@@ -1609,6 +1668,7 @@ func (h *AdminHandler) UpdateProduct(c *gin.Context) {
 	resp, err := h.productClient.UpdateProduct(c.Request.Context(), &product.UpdateProductReq{
 		Id:           id,
 		CategoryId:   req.CategoryID,
+		CommunityId:  h.scopeCommunityID(c),
 		Name:         req.Name,
 		Description:  req.Description,
 		CoverImage:   req.CoverImage,
@@ -1640,7 +1700,7 @@ func (h *AdminHandler) DeleteProduct(c *gin.Context) {
 		return
 	}
 
-	_, err = h.productClient.DeleteProduct(c.Request.Context(), &product.DeleteProductReq{Id: id})
+	_, err = h.productClient.DeleteProduct(c.Request.Context(), &product.DeleteProductReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -1721,8 +1781,9 @@ func (h *AdminHandler) UpdateProductStatus(c *gin.Context) {
 	}
 
 	_, err = h.productClient.UpdateProductStatus(c.Request.Context(), &product.UpdateProductStatusReq{
-		Id:     id,
-		Status: *req.Status,
+		Id:          id,
+		Status:      *req.Status,
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2634,7 +2695,8 @@ func (h *AdminHandler) GetStockCheckDetail(c *gin.Context) {
 	}
 
 	resp, err := h.productClient.GetStockCheck(c.Request.Context(), &product.GetStockCheckReq{
-		Id: id,
+		Id:          id,
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2715,8 +2777,9 @@ func (h *AdminHandler) SubmitStockCheck(c *gin.Context) {
 	}
 
 	_, err = h.productClient.SubmitStockCheck(c.Request.Context(), &product.SubmitStockCheckReq{
-		Id:    id,
-		Items: items,
+		Id:          id,
+		Items:       items,
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -2850,20 +2913,22 @@ func (h *AdminHandler) UpdateCoupon(c *gin.Context) {
 	}
 
 	// 读当前券判断发布状态，按状态裁剪可编辑字段
-	cur, err := h.productClient.GetCoupon(c.Request.Context(), &product.GetCouponReq{Id: id})
+	cur, err := h.productClient.GetCoupon(c.Request.Context(), &product.GetCouponReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
-	// 社区隔离：仅允许操作本社区语境下的券
-	if communityID := h.getAdminCommunityID(c); communityID > 0 && cur.CommunityId != communityID {
+	// 社区隔离：仅允许操作本社区语境下的券（网关第一道，服务端另有强校验）
+	scope := h.scopeCommunityID(c)
+	if scope > 0 && cur.CommunityId != scope {
 		response.Error(c, errcode.NoPermission, "无权操作其他社区的优惠券")
 		return
 	}
 	isDraft := cur.PublishStatus == 0
 
 	rpcReq := &product.UpdateCouponReq{
-		Id: id,
+		Id:          id,
+		CommunityId: scope,
 		// Status 启停已由「发布状态机」取代，不再单独透传
 	}
 	// 全状态通用：发布/下架流转、发放启停、规则文案、启停
@@ -3103,11 +3168,12 @@ func (h *AdminHandler) UpdateFlashSale(c *gin.Context) {
 	}
 
 	resp, err := h.productClient.UpdateFlashSale(c.Request.Context(), &product.UpdateFlashSaleReq{
-		Id:        id,
-		Name:      req.Name,
-		StartTime: req.StartTime,
-		EndTime:   req.EndTime,
-		Status:    req.Status,
+		Id:          id,
+		Name:        req.Name,
+		StartTime:   req.StartTime,
+		EndTime:     req.EndTime,
+		Status:      req.Status,
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -3460,6 +3526,8 @@ func (h *AdminHandler) UpdateBanner(c *gin.Context) {
 		StartTime:   req.StartTime,
 		EndTime:     req.EndTime,
 		CommunityId: communityID,
+
+		ScopeCommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -3478,7 +3546,7 @@ func (h *AdminHandler) DeleteBanner(c *gin.Context) {
 		return
 	}
 
-	_, err = h.productClient.DeleteBanner(c.Request.Context(), &product.DeleteBannerReq{Id: id})
+	_, err = h.productClient.DeleteBanner(c.Request.Context(), &product.DeleteBannerReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -3580,7 +3648,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 // ListUserFrequentProducts 会员常买商品排行（会员订单弹窗「常买商品排行」板块）
 // 按该会员有效订单（已支付及之后，排除待支付/取消/退款）统计：
 // 购买次数 = 去重订单数，累计件数 = SUM(quantity)，按购买次数降序分页返回；
-// 口径为会员全社区消费（用户维度统计，不随社区语境过滤）
+// 口径：普通管理员仅统计本社区订单，超管（语境 0）看会员全社区消费
 // 参数：
 //   - c: gin 上下文（路径 user_id；query: page/page_size）
 func (h *AdminHandler) ListUserFrequentProducts(c *gin.Context) {
@@ -3593,9 +3661,10 @@ func (h *AdminHandler) ListUserFrequentProducts(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "5"))
 
 	resp, err := h.orderClient.GetUserFrequentProducts(c.Request.Context(), &order.GetUserFrequentProductsReq{
-		UserId:   userID,
-		Page:     int32(page),
-		PageSize: int32(pageSize),
+		UserId:      userID,
+		Page:        int32(page),
+		PageSize:    int32(pageSize),
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -3697,8 +3766,9 @@ func (h *AdminHandler) SetUserStatus(c *gin.Context) {
 	}
 
 	if _, err = h.userClient.SetUserStatus(c.Request.Context(), &user.SetUserStatusReq{
-		Id:     id,
-		Status: *req.Status,
+		Id:          id,
+		Status:      *req.Status,
+		CommunityId: h.scopeCommunityID(c),
 	}); err != nil {
 		response.GRPCError(c, err)
 		return
