@@ -6,6 +6,8 @@
 #   2. 按 bind mount 目录属主自动授权（Linux 宿主无需手动 chown）
 #   3. MySQL 数据目录为空时首启初始化（建 root 口令 + market 库），
 #      随后启动 mysqld / redis-server 并等待就绪
+#      （MySQL/Redis 监听 0.0.0.0，可达性由部署侧端口发布决定：示例 compose
+#       发布侧绑定宿主机 127.0.0.1，本机/SSH 隧道可用第三方工具直连调试）
 #   4. 按 gRPC 依赖顺序拉起 6 个业务进程（均以 uid 10001 运行，
 #      崩溃由 supervise 循环自动拉起）
 #   5. 调用 market-admin init 初始化超管账号（幂等，凭据输出到 stdout，
@@ -182,9 +184,11 @@ chown -R appuser:appuser "$RUNTIME_DIR" 2>/dev/null || true
 
 # ---------- Redis ----------
 
+# 监听 0.0.0.0：端口是否可达由部署侧端口发布决定（示例 compose 发布侧绑定
+# 宿主机 127.0.0.1），宿主机第三方工具可经映射直连调试（口令 REDIS_PASSWORD）
 log "启动 Redis ..."
 supervise redis runuser -u redis -- \
-  redis-server --bind 127.0.0.1 --port 6379 --dir /data \
+  redis-server --bind 0.0.0.0 --port 6379 --dir /data \
     --requirepass "$REDIS_PASSWORD" \
     --save 900 1 --save 300 10 --save 60 10000
 
@@ -200,9 +204,10 @@ if [ ! -d "$MYSQL_DATA/mysql" ]; then
   fi
 fi
 
+# 监听 0.0.0.0：首启已建 root@'%' 账号，宿主机第三方工具可经端口映射直连调试
 log "启动 MySQL ..."
 supervise mysqld mysqld --user=mysql --datadir="$MYSQL_DATA" \
-  --bind-address=127.0.0.1 --port=3306 --mysqlx=OFF --skip-name-resolve
+  --bind-address=0.0.0.0 --port=3306 --mysqlx=OFF --skip-name-resolve
 
 # 等待 socket 就绪（首启初始化后的启动可能需要数十秒）
 log "等待 MySQL 就绪..."
