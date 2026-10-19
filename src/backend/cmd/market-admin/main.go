@@ -7,6 +7,10 @@
 //     MARKET_ADMIN_PASSWORD（未配置时随机生成）；凭据打印到 stdout（进入
 //     docker logs）并写入凭证文件（随宿主机 runtime 目录持久化）。幂等：
 //     已有超管时跳过，绝不重置既有密码。
+//     随后做初始社区兜底：库中不存在任何社区时创建一个默认社区（名称取
+//     MARKET_DEFAULT_COMMUNITY，默认「默认社区」），并初始化内置社区管理员
+//     角色（与后台创建社区同链路），避免全新部署时超管被卡在「社区选择」页
+//     死循环（无社区 → 强制选择页 → 选择页为空且无创建入口）。
 //  2. 无参数交互式菜单（docker exec -it <容器名> ./market-admin）：
 //     查看超管列表 / 查看初始或最近一次设置的密码 / 重置指定超管密码
 //     （随机生成或手动输入）。
@@ -18,6 +22,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -31,13 +36,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 	"github.com/jcbowen/market/src/backend/services/user/model"
+	"github.com/jcbowen/market/src/backend/services/user/service"
 )
 
 const (
 	// defaultAdminUsername 初始超管默认用户名（可用 MARKET_ADMIN_USER 覆盖）
 	defaultAdminUsername = "admin"
+	// defaultCommunityName 默认社区名称（可用 MARKET_DEFAULT_COMMUNITY 覆盖）
+	defaultCommunityName = "默认社区"
 	// minPasswordLength 密码最小长度（手动输入与 MARKET_ADMIN_PASSWORD 同口径）
 	minPasswordLength = 8
 	// passwordAlphabet 随机密码字符集：剔除 i/l/I/0/O/1 等易混淆字符
@@ -64,7 +73,7 @@ func main() {
 	if len(args) > 0 {
 		fmt.Println("用法:")
 		fmt.Println("  market-admin           交互式管理菜单（查看列表/查看密码/重置密码）")
-		fmt.Println("  market-admin init [--timeout N]   初始化超管（entrypoint 自动调用）")
+		fmt.Println("  market-admin init [--timeout N]   初始化超管与默认社区（entrypoint 自动调用）")
 		os.Exit(2)
 	}
 	runInteractive()
@@ -72,27 +81,24 @@ func main() {
 
 // openDB 加载配置并连接 MySQL（复用各微服务的 bootstrap 加载逻辑，
 // 配置路径经 CONFIG_FILE 环境变量解析，敏感项经 MYSQL_PASSWORD 覆盖）
-func openDB() (*gorm.DB, error) {
+func openDB() (*mysql.Instance, error) {
 	cfg := bootstrap.LoadConfig()
-	inst, err := bootstrap.InitMySQL(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("连接数据库失败: %w", err)
-	}
-	return inst.GetDb(), nil
+	return bootstrap.InitMySQL(cfg)
 }
 
 // ============================================================
 // init 子命令
 // ============================================================
 
-// runInit 初始化超管账号（幂等，失败不阻断容器启动由 entrypoint 兜底提示）
+// runInit 初始化超管账号与默认社区（幂等，失败不阻断容器启动由 entrypoint 兜底提示）
 func runInit(timeoutSec int) {
-	fmt.Println("==> [market-admin] 超管初始化开始")
-	db, err := openDB()
+	fmt.Println("==> [market-admin] 初始化开始")
+	inst, err := openDB()
 	if err != nil {
 		fmt.Printf("==> [market-admin] 初始化失败: %v\n", err)
 		os.Exit(1)
 	}
+	db := inst.GetDb()
 
 	// 等待 admin_users 表就绪：user-service 启动时 AutoMigrate 建表，
 	// 此前表不存在属正常现象，轮询直至超时
@@ -110,15 +116,23 @@ func runInit(timeoutSec int) {
 		time.Sleep(2 * time.Second)
 	}
 
-	// 幂等：已有超管则跳过
+	if err := ensureSuperAdmin(db); err != nil {
+		fmt.Printf("==> [market-admin] 超管初始化失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	ensureDefaultCommunity(inst)
+}
+
+// ensureSuperAdmin 确保存在超管账号（幂等：已有超管则跳过，绝不重置既有密码）
+func ensureSuperAdmin(db *gorm.DB) error {
 	var count int64
 	if err := db.Model(&model.Admin{}).Where("is_super = ?", true).Count(&count).Error; err != nil {
-		fmt.Printf("==> [market-admin] 查询超管失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("查询超管失败: %w", err)
 	}
 	if count > 0 {
 		fmt.Printf("==> [market-admin] 已存在 %d 个超管账号，跳过初始化（不会重置既有密码）\n", count)
-		return
+		return nil
 	}
 
 	username := strings.TrimSpace(os.Getenv("MARKET_ADMIN_USER"))
@@ -131,10 +145,9 @@ func runInit(timeoutSec int) {
 	if err := db.Where("username = ?", username).First(&exist).Error; err == nil {
 		if exist.IsSuper {
 			fmt.Printf("==> [market-admin] 用户名 %q 已是超管，视为初始化完成\n", username)
-			return
+			return nil
 		}
-		fmt.Printf("==> [market-admin] 初始化失败: 用户名 %q 已存在且不是超管，请通过 MARKET_ADMIN_USER 指定其他用户名\n", username)
-		os.Exit(1)
+		return fmt.Errorf("用户名 %q 已存在且不是超管，请通过 MARKET_ADMIN_USER 指定其他用户名", username)
 	}
 
 	envPwd := os.Getenv("MARKET_ADMIN_PASSWORD")
@@ -142,15 +155,13 @@ func runInit(timeoutSec int) {
 	generated := false
 	if envPwd != "" {
 		if len(envPwd) < minPasswordLength {
-			fmt.Printf("==> [market-admin] 初始化失败: MARKET_ADMIN_PASSWORD 长度不足（至少 %d 位）\n", minPasswordLength)
-			os.Exit(1)
+			return fmt.Errorf("MARKET_ADMIN_PASSWORD 长度不足（至少 %d 位）", minPasswordLength)
 		}
 		password = envPwd
 	} else {
 		p, err := generatePassword(16)
 		if err != nil {
-			fmt.Printf("==> [market-admin] 生成随机密码失败: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("生成随机密码失败: %w", err)
 		}
 		password = p
 		generated = true
@@ -158,8 +169,7 @@ func runInit(timeoutSec int) {
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		fmt.Printf("==> [market-admin] 密码哈希失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("密码哈希失败: %w", err)
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")
 	admin := &model.Admin{
@@ -172,8 +182,7 @@ func runInit(timeoutSec int) {
 		UpdatedAt: now,
 	}
 	if err := db.Create(admin).Error; err != nil {
-		fmt.Printf("==> [market-admin] 创建超管失败: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("创建超管失败: %w", err)
 	}
 
 	_ = saveCredentials(adminCredentials{
@@ -192,6 +201,45 @@ func runInit(timeoutSec int) {
 		fmt.Println("    （随机生成密码，请尽快登录后台修改；本条日志随 docker logs 可查）")
 	}
 	fmt.Printf("    凭证文件: %s\n", credentialsPath())
+	fmt.Println("==================================================")
+	return nil
+}
+
+// ensureDefaultCommunity 初始社区兜底（幂等）：库中不存在任何社区时创建一个
+// 默认社区并初始化内置社区管理员角色，与后台「创建社区」同链路；避免全新部署
+// 超管被「社区选择」页死循环卡住。任何失败仅打印日志不中断（可在后台手动创建）。
+func ensureDefaultCommunity(inst *mysql.Instance) {
+	db := inst.GetDb()
+
+	var count int64
+	if err := db.Model(&model.Community{}).Count(&count).Error; err != nil {
+		fmt.Printf("==> [market-admin] 查询社区数失败，跳过默认社区初始化: %v\n", err)
+		return
+	}
+	if count > 0 {
+		return
+	}
+
+	name := strings.TrimSpace(os.Getenv("MARKET_DEFAULT_COMMUNITY"))
+	if name == "" {
+		name = defaultCommunityName
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	c := &model.Community{Name: name, Status: 1, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(c).Error; err != nil {
+		fmt.Printf("==> [market-admin] 创建默认社区失败: %v\n", err)
+		return
+	}
+
+	// 随社区初始化内置社区管理员角色（社区权限上限的载体），与 CreateCommunity 服务一致
+	if _, err := service.NewRoleService(inst).EnsureCommunityAdminRole(context.Background(), c.ID); err != nil {
+		fmt.Printf("==> [market-admin] 初始化内置社区管理员角色失败: %v\n", err)
+		return
+	}
+
+	fmt.Println("==================================================")
+	fmt.Printf("==> 已创建默认社区 %q（ID: %d）\n", name, c.ID)
+	fmt.Println("    超管登录后台选择该社区进入后，可在「社区管理」完善资料")
 	fmt.Println("==================================================")
 }
 
@@ -212,6 +260,7 @@ func runInteractive() {
 		fmt.Println("提示: 若容器刚启动，MySQL 可能尚未就绪，请稍后重试")
 		os.Exit(1)
 	}
+	gdb := db.GetDb()
 
 	for {
 		fmt.Println()
@@ -224,11 +273,11 @@ func runInteractive() {
 		line, _ := reader.ReadString('\n')
 		switch strings.TrimSpace(line) {
 		case "1":
-			_ = listSuperAdmins(db)
+			_ = listSuperAdmins(gdb)
 		case "2":
 			showCredentials()
 		case "3":
-			resetPasswordFlow(db, reader)
+			resetPasswordFlow(gdb, reader)
 		case "0", "q", "Q", "exit", "quit":
 			fmt.Println("再见")
 			return
