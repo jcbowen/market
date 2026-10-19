@@ -250,15 +250,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Docker Hub 双发：需在仓库 Secrets 配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN；
-      # 未配置时本步与镜像 tag 自动跳过（仅发 GHCR）。Docker Hub 首次推送自动建仓，
-      # 个人账号默认公开可见性
+      # 注意 secrets 上下文不能用于 step if，故经 env 注入后在 shell 内判断，
+      # 未配置时跳过登录（build 步骤同样按 env 非空决定是否追加 Docker Hub tag）。
+      # Docker Hub 首次推送自动建仓，个人账号默认公开可见性
       - name: 登录 Docker Hub
-        if: ${{ contains(github.server_url, 'github.com') && secrets.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v3
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: ${{ contains(github.server_url, 'github.com') }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "${DOCKERHUB_USERNAME}" ]; then
+            echo "未配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，跳过 Docker Hub 发布（仅发 GHCR）"
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io -u "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: 构建并推送多架构一体化镜像
         if: ${{ contains(github.server_url, 'github.com') }}
