@@ -2,6 +2,7 @@
 # Release 产物：linux/darwin/windows × amd64/arm64 共 6 平台包（tar.gz，Windows 为 zip），内含 6 个服务二进制 + 前端产物 + config.yaml
 # 说明：后端 Go module 位于 src/backend，前端位于 src/admin 与 src/client
 # Gitea Actions 与 GitHub Actions 语法兼容，本文件在 GitHub 与 Gitea（act_runner）上均可运行；
+# 注意 checkout v5 起 Action 运行时为 Node 24，要求 act_runner ≥ 2.327.1，Gitea 侧 runner 过旧需先升级；
 # tag 发布步骤已做平台适配（API 域名差异见「创建 Release 并上传产物」步骤注释）
 name: CI
 
@@ -26,9 +27,9 @@ jobs:
       run:
         working-directory: src/backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.26'
           cache-dependency-path: src/backend/go.sum
@@ -66,9 +67,9 @@ jobs:
     # 待本地按报告清理完成后移除 continue-on-error 改为阻断
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.26'
           cache-dependency-path: src/backend/go.sum
@@ -90,7 +91,7 @@ jobs:
 
       # 配置文件位于仓库根目录 .golangci.yml（v2 格式），golangci-lint 会自
       # working-directory 逐级向上查找配置
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14
           working-directory: src/backend
@@ -103,11 +104,11 @@ jobs:
       run:
         working-directory: src/admin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: src/admin/package-lock.json
 
@@ -125,11 +126,11 @@ jobs:
       run:
         working-directory: src/client
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: src/client/package-lock.json
 
@@ -149,9 +150,9 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.26'
           cache-dependency-path: src/backend/go.sum
@@ -188,9 +189,9 @@ jobs:
             done
           done
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             src/admin/package-lock.json
