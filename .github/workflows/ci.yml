@@ -249,15 +249,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Docker Hub 双发：需在仓库 Secrets 配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN；
+      # 未配置时本步与镜像 tag 自动跳过（仅发 GHCR）。Docker Hub 首次推送自动建仓，
+      # 个人账号默认公开可见性
+      - name: 登录 Docker Hub
+        if: ${{ contains(github.server_url, 'github.com') && secrets.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: 构建并推送多架构一体化镜像
         if: ${{ contains(github.server_url, 'github.com') }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          TAGS="-t ${IMAGE}:${GITHUB_REF_NAME} -t ${IMAGE}:latest"
+          if [ -n "${DOCKERHUB_USERNAME}" ]; then
+            TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market:${GITHUB_REF_NAME} -t docker.io/${DOCKERHUB_USERNAME}/market:latest"
+          fi
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             -f src/backend/deploy/Dockerfile.allinone \
-            -t "${IMAGE}:${GITHUB_REF_NAME}" \
-            -t "${IMAGE}:latest" \
+            $TAGS \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --push .
