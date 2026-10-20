@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { needsShell } from './deps-tools.mjs';
 import { fileURLToPath } from 'node:url';
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -119,7 +120,7 @@ args.push('.');
 
 console.log(`==> 构建一体化镜像: ${tag}`);
 console.log(`==> 平台: ${platforms.join(', ')}  模式: ${push ? 'push（发布）' : 'load（本地载入）'}`);
-const r = spawnSync('docker', args, { stdio: 'inherit', cwd: ROOT_DIR, shell: process.platform === 'win32' });
+const r = spawnSync('docker', args, { stdio: 'inherit', cwd: ROOT_DIR, shell: needsShell('docker') });
 if (r.status !== 0) {
   console.error('错误: 镜像构建失败');
   process.exit(r.status ?? 1);

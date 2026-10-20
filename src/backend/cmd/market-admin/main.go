@@ -205,9 +205,10 @@ func ensureSuperAdmin(db *gorm.DB) error {
 	return nil
 }
 
-// ensureDefaultCommunity 初始社区兜底（幂等）：库中不存在任何社区时创建一个
-// 默认社区并初始化内置社区管理员角色，与后台「创建社区」同链路；避免全新部署
-// 超管被「社区选择」页死循环卡住。任何失败仅打印日志不中断（可在后台手动创建）。
+// ensureDefaultCommunity 初始社区兜底（幂等）：库中不存在任何社区时创建一个默认社区，
+// 与后台「创建社区」同链路；避免全新部署超管被「社区选择」页死循环卡住。
+// 无论是否新建，都再为缺内置角色的存量社区补建社区管理员角色（见 backfillCommunityAdminRoles）。
+// 任何失败仅打印日志不中断（可在后台手动创建）。
 func ensureDefaultCommunity(inst *mysql.Instance) {
 	db := inst.GetDb()
 
@@ -216,31 +217,52 @@ func ensureDefaultCommunity(inst *mysql.Instance) {
 		fmt.Printf("==> [market-admin] 查询社区数失败，跳过默认社区初始化: %v\n", err)
 		return
 	}
-	if count > 0 {
+	if count == 0 {
+		name := strings.TrimSpace(os.Getenv("MARKET_DEFAULT_COMMUNITY"))
+		if name == "" {
+			name = defaultCommunityName
+		}
+		now := time.Now().Format("2006-01-02 15:04:05")
+		c := &model.Community{Name: name, Status: 1, CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(c).Error; err != nil {
+			fmt.Printf("==> [market-admin] 创建默认社区失败: %v\n", err)
+			return
+		}
+
+		fmt.Println("==================================================")
+		fmt.Printf("==> 已创建默认社区 %q（ID: %d）\n", name, c.ID)
+		fmt.Println("    超管登录后台选择该社区进入后，可在「社区管理」完善资料")
+		fmt.Println("==================================================")
+	}
+
+	backfillCommunityAdminRoles(inst)
+}
+
+// backfillCommunityAdminRoles 为缺内置社区管理员角色的社区幂等补建该角色。
+// 该角色是「社区权限上限」的载体：预置数据（init.dev.sql）里已有社区但没有角色时，
+// 分配社区管理员、按内置角色造员工都会失败，故每次初始化都补齐一次。
+func backfillCommunityAdminRoles(inst *mysql.Instance) {
+	db := inst.GetDb()
+	var ids []int64
+	if err := db.Model(&model.Community{}).
+		Where("id NOT IN (?)", db.Model(&model.Role{}).
+			Select("community_id").Where("code = ?", model.RoleCodeCommunityAdmin)).
+		Pluck("id", &ids).Error; err != nil {
+		fmt.Printf("==> [market-admin] 查询待补建角色的社区失败: %v\n", err)
+		return
+	}
+	if len(ids) == 0 {
 		return
 	}
 
-	name := strings.TrimSpace(os.Getenv("MARKET_DEFAULT_COMMUNITY"))
-	if name == "" {
-		name = defaultCommunityName
+	roleService := service.NewRoleService(inst)
+	for _, id := range ids {
+		if _, err := roleService.EnsureCommunityAdminRole(context.Background(), id); err != nil {
+			fmt.Printf("==> [market-admin] 社区 %d 补建内置社区管理员角色失败: %v\n", id, err)
+			continue
+		}
+		fmt.Printf("==> [market-admin] 社区 %d 已补建内置社区管理员角色\n", id)
 	}
-	now := time.Now().Format("2006-01-02 15:04:05")
-	c := &model.Community{Name: name, Status: 1, CreatedAt: now, UpdatedAt: now}
-	if err := db.Create(c).Error; err != nil {
-		fmt.Printf("==> [market-admin] 创建默认社区失败: %v\n", err)
-		return
-	}
-
-	// 随社区初始化内置社区管理员角色（社区权限上限的载体），与 CreateCommunity 服务一致
-	if _, err := service.NewRoleService(inst).EnsureCommunityAdminRole(context.Background(), c.ID); err != nil {
-		fmt.Printf("==> [market-admin] 初始化内置社区管理员角色失败: %v\n", err)
-		return
-	}
-
-	fmt.Println("==================================================")
-	fmt.Printf("==> 已创建默认社区 %q（ID: %d）\n", name, c.ID)
-	fmt.Println("    超管登录后台选择该社区进入后，可在「社区管理」完善资料")
-	fmt.Println("==================================================")
 }
 
 // ============================================================

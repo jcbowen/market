@@ -323,28 +323,28 @@ test.describe.serial('会员常买商品排行分页', () => {
     }
   });
 
-  test('9. 现状锁定：page=0 退回 limit 模式，最多 10 条且 total=0', async () => {
+  test('9. 分页入参已收敛：page=0/负数归一为首页，走分页模式且 total 为真实总数', async () => {
     test.skip(products.length < 4, '造数未完成');
-    // 服务端 paged := req.Page > 0，page=0（或负数）时整条请求走 limit 分支：
-    // limit<=0 兜底 10，且 total 未被赋值恒为 0 —— 前端若据此算页数会得到 0 页。
-    // 已写入待办清单缺陷区，本轮锁定现状以免回归漏掉。
-    const body = (await (await adminApi.get(`/api/v1/admin/users/${buyerId}/frequent-products`, { params: { page: 0 } })).json()) as ApiResponse<PageData<FrequentItem>>;
-    expect(body.code).toBe(0);
-    expect(asList<FrequentItem>(body.data), 'limit 模式仍返回全部命中商品（≤10 条）').toHaveLength(4);
-    expect(body.data?.total ?? -1, 'limit 模式 total 固定为 0').toBe(0);
-
-    const negative = await rawFetch(buyerId, { page: -3 });
-    expect(asList<FrequentItem>(negative.data).length, '负 page 同样按 limit 模式返回').toBe(4);
+    // 原缺陷（服务端 paged := req.Page > 0，page=0 或负数整条请求退回 limit 分支，
+    // limit<=0 兜底 10 且 total 未赋值恒为 0，前端据此算页数会得到 0 页）已在 c4f5287 修掉：
+    // 网关 parsePageParams 把 page<=0 归一为 1、page_size<=0 归一为默认值并封顶 100，
+    // 因此管理端始终走分页模式；C 端 limit 模式（不传 page）仍由 42 号用例覆盖。
+    for (const page of [0, -3]) {
+      const body = await fetchFrequent(buyerId, { page });
+      expect(asList<FrequentItem>(body), `page=${page} 返回首页数据`).toHaveLength(4);
+      expect(body.total ?? -1, `page=${page} 的分页模式 total 应为真实总数`).toBe(4);
+      expect(body.page, `page=${page} 应回显为 1`).toBe(1);
+    }
   });
 
-  test('10. 现状锁定：page_size=0 实际按 5 执行但回显 0', async () => {
+  test('10. 分页入参已收敛：page_size=0 归一为默认 5，超大值封顶 100', async () => {
     test.skip(products.length < 4, '造数未完成');
     const body = (await (
       await adminApi.get(`/api/v1/admin/users/${buyerId}/frequent-products`, { params: { page: 1, page_size: 0 } })
     ).json()) as ApiResponse<PageData<FrequentItem>>;
     expect(body.code).toBe(0);
-    expect(body.data?.page_size, '回显值取请求原值 0').toBe(0);
-    expect(asList<FrequentItem>(body.data), '真实尺寸兜底为 5，本轮 4 个商品全部返回').toHaveLength(4);
+    expect(body.data?.page_size, 'page_size=0 应归一并回显为默认 5').toBe(5);
+    expect(asList<FrequentItem>(body.data), '本轮 4 个商品全部落在首页内').toHaveLength(4);
 
     const huge = await fetchFrequent(buyerId, { page: 1, page_size: 1000 });
     expect(asList<FrequentItem>(huge), '超大 page_size 不报错，按实际命中返回').toHaveLength(4);

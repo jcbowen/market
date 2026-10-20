@@ -59,10 +59,13 @@ function dateRange(): { start: string; end: string } {
 }
 
 let api: Awaited<ReturnType<typeof newAdminContext>>['api'];
+/** 超管当前语境社区 ID（与 api 上下文携带的 X-Community-Id 同源，勿用 my/communities 列表首项推断） */
+let adminCommunityId = 0;
 
 test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright);
   api = admin.api;
+  adminCommunityId = admin.communityId;
 });
 
 test.afterAll(async () => {
@@ -174,9 +177,9 @@ test.describe.serial('统计口径与越权防护', () => {
   let staffRoleId = 0;
 
   test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
-    // 超管当前社区：建员工时取超管 X-Community-Id 语境，角色须归属同一社区
-    const comms = (await (await api.get('/api/v1/admin/my/communities')).json()) as ApiResponse<{ id: number }[]>;
-    superCommunityId = comms.data?.[0]?.id ?? 0;
+    // 超管当前社区：建员工走 api 上下文的 X-Community-Id 语境，角色须归属同一社区。
+    // 不能用 my/communities 首项推断——该列表按创建倒序，往轮遗留的 AUTO-TEST 空壳社区会排在前面
+    superCommunityId = adminCommunityId;
     expect(superCommunityId, '应能取到超管当前社区 ID').toBeGreaterThan(0);
 
     // 超管建最小权限测试角色（统计查看 + 订单查看）与测试员工，用完即删

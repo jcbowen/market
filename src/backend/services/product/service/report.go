@@ -104,7 +104,7 @@ func (s *ReportService) GetInventorySummaryReport(ctx context.Context, req *prod
 			COALESCE(agg.q_in, 0) AS in_quantity,
 			COALESCE(agg.q_out, 0) AS out_quantity,
 			COALESCE(lr.after_stock, s.stock) AS closing_stock,
-			s.cost_price, s.price` + baseWhere + `
+			s.cost_price, s.price` + baseWhere + keywordSQL + `
 		ORDER BY s.id ASC LIMIT ? OFFSET ?`
 	args = append(args, pageSize, offset)
 

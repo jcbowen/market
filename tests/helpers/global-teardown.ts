@@ -11,17 +11,18 @@ import { clearTestUserRegistry, readTestUserRegistry } from './data';
  * 也不会再被统计/列表用例命中，脏行留在库里等重建开发库（init.dev.sql）时统一清掉。
  *
  * - 函数名: globalTeardown（Playwright 约定导出）
- * - 参数: options — Playwright 传入的运行摘要（totalDuration 等，本钩子只取 errors 判断服务是否已不可用）
+ * - 参数: options — Playwright 传入的是 globalSetup 的返回值（本项目 globalSetup 无返回值，
+ *          故为 undefined；健康检查失败时 globalSetup 直接抛错、本轮根本不会跑到这里）
  * - 返回: Promise<void>
  * - 异常: 不抛出。回收属尽力而为：服务已停或单个会员停用失败只打印告警，
  *         不能让「用例全绿但回收报错」变成红色误导调用方
  * - 使用示例: 由 playwright.config.ts 的 globalTeardown 字段自动调用
  */
-export default async function globalTeardown(options: { errors: unknown[]; skipped: boolean; totalDuration: number }): Promise<void> {
+export default async function globalTeardown(options?: { errors?: unknown[] }): Promise<void> {
   const users = readTestUserRegistry();
   if (users.length === 0) return;
   // 全局阶段（如健康检查）已报错说明服务不可用，登录必然失败，直接保留清单交给下轮
-  if (options.errors.length > 0) {
+  if (options?.errors?.length) {
     console.warn(`[global-teardown] 本轮存在 ${options.errors.length} 条全局错误，跳过 ${users.length} 个会员的停用，登记表保留待下次回收`);
     return;
   }

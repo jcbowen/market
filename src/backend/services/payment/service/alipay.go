@@ -38,11 +38,14 @@ func normalizeAlipayGateway(raw string) string {
 	return strings.TrimRight(gw, "/")
 }
 
-// checkAlipayKeys 离线自检支付宝密钥可用性（不联网）
-// 私钥走与真实下单一致的签名路径（SDK AloneRsaSign → security.RSASign），
-// 公钥走与回调验签一致的解析路径（security.ParseRSAPublicKey），
-// 用于把「私钥粘错、把应用公钥错填成支付宝公钥、密钥缺字符」这类配置错误
-// 在后台保存时就暴露出来，而不是等真实用户点支付才在签名阶段失败
+// checkAlipayKeys 离线自检支付宝密钥可用性（不联网），按加签方式分流：
+//   - 应用私钥两种模式一致：走与真实下单一致的签名路径（SDK AloneRsaSign → security.RSASign）；
+//   - 公钥模式：支付宝公钥走与回调验签一致的解析路径（security.ParseRSAPublicKey）；
+//   - 证书模式：三证书走与执行器构建/通知验签一致的路径（CertSN/CertPublicKey/RootCertSN），
+//     并校验根证书链中至少一段可计算序列号。
+//
+// 用于把「私钥粘错、把应用公钥错填成支付宝公钥、密钥缺字符、证书内容贴错位置」
+// 这类配置错误在后台保存时就暴露出来，而不是等真实用户点支付才在签名阶段失败
 // 参数：
 //   - cfg: 支付宝配置载体
 //
@@ -52,6 +55,18 @@ func checkAlipayKeys(cfg config.AlipayConfig) string {
 	if _, err := alipaysdk.AloneRsaSign("market_alipay_config_check", cfg.PrivateKey, false); err != nil {
 		return "应用私钥不可用：" + err.Error()
 	}
+	if cfg.IsCertMode() {
+		if _, err := alipaysdk.CertSN(cfg.AppCert); err != nil {
+			return "应用公钥证书不可解析：" + err.Error()
+		}
+		if _, err := alipaysdk.CertPublicKey(cfg.AlipayPublicCert); err != nil {
+			return "支付宝公钥证书不可解析：" + err.Error()
+		}
+		if _, err := alipaysdk.RootCertSN(cfg.AlipayRootCert); err != nil {
+			return "支付宝根证书不可解析：" + err.Error()
+		}
+		return ""
+	}
 	if _, err := security.ParseRSAPublicKey([]byte(cfg.AlipayPublicKey)); err != nil {
 		return "支付宝公钥不可解析：" + err.Error()
 	}
@@ -59,7 +74,8 @@ func checkAlipayKeys(cfg config.AlipayConfig) string {
 }
 
 // AlipayConfigStatus 计算支付配置行的支付宝就绪状态与自检失败原因
-// 就绪口径为「必填字段齐全 且 密钥自检通过」，与 C 端是否展示支付宝、下单是否可用保持一致
+// 就绪口径为「当前加签方式的必填字段齐全 且 密钥自检通过」，
+// 与 C 端是否展示支付宝、下单是否可用保持一致
 // 参数：
 //   - cfg: 支付配置行，可为 nil
 //
@@ -69,6 +85,9 @@ func checkAlipayKeys(cfg config.AlipayConfig) string {
 func AlipayConfigStatus(cfg *model.PayConfig) (bool, string) {
 	alipay := alipayConfigOf(cfg)
 	if !alipay.IsConfigured() {
+		if alipay.IsCertMode() {
+			return false, "支付宝证书模式必填配置不完整（AppID、应用私钥、应用公钥证书、支付宝公钥证书、支付宝根证书、异步通知地址均为必填）"
+		}
 		return false, "支付宝必填配置不完整（AppID、应用私钥、支付宝公钥、异步通知地址均为必填）"
 	}
 	if msg := checkAlipayKeys(alipay); msg != "" {
@@ -78,8 +97,12 @@ func AlipayConfigStatus(cfg *model.PayConfig) (bool, string) {
 }
 
 // buildAlipayExecutor 根据支付宝配置构建通用执行器（V2 pageExecute 与 V3 API 共享）
-// 采用公钥模式：AppID + 应用私钥 + 支付宝公钥；配置不完整或构建失败时返回 nil，
-// C 端渠道接口据其就绪状态隐藏支付宝选项
+// 按加签方式分流：
+//   - 公钥模式：AppID + 应用私钥 + 支付宝公钥；
+//   - 证书模式：AppID + 应用私钥 + 应用公钥证书/支付宝公钥证书/根证书内容，
+//     SDK 会据此计算 appCertSN 与 rootCertSN 并在请求中携带证书序列号，响应验签按 alipay-sn 头取缓存公钥。
+//
+// 配置不完整或构建失败时返回 nil，C 端渠道接口据其就绪状态隐藏支付宝选项
 // 参数：
 //   - cfg: 支付宝配置载体
 //
@@ -89,13 +112,20 @@ func buildAlipayExecutor(cfg config.AlipayConfig) *alipaysdk.GenericExecuteApi {
 	if !cfg.IsConfigured() {
 		return nil
 	}
-	configUtil, err := alipaysdk.NewAlipayConfigUtil(&alipaysdk.AlipayConfig{
+	sdkConfig := &alipaysdk.AlipayConfig{
 		// GatewayURL 入库前已由 normalizeAlipayGateway 规范化为「协议+域名」，空串即 SDK 默认生产网关
-		ServerUrl:       cfg.GatewayURL,
-		AppId:           cfg.AppID,
-		PrivateKey:      cfg.PrivateKey,
-		AlipayPublicKey: cfg.AlipayPublicKey,
-	})
+		ServerUrl:  cfg.GatewayURL,
+		AppId:      cfg.AppID,
+		PrivateKey: cfg.PrivateKey,
+	}
+	if cfg.IsCertMode() {
+		sdkConfig.AppCertContent = cfg.AppCert
+		sdkConfig.AlipayPublicCertContent = cfg.AlipayPublicCert
+		sdkConfig.RootCertContent = cfg.AlipayRootCert
+	} else {
+		sdkConfig.AlipayPublicKey = cfg.AlipayPublicKey
+	}
+	configUtil, err := alipaysdk.NewAlipayConfigUtil(sdkConfig)
 	if err != nil {
 		log.Printf("构建支付宝配置工具失败: %v", err)
 		return nil
@@ -234,7 +264,11 @@ func alipayRespString(resp map[string]interface{}, key string) string {
 }
 
 // parseAlipayCallback 解析支付宝支付回调参数并完成 RSA2 验签
-// 验签使用数据库配置的支付宝公钥（RsaCheckV1 规则：剔除 sign/sign_type 后按 key 升序拼接验签），
+// 验签按加签方式分流（RsaCheckV1 规则：剔除 sign/sign_type 后按 key 升序拼接验签），
+//   - 公钥模式：使用配置的支付宝公钥；
+//   - 证书模式：按通知里的 alipay_cert_sn 在「支付宝公钥证书 + 根证书链」中定位公钥，
+//     序列号不匹配（证书过期/未更新）时验签失败，同样拒绝该通知。
+//
 // 验签不通过直接拒绝；验签后再核对 app_id、交易状态与金额，防跨应用通知重放与非成功通知误置
 // 参数：
 //   - params: 支付宝回调参数映射（POST form）
@@ -248,15 +282,22 @@ func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCall
 	}
 
 	cfg := s.getAlipayPayConfig()
-	if cfg.AlipayPublicKey == "" {
-		return nil, fmt.Errorf("支付宝公钥未配置，无法验签")
+	var ok bool
+	var err error
+	if cfg.IsCertMode() {
+		ok, err = alipaysdk.RsaCheckV1WithCert(params, cfg.AlipayPublicCert, cfg.AlipayRootCert)
+	} else {
+		if cfg.AlipayPublicKey == "" {
+			return nil, fmt.Errorf("支付宝公钥未配置，无法验签")
+		}
+		ok, err = alipaysdk.RsaCheckV1(params, cfg.AlipayPublicKey, false)
 	}
-	ok, err := alipaysdk.RsaCheckV1(params, cfg.AlipayPublicKey, false)
 	if err != nil || !ok {
+		log.Printf("支付宝回调验签失败: %v", err)
 		return nil, fmt.Errorf("支付宝回调验签失败")
 	}
 
-	// 通知身份校验：公钥模式下支付宝公钥为全商户共用，验签只能证明「来自支付宝」，
+	// 通知身份校验：支付宝公钥为全商户共用，验签只能证明「来自支付宝」，
 	// 不能证明这条通知是发给本应用的，须核对 app_id（官方异步通知校验要求）
 	if cfg.AppID == "" {
 		return nil, fmt.Errorf("支付宝 AppID 未配置，无法校验通知身份")

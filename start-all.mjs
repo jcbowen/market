@@ -24,6 +24,7 @@ import {
   createContext,
   ensureGeoipDatabase,
   ensureNpmDependencies,
+  needsShell,
   runWithRepair,
 } from './deps-tools.mjs';
 
@@ -50,7 +51,7 @@ function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, {
     stdio: 'inherit',
     cwd: opts.cwd || ROOT_DIR,
-    shell: process.platform === 'win32',
+    shell: needsShell(cmd),
   });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
@@ -59,7 +60,7 @@ function run(cmd, args, opts = {}) {
 function checkCommand(cmd, name, versionArgs = ['--version']) {
   const r = spawnSync(cmd, versionArgs, {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: needsShell(cmd),
   });
   if (r.status !== 0) {
     console.error(`错误: 未找到 ${cmd}，请先安装 ${name}`);
@@ -71,7 +72,7 @@ function checkCommand(cmd, name, versionArgs = ['--version']) {
 function checkDockerCompose() {
   const r = spawnSync('docker', ['compose', 'version'], {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: needsShell('docker'),
   });
   if (r.status !== 0) {
     console.error('错误: Docker Compose 子命令不可用，请安装/启用 Docker Compose 插件（docker compose）');
@@ -83,7 +84,7 @@ function checkDockerCompose() {
 function dockerDaemonRunning() {
   const r = spawnSync('docker', ['info'], {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: needsShell('docker'),
   });
   return r.status === 0;
 }
@@ -148,7 +149,7 @@ const CLIENT_DIR = path.join(ROOT_DIR, 'src', 'client');
 function dockerExec(args, env = {}) {
   const r = spawnSync('docker', ['exec', ...args], {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: needsShell('docker'),
     env: { ...process.env, ...env },
   });
   return { ok: r.status === 0, stdout: r.stdout || '' };
@@ -303,7 +304,7 @@ if (dotenv.get('APP_ENV') === 'production' || process.env.APP_ENV === 'productio
     ], {
       input: sql,
       encoding: 'utf8',
-      shell: process.platform === 'win32',
+      shell: needsShell('docker'),
       env: { ...process.env, ...MYSQL_EXEC_ENV },
     });
     if (r.status === 0) {

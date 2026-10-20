@@ -9,8 +9,11 @@ import { newAdminContext, assertOk, type ApiResponse } from '../helpers/api';
  *   - GET/PUT /admin/settings/payment：渠道开关与微信/支付宝配置
  *     alipay 写入后可持久化保留（写侧不再强制过滤），但 C 端是否下发取决于 alipay_ready 就绪状态
  *     保存携带 updated_at 作版本号做乐观锁比对，过期版本提交被拒且不改写库中配置
+ *   - 支付宝加签方式（公钥模式/证书模式）读写贯通：mode 可保存回读，证书内容不回传明文，
+ *     证书未齐时按 fail-closed 判未就绪并给出与模式对应的原因文案
+ *   - 异步通知地址格式服务端兜底：非法地址拒绝整行保存且不落库
  *   - 写后恢复原值，不污染环境（读→写→验证→恢复闭环）
- * 说明：证书上传（multipart/OSS 类）不在本模块范围
+ * 说明：证书上传（multipart）需真实证书文件，不在本模块范围，由 payment 服务离线测试覆盖
  */
 
 /** 退款配置（运费退还策略） */
@@ -194,5 +197,105 @@ test.describe.serial('支付配置（渠道开关）', () => {
     expect(saved.enabled_channels ?? [], '冲突拒绝后渠道配置不应被改写').toEqual(
       current.enabled_channels ?? [],
     );
+  });
+});
+
+/** 支付宝配置子对象（GET 视图，断言相关字段） */
+interface AlipaySetting {
+  app_id?: string;
+  mode?: string;
+  notify_url?: string;
+  /** 证书内容仅由上传接口写入，GET 恒回传空串 */
+  app_cert?: string;
+  alipay_public_cert?: string;
+  alipay_root_cert?: string;
+  [k: string]: unknown;
+}
+
+test.describe.serial('支付宝加签方式与通知地址校验', () => {
+  let original: PaymentSetting | null = null;
+
+  /**
+   * 读取最新支付配置
+   * 每次写入都会推进版本号，写入前需重取配置再提交，避免误触乐观锁
+   */
+  async function readSetting(): Promise<PaymentSetting> {
+    const body = (await (
+      await adminApi.get('/api/v1/admin/settings/payment')
+    ).json()) as ApiResponse<PaymentSetting>;
+    return assertOk(body, '读取支付配置');
+  }
+
+  test('9. GET 返回加签方式与三证书上传标志，且证书内容不回传明文', async () => {
+    const data = await readSetting();
+    original = data;
+    const alipay = (data.alipay ?? {}) as AlipaySetting;
+    // 存量数据 mode 为空串时后台按公钥模式展示，接口仍应稳定回传该字段
+    expect(typeof alipay.mode, '应回传加签方式字段').toBe('string');
+    for (const key of ['alipay_app_cert_uploaded', 'alipay_public_cert_uploaded', 'alipay_root_cert_uploaded']) {
+      expect(typeof data[key], `${key} 应为布尔标志`).toBe('boolean');
+    }
+    for (const key of ['app_cert', 'alipay_public_cert', 'alipay_root_cert']) {
+      expect(alipay[key], `证书内容 ${key} 不得回传明文`).toBe('');
+    }
+  });
+
+  test('10. 保存为证书模式：证书未齐即判未就绪且原因按模式给出', async () => {
+    if (!original) test.skip(true, '支付配置未读取');
+    const current = await readSetting();
+    const alipay = { ...(current.alipay as AlipaySetting), mode: 'cert' };
+    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
+      data: { ...current, alipay, updated_at: current.updated_at },
+    });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, `保存证书模式失败: ${body.message}`).toBe(0);
+
+    const saved = await readSetting();
+    expect((saved.alipay as AlipaySetting).mode, '加签方式应持久化为证书模式').toBe('cert');
+    // 未上传三证书时证书模式必然未就绪（fail-closed），C 端不展示支付宝
+    const allUploaded = ['alipay_app_cert_uploaded', 'alipay_public_cert_uploaded', 'alipay_root_cert_uploaded']
+      .every((k) => saved[k] === true);
+    if (!allUploaded) {
+      expect(saved.alipay_ready, '证书未齐时支付宝不应判就绪').toBe(false);
+      expect(saved.alipay_ready_message ?? '', '未就绪原因应指向证书模式必填项').toContain('证书模式');
+    }
+  });
+
+  test('11. 非法异步通知地址被服务端拒绝且不落库', async () => {
+    if (!original) test.skip(true, '支付配置未读取');
+    const current = await readSetting();
+    const before = (current.alipay as AlipaySetting).notify_url ?? '';
+    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
+      data: {
+        ...current,
+        alipay: { ...(current.alipay as AlipaySetting), notify_url: 'market.example.com/callback' },
+        updated_at: current.updated_at,
+      },
+    });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, '缺协议的异步通知地址应被拒绝').not.toBe(0);
+    expect(body.message ?? '', '拒绝原因应透传到管理端').toContain('异步通知地址');
+
+    const after = await readSetting();
+    expect((after.alipay as AlipaySetting).notify_url, '拒绝后通知地址不应被改写').toBe(before);
+  });
+
+  test('12. 恢复原加签方式（不污染环境）', async () => {
+    if (!original) test.skip(true, '支付配置未读取');
+    const current = await readSetting();
+    const alipay = {
+      ...(current.alipay as AlipaySetting),
+      mode: (original.alipay as AlipaySetting)?.mode ?? '',
+    };
+    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
+      data: { ...current, alipay, updated_at: current.updated_at },
+    });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, `恢复加签方式失败: ${body.message}`).toBe(0);
+    const after = await readSetting();
+    expect(
+      (after.alipay as AlipaySetting).mode || 'public',
+      '加签方式应恢复原值',
+    ).toBe((original.alipay as AlipaySetting)?.mode || 'public');
   });
 });

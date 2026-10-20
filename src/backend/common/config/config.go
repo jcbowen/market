@@ -119,28 +119,54 @@ func (w *WechatConfig) IsPaymentConfigured() bool {
 		w.NotifyURL != ""
 }
 
+// 支付宝加签方式常量（pay_config.alipay_mode）
+// 空串按公钥模式处理，兼容存量数据
+const (
+	AlipayModePublic = "public" // 公钥模式：AppID + 应用私钥 + 支付宝公钥
+	AlipayModeCert   = "cert"   // 证书模式：AppID + 应用私钥 + 应用公钥证书 + 支付宝公钥证书 + 支付宝根证书
+)
+
 // AlipayConfig 支付宝支付配置数据载体
 // 支付配置实际存储于数据库 pay_config 表，此结构体仅作为服务间传递的数据载体
 type AlipayConfig struct {
-	AppID           string `json:"app_id" yaml:"app_id"`                       // 支付宝 AppID
-	PrivateKey      string `json:"private_key" yaml:"private_key"`             // 支付宝应用私钥
-	AlipayPublicKey string `json:"alipay_public_key" yaml:"alipay_public_key"` // 支付宝公钥
+	AppID      string `json:"app_id" yaml:"app_id"`           // 支付宝 AppID
+	PrivateKey string `json:"private_key" yaml:"private_key"` // 支付宝应用私钥
+	// Mode 加签方式：public（默认，空串兼容存量）/ cert，见 AlipayMode* 常量
+	Mode            string `json:"mode" yaml:"mode"`
+	AlipayPublicKey string `json:"alipay_public_key" yaml:"alipay_public_key"` // 支付宝公钥（公钥模式）
 	NotifyURL       string `json:"notify_url" yaml:"notify_url"`               // 支付宝支付结果通知 URL
 	ReturnURL       string `json:"return_url" yaml:"return_url"`               // 支付宝支付完成回跳 URL
 	// GatewayURL V2/V3 网关地址，空=生产环境 https://openapi.alipay.com；
 	// 填支付宝沙箱网关（https://openapi-sandbox.dl.alipaydev.com）即切到沙箱环境联调
 	GatewayURL string `json:"gateway_url" yaml:"gateway_url"`
+	// 证书模式三证书内容（PEM 文本，仅证书模式参与必填判定与执行器构建）
+	AppCert          string `json:"app_cert" yaml:"app_cert"`                     // 应用公钥证书
+	AlipayPublicCert string `json:"alipay_public_cert" yaml:"alipay_public_cert"` // 支付宝公钥证书
+	AlipayRootCert   string `json:"alipay_root_cert" yaml:"alipay_root_cert"`     // 支付宝根证书
+}
+
+// IsCertMode 判断当前配置是否为证书模式（空串按公钥模式，兼容存量数据）
+//
+// 返回：
+//   - bool: 证书模式返回 true
+func (a *AlipayConfig) IsCertMode() bool {
+	return a.Mode == AlipayModeCert
 }
 
 // IsConfigured 判断支付宝支付配置是否完整
+// 按加签方式分流必填口径：公钥模式需支付宝公钥，证书模式需三证书齐全；
+// 另一模式的残留字段不参与判定，模式切换后未补齐即判未就绪（fail-closed）
 //
 // 返回：
 //   - bool: 配置完整返回 true
 func (a *AlipayConfig) IsConfigured() bool {
-	return a.AppID != "" &&
-		a.PrivateKey != "" &&
-		a.AlipayPublicKey != "" &&
-		a.NotifyURL != ""
+	if a.AppID == "" || a.PrivateKey == "" || a.NotifyURL == "" {
+		return false
+	}
+	if a.IsCertMode() {
+		return a.AppCert != "" && a.AlipayPublicCert != "" && a.AlipayRootCert != ""
+	}
+	return a.AlipayPublicKey != ""
 }
 
 // currentConfigPath 当前加载的配置文件路径

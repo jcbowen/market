@@ -30,9 +30,6 @@ import { autoName } from '../helpers/data';
  * 故销售数量固定为 2，所有断言只依赖本轮自身增量
  */
 
-/** 服务器内部错误码（网关对未映射的底层错误统一返回） */
-const SERVER_ERROR = 10002;
-
 /** 主商品流水数量：入库 20、报损出库 3、POS 销售 2 */
 const IN_QTY = 20;
 const OUT_QTY = 3;
@@ -428,19 +425,24 @@ test.describe.serial('进销存报表', () => {
     expect(asList<ProfitRow>(profit), '非法日期下毛利报表应为空（无销售流水可比对）').toHaveLength(0);
   });
 
-  test('12. 现状锁定：page=0 触发负 OFFSET 报 10002；page_size=0 返回空列表但 total 正常', async () => {
+  test('12. 分页入参已收敛：page=0/负数与 page_size=0 均归一为首页正常返回', async () => {
     test.skip(!categoryId || !mainSkuId, '造数未完成');
-    // 缺陷：offset=(page-1)*pageSize 未做下限保护，MySQL 收到 OFFSET -10 直接报错，
-    // 对外表现为 10002 服务器内部错误（应为 10001 参数错误）。两报表接口共用该分页构造，行为一致。
-    // 已写入待办清单缺陷区，待决策后修复；本轮锁定现状以免回归时漏掉。
-    const zeroPage = await rawGet('/api/v1/admin/inventory/reports/summary', { page: 0, page_size: 10 });
-    expect(zeroPage.code, 'page=0 现状返回内部错误码').toBe(SERVER_ERROR);
-    const profitZeroPage = await rawGet('/api/v1/admin/inventory/reports/profit', { page: 0 });
-    expect(profitZeroPage.code, '毛利报表 page=0 同样报内部错误').toBe(SERVER_ERROR);
+    // 原缺陷（offset=(page-1)*pageSize 无下限保护，MySQL 收到 OFFSET -10 报 10002；
+    // page_size=0 走 LIMIT 0 返回空列表）已在 c4f5287 修掉：网关 parsePageParams 把 page<1 归一为 1、
+    // page_size<=0 归一为默认 10 并封顶 100，服务层 reportPage 同样兜底，两张报表共用该构造。
+    for (const page of [0, -3]) {
+      const body = (await rawGet('/api/v1/admin/inventory/reports/summary', { page, page_size: 10 })) as ApiResponse<PageData<SummaryRow>>;
+      expect(body.code, `page=${page} 应归一为首页而非报内部错误`).toBe(0);
+      expect(body.data?.page, `page=${page} 应回显为 1`).toBe(1);
+      expect(asList<SummaryRow>(body.data).length, `page=${page} 应返回首页数据`).toBeGreaterThan(0);
 
-    const zeroSize = (await (await adminApi.get('/api/v1/admin/inventory/reports/summary', { params: { page: 1, page_size: 0 } })).json()) as ApiResponse<PageData<SummaryRow>>;
-    expect(zeroSize.code).toBe(0);
-    expect(asList<SummaryRow>(zeroSize.data), 'page_size=0 时 LIMIT 0 返回空列表').toHaveLength(0);
-    expect(zeroSize.data?.total ?? -1, 'page_size=0 时 total 仍应回显').toBeGreaterThan(0);
+      const profit = (await rawGet('/api/v1/admin/inventory/reports/profit', { page })) as ApiResponse<PageData<ProfitRow>>;
+      expect(profit.code, `毛利报表 page=${page} 同样归一`).toBe(0);
+    }
+
+    const zeroSize = await readSummary({ page: 1, page_size: 0 });
+    expect(zeroSize.page_size, 'page_size=0 应归一为默认 10').toBe(10);
+    expect(asList<SummaryRow>(zeroSize).length, '归一后按首页返回，不再是空列表').toBeGreaterThan(0);
+    expect(zeroSize.total ?? -1, 'total 仍应回显').toBeGreaterThan(0);
   });
 });

@@ -141,6 +141,22 @@ export function createContext({ rootDir, autoFix = true }) {
 }
 
 /**
+ * Windows 下是否必须经 cmd.exe 启动该命令。
+ *
+ * go/git/docker/node 都是真实 .exe，可以直接 spawn；只有 npm/npx 这类 .cmd 包装脚本
+ * 需要 shell（新版 Node 拒绝无 shell 启动 .bat/.cmd）。经 shell 启动时参数是被拼成一条
+ * 命令行字符串的，含空格的参数（如 `-ldflags "-X pkg=ver"`）会被 cmd 拆成两个 token，
+ * go build 随即报 malformed import path——所以能不用 shell 就不用。
+ *
+ * @param {string} cmd 可执行文件名
+ * @returns {boolean} true 表示需要 shell: true
+ */
+export function needsShell(cmd) {
+  if (process.platform !== 'win32') return false;
+  return /^(npm|npx|yarn|pnpm|tsx|concurrently)(\.cmd)?$/i.test(cmd) || /\.(bat|cmd)$/i.test(cmd);
+}
+
+/**
  * 执行命令，支持三种输出模式。
  *
  * 默认用 tty（stdio: 'inherit'）：Docker Compose / vite / uni 都按 stdout 是否为 TTY
@@ -162,7 +178,7 @@ export function runChecked(cmd, args, opts = {}) {
         cwd: opts.cwd || process.cwd(),
         env: opts.env ? { ...process.env, ...opts.env } : process.env,
         stdio: 'inherit',
-        shell: process.platform === 'win32',
+        shell: needsShell(cmd),
       });
       child.on('error', (err) => resolve({ ok: false, status: 127, output: String(err.message) }));
       child.on('close', (code) => resolve({ ok: code === 0, status: code, output: '' }));
@@ -174,7 +190,7 @@ export function runChecked(cmd, args, opts = {}) {
     const child = spawn(cmd, args, {
       cwd: opts.cwd || process.cwd(),
       env: opts.env ? { ...process.env, ...opts.env } : process.env,
-      shell: process.platform === 'win32',
+      shell: needsShell(cmd),
     });
 
     let output = '';

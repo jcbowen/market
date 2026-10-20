@@ -114,9 +114,9 @@
                     :show-file-list="false"
                     accept=".pem,.key,.txt,.crt"
                     :disabled="!canUpdate"
-                    :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('wechat', options)"
+                    :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('wechat', 'private_key', options)"
                   >
-                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="wechatCertUploading">上传证书文件</n-button>
+                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['wechat:private_key']">上传证书文件</n-button>
                   </n-upload>
                   <n-tag v-if="paymentForm.wechat_cert_uploaded" type="success" size="small">已上传商户私钥</n-tag>
                   <n-tag v-else type="warning" size="small">未上传</n-tag>
@@ -162,7 +162,10 @@
 
           <n-alert type="info" style="margin-bottom: 16px;">
             请将下方异步通知地址配置到支付宝开放平台（应用详情 → 开发设置 → 接口加签与消息校验），
-            加签方式选择「公钥模式」，将应用私钥与支付宝公钥填入下方对应项。配置后支付结果才能通知到本系统。
+            并让所选加签方式与开放平台的设置保持一致：
+            <strong>公钥模式</strong>需填写应用私钥与支付宝公钥；
+            <strong>证书模式</strong>需上传应用公钥证书、支付宝公钥证书与支付宝根证书（应用私钥仍单独上传）。
+            方式不匹配会导致签名或验签失败，配置后支付结果才能通知到本系统。
           </n-alert>
           <div class="url-guide-row">
             <n-text code>{{ paymentForm.suggested_urls.alipay_notify_url }}</n-text>
@@ -170,6 +173,25 @@
           </div>
 
           <n-grid cols="1 m:2" :x-gap="16" responsive="screen" style="margin-top: 8px;">
+            <n-grid-item :span="2">
+              <n-form-item label="加签方式">
+                <div class="sign-mode-row">
+                  <n-radio-group
+                    :value="paymentForm.alipay.mode || 'public'"
+                    :disabled="!canUpdate"
+                    @update:value="switchAlipaySignMode"
+                  >
+                    <n-radio v-for="m in ALIPAY_SIGN_MODES" :key="m.value" :value="m.value" style="margin-right: 16px;">
+                      {{ m.label }}
+                    </n-radio>
+                  </n-radio-group>
+                  <n-text depth="3" class="form-hint">
+                    须与支付宝开放平台「接口加签方式」的选择一致。两种方式的必填项不同，切换后需补齐对应配置并保存；
+                    必填项未齐全时 C 端不会展示支付宝支付。
+                  </n-text>
+                </div>
+              </n-form-item>
+            </n-grid-item>
             <n-grid-item>
               <n-form-item label="支付宝 AppID">
                 <n-input v-model:value="paymentForm.alipay.app_id" :disabled="!canUpdate" placeholder="开放平台应用 AppID" />
@@ -217,7 +239,7 @@
                 {{ alipayReturnUrlSuggestion }}。回跳仅作体验用途，支付结果一律以异步通知与订单状态为准。
               </n-text>
             </n-grid-item>
-            <n-grid-item :span="2">
+            <n-grid-item v-if="!isAlipayCertMode" :span="2">
               <n-form-item label="支付宝公钥">
                 <n-input
                   v-model:value="paymentForm.alipay.alipay_public_key"
@@ -228,16 +250,43 @@
                 />
               </n-form-item>
             </n-grid-item>
+            <n-grid-item v-if="!isAlipayCertMode" :span="2">
+              <n-text depth="3" class="form-hint">
+                公钥模式只用到这一项公钥；若开放平台选择的是一方证书/证书模式，请把上方加签方式改为「证书模式」并上传三份证书，
+                把「支付宝公钥证书」内容粘到此处不会生效。
+              </n-text>
+            </n-grid-item>
+            <template v-if="isAlipayCertMode">
+              <n-grid-item v-for="cert in ALIPAY_CERT_ITEMS" :key="cert.type" :span="2">
+                <n-form-item :label="cert.label">
+                  <div class="cert-upload-row">
+                    <n-upload
+                      :show-file-list="false"
+                      accept=".pem,.crt,.key,.txt"
+                      :disabled="!canUpdate"
+                      :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', cert.type, options)"
+                    >
+                      <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['alipay:' + cert.type]">
+                        上传{{ cert.label }}
+                      </n-button>
+                    </n-upload>
+                    <n-tag v-if="certUploaded[cert.key]" type="success" size="small">已上传</n-tag>
+                    <n-tag v-else type="warning" size="small">未上传</n-tag>
+                    <n-text depth="3" class="form-hint">{{ cert.hint }}</n-text>
+                  </div>
+                </n-form-item>
+              </n-grid-item>
+            </template>
             <n-grid-item :span="2">
-              <n-form-item label="应用私钥（接口加签私钥）">
+              <n-form-item :label="isAlipayCertMode ? '应用私钥（与证书同批生成）' : '应用私钥（接口加签私钥）'">
                 <div class="cert-upload-row">
                   <n-upload
                     :show-file-list="false"
                     accept=".pem,.key,.txt,.crt"
                     :disabled="!canUpdate"
-                    :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', options)"
+                    :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', 'private_key', options)"
                   >
-                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="alipayCertUploading">上传私钥文件</n-button>
+                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['alipay:private_key']">上传私钥文件</n-button>
                   </n-upload>
                   <n-tag v-if="paymentForm.alipay_cert_uploaded" type="success" size="small">已上传应用私钥</n-tag>
                   <n-tag v-else type="warning" size="small">未上传</n-tag>
@@ -335,8 +384,8 @@ const PAY_CHANNEL_UNSUPPORTED: Record<string, Record<string, string>> = {
 
 const paymentLoading = ref(false)
 const paymentSaving = ref(false)
-const wechatCertUploading = ref(false)
-const alipayCertUploading = ref(false)
+/** 证书上传中状态，键为「渠道:证书类型」，使各上传按钮独立展示 loading */
+const certUploading = reactive<Record<string, boolean>>({})
 
 interface ChannelCardItem {
   value: string
@@ -374,6 +423,7 @@ const paymentForm = reactive({
   alipay: {
     app_id: '',
     private_key: '',
+    mode: 'public' as string,
     alipay_public_key: '',
     notify_url: '',
     return_url: '',
@@ -384,6 +434,9 @@ const paymentForm = reactive({
   alipay_ready_message: '',
   wechat_cert_uploaded: false,
   alipay_cert_uploaded: false,
+  alipay_app_cert_uploaded: false,
+  alipay_public_cert_uploaded: false,
+  alipay_root_cert_uploaded: false,
   updated_at: '',
   wechat_client_channels: [] as string[],
   alipay_client_channels: [] as string[],
@@ -441,19 +494,74 @@ const canUpdate = computed(() => authStore.isSuperAdmin || authStore.hasPermissi
 /** 支付宝当前是否指向沙箱网关 */
 const alipayInSandbox = computed(() => paymentForm.alipay.gateway_url.includes('openapi-sandbox.'))
 
+/** 支付宝加签方式选项，值与服务端 config.AlipayMode* 常量一致 */
+const ALIPAY_SIGN_MODES = [
+  { value: 'public', label: '公钥模式' },
+  { value: 'cert', label: '证书模式' },
+]
+
+/**
+ * 支付宝证书模式需上传的三份证书定义
+ * type 为上传接口的 cert_type，key 为配置读取接口返回的「已上传」标志字段，
+ * 与服务端 payment 服务 UploadPayCert 的 case 一一对应
+ */
+const ALIPAY_CERT_ITEMS = [
+  {
+    type: 'app_cert',
+    key: 'alipay_app_cert_uploaded',
+    label: '应用公钥证书',
+    hint: '开放平台「应用公钥证书」页签下载，文件名形如 appPublicCert.crt',
+  },
+  {
+    type: 'alipay_public_cert',
+    key: 'alipay_public_cert_uploaded',
+    label: '支付宝公钥证书',
+    hint: '开放平台「支付宝公钥证书」页签下载，文件名形如 alipayPublicCert.crt，用于回调验签',
+  },
+  {
+    type: 'root_cert',
+    key: 'alipay_root_cert_uploaded',
+    label: '支付宝根证书',
+    hint: '开放平台「根证书」页签下载，文件名形如 alipayRootCert.crt',
+  },
+] as const
+
+/** 是否处于证书模式（存量空值按公钥模式处理，与服务端口径一致） */
+const isAlipayCertMode = computed(() => paymentForm.alipay.mode === 'cert')
+
+/** 证书上传状态映射，键与 ALIPAY_CERT_ITEMS 的 key（API 响应字段名）一致，供「已上传」标签与必填校验取值 */
+const certUploaded = computed<Record<string, boolean>>(() => ({
+  alipay_app_cert_uploaded: paymentForm.alipay_app_cert_uploaded,
+  alipay_public_cert_uploaded: paymentForm.alipay_public_cert_uploaded,
+  alipay_root_cert_uploaded: paymentForm.alipay_root_cert_uploaded,
+}))
+
+/**
+ * 切换支付宝加签方式
+ * 仅改动表单值，需点击「保存配置」后才写入服务端；两种方式必填项不同，
+ * 切换后未补齐对应配置时服务端按「未就绪」处理，C 端不展示支付宝
+ * @param mode 目标加签方式
+ */
+function switchAlipaySignMode(mode: string) {
+  paymentForm.alipay.mode = mode
+  message.info(mode === 'cert'
+    ? '已切换为证书模式，请上传应用公钥证书、支付宝公钥证书与根证书后保存'
+    : '已切换为公钥模式，请填写支付宝公钥后保存')
+}
+
 /**
  * 支付宝配置状态三态判定
- * - ready：服务端判定就绪（字段齐全且密钥自检通过）
- * - invalid：必填项都已填写但自检未通过（如私钥粘错、把应用公钥当成支付宝公钥填）
+ * - ready：服务端判定就绪（当前加签方式必填项齐全且密钥自检通过）
+ * - invalid：必填项都已填写但自检未通过（如私钥粘错、把应用公钥当成支付宝公钥填、证书传错位置）
  * - incomplete：仍有必填项未填写
+ * @param filledByMode 当前模式下的「必填项是否都已填写」判断
  */
 const alipayStatus = computed<{ level: 'ready' | 'invalid' | 'incomplete'; reason: string }>(() => {
   if (paymentForm.alipay_ready) return { level: 'ready', reason: '' }
-  const filled =
-    !!paymentForm.alipay.app_id &&
-    !!paymentForm.alipay.alipay_public_key &&
-    !!paymentForm.alipay.notify_url &&
-    paymentForm.alipay_cert_uploaded
+  const common = !!paymentForm.alipay.app_id && !!paymentForm.alipay.notify_url && paymentForm.alipay_cert_uploaded
+  const filled = isAlipayCertMode.value
+    ? common && ALIPAY_CERT_ITEMS.every((cert) => certUploaded.value[cert.key])
+    : common && !!paymentForm.alipay.alipay_public_key
   if (!filled) return { level: 'incomplete', reason: paymentForm.alipay_ready_message }
   return { level: 'invalid', reason: paymentForm.alipay_ready_message }
 })
@@ -664,16 +772,27 @@ async function persistChannels() {
 
 /**
  * 校验支付宝配置项格式
+ * 只做格式与必填项的本地预检（服务端另有兜底：通知地址格式非法会拒绝整行保存），
+ * 内容是否可解析由服务端自检判定
  * @returns 未通过的提示文案，全部通过返回空串
  */
 function validateAlipayForm(): string {
   const urlPattern = /^https?:\/\/\S+$/
-  const { return_url: returnUrl, gateway_url: gateway } = paymentForm.alipay
+  const { notify_url: notifyUrl, return_url: returnUrl, gateway_url: gateway } = paymentForm.alipay
+  if (notifyUrl && !urlPattern.test(notifyUrl)) {
+    return '异步通知 URL 必须是 http/https 开头的绝对地址'
+  }
   if (returnUrl && !urlPattern.test(returnUrl)) {
     return '支付完成回跳 URL 必须是 http/https 开头的绝对地址'
   }
   if (gateway && !urlPattern.test(gateway)) {
     return '网关地址必须是 http/https 开头的绝对地址'
+  }
+  if (isAlipayCertMode.value) {
+    const missing = ALIPAY_CERT_ITEMS.filter((cert) => !certUploaded.value[cert.key]).map((cert) => cert.label)
+    if (missing.length) {
+      return `证书模式还需上传：${missing.join('、')}`
+    }
   }
   return ''
 }
@@ -734,12 +853,16 @@ async function fetchPaymentSetting() {
   const data = res.data.data
   enabledOrder.value = data.enabled_channels
   paymentForm.wechat = data.wechat
-  paymentForm.alipay = data.alipay
+  // 存量配置加签方式可能为空串，统一按公钥模式展示（与服务端兼容口径一致）
+  paymentForm.alipay = { ...data.alipay, mode: data.alipay.mode || 'public' }
   paymentForm.wechat_payment_ready = data.wechat_payment_ready
   paymentForm.alipay_ready = data.alipay_ready
   paymentForm.alipay_ready_message = data.alipay_ready_message ?? ''
   paymentForm.wechat_cert_uploaded = data.wechat_cert_uploaded
   paymentForm.alipay_cert_uploaded = data.alipay_cert_uploaded
+  paymentForm.alipay_app_cert_uploaded = data.alipay_app_cert_uploaded ?? false
+  paymentForm.alipay_public_cert_uploaded = data.alipay_public_cert_uploaded ?? false
+  paymentForm.alipay_root_cert_uploaded = data.alipay_root_cert_uploaded ?? false
   paymentForm.updated_at = data.updated_at
   paymentForm.wechat_client_channels = data.wechat_client_channels ?? []
   paymentForm.alipay_client_channels = data.alipay_client_channels ?? []
@@ -748,20 +871,22 @@ async function fetchPaymentSetting() {
 
 /**
  * 上传支付证书文件
- * 上传成功后刷新配置以更新证书上传状态
+ * 上传成功后刷新配置以更新证书上传状态；服务端会校验内容可解析性，
+ * 校验失败时不写库并返回具体原因（请求层统一提示）
  * @param channel 支付渠道：wechat / alipay
+ * @param certType 证书类型：private_key、app_cert、alipay_public_cert、root_cert
  * @param options naive-ui 自定义上传请求参数
  */
-async function handleCertUpload(channel: string, options: UploadCustomRequestOptions) {
+async function handleCertUpload(channel: string, certType: string, options: UploadCustomRequestOptions) {
   const file = options.file.file
   if (!file) {
     return
   }
 
-  const uploading = channel === 'wechat' ? wechatCertUploading : alipayCertUploading
-  uploading.value = true
+  const loadingKey = `${channel}:${certType}`
+  certUploading[loadingKey] = true
   try {
-    const res = await uploadPaymentCert(channel, 'private_key', file)
+    const res = await uploadPaymentCert(channel, certType, file)
     message.success(res.data.message || '证书上传成功')
     options.onFinish()
     await loadPaymentSetting()
@@ -769,7 +894,7 @@ async function handleCertUpload(channel: string, options: UploadCustomRequestOpt
     options.onError()
     throw err
   } finally {
-    uploading.value = false
+    certUploading[loadingKey] = false
   }
 }
 
@@ -933,6 +1058,14 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.sign-mode-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   width: 100%;
 }
 

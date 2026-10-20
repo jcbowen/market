@@ -51,7 +51,8 @@ VALUES (2, '阳光花园', '广东省深圳市南山区阳光路 8 号', 113.930
 INSERT INTO `admin_roles` (`id`, `name`, `code`, `community_id`, `permissions`, `description`, `created_at`, `updated_at`)
 VALUES
   (1, '超级管理员', 'super_admin', 0, '["*"]', '全局角色（仅兼容保留，超管判定看 is_super）', NOW(), NOW()),
-  (2, '社区管理员', 'community_admin', 2, '["*"]', '内置角色：负责本社区的日常运营与员工管理', NOW(), NOW());
+  (2, '社区管理员', 'community_admin', 2, '["*"]', '内置角色：负责本社区的日常运营与员工管理', NOW(), NOW()),
+  (3, '社区管理员', 'community_admin', 1, '["*"]', '内置角色：负责本社区的日常运营与员工管理', NOW(), NOW());
 
 -- 密码均为 admin123（bcrypt）；admin_users.role_id/community_id 为旧模型遗留列，不再使用
 INSERT INTO `admin_users` (`id`, `username`, `password`, `real_name`, `phone`, `is_super`, `status`, `last_login_at`, `last_login_ip`, `created_at`, `updated_at`)

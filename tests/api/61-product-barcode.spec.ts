@@ -35,11 +35,14 @@ const BARCODE_A = `61${Date.now()}`.slice(-13).padStart(13, '6');
 const BARCODE_B1 = `61${Date.now()}1`.slice(-13).padStart(13, '6');
 const BARCODE_B2 = `61${Date.now()}2`.slice(-13).padStart(13, '6');
 
+/** 用例专用分类 ID：beforeAll 在当前社区语境下建，商品必须挂同社区分类（跨社区引用被服务端拒绝） */
+let categoryId = 0;
+
 /** 单规格商品保存载荷（sku_items 全量提交） */
 function singleSkuPayload(name: string, barcode: string) {
   return {
     name,
-    category_id: 1,
+    category_id: categoryId,
     description: 'AUTO-TEST 条码用例',
     cover_image: '',
     images: [] as string[],
@@ -73,6 +76,11 @@ test.describe.serial('商品条形码录入与使用', () => {
       await publicApi.get('/api/v1/communities', { params: { page: 1, page_size: 50 } }),
     );
     otherCommunityId = (comms.data?.list ?? []).find((c) => c.id !== admin.communityId && c.status === 1)?.id ?? 0;
+
+    // 商品挂分类必须是同社区引用，故先在当前语境建一个用例专用分类，结束后删除
+    categoryId = (await json<{ id: number }>(
+      await admin.api.post('/api/v1/admin/categories', { data: { name: `AUTO-条码分类 ${Date.now()}` } }),
+    )).data!.id;
   });
 
   test.afterAll(async () => {
@@ -80,6 +88,7 @@ test.describe.serial('商品条形码录入与使用', () => {
     for (const id of createdProductIds) {
       await admin?.api.delete(`/api/v1/admin/products/${id}`);
     }
+    if (categoryId) await admin?.api.delete(`/api/v1/admin/categories/${categoryId}`);
     await admin?.api.dispose();
     await publicApi?.dispose();
   });
@@ -149,7 +158,7 @@ test.describe.serial('商品条形码录入与使用', () => {
       await admin.api.post('/api/v1/admin/products', {
         data: {
           name: 'AUTO-条码商品-内重复',
-          category_id: 1,
+          category_id: categoryId,
           description: '',
           cover_image: '',
           images: [],
@@ -197,7 +206,7 @@ test.describe.serial('商品条形码录入与使用', () => {
       await admin.api.post('/api/v1/admin/products', {
         data: {
           name: 'AUTO-条码商品B（多规格）',
-          category_id: 1,
+          category_id: categoryId,
           description: '',
           cover_image: '',
           images: [],

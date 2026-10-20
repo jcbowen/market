@@ -118,11 +118,17 @@ message PayConfig {
   string alipay_gateway_url = 21;
   // 支付宝配置自检失败原因，空表示自检通过；就绪状态为「字段齐全且自检通过」
   string alipay_ready_message = 22;
+  // 支付宝加签方式：public 公钥模式（默认，空串兼容存量）/ cert 证书模式
+  string alipay_mode = 23;
+  // 证书模式三证书上传状态（内容存库仅走上传接口，此处只回传标志，读写均不携带内容）
+  bool alipay_app_cert_uploaded = 24;
+  bool alipay_public_cert_uploaded = 25;
+  bool alipay_root_cert_uploaded = 26;
 }
 
 message UploadPayCertReq {
   string channel = 1;    // 渠道：wechat / alipay
-  string cert_type = 2;  // 证书类型：private_key（商户/应用私钥）等
+  string cert_type = 2;  // 类型：private_key（商户/应用私钥）、app_cert / alipay_public_cert / root_cert（支付宝证书模式）
   string filename = 3;   // 原始文件名，用于校验扩展名
   bytes content = 4;     // 证书文件内容
 }

@@ -23,6 +23,7 @@ import {
   createContext,
   ensureGeoipDatabase,
   ensureNpmDependencies,
+  needsShell,
   parseAutoFix,
   runWithRepair,
 } from './deps-tools.mjs';
@@ -100,7 +101,7 @@ function packageRelease() {
 
   // 生成版本信息
   let commit = 'unknown';
-  const g = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8', shell: process.platform === 'win32' });
+  const g = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8', shell: needsShell('git') });
   if (g.status === 0 && g.stdout) commit = g.stdout.trim();
   fs.writeFileSync(DIST_DIR + path.sep + 'VERSION', [
     `build_time: ${new Date().toLocaleString('sv-SE').replace('T', ' ')}`,

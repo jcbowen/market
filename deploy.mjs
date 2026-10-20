@@ -23,6 +23,7 @@ import {
   createContext,
   ensureGeoipDatabase,
   ensureNpmDependencies,
+  needsShell,
   runWithRepair,
 } from './deps-tools.mjs';
 
@@ -57,7 +58,7 @@ function sleepSync() {
 function dockerDaemonRunning() {
   const r = spawnSync('docker', ['info'], {
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: needsShell('docker'),
   });
   return r.status === 0;
 }
@@ -141,7 +142,7 @@ console.log('    镜像列表：');
 const imgs = spawnSync('docker', ['images'], {
   cwd: ROOT_DIR,
   encoding: 'utf8',
-  shell: process.platform === 'win32',
+  shell: needsShell('docker'),
 });
 for (const line of (imgs.stdout || '').split('\n')) {
   if (line.includes('market')) console.log(line);

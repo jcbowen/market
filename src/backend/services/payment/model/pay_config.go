@@ -33,9 +33,15 @@ type PayConfig struct {
 	// 支付宝
 	AlipayAppID      string `gorm:"column:alipay_app_id;type:varchar(64);comment:支付宝 AppID" json:"alipay_app_id"`
 	AlipayPrivateKey string `gorm:"column:alipay_private_key;type:text;comment:支付宝应用私钥内容" json:"alipay_private_key"`
-	AlipayPublicKey  string `gorm:"column:alipay_public_key;type:text;comment:支付宝公钥内容" json:"alipay_public_key"`
+	AlipayPublicKey  string `gorm:"column:alipay_public_key;type:text;comment:支付宝公钥内容（公钥模式）" json:"alipay_public_key"`
 	AlipayNotifyURL  string `gorm:"column:alipay_notify_url;type:varchar(255);comment:支付宝异步通知 URL" json:"alipay_notify_url"`
 	AlipayReturnURL  string `gorm:"column:alipay_return_url;type:varchar(255);comment:支付宝支付完成回跳 URL" json:"alipay_return_url"`
+	// 加签方式：public 公钥模式（空串兼容存量）/ cert 证书模式，决定必填字段口径与回调验签路径
+	AlipayMode string `gorm:"column:alipay_mode;type:varchar(16);comment:支付宝加签方式：public 公钥模式（默认，空串兼容存量）/ cert 证书模式" json:"alipay_mode"`
+	// 证书模式三证书，内容与私钥同类：仅上传接口写入，GET 不回传明文，保存请求不触碰（空值保留原值）
+	AlipayAppCert    string `gorm:"column:alipay_app_cert;type:mediumtext;comment:应用公钥证书内容（证书模式，上传接口维护，不回传明文）" json:"alipay_app_cert"`
+	AlipayPublicCert string `gorm:"column:alipay_public_cert;type:mediumtext;comment:支付宝公钥证书内容（证书模式，上传接口维护，不回传明文）" json:"alipay_public_cert"`
+	AlipayRootCert   string `gorm:"column:alipay_root_cert;type:mediumtext;comment:支付宝根证书内容（证书模式，上传接口维护，不回传明文）" json:"alipay_root_cert"`
 	// 网关地址为空表示生产环境（https://openapi.alipay.com），填沙箱地址即切换沙箱环境
 	AlipayGatewayURL string `gorm:"column:alipay_gateway_url;type:varchar(255);comment:支付宝网关地址，空=生产环境 openapi.alipay.com" json:"alipay_gateway_url"`
 

@@ -125,10 +125,13 @@ test.describe.serial('社区管理与隔离', () => {
   });
 
   test('隔离：普通管理员跨社区读单据详情被拒绝', async ({ playwright }: { playwright: Playwright }) => {
-    // 1) 建全局角色（含库存查看权限，供普通管理员通过权限中间件，聚焦社区归属校验层）
+    // 1) 在测试社区语境下建角色（含库存查看权限，供普通管理员通过权限中间件，聚焦社区归属校验层）
+    //    角色按社区隔离后，CreateAdmin 只接受「与任职社区同域」的角色，
+    //    默认社区语境下建的全局角色（community_id=0）会被拒绝——见开发计划第 77 项。
+    //    超管建角色时社区归属只认请求体 community_id（X-Community-Id 仅对非超管生效），故必须显式传
     const role = (await (
       await api.post('/api/v1/admin/roles', {
-        data: { name: autoName('越权测试角色'), code: `auto_test_${Date.now()}`, permissions: ['inventory:view'] },
+        data: { name: autoName('越权测试角色'), code: `auto_test_${Date.now()}`, permissions: ['inventory:view'], community_id: testCommunityId },
       })
     ).json()) as ApiResponse<{ id: number }>;
     expect(role.code, `建角色失败: ${role.message}`).toBe(0);
@@ -155,9 +158,10 @@ test.describe.serial('社区管理与隔离', () => {
       await api.post('/api/v1/admin/inventory/in-orders', {
         data: { remark: 'AUTO-TEST 越权源单', items: [{ sku_id: sku!.id ?? sku!.sku_id, quantity: 1 }] },
       })
-    ).json()) as ApiResponse<{ id: number }>;
+    ).json()) as ApiResponse<{ info?: { id?: number } }>;
     expect(bill.code, `建入库单失败: ${bill.message}`).toBe(0);
-    const billId = bill.data!.id;
+    const billId = bill.data?.info?.id ?? 0;
+    expect(billId, '入库单应返回单据 ID').toBeGreaterThan(0);
 
     // 4) 普通管理员（任职测试社区）读源社区单据 → 社区归属校验拒绝(11005)；
     //    若权限中间件先行拦截（社区权限上限截断 inventory:view），同样返回 11005，业务语义一致
@@ -176,12 +180,14 @@ test.describe.serial('社区管理与隔离', () => {
   });
 
   test('清理：删除越权测试管理员与角色', async () => {
+    // 员工与角色都归属测试社区，清理必须在同一社区语境下发起，否则被社区归属校验拒绝、留下脏数据
+    const headers = { 'X-Community-Id': String(testCommunityId) };
     if (adminBId) {
-      const r = (await (await api.delete(`/api/v1/admin/admins/${adminBId}`)).json()) as ApiResponse;
+      const r = (await (await api.delete(`/api/v1/admin/admins/${adminBId}`, { headers })).json()) as ApiResponse;
       console.log(`[越权用例] 删除管理员 ${adminBId} code=${r.code}`);
     }
     if (roleId) {
-      const r = (await (await api.delete(`/api/v1/admin/roles/${roleId}`)).json()) as ApiResponse;
+      const r = (await (await api.delete(`/api/v1/admin/roles/${roleId}`, { headers })).json()) as ApiResponse;
       console.log(`[越权用例] 删除角色 ${roleId} code=${r.code}`);
     }
   });

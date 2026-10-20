@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -27,6 +28,33 @@ var payCertAllowedExts = map[string]bool{".pem": true, ".key": true, ".txt": tru
 
 // payConfigID 支付配置表固定单行主键
 const payConfigID = 1
+
+// checkNotifyURL 校验异步通知地址格式：允许空（未配置，就绪判定自然为未就绪），
+// 非空时必须是带域名的 http(s) 绝对地址。
+// 通知地址写错（漏协议、粘贴成相对路径、带空格换行）时，支付宝/微信会持续重试回调但永远打不到网关，
+// 表现为「用户已付款但订单未支付」，属于只能在保存时拦住的配置错误，故在服务端兜底校验而不只依赖前端表单
+//
+// 参数：
+//   - label: 字段中文名，用于错误提示
+//   - raw: 通知地址
+//
+// 返回值：
+//   - error: 格式非法时返回业务错误（InvalidArgument），合法返回 nil
+func checkNotifyURL(label, raw string) error {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return nil
+	}
+	// 粘贴带来的空格/换行会让支付宝回调打到错误路径，url.Parse 不报错但请求必然 404，须在此拦住
+	if strings.ContainsAny(u, " \t\r\n") {
+		return bizerr.New(codes.InvalidArgument, fmt.Sprintf("%s不能包含空格或换行", label))
+	}
+	parsed, err := url.Parse(u)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return bizerr.New(codes.InvalidArgument, fmt.Sprintf("%s必须是 http(s) 开头的完整地址", label))
+	}
+	return nil
+}
 
 // EnsureDefaultPayConfig 确保支付配置表存在默认配置行
 // 表为空时写入一份默认记录（渠道仅现金，其余字段为空待后台配置）
@@ -95,6 +123,14 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 		return bizerr.New(codes.FailedPrecondition, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
 	}
 
+	// 通知地址格式服务端兜底（详见 checkNotifyURL），拒绝后不写入、不触发热更新
+	if err := checkNotifyURL("微信异步通知地址", cfg.WechatNotifyUrl); err != nil {
+		return err
+	}
+	if err := checkNotifyURL("支付宝异步通知地址", cfg.AlipayNotifyUrl); err != nil {
+		return err
+	}
+
 	channels, err := json.Marshal(cfg.EnabledChannels)
 	if err != nil {
 		return fmt.Errorf("解析支付渠道列表失败: %w", err)
@@ -133,6 +169,13 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 	row.AlipayNotifyURL = cfg.AlipayNotifyUrl
 	row.AlipayReturnURL = cfg.AlipayReturnUrl
 	row.AlipayGatewayURL = normalizeAlipayGateway(cfg.AlipayGatewayUrl)
+	// 加签方式：空串按公钥模式落库（存量口径），cert 模式下三证书仅由上传接口维护、此处不触碰；
+	// 支付宝公钥属公钥模式载体，证书模式下残留值不参与必填判定（见 AlipayConfig.IsConfigured），无需清空
+	if cfg.AlipayMode == config.AlipayModeCert {
+		row.AlipayMode = config.AlipayModeCert
+	} else {
+		row.AlipayMode = config.AlipayModePublic
+	}
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
 
 	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
@@ -144,6 +187,39 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 	defer s.payMu.Unlock()
 	s.applyPayConfig(row)
 	return nil
+}
+
+// checkAlipayUploadContent 校验上传到支付宝证书字段的文件内容是否可解析
+// 按 cert_type 使用与真实链路一致的解析路径（私钥签名自检 / 证书序列号计算 / 证书公钥提取），
+// 上传即拦截「把根证书传到应用证书位置」「私钥缺字符」这类只有等到下单或回调才暴露的错误，
+// 且校验失败时不写库，原有配置保持不变
+//
+// 参数：
+//   - certType: 证书类型（private_key、app_cert、alipay_public_cert、root_cert）
+//   - content: 文件内容
+//
+// 返回值：
+//   - string: 校验失败原因，通过时为空串
+func checkAlipayUploadContent(certType, content string) string {
+	switch certType {
+	case "private_key":
+		if _, err := alipaysdk.AloneRsaSign("market_alipay_config_check", content, false); err != nil {
+			return "应用私钥不可用：" + err.Error()
+		}
+	case "app_cert":
+		if _, err := alipaysdk.CertSN(content); err != nil {
+			return "应用公钥证书不可解析：" + err.Error()
+		}
+	case "alipay_public_cert":
+		if _, err := alipaysdk.CertPublicKey(content); err != nil {
+			return "支付宝公钥证书不可解析：" + err.Error()
+		}
+	case "root_cert":
+		if _, err := alipaysdk.RootCertSN(content); err != nil {
+			return "支付宝根证书不可解析：" + err.Error()
+		}
+	}
+	return ""
 }
 
 // UploadPayCert 上传支付证书文件
@@ -173,6 +249,12 @@ func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadP
 	if !payCertAllowedExts[ext] {
 		return fmt.Errorf("仅支持上传 %v 格式的证书文件", allowedExtList())
 	}
+	// 支付宝证书内容可解析性校验：FailedPrecondition 使网关原样透传具体原因，便于定位传错的文件
+	if req.Channel == "alipay" {
+		if msg := checkAlipayUploadContent(req.CertType, string(req.Content)); msg != "" {
+			return bizerr.New(codes.FailedPrecondition, msg)
+		}
+	}
 
 	row, err := s.GetPayConfig(ctx)
 	if err != nil {
@@ -185,6 +267,13 @@ func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadP
 		row.WechatPrivateKey = content
 	case req.Channel == "alipay" && req.CertType == "private_key":
 		row.AlipayPrivateKey = content
+	// 证书模式三证书：内容与私钥同类处理，仅此处写入，保存请求不触碰
+	case req.Channel == "alipay" && req.CertType == "app_cert":
+		row.AlipayAppCert = content
+	case req.Channel == "alipay" && req.CertType == "alipay_public_cert":
+		row.AlipayPublicCert = content
+	case req.Channel == "alipay" && req.CertType == "root_cert":
+		row.AlipayRootCert = content
 	default:
 		return fmt.Errorf("不支持的证书类型: %s", req.CertType)
 	}
@@ -313,12 +402,16 @@ func alipayConfigOf(cfg *model.PayConfig) config.AlipayConfig {
 		return config.AlipayConfig{}
 	}
 	return config.AlipayConfig{
-		AppID:           cfg.AlipayAppID,
-		PrivateKey:      cfg.AlipayPrivateKey,
-		AlipayPublicKey: cfg.AlipayPublicKey,
-		NotifyURL:       cfg.AlipayNotifyURL,
-		ReturnURL:       cfg.AlipayReturnURL,
-		GatewayURL:      cfg.AlipayGatewayURL,
+		AppID:            cfg.AlipayAppID,
+		PrivateKey:       cfg.AlipayPrivateKey,
+		Mode:             cfg.AlipayMode,
+		AlipayPublicKey:  cfg.AlipayPublicKey,
+		NotifyURL:        cfg.AlipayNotifyURL,
+		ReturnURL:        cfg.AlipayReturnURL,
+		GatewayURL:       cfg.AlipayGatewayURL,
+		AppCert:          cfg.AlipayAppCert,
+		AlipayPublicCert: cfg.AlipayPublicCert,
+		AlipayRootCert:   cfg.AlipayRootCert,
 	}
 }
 

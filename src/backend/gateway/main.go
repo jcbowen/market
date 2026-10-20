@@ -258,9 +258,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	gwMiddleware.SetPermissionResolver(clients.UserClient)
 	admin := r.Group("/api/v1/admin")
 	{
-		// 后台登录独立收紧（D1）：突发 20、持续 1 r/s，配合按账号的失败锁定；
-		// 额度需容纳 Playwright/多标签页连续登录，故不按最激进口径设
-		adminAuthLimiter := gwMiddleware.RateLimitMiddleware(1, 20)
+		// 后台登录独立收紧（D1）：突发 50、持续 5 r/s，仅作洪水兜底；
+		// 猜密码的真正防线是 login_guard 的按账号失败锁定（计数存 Redis、跨 IP 有效），
+		// 本额度必须容纳 NAT 后多人同时登录与自动化全量回归（每轮数百次登录），故不按最激进口径设
+		adminAuthLimiter := gwMiddleware.RateLimitMiddleware(5, 50)
 		admin.POST("/auth/login", adminAuthLimiter, adminHandler.Login)
 		admin.POST("/auth/refresh", adminAuthLimiter, adminHandler.RefreshToken)
 		// 登出仅需清除 httpOnly refresh cookie，无需登录态（access 已过期也要能登出）

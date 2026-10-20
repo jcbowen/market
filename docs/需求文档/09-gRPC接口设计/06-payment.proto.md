@@ -120,11 +120,18 @@ message PayConfig {
   string alipay_gateway_url = 21;
   // 支付宝配置自检失败原因，空表示自检通过；就绪状态为「字段齐全且自检通过」
   string alipay_ready_message = 22;
+  // 支付宝加签方式：public 公钥模式（默认，空串兼容存量）/ cert 证书模式
+  string alipay_mode = 23;
+  // 证书模式三证书上传状态（证书内容不入 proto，只由上传接口写库、GET 只回传标志）
+  bool alipay_app_cert_uploaded = 24;
+  bool alipay_public_cert_uploaded = 25;
+  bool alipay_root_cert_uploaded = 26;
 }
 
 message UploadPayCertReq {
   string channel = 1;    // 渠道：wechat / alipay
-  string cert_type = 2;  // 证书类型：private_key（商户/应用私钥）等
+  // 证书类型：private_key（商户/应用私钥）、app_cert / alipay_public_cert / root_cert（支付宝证书模式三证书）
+  string cert_type = 2;
   string filename = 3;   // 原始文件名，用于校验扩展名
   bytes content = 4;     // 证书文件内容
 }
@@ -144,8 +151,9 @@ message UploadPayCertResp {
 ### 支付回调与关单语义
 
 - **回调金额强校验**：`HandleWechatCallback` 落账前将回调报文中的金额与支付单 `amount` 强制比对（注意微信侧单位为分、支付单为元），不一致直接拒绝并返回失败，防止篡改金额或串单；`HandleAlipayCallback` 同口径。
-- **支付宝回调验签（已实装）**：网关 `POST /api/v1/payments/callback/alipay` 为公开路由，验签在 payment 服务 `parseAlipayCallback` 内完成——`alipaysdk.RsaCheckV1` 用 `alipay_public_key` 做 RSA2 验签（普通公钥模式，非证书模式），随后依次校验通知身份 `app_id` 与本地配置一致、`trade_status` 仅限 `TRADE_SUCCESS`/`TRADE_FINISHED`、`total_amount` 解析成功且大于 0，任一项不过即拒绝处理。支付宝公钥未配置时直接拒绝，不存在「未验签放行」的路径。
-- **支付宝渠道开关**：就绪判定为「必填字段齐全且配置自检通过」（`alipay_ready` + `alipay_ready_message`，见 `PayConfig` 18/22 号字段），配置来源是数据库 `pay_config` 单行而非环境变量；就绪即可下单、回调与退款。当前仅实现手机网站支付（`alipay.trade.wap.pay`），小程序/公众号客户端渠道不支持，网关会明确拒绝。
+- **支付宝回调验签（已实装）**：网关 `POST /api/v1/payments/callback/alipay` 为公开路由，验签在 payment 服务 `parseAlipayCallback` 内按加签方式分流——公钥模式用 `alipaysdk.RsaCheckV1` + `alipay_public_key`；证书模式用 `alipaysdk.RsaCheckV1WithCert`，按通知的 `alipay_cert_sn` 在 `alipay_public_cert`（命中则取证书公钥）与 `alipay_root_cert`（逐段比对序列号）中定位验签公钥，序列号不匹配即拒绝。随后依次校验通知身份 `app_id` 与本地配置一致、`trade_status` 仅限 `TRADE_SUCCESS`/`TRADE_FINISHED`、`total_amount` 解析成功且大于 0，任一项不过即拒绝处理。当前模式所需验签载体缺失时直接拒绝，不存在「未验签放行」的路径。
+- **支付宝加签方式（2026-10-20 新增）**：`alipay_mode`（23 号字段）决定必填口径与录入面，公钥模式需 `alipay_public_key`，证书模式需三证书；证书内容刻意义不进 `PayConfig`（保存是单行全量覆写，携带内容字段会把未提交的证书清空），只经 `UploadPayCert` 写入并以 `alipay_app_cert_uploaded`/`alipay_public_cert_uploaded`/`alipay_root_cert_uploaded`（24/25/26 号字段）回传状态。`UploadPayCert` 对支付宝四类内容先校验可解析性再落库，校验失败以 `codes.FailedPrecondition` 原样透传原因（`codes.Internal` 网关不透传原始消息）。
+- **支付宝渠道开关**：就绪判定为「当前加签方式的必填字段齐全且配置自检通过」（`alipay_ready` + `alipay_ready_message`，见 `PayConfig` 18/22 号字段），配置来源是数据库 `pay_config` 单行而非环境变量；就绪即可下单、回调与退款。当前仅实现手机网站支付（`alipay.trade.wap.pay`），小程序/公众号客户端渠道不支持，网关会明确拒绝。
 - **回调幂等**：置支付成功采用条件更新 `WHERE payment_no=? AND status=1`，重复回调与并发回调只生效一次；支付单/订单已处于终态时走终态兜底，不再重复推进订单状态。
 - **支付确认与订单同步解耦（2026-10-17）**：`handlePaySuccess` 拆分为两阶段——阶段一仅在数据库事务内落支付单成功状态（不依赖 order-service 可用性，事务内不再有跨服务 RPC）；阶段二在事务提交后调用 order 服务 `UpdateOrderStatus` 同步订单状态，失败重试 3 次仍不成功时记录 `[CRITICAL]` 日志（支付已确认但订单状态未同步，需人工介入排查），不再因跨服务 RPC 失败回滚已确认的支付，避免回调超时导致渠道重复通知与支付状态反复。
 - **ClosePayments**：订单取消（用户取消/后台取消）或调度器超时关单后，由 order 服务调用本 RPC，将该订单下全部 `status=1`（待支付）支付单条件更新为 `status=5 已关闭`；此后到达的迟到回调因状态不匹配被幂等拦截，防止"已关单却回调成功"造成资损。`ClosePaymentsReq` 按订单维度（`order_id`）批量关闭，无需逐单枚举支付单号。

@@ -4505,6 +4505,10 @@ type PaymentSetting struct {
 	AlipayClientChannels []string `json:"alipay_client_channels"`
 	// AlipayReadyMessage 支付宝配置自检失败原因，空表示自检通过（就绪=字段齐全且自检通过）；仅出参
 	AlipayReadyMessage string `json:"alipay_ready_message"`
+	// 支付宝证书模式三证书上传状态：证书内容不回传，前端仅据此展示「已上传」并可重新上传；仅出参
+	AlipayAppCertUploaded    bool `json:"alipay_app_cert_uploaded"`
+	AlipayPublicCertUploaded bool `json:"alipay_public_cert_uploaded"`
+	AlipayRootCertUploaded   bool `json:"alipay_root_cert_uploaded"`
 }
 
 // PaymentSuggestedURLs 回调 URL 配置引导
@@ -4553,11 +4557,13 @@ func (h *AdminHandler) syncWechatPayAppID(ctx context.Context, resp *payment.Pay
 		WechatApiV3Key:     resp.WechatApiV3Key,
 		WechatCertSerialNo: resp.WechatCertSerialNo,
 		// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
-		WechatPrivateKey:     "",
-		WechatNotifyUrl:      resp.WechatNotifyUrl,
-		AlipayAppId:          resp.AlipayAppId,
-		AlipayPrivateKey:     "",
-		AlipayPublicKey:      resp.AlipayPublicKey,
+		WechatPrivateKey: "",
+		WechatNotifyUrl:  resp.WechatNotifyUrl,
+		AlipayAppId:      resp.AlipayAppId,
+		AlipayPrivateKey: "",
+		AlipayPublicKey:  resp.AlipayPublicKey,
+		// 加签方式原样回写，避免每次读取配置都把证书模式重置为公钥模式
+		AlipayMode:           resp.AlipayMode,
 		AlipayNotifyUrl:      resp.AlipayNotifyUrl,
 		AlipayReturnUrl:      resp.AlipayReturnUrl,
 		AlipayGatewayUrl:     resp.AlipayGatewayUrl,
@@ -4622,18 +4628,22 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 		},
 		Alipay: config.AlipayConfig{
 			AppID:           resp.AlipayAppId,
+			Mode:            resp.AlipayMode,
 			AlipayPublicKey: resp.AlipayPublicKey,
 			NotifyURL:       resp.AlipayNotifyUrl,
 			ReturnURL:       resp.AlipayReturnUrl,
 			GatewayURL:      resp.AlipayGatewayUrl,
 		},
-		WechatPaymentReady: wechatReady,
-		AlipayReady:        resp.AlipayReady,
-		AlipayReadyMessage: resp.AlipayReadyMessage,
-		WechatCertUploaded: resp.WechatCertUploaded,
-		AlipayCertUploaded: resp.AlipayCertUploaded,
-		UpdatedAt:          resp.UpdatedAt,
-		SuggestedURLs:      buildSuggestedURLs(c),
+		WechatPaymentReady:       wechatReady,
+		AlipayReady:              resp.AlipayReady,
+		AlipayReadyMessage:       resp.AlipayReadyMessage,
+		WechatCertUploaded:       resp.WechatCertUploaded,
+		AlipayCertUploaded:       resp.AlipayCertUploaded,
+		AlipayAppCertUploaded:    resp.AlipayAppCertUploaded,
+		AlipayPublicCertUploaded: resp.AlipayPublicCertUploaded,
+		AlipayRootCertUploaded:   resp.AlipayRootCertUploaded,
+		UpdatedAt:                resp.UpdatedAt,
+		SuggestedURLs:            buildSuggestedURLs(c),
 
 		WechatClientChannels: resp.WechatClientChannels,
 		AlipayClientChannels: resp.AlipayClientChannels,
@@ -4673,6 +4683,8 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 		AlipayAppId:      req.Alipay.AppID,
 		AlipayPrivateKey: "",
 		AlipayPublicKey:  req.Alipay.AlipayPublicKey,
+		// 加签方式随表单整行覆写（证书内容不在本接口维护，由上传接口单独写入）
+		AlipayMode:       req.Alipay.Mode,
 		AlipayNotifyUrl:  req.Alipay.NotifyURL,
 		AlipayReturnUrl:  req.Alipay.ReturnURL,
 		AlipayGatewayUrl: req.Alipay.GatewayURL,

@@ -203,6 +203,10 @@ export interface PaymentSetting {
   alipay_ready_message?: string
   wechat_cert_uploaded: boolean
   alipay_cert_uploaded: boolean
+  /** 支付宝证书模式三证书上传状态（证书内容不回传，仅回传标志）；仅服务端出参 */
+  alipay_app_cert_uploaded?: boolean
+  alipay_public_cert_uploaded?: boolean
+  alipay_root_cert_uploaded?: boolean
   updated_at: string
   suggested_urls: PaymentSuggestedURLs
   /** 适用客户端渠道勾选（mp/gzh/app/h5；空数组=全部客户端渠道可用，存量兼容口径） */
@@ -254,11 +258,21 @@ export interface WechatPayConfig {
 }
 
 /**
+ * 支付宝加签方式
+ * - public 公钥模式：AppID + 应用私钥 + 支付宝公钥
+ * - cert 证书模式：AppID + 应用私钥 + 应用公钥证书 + 支付宝公钥证书 + 支付宝根证书
+ * 与服务端 config.AlipayMode* 常量一致；存量数据为空串，前端按 public 处理
+ */
+export type AlipaySignMode = 'public' | 'cert'
+
+/**
  * 支付宝支付配置
  */
 export interface AlipayPayConfig {
   app_id: string
   private_key: string
+  /** 加签方式，见 AlipaySignMode */
+  mode: string
   alipay_public_key: string
   notify_url: string
   return_url: string
@@ -294,8 +308,10 @@ export function updatePaymentSetting(data: PaymentSetting) {
  * 上传支付证书文件
  * 文件内容存入数据库，上传后支付配置即时热更新
  * @param channel 支付渠道：wechat / alipay
- * @param certType 证书类型：private_key
- * @param file 证书文件（.pem 等）
+ * @param certType 证书类型：private_key（应用私钥）、app_cert（应用公钥证书）、
+ *                 alipay_public_cert（支付宝公钥证书）、root_cert（支付宝根证书），
+ *                 后三类仅支付宝证书模式使用
+ * @param file 证书文件（.pem/.crt/.key/.txt）
  * @returns 上传结果
  */
 export function uploadPaymentCert(channel: string, certType: string, file: File) {
