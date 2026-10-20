@@ -108,9 +108,6 @@ func (h *AdminHandler) GetSiteSetting(c *gin.Context) {
 		EffectiveBaseURL: base,
 		BaseURLSource:    snap.BaseURLSource,
 	}
-	if setting.BaseURLSource == "" {
-		setting.BaseURLSource = "request"
-	}
 	setting.WechatNotifyURL = base + wechatPayCallbackPath
 	setting.AlipayNotifyURL = base + alipayPayCallbackPath
 	setting.AlipayReturnURL = base + h5OrderListHashURL

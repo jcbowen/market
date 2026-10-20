@@ -22,7 +22,7 @@ import (
 
 // Snapshot 站点设置快照
 // BaseURL 已合并兜底优先级：站点设置 base_url 恒优先，数据库未配置时回落 SITE_BASE_URL 环境变量；
-// BaseURLSource 标记当前生效值来源（db/env，均为空时由调用方按请求现推）
+// BaseURLSource 标记当前生效值来源（db/env/request：均为空时按请求现推）
 type Snapshot struct {
 	BaseURL         string
 	BaseURLSource   string
@@ -80,6 +80,9 @@ func (c *Cache) snapshot() Snapshot {
 		snap.BaseURL = c.envBaseURL
 		snap.BaseURLSource = "env"
 		snap.FromEnvironment = true
+	} else {
+		// 均未配置：调用方按当前请求推导域名，快照标记来源以便后台页面区分展示
+		snap.BaseURLSource = "request"
 	}
 	return snap
 }
