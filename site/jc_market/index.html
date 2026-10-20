@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>玖祺社区商超 · 让社区生意变得更简单</title>
+<meta name="description" content="玖祺社区商超（jc_market）：面向社区商超的一体化 SaaS 管理平台，商品、库存、订单、营销、收银台一站式管理，多社区统一运营。">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<a class="skip-link" href="#hero">跳到主要内容</a>
+
+<!-- ============ 顶部导航 ============ -->
+<header class="site-header" id="siteHeader">
+  <div class="container nav-row">
+    <a class="brand" href="#hero" aria-label="玖祺社区商超 首页">
+      <span class="brand-mark" aria-hidden="true">玖</span>
+      <span class="brand-name">玖祺社区商超</span>
+    </a>
+    <nav class="main-nav" id="mainNav" aria-label="主导航">
+      <a href="#preview" class="nav-link">产品预览</a>
+      <a href="#features" class="nav-link">核心功能</a>
+      <!-- 价格 / 常见问题区块暂时下线（2026-10-20）
+      <a href="#pricing" class="nav-link">价格</a>
+      -->
+      <a href="#testimonials" class="nav-link">客户评价</a>
+      <!--
+      <a href="#faq" class="nav-link">常见问题</a>
+      -->
+    </nav>
+    <div class="nav-actions">
+      <button class="btn btn-primary btn-sm" data-open-demo>预约演示</button>
+      <button class="nav-burger" id="navBurger" aria-label="打开菜单" aria-expanded="false" aria-controls="mainNav">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- ============ 首屏 ============ -->
+<section class="hero" id="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+  <div class="container hero-inner">
+    <p class="eyebrow reveal">社区商超数字化经营平台</p>
+    <h1 class="hero-title reveal">让社区生意<span class="text-brand">变得更简单</span></h1>
+    <p class="hero-sub reveal">商品、库存、订单、营销、收银，一站式管理。<br class="only-desktop">一个后台，同时经营多个社区门店。</p>
+    <div class="hero-cta reveal">
+      <button class="btn btn-primary btn-lg" data-open-demo>预约演示</button>
+      <a class="btn btn-ghost btn-lg" href="#preview">查看产品界面</a>
+    </div>
+    <div class="hero-points reveal">
+      <div class="point"><strong>多社区</strong><span>统一后台切换管理</span></div>
+      <div class="point"><strong>实时库存</strong><span>收银与商城共用一套</span></div>
+      <div class="point"><strong>营销工具</strong><span>优惠券 · 秒杀 · 满减</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 产品界面预览 ============ -->
+<section class="section" id="preview">
+  <div class="container">
+    <div class="section-head reveal">
+      <p class="eyebrow">产品预览</p>
+      <h2 class="section-title">每个界面，都为生意而做</h2>
+      <p class="section-desc">后台工作台、门店收银台、顾客端商城，数据实时互通。（界面为产品真实截图，数据来自演示环境）</p>
+    </div>
+
+    <div class="preview-tabs reveal" role="tablist" aria-label="产品界面切换">
+      <button class="preview-tab is-active" role="tab" aria-selected="true" id="tab-dash" aria-controls="pane-dash" data-preview-tab="dash">后台工作台</button>
+      <button class="preview-tab" role="tab" aria-selected="false" id="tab-pos" aria-controls="pane-pos" data-preview-tab="pos">门店收银台</button>
+      <button class="preview-tab" role="tab" aria-selected="false" id="tab-app" aria-controls="pane-app" data-preview-tab="app">顾客端商城</button>
+    </div>
+
+    <!-- 样机一：后台工作台（真实截图） -->
+    <div class="preview-stage reveal" id="pane-dash" role="tabpanel" aria-labelledby="tab-dash">
+      <div class="frame frame-desktop" aria-label="后台工作台界面">
+        <div class="frame-bar">
+          <span class="frame-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="frame-url">market.example.com/b/#/dashboard</span>
+        </div>
+        <img class="shot" src="assets/dashboard.png" alt="后台工作台截图：今日订单、销售额、注册会员、在售商品四项指标，待办中心、近 7 日营收柱状图与热销 TOP5" width="1890" height="948">
+      </div>
+    </div>
+
+    <!-- 样机二：门店收银台（真实截图） -->
+    <div class="preview-stage reveal" id="pane-pos" role="tabpanel" aria-labelledby="tab-pos" hidden>
+      <div class="frame frame-desktop" aria-label="门店收银台界面">
+        <div class="frame-bar">
+          <span class="frame-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="frame-url">market.example.com/b/#/pos</span>
+        </div>
+        <img class="shot" src="assets/pos.png" alt="门店收银台截图：左侧商品网格与分类，右侧当前小票、到店/自提/配送切换与现金结账" width="1912" height="945">
+      </div>
+    </div>
+
+    <!-- 样机三：手机端商品页（真实截图） -->
+    <div class="preview-stage reveal" id="pane-app" role="tabpanel" aria-labelledby="tab-app" hidden>
+      <div class="app-stage">
+        <img class="phone-shot" src="assets/app.png" alt="顾客端商城截图：社区选择、分类侧栏、促销 Banner 与商品列表" width="375" height="706">
+        <div class="app-notes">
+          <h3>顾客端商城</h3>
+          <p>社区居民打开即买：分类浏览、加购下单、自提配送到户。与后台库存、收银数据实时同步，超卖不再发生。</p>
+          <ul>
+            <li>H5 / 小程序 / App 多渠道入口</li>
+            <li>收货地址自动锁定所属社区，支持 IP 定位辅助选择</li>
+            <li>下单生成取货码，收银台扫码核销</li>
+            <li>领券中心、秒杀、满减活动实时展示</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 三个核心功能 ============ -->
+<section class="section section-alt" id="features">
+  <div class="container">
+    <div class="section-head reveal">
+      <p class="eyebrow">核心功能</p>
+      <h2 class="section-title">三件事，做到极致</h2>
+    </div>
+    <div class="feature-grid">
+      <article class="feature-card reveal">
+        <p class="feature-no">01</p>
+        <h3>多社区统一管理</h3>
+        <p>一个账号可在多个社区任职：登录选社区、顶栏一键切换，角色与权限按社区独立生效。超管拥有跨社区角色总览与全平台统计，连锁老板一眼看清每家店。</p>
+        <ul class="feature-list">
+          <li>社区级权限与数据隔离</li>
+          <li>跨社区角色总览 · 全平台统计</li>
+          <li>会员多社区关联，购物车按社区分流结算</li>
+        </ul>
+      </article>
+      <article class="feature-card reveal">
+        <p class="feature-no">02</p>
+        <h3>库存 · 收银 · 商城实时联动</h3>
+        <p>收银台与顾客端商城共用一套库存和订单：扫码核销取货码、挂单、抹零改价、优惠券预估、58mm 交班小票打印一屏完成；采购、出入库、盘点、低库存预警、批次临期、一键补货形成进销存闭环。</p>
+        <ul class="feature-list">
+          <li>取货码扫码核销 · 交班小票打印</li>
+          <li>低库存预警 · 批次临期 · 一键补货</li>
+          <li>停业社区自动提示，会员就近切换</li>
+        </ul>
+      </article>
+      <article class="feature-card reveal">
+        <p class="feature-no">03</p>
+        <h3>营销增长工具</h3>
+        <p>满减券、折扣券、秒杀、满减活动、免配送费、首页 Banner 全部内置。优惠券支持领取与后台手动发放（记录经手人），规则文案一键生成；活动过期自动流转，订单超时自动取消。</p>
+        <ul class="feature-list">
+          <li>限领 / 总量 / 商品范围精细控制</li>
+          <li>划线价、销量展示可配置，新店不显空</li>
+          <li>定时任务自动处理过期与卡单</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 客户评价 ============ -->
+<section class="section" id="testimonials">
+  <div class="container">
+    <div class="section-head reveal">
+      <p class="eyebrow">客户评价</p>
+      <h2 class="section-title">开社区店的人怎么说</h2>
+      <p class="section-desc">以下评价为产品宣传示例，供演示参考。</p>
+    </div>
+    <div class="quote-grid">
+      <figure class="quote-card reveal">
+        <blockquote>「以前收银是一套系统、小程序是一套，月底对账最头疼。现在收银和商城一个库存，今天卖了多少，工作台上一眼就看到。」</blockquote>
+        <figcaption><b>王女士</b><span>社区生鲜超市 · 经营 2 家门店</span></figcaption>
+      </figure>
+      <figure class="quote-card reveal">
+        <blockquote>「优惠券活动文案一键生成这个功能很实用，我妈在后台都能自己发满减，不用每次都打电话问我。」</blockquote>
+        <figcaption><b>刘先生</b><span>社区商超 · 经营 1 家门店</span></figcaption>
+      </figure>
+      <figure class="quote-card reveal">
+        <blockquote>「我们做社区团购转型，最看重多社区管理。每个小区价格可以不一样，权限分开，我坐在办公室看总览就行。」</blockquote>
+        <figcaption><b>陈先生</b><span>连锁社区超市 · 经营 6 个社区</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 三档价格（暂时下线 2026-10-20，恢复时去掉本注释与下方结束注释） ============
+<section class="section section-alt" id="pricing">
+  <div class="container">
+    <div class="section-head reveal">
+      <p class="eyebrow">价格</p>
+      <h2 class="section-title">按店选版本，年付更划算</h2>
+      <div class="billing-toggle" role="group" aria-label="付费周期切换">
+        <button class="toggle-opt is-active" data-billing="monthly" aria-pressed="true">月付</button>
+        <button class="toggle-opt" data-billing="yearly" aria-pressed="false">年付 <em>省 2 个月</em></button>
+      </div>
+    </div>
+    <div class="price-grid">
+      <article class="price-card reveal">
+        <h3>单店版</h3>
+        <p class="price-tag"><span class="cur">¥</span><b data-monthly="199" data-yearly="1990">199</b><span class="per" data-per> / 月</span></p>
+        <p class="price-note" data-yearly-note hidden>按年支付，折合每月约 ¥166</p>
+        <p class="price-desc">一家社区店的全部日常经营所需。</p>
+        <ul class="price-list">
+          <li>1 个社区门店</li>
+          <li>商品 · 库存 · 订单 · 售后</li>
+          <li>收银台（挂单 · 抹角 · 取货码核销）</li>
+          <li>顾客端商城（H5）</li>
+          <li>满减活动 · 优惠券</li>
+          <li>工作日在线客服</li>
+        </ul>
+        <button class="btn btn-outline btn-block" data-open-demo data-plan="单店版">预约演示</button>
+      </article>
+      <article class="price-card is-featured reveal">
+        <p class="price-flag">最受欢迎</p>
+        <h3>连锁版</h3>
+        <p class="price-tag"><span class="cur">¥</span><b data-monthly="399" data-yearly="3990">399</b><span class="per" data-per> / 月</span></p>
+        <p class="price-note" data-yearly-note hidden>按年支付，折合每月约 ¥333</p>
+        <p class="price-desc">多社区运营与完整营销能力，连锁店主首选。</p>
+        <ul class="price-list">
+          <li>最多 10 个社区门店</li>
+          <li>多社区权限与跨社区总览</li>
+          <li>秒杀 · 满减 · 免配送费 · Banner</li>
+          <li>优惠券领取 + 手动发放（经手人记录）</li>
+          <li>库存报表 · 批次临期 · 数据统计</li>
+          <li>微信 / 支付宝在线收款 · 优先客服</li>
+        </ul>
+        <button class="btn btn-primary btn-block" data-open-demo data-plan="连锁版">预约演示</button>
+      </article>
+      <article class="price-card reveal">
+        <h3>旗舰定制版</h3>
+        <p class="price-tag"><span class="cur">¥</span><b data-monthly="899" data-yearly="8990">899</b><span class="per" data-per> / 月起</span></p>
+        <p class="price-note" data-yearly-note hidden>按年支付，折合每月约 ¥749 起</p>
+        <p class="price-desc">区域连锁与个性化对接需求。</p>
+        <ul class="price-list">
+          <li>社区门店数量不限</li>
+          <li>小程序 / 公众号 / App 多渠道客户端</li>
+          <li>私有化部署可选（一体化镜像 / 二进制）</li>
+          <li>开放 API 与系统对接</li>
+          <li>专属客户成功经理</li>
+        </ul>
+        <button class="btn btn-outline btn-block" data-open-demo data-plan="旗舰定制版">联系商务</button>
+      </article>
+    </div>
+    <p class="price-foot reveal">所有版本均支持 14 天免费试用，试用期内数据可完整保留。价格为示意，以商务报价为准。</p>
+  </div>
+</section>
+============ 价格区块下线结束 ============ -->
+
+<!-- ============ 常见问题（暂时下线 2026-10-20，恢复时去掉本注释与下方结束注释） ============
+<section class="section" id="faq">
+  <div class="container container-narrow">
+    <div class="section-head reveal">
+      <p class="eyebrow">常见问题</p>
+      <h2 class="section-title">你关心的，先回答</h2>
+    </div>
+    <div class="faq-list reveal">
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false"><span>不会用电脑能管得了后台吗？</span><i class="faq-mark" aria-hidden="true"></i></button>
+        <div class="faq-a" hidden><p>可以。后台按"今天该干什么"来设计：工作台有待办红标直达筛选，收银台挂单、抹角、改价一屏完成，营销活动的规则文案支持一键生成。大多数店主当天就能独立操作。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false"><span>顾客端是小程序还是 H5？需要我自己开发吗？</span><i class="faq-mark" aria-hidden="true"></i></button>
+        <div class="faq-a" hidden><p>两者都是现成的，开通后配置门店信息即可使用，无需任何开发。连锁版及以上支持小程序端，单店版默认提供 H5 商城。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false"><span>我原来收银机里的商品和会员数据能导入吗？</span><i class="faq-mark" aria-hidden="true"></i></button>
+        <div class="faq-a" hidden><p>可以迁移。商品、库存、会员资料可由我们协助整理导入，订单等模块已支持表格批量导入。如果你使用的是主流收银系统，我们会协助完成数据迁移，整个过程不影响正常营业。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false"><span>多个社区是怎么计费的？</span><i class="faq-mark" aria-hidden="true"></i></button>
+        <div class="faq-a" hidden><p>按版本包含的门店数量计费：单店版含 1 个社区，连锁版最多 10 个，旗舰定制版不限。超出数量可以按门店增购，不需要整体升级。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false"><span>经营数据安全吗？换系统后数据能带走吗？</span><i class="faq-mark" aria-hidden="true"></i></button>
+        <div class="faq-a" hidden><p>各社区数据严格隔离，员工权限按角色分配，登录有频率风控保护。停止合作后，你可以联系我们导出全部商品、订单和会员记录，数据永远属于你。</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false"><span>试用期结束后不续费，店铺会怎样？</span><i class="faq-mark" aria-hidden="true"></i></button>
+        <div class="faq-a" hidden><p>试用结束后系统进入只读状态，数据再为你保留 90 天。期间随时续费即可恢复经营，之前的商品、订单、会员数据都还在。</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+============ 常见问题区块下线结束 ============ -->
+
+<!-- ============ 底部 CTA ============ -->
+<section class="cta-band">
+  <div class="container cta-inner reveal">
+    <h2>今天开始，把生意管明白</h2>
+    <p>预约一次 30 分钟的线上演示，我们按你门店的真实场景走一遍流程。</p>
+    <button class="btn btn-invert btn-lg" data-open-demo>预约演示</button>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ 页脚 ============ -->
+<footer class="site-footer">
+  <div class="container footer-grid">
+    <div class="footer-brand">
+      <a class="brand" href="#hero"><span class="brand-mark" aria-hidden="true">玖</span><span class="brand-name">玖祺社区商超</span></a>
+      <p>让社区生意变得更简单。<br>商品 · 库存 · 订单 · 营销 · 收银，一站式管理。</p>
+    </div>
+    <nav class="footer-col" aria-label="产品">
+      <h3>产品</h3>
+      <a href="#preview">产品预览</a>
+      <a href="#features">核心功能</a>
+      <!-- 价格区块暂时下线（2026-10-20）
+      <a href="#pricing">价格</a>
+      -->
+    </nav>
+    <nav class="footer-col" aria-label="支持">
+      <h3>支持</h3>
+      <!-- 常见问题暂时下线（2026-10-20）
+      <a href="#faq">常见问题</a>
+      -->
+      <button class="footer-link-btn" data-open-demo>预约演示</button>
+      <a href="#testimonials">客户评价</a>
+    </nav>
+    <div class="footer-col">
+      <h3>联系</h3>
+      <p>商务合作：jiuqi@jiuchet.com</p>
+    </div>
+  </div>
+  <div class="container footer-bottom">
+    <p>© <span id="year">2026</span> 玖祺社区商超（jc_market）· 保留所有权利</p>
+  </div>
+</footer>
+
+<!-- ============ 演示预约表单 ============ -->
+<div class="modal" id="demoModal" hidden>
+  <div class="modal-backdrop" data-close-demo></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="demoTitle">
+    <button class="modal-x" data-close-demo aria-label="关闭">×</button>
+
+    <form id="demoForm" novalidate>
+      <h2 id="demoTitle">预约产品演示</h2>
+      <p class="modal-sub">留下联系方式，我们将在 1 个工作日内与你约定演示时间。</p>
+      <p class="modal-plan" id="demoPlan" hidden></p>
+
+      <div class="field">
+        <label for="fName">姓名 <span class="req">*</span></label>
+        <input id="fName" name="name" type="text" autocomplete="name" placeholder="怎么称呼你">
+        <p class="field-err" data-err-for="fName" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="fPhone">手机号 <span class="req">*</span></label>
+        <input id="fPhone" name="phone" type="tel" inputmode="numeric" maxlength="11" autocomplete="tel" placeholder="用于演示前与你联系">
+        <p class="field-err" data-err-for="fPhone" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="fStore">门店 / 社区名称 <span class="req">*</span></label>
+        <input id="fStore" name="store" type="text" placeholder="例如：XX 花园东门超市">
+        <p class="field-err" data-err-for="fStore" role="alert" hidden></p>
+      </div>
+      <div class="field">
+        <label for="fCount">经营社区数</label>
+        <select id="fCount" name="communities">
+          <option value="1 个">1 个</option>
+          <option value="2 - 5 个">2 - 5 个</option>
+          <option value="6 - 10 个">6 - 10 个</option>
+          <option value="10 个以上">10 个以上</option>
+          <option value="还没开店">还没开店</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fNote">备注（选填）</label>
+        <textarea id="fNote" name="note" rows="3" placeholder="目前用的收银方式、最想解决的问题…"></textarea>
+      </div>
+
+      <button class="btn btn-primary btn-block btn-lg" id="demoSubmit" type="submit">提交预约</button>
+      <p class="modal-legal">提交即表示同意我们使用以上信息与你联系。</p>
+    </form>
+
+    <div id="demoResult" hidden>
+      <div class="result-badge" aria-hidden="true">✓</div>
+      <h2 id="demoTitle2">预约提交成功</h2>
+      <p class="modal-sub">已收到你的演示预约，我们会在 <b>1 个工作日内</b>致电确认时间。</p>
+      <dl class="result-list">
+        <div><dt>姓名</dt><dd id="rName"></dd></div>
+        <div><dt>手机号</dt><dd id="rPhone"></dd></div>
+        <div><dt>门店</dt><dd id="rStore"></dd></div>
+        <div><dt>经营社区数</dt><dd id="rCount"></dd></div>
+        <div id="rNoteRow" hidden><dt>备注</dt><dd id="rNote"></dd></div>
+      </dl>
+      <p class="result-ticket">受理编号：<b id="rTicket"></b></p>
+      <button class="btn btn-outline btn-block" data-close-demo>好的，知道了</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
