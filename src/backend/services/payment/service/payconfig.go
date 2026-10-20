@@ -218,6 +218,10 @@ func checkAlipayUploadContent(certType, content string) string {
 		if _, err := alipaysdk.RootCertSN(content); err != nil {
 			return "支付宝根证书不可解析：" + err.Error()
 		}
+	default:
+		// 未知类型必须拒绝而非放行：返回空串会被调用方当作校验通过，
+		// 与 UploadPayCert 写库 switch 的 default 拒绝口径保持一致
+		return "不支持的证书类型: " + certType
 	}
 	return ""
 }

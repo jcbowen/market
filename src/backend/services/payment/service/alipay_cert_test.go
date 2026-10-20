@@ -279,7 +279,7 @@ func TestCheckAlipayUploadContent(t *testing.T) {
 		{"支付宝公钥证书非证书", "alipay_public_cert", "not-a-cert", "支付宝公钥证书"},
 		{"根证书合法", "root_cert", certPEM, ""},
 		{"根证书乱码", "root_cert", "garbage", "支付宝根证书"},
-		{"微信私钥不做支付宝侧校验", "unknown_type", "whatever", ""},
+		{"未知类型拒绝", "unknown_type", "whatever", "不支持的证书类型"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
