@@ -506,13 +506,29 @@ func (s *server) ChangeAdminPassword(ctx stdctx.Context, req *user.ChangeAdminPa
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
-// ListRoles 获取角色列表（按社区语境）
+// ListRoles 获取角色列表（按社区语境；all_communities=true 时返回跨社区总览并回填社区名与任职人数）
 func (s *server) ListRoles(ctx stdctx.Context, req *user.ListRolesReq) (*user.ListRolesResp, error) {
+	resp := &user.ListRolesResp{}
+	if req.AllCommunities {
+		overview, err := s.roleService.ListRolesOverview(ctx)
+		if err != nil {
+			return nil, bizerr.ToStatus(err)
+		}
+		resp.List = make([]*user.RoleInfo, 0, len(overview))
+		for _, item := range overview {
+			info := service.ToRoleInfo(item.Role)
+			info.CommunityName = item.CommunityName
+			info.AssignmentCount = item.AssignmentCount
+			resp.List = append(resp.List, info)
+		}
+		return resp, nil
+	}
+
 	list, err := s.roleService.ListRoles(ctx, req.CommunityId, req.IncludeGlobal)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	resp := &user.ListRolesResp{List: make([]*user.RoleInfo, 0, len(list))}
+	resp.List = make([]*user.RoleInfo, 0, len(list))
 	for _, r := range list {
 		resp.List = append(resp.List, service.ToRoleInfo(r))
 	}

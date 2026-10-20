@@ -104,12 +104,12 @@ export function changeAdminPassword(id: number, data: { old_password: string; ne
 
 /**
  * 获取角色列表
- * 默认返回当前社区的角色；超管可传 scope=global 查看全局角色，
+ * 默认返回当前社区的角色；超管可传 scope=all 跨社区总览（含所属社区名与任职人数），
  * 或传 community_id 查看任意社区的角色（社区权限分配页使用）
  * @param params 查询参数
  * @returns 角色列表
  */
-export function getRoleList(params?: { scope?: 'global'; community_id?: number }) {
+export function getRoleList(params?: { scope?: 'all'; community_id?: number }) {
   return request<ApiResult<Role[]>>({
     url: '/api/v1/admin/roles',
     method: 'GET',

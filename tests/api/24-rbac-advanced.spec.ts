@@ -9,6 +9,7 @@ import { autoName, uniqueSuffix } from '../helpers/data';
  *       → 员工改社区权限上限拒绝（超管专用）→ 上限收紧后员工 API 即时 403（还原）
  *       → 收紧为空拒绝 → 自建社区上验证社区管理员增删（每社区 1 人自动替换）
  *       → 门店 profile 读写一致
+ *       → 社区角色跨社区总览（scope=all 带社区名/任职人数、无归属建角色被拒、跨社区指派文案透传）
  * 注意：主社区权限上限测试后还原原值；社区管理员增删在自建社区上做，测试后删除
  */
 
@@ -79,7 +80,7 @@ test.describe.serial('员工与角色权限边界', () => {
   let categoryId = 0;
 
   test('1. 超管建社区角色与员工，员工可登录', async ({ playwright }) => {
-    // 角色须归属员工任职社区（服务端校验角色社区归属，全局角色不能用于社区任职）
+    // 角色须归属员工任职社区（服务端校验角色社区归属，community_id=0 的遗留角色不能用于社区任职）
     const role = assertOk(
       (await (
         await superApi.post('/api/v1/admin/roles', {
@@ -335,6 +336,84 @@ test.describe.serial('社区管理员与门店设置', () => {
       expect(profile.business_hours).toBe('08:00-22:00');
     } finally {
       await cmCtx.api.dispose();
+    }
+  });
+});
+
+test.describe.serial('社区角色跨社区总览（超管只读入口）', () => {
+  test('15. scope=all 返回跨社区角色并回填社区名与任职人数', async () => {
+    const all = asList<Role>(
+      assertOk((await (await superApi.get('/api/v1/admin/roles', { params: { scope: 'all' } })).json()) as ApiResponse<Role[]>),
+    );
+    const mine = all.find((r) => r.id === roleId);
+    expect(mine, '总览应包含第 1 条用例创建的测试角色').toBeTruthy();
+    expect(mine!.community_id, '测试角色应归属主社区').toBe(primaryCommunity);
+    expect(mine!.community_name, '跨社区总览应回填所属社区名').toBeTruthy();
+    expect(mine!.assignment_count, '测试角色已指派给员工，任职人数应不少于 1').toBeGreaterThanOrEqual(1);
+
+    // 跨社区：社区仍存在时社区名必须与社区列表一致；社区已删除的孤儿角色允许为空（前端回落显示「社区 N」）
+    const communities = asList<{ id: number; name: string }>(
+      assertOk(
+        (await (await superApi.get('/api/v1/admin/communities', { params: { page: 1, page_size: 100 } })).json()) as ApiResponse<unknown>,
+        '社区列表',
+      ),
+    );
+    const nameOf = new Map(communities.map((c) => [c.id, c.name]));
+    const scoped = all.filter((r) => (r.community_id ?? 0) > 0);
+    expect(scoped.length, '总览应覆盖各社区角色').toBeGreaterThan(0);
+    scoped
+      .filter((r) => nameOf.has(r.community_id))
+      .forEach((r) => expect(r.community_name, `角色 ${r.id} 的社区名应与社区列表一致`).toBe(nameOf.get(r.community_id)));
+  });
+
+  test('16. 废弃入口 scope=global 明确报错，提示改用 scope=all', async () => {
+    const resp = await superApi.get('/api/v1/admin/roles', { params: { scope: 'global' } });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, '旧的全局角色入口应被拒绝').not.toBe(0);
+    expect(body.message).toContain('scope=all');
+  });
+
+  test('17. 不传 community_id 建角色被拒（角色一律社区私有）', async () => {
+    const resp = await superApi.post('/api/v1/admin/roles', {
+      data: { name: autoName('无归属角色'), code: `t_${uniqueSuffix()}`, permissions: ['product:view'] },
+    });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, '超管不指定社区时建角色应被拒绝').not.toBe(0);
+    expect(body.message, '应提示角色必须归属社区').toContain('社区');
+  });
+
+  test('18. 跨社区指派角色被拒且业务文案透传（不再退化为 10002）', async () => {
+    const comm = assertOk(
+      (await (
+        await superApi.post('/api/v1/admin/communities', {
+          data: { name: autoName('RBAC 越界社区'), address: 'AUTO-TEST 地址', status: 1, delivery_fee: 0, min_order_amount: 0 },
+        })
+      ).json()) as ApiResponse<{ id: number }>,
+      '创建越界社区',
+    );
+    const otherCommunity = comm.id;
+    let otherRoleId = 0;
+    try {
+      const role = assertOk(
+        (await (
+          await superApi.post('/api/v1/admin/roles', {
+            data: { name: autoName('越界角色'), code: `t_${uniqueSuffix()}`, permissions: ['product:view'], community_id: otherCommunity },
+          })
+        ).json()) as ApiResponse<Role>,
+        '在越界社区建角色',
+      );
+      otherRoleId = role.id;
+
+      // 员工落在超管当前社区语境（primaryCommunity），却指派另一社区的角色 → 应被服务端拒绝
+      const resp = await superApi.post('/api/v1/admin/admins', {
+        data: { username: `t${uniqueSuffix()}`, password: STAFF_PASS, real_name: 'AUTO-TEST 越界任职', role_ids: [otherRoleId] },
+      });
+      const body = (await resp.json()) as ApiResponse;
+      expect(body.code, '跨社区指派角色应被拒绝').not.toBe(0);
+      expect(body.message, '服务端的业务拒绝文案应透传到调用方，而不是笼统的服务器内部错误').toContain('不属于当前社区');
+    } finally {
+      if (otherRoleId) await superApi.delete(`/api/v1/admin/roles/${otherRoleId}`);
+      await superApi.delete(`/api/v1/admin/communities/${otherCommunity}`);
     }
   });
 });

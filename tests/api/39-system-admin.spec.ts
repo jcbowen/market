@@ -10,7 +10,7 @@ import { uniquePhone, uniqueSuffix } from '../helpers/data';
  * - 社区 PUT 修改生效（含整表覆盖语义与 status 回填保护）已由 33 号覆盖，此处不重复
  * - PUT /admins/:id 仅改资料与任职（RealName/Phone 为 string 无 presence，回传原值防清空）；
  *   停用/启用走专用接口 PUT /accounts/:id/status（超管专用，指针 presence）
- * - 角色须归属员工任职社区（全局角色不可用于社区任职，同 24 号前置）
+ * - 角色须归属员工任职社区（community_id=0 的遗留角色不可用于社区任职，同 24 号前置）
  */
 
 /** 管理端员工 VO（toAdminVO） */

@@ -3357,10 +3357,14 @@ type RoleInfo struct {
 	Code        string                 `protobuf:"bytes,3,opt,name=code,proto3" json:"code,omitempty"`
 	Permissions []string               `protobuf:"bytes,4,rep,name=permissions,proto3" json:"permissions,omitempty"`
 	Description string                 `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
-	// 所属社区：0=全局角色（仅超管相关），>0=社区私有角色
-	CommunityId   int64 `protobuf:"varint,6,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 所属社区：>0=社区私有角色（业务唯一口径）；0=历史保留值，仅存量兼容数据
+	CommunityId int64 `protobuf:"varint,6,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 所属社区名称：仅 all_communities 跨社区查询时回填
+	CommunityName string `protobuf:"bytes,7,opt,name=community_name,json=communityName,proto3" json:"community_name,omitempty"`
+	// 该角色当前任职人数：仅 all_communities 跨社区查询时回填
+	AssignmentCount int64 `protobuf:"varint,8,opt,name=assignment_count,json=assignmentCount,proto3" json:"assignment_count,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RoleInfo) Reset() {
@@ -3435,14 +3439,30 @@ func (x *RoleInfo) GetCommunityId() int64 {
 	return 0
 }
 
+func (x *RoleInfo) GetCommunityName() string {
+	if x != nil {
+		return x.CommunityName
+	}
+	return ""
+}
+
+func (x *RoleInfo) GetAssignmentCount() int64 {
+	if x != nil {
+		return x.AssignmentCount
+	}
+	return 0
+}
+
 type ListRolesReq struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 社区语境：>0 返回该社区角色；0 仅返回全局角色
+	// 社区语境：>0 返回该社区角色；0 返回历史保留的全局行
 	CommunityId int64 `protobuf:"varint,1,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	// 是否附带全局角色（超管视角）
 	IncludeGlobal bool `protobuf:"varint,2,opt,name=include_global,json=includeGlobal,proto3" json:"include_global,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 跨社区总览：忽略 community_id，返回全部社区的角色并回填社区名与任职人数（仅超管可用）
+	AllCommunities bool `protobuf:"varint,3,opt,name=all_communities,json=allCommunities,proto3" json:"all_communities,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ListRolesReq) Reset() {
@@ -3485,6 +3505,13 @@ func (x *ListRolesReq) GetCommunityId() int64 {
 func (x *ListRolesReq) GetIncludeGlobal() bool {
 	if x != nil {
 		return x.IncludeGlobal
+	}
+	return false
+}
+
+func (x *ListRolesReq) GetAllCommunities() bool {
+	if x != nil {
+		return x.AllCommunities
 	}
 	return false
 }
@@ -3592,7 +3619,7 @@ type CreateRoleReq struct {
 	Code        string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`
 	Permissions []string               `protobuf:"bytes,3,rep,name=permissions,proto3" json:"permissions,omitempty"`
 	Description string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-	// 所属社区：0=全局（仅超管可建），>0=社区私有角色
+	// 所属社区：必填且须 >0，角色一律社区私有（0 会被服务端拒绝）
 	CommunityId   int64 `protobuf:"varint,5,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5901,17 +5928,20 @@ const file_user_user_proto_rawDesc = "" +
 	"\bis_super\x18\x01 \x01(\bR\aisSuper\x12\x19\n" +
 	"\brole_ids\x18\x02 \x03(\x03R\aroleIds\x12 \n" +
 	"\vpermissions\x18\x03 \x03(\tR\vpermissions\x12\x14\n" +
-	"\x05bound\x18\x04 \x01(\bR\x05bound\"\xa9\x01\n" +
+	"\x05bound\x18\x04 \x01(\bR\x05bound\"\xfb\x01\n" +
 	"\bRoleInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
 	"\x04code\x18\x03 \x01(\tR\x04code\x12 \n" +
 	"\vpermissions\x18\x04 \x03(\tR\vpermissions\x12 \n" +
 	"\vdescription\x18\x05 \x01(\tR\vdescription\x12!\n" +
-	"\fcommunity_id\x18\x06 \x01(\x03R\vcommunityId\"X\n" +
+	"\fcommunity_id\x18\x06 \x01(\x03R\vcommunityId\x12%\n" +
+	"\x0ecommunity_name\x18\a \x01(\tR\rcommunityName\x12)\n" +
+	"\x10assignment_count\x18\b \x01(\x03R\x0fassignmentCount\"\x81\x01\n" +
 	"\fListRolesReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12%\n" +
-	"\x0einclude_global\x18\x02 \x01(\bR\rincludeGlobal\"3\n" +
+	"\x0einclude_global\x18\x02 \x01(\bR\rincludeGlobal\x12'\n" +
+	"\x0fall_communities\x18\x03 \x01(\bR\x0eallCommunities\"3\n" +
 	"\rListRolesResp\x12\"\n" +
 	"\x04list\x18\x01 \x03(\v2\x0e.user.RoleInfoR\x04list\"?\n" +
 	"\n" +

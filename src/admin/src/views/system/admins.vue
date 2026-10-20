@@ -114,7 +114,7 @@ const statusOptions = [
 const roleOptions = computed(() =>
   roles.value
     // 内置社区管理员角色不进入员工分配下拉（指定社区管理员在「系统管理 → 社区编辑」操作）；
-    // 全局角色兜底过滤（后端已隔离，此处双保险）
+    // 历史保留行（community_id=0 的遗留角色）兜底过滤（后端已隔离，此处双保险）
     .filter((r) => (r.community_id ?? 0) > 0 && r.code !== 'community_admin')
     .map((r) => ({ label: r.name, value: r.id })),
 )

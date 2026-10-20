@@ -404,7 +404,7 @@ const menuOptions = computed<MenuOption[]>(() => {
 /**
  * 系统空间菜单（仅系统管理页面展示，替代业务菜单）
  * 按职能拆分三个一级菜单：数据统计 / 系统管理 / 平台配置
- * superOnly 项仅超管可见（社区权限/账号/全局角色/全平台统计）
+ * superOnly 项仅超管可见（社区权限/账号/社区角色/全平台统计）
  */
 const systemMenuOptions = computed<MenuOption[]>(() => {
   const groups: MenuGroupConfig[] = [
@@ -422,7 +422,7 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
         { label: '社区管理', key: '/system/communities', permission: 'community:view' },
         { label: '社区权限', key: '/system/community-permissions', permission: 'community:view', superOnly: true },
         { label: '账号管理', key: '/system/accounts', permission: 'admin:view', superOnly: true },
-        { label: '全局角色', key: '/system/roles-global', permission: 'role:view', superOnly: true },
+        { label: '社区角色', key: '/system/community-roles', permission: 'role:view', superOnly: true },
         { label: '行政区划', key: '/system/regions', permission: 'region:view' },
       ],
     },

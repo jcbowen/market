@@ -8,7 +8,7 @@ import (
 
 // EnsureScope 校验操作者社区语境是否覆盖资源归属社区
 // 与 product 服务 service.EnsureScope 同口径：scope<=0 表示超管或内部调用（放行），
-// 资源归属为 0 的全局数据（全局角色、全局 banner）仅超管可操作
+// 资源归属为 0 的历史保留数据（community_id=0 的遗留角色、全局 banner）仅超管可操作
 //
 // 参数：
 //   - scope: 操作者社区语境（0=超管或内部调用）

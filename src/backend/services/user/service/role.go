@@ -6,8 +6,10 @@ import (
 	"fmt"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -49,13 +51,13 @@ func NewRoleService(db *mysql.Instance) *RoleService {
 }
 
 // ListRoles 查询角色列表
-// 多社区口径：communityID > 0 返回该社区的角色（includeGlobal 时附带全局角色）；
-// communityID = 0 仅返回全局角色
+// 多社区口径：communityID > 0 返回该社区的角色（includeGlobal 时附带历史保留行）；
+// communityID = 0 仅返回历史保留行（community_id = 0 的存量数据，已无业务消费方）
 //
 // 参数：
 //   - ctx: 上下文
 //   - communityID: 社区 ID
-//   - includeGlobal: 是否附带全局角色（community_id = 0）
+//   - includeGlobal: 是否附带历史保留行（community_id = 0）
 //
 // 返回：
 //   - []*model.Role: 角色列表
@@ -75,6 +77,86 @@ func (s *RoleService) ListRoles(ctx context.Context, communityID int64, includeG
 	var list []*model.Role
 	err := db.Order("id desc").Find(&list).Error
 	return list, err
+}
+
+// RoleOverview 跨社区角色总览行
+// 角色本体 + 所属社区名 + 该角色当前任职人数
+type RoleOverview struct {
+	Role            *model.Role
+	CommunityName   string
+	AssignmentCount int64
+}
+
+// ListRolesOverview 查询全部社区的角色总览（超管「社区角色」只读页用）
+// 不按社区过滤，含 community_id = 0 的历史保留行；社区名与任职人数各用一条聚合查询回填，避免逐行 N+1
+//
+// 参数：
+//   - ctx: 上下文
+//
+// 返回：
+//   - []*RoleOverview: 总览行，按社区 ID 升序、角色 ID 降序
+//   - error: 错误信息
+func (s *RoleService) ListRolesOverview(ctx context.Context) ([]*RoleOverview, error) {
+	var roles []*model.Role
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.Role{}).
+		Order("community_id ASC, id DESC").Find(&roles).Error; err != nil {
+		return nil, err
+	}
+	communityNames, err := s.communityNameMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := s.roleAssignmentCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]*RoleOverview, 0, len(roles))
+	for _, r := range roles {
+		list = append(list, &RoleOverview{
+			Role:            r,
+			CommunityName:   communityNames[r.CommunityID],
+			AssignmentCount: counts[r.ID],
+		})
+	}
+	return list, nil
+}
+
+// communityNameMap 查询社区 ID → 社区名称
+// 返回：
+//   - map[int64]string: 社区名映射，0 键不存在（历史保留行由调用方显示为「遗留·全局」）
+//   - error: 错误信息
+func (s *RoleService) communityNameMap(ctx context.Context) (map[int64]string, error) {
+	var communities []*model.Community
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.Community{}).
+		Select("id", "name").Find(&communities).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[int64]string, len(communities))
+	for _, c := range communities {
+		result[c.ID] = c.Name
+	}
+	return result, nil
+}
+
+// roleAssignmentCounts 统计每个角色的任职人数（admin_communities 按 role_id 分组）
+// 返回：
+//   - map[int64]int64: 角色 ID → 任职人数
+//   - error: 错误信息
+func (s *RoleService) roleAssignmentCounts(ctx context.Context) (map[int64]int64, error) {
+	var rows []struct {
+		RoleID int64 `gorm:"column:role_id"`
+		Count  int64 `gorm:"column:cnt"`
+	}
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.AdminCommunity{}).
+		Select("role_id, COUNT(*) AS cnt").Group("role_id").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[int64]int64, len(rows))
+	for _, row := range rows {
+		result[row.RoleID] = row.Count
+	}
+	return result, nil
 }
 
 // GetRoleByID 根据 ID 查询角色
@@ -118,7 +200,7 @@ func (s *RoleService) GetRolesByIDs(ctx context.Context, ids []int64) (map[int64
 }
 
 // CreateRole 创建角色
-// 角色归属社区由 req.CommunityId 决定（0=全局角色，仅超管可创建，由网关层校验）
+// 角色一律社区私有：req.CommunityId 必须 > 0，传 0（历史「全局角色」）由服务端拒绝
 //
 // 参数：
 //   - ctx: 上下文
@@ -128,6 +210,9 @@ func (s *RoleService) GetRolesByIDs(ctx context.Context, ids []int64) (map[int64
 //   - *model.Role: 角色模型
 //   - error: 错误信息
 func (s *RoleService) CreateRole(ctx context.Context, req *user.CreateRoleReq) (*model.Role, error) {
+	if req.CommunityId <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "角色必须归属于某个社区，请先选择社区")
+	}
 	permsJSON, err := PermissionsToJSON(req.Permissions)
 	if err != nil {
 		return nil, err

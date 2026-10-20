@@ -482,15 +482,21 @@ message RoleInfo {
   string code = 3;
   repeated string permissions = 4;
   string description = 5;
-  // 所属社区：0=全局角色（仅超管相关），>0=社区私有角色
+  // 所属社区：>0=社区私有角色（业务唯一口径）；0=历史保留值，仅存量兼容数据
   int64 community_id = 6;
+  // 所属社区名称：仅 all_communities 跨社区查询时回填
+  string community_name = 7;
+  // 该角色当前任职人数：仅 all_communities 跨社区查询时回填
+  int64 assignment_count = 8;
 }
 
 message ListRolesReq {
-  // 社区语境：>0 返回该社区角色；0 仅返回全局角色
+  // 社区语境：>0 返回该社区角色；0 返回历史保留的全局行
   int64 community_id = 1;
   // 是否附带全局角色（超管视角）
   bool include_global = 2;
+  // 跨社区总览：忽略 community_id，返回全部社区的角色并回填社区名与任职人数（仅超管可用）
+  bool all_communities = 3;
 }
 
 message ListRolesResp {
@@ -499,6 +505,8 @@ message ListRolesResp {
 
 message GetRoleReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验角色归属社区（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message CreateRoleReq {
@@ -506,7 +514,7 @@ message CreateRoleReq {
   string code = 2;
   repeated string permissions = 3;
   string description = 4;
-  // 所属社区：0=全局（仅超管可建），>0=社区私有角色
+  // 所属社区：必填且须 >0，角色一律社区私有（0 会被服务端拒绝）
   int64 community_id = 5;
 }
 
@@ -692,7 +700,8 @@ message CheckFulfillerResp {
 接口语义说明（补充相对旧版文档的新增 RPC）：
 
 - `GetAdminContext`：网关在每次管理端请求时实时调用，解析管理员在 `X-Community-Id` 社区的任职与权限并集（含 `*` 通配），供 `RequireCommunityAccess`（越权社区切换拦截）与 `RequirePermission`（权限点校验）中间件使用；`bound=false` 表示在该社区无任职，直接 403。
-- `GetRole` / `ListRoles(ListRolesReq)`：角色详情与分语境列表；`community_id>0` 返回该社区私有角色，`0` 仅返回全局角色，`include_global=true`（超管视角）附带全局角色。
+- `GetRole` / `ListRoles(ListRolesReq)`：角色详情与分语境列表；`community_id>0` 返回该社区私有角色，`0` 返回历史保留的全局行（`community_id=0` 的存量数据，已无业务消费方），`include_global=true`（超管视角）附带全局行；`all_communities=true`（仅超管，网关 `?scope=all` 映射）忽略社区语境返回全部社区角色，并批量回填 `community_name`、`assignment_count`（各一条聚合查询，无 N+1），用于超管「社区角色」跨社区只读总览。
+- `CreateRole`：`community_id` 必填且须 `>0`，角色一律社区私有；传 0 由服务端拒绝（历史「全局角色」不再可新建）。
 - `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/backfill，重复记录不报错。
 - `SetUserStatus` / `CreateMember`：会员拉黑/恢复与按手机号幂等注册（收银台与后台均可用）。`CreateMember` 以手机号为唯一键：未注册时新建会员并归属当前社区语境；已注册时不报错，复用既有会员并把 `user_communities` 关联到当前社区，`source` 标记关联来源（`admin` 后台添加 / `pos` 收银台，缺省 `admin`）。响应 `CreateMemberResp` 返回 `user`（注册或复用的会员信息）与 `is_new`（是否本次新注册）。
 - `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。履约人员 = 本社区任职中且绑定会员的员工（`CreateAdminReq.user_id` / `UpdateAdminReq.user_id` 配置，随任职增减自动生效），不再有独立的会员侧标记。

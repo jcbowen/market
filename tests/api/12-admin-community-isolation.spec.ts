@@ -127,7 +127,7 @@ test.describe.serial('社区管理与隔离', () => {
   test('隔离：普通管理员跨社区读单据详情被拒绝', async ({ playwright }: { playwright: Playwright }) => {
     // 1) 在测试社区语境下建角色（含库存查看权限，供普通管理员通过权限中间件，聚焦社区归属校验层）
     //    角色按社区隔离后，CreateAdmin 只接受「与任职社区同域」的角色，
-    //    默认社区语境下建的全局角色（community_id=0）会被拒绝——见开发计划第 77 项。
+    //    community_id=0 的遗留角色同样会被拒绝（服务端已禁止新建无归属角色）——见开发计划第 77 项。
     //    超管建角色时社区归属只认请求体 community_id（X-Community-Id 仅对非超管生效），故必须显式传
     const role = (await (
       await api.post('/api/v1/admin/roles', {

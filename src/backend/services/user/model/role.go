@@ -13,14 +13,15 @@ const (
 )
 
 // Role 角色模型
-// 多社区模型：community_id = 0 为全局角色（仅超管相关），> 0 为社区私有角色
+// 多社区模型：角色一律社区私有（community_id > 0）；community_id = 0 为历史保留值，
+// 仅存量兼容数据，结构上不可指派、CreateRole 已拒绝新建
 // 同一 code 可在不同社区各有一条（如每社区一条内置 community_admin）
 type Role struct {
 	base.MysqlBaseModel
 	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	Name        string `gorm:"column:name;type:varchar(50);not null;comment:角色名称" json:"name"`
 	Code        string `gorm:"column:code;type:varchar(50);not null;uniqueIndex:uk_role_community_code,priority:2;comment:角色编码（community_admin 为内置社区管理员角色）" json:"code"`
-	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;default:0;index;uniqueIndex:uk_role_community_code,priority:1;comment:所属社区 ID，0=全局角色" json:"community_id"`
+	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;default:0;index;uniqueIndex:uk_role_community_code,priority:1;comment:所属社区 ID，0=历史保留值（业务角色一律 >0）" json:"community_id"`
 	Permissions string `gorm:"column:permissions;type:json;comment:权限 JSON 数组" json:"permissions"`
 	Description string `gorm:"column:description;type:varchar(255);comment:描述" json:"description"`
 	CreatedAt   string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`

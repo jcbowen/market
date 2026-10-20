@@ -147,7 +147,7 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 			return nil, err
 		}
 		if len(req.Password) < 6 {
-			return nil, fmt.Errorf("新账号密码长度至少 6 位")
+			return nil, bizerr.New(codes.InvalidArgument, "新账号密码长度至少 6 位")
 		}
 		hashed, err := hashPassword(req.Password)
 		if err != nil {
@@ -167,7 +167,7 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 	}
 
 	if req.CommunityId <= 0 {
-		return nil, fmt.Errorf("缺少任职社区")
+		return nil, bizerr.New(codes.InvalidArgument, "缺少任职社区，请先选择社区")
 	}
 	// 指定为内置社区管理员：自动解析/创建内置角色（角色 ID 由服务端裁决，忽略 role_ids）
 	if req.AssignCommunityAdmin {
@@ -178,7 +178,7 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 		req.RoleIds = []int64{builtin.ID}
 	}
 	if len(req.RoleIds) == 0 {
-		return nil, fmt.Errorf("请至少分配一个角色")
+		return nil, bizerr.New(codes.InvalidArgument, "请至少分配一个角色")
 	}
 	if err := s.validateRolesForCommunity(ctx, req.CommunityId, req.RoleIds, req.OperatorIsSuper); err != nil {
 		return nil, err
@@ -193,7 +193,7 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 			a = &existing
 		case gorm.ErrRecordNotFound:
 			if len(req.Password) < 6 {
-				return fmt.Errorf("新账号密码长度至少 6 位")
+				return bizerr.New(codes.InvalidArgument, "新账号密码长度至少 6 位")
 			}
 			hashed, err := hashPassword(req.Password)
 			if err != nil {
@@ -743,13 +743,13 @@ func (s *AdminService) validateRolesForCommunity(ctx context.Context, communityI
 	for _, id := range roleIDs {
 		r := roles[id]
 		if r == nil {
-			return fmt.Errorf("角色不存在（ID %d）", id)
+			return bizerr.New(codes.NotFound, fmt.Sprintf("角色不存在（ID %d）", id))
 		}
 		if r.CommunityID != communityID {
-			return fmt.Errorf("角色「%s」不属于当前社区", r.Name)
+			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("角色「%s」不属于当前社区，请到该社区下配置", r.Name))
 		}
 		if r.IsBuiltinCommunityAdmin() && !operatorIsSuper {
-			return fmt.Errorf("仅超级管理员可设置社区管理员")
+			return bizerr.New(codes.PermissionDenied, "仅超级管理员可设置社区管理员")
 		}
 	}
 	return nil
@@ -772,11 +772,11 @@ func replaceAssignmentsTx(tx *gorm.DB, adminID int64, communityID int64, roleIDs
 	for _, id := range roleIDs {
 		var r model.Role
 		if err := tx.First(&r, id).Error; err != nil {
-			return fmt.Errorf("角色不存在（ID %d）", id)
+			return bizerr.New(codes.NotFound, fmt.Sprintf("角色不存在（ID %d）", id))
 		}
 		if r.IsBuiltinCommunityAdmin() && r.CommunityID == communityID {
 			if !operatorIsSuper {
-				return fmt.Errorf("仅超级管理员可设置社区管理员")
+				return bizerr.New(codes.PermissionDenied, "仅超级管理员可设置社区管理员")
 			}
 			if err := tx.
 				Where("community_id = ? AND role_id = ? AND admin_id <> ?", communityID, id, adminID).

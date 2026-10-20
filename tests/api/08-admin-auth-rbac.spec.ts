@@ -7,7 +7,7 @@ import type { Playwright } from '@playwright/test';
  * 模块 08：管理端认证与 RBAC
  * 覆盖：登录/错误密码、auth/info、角色 CRUD、管理员 CRUD、改密码、越权 403、
  *       刷新 token、我的社区
- * 注意：角色需显式归属社区（community_id），否则全局角色无法用于员工任职
+ * 注意：角色一律社区私有，建角色须显式传 community_id（不传会被服务端拒绝）
  */
 
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;

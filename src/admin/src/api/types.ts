@@ -85,8 +85,12 @@ export interface Role {
   permissions: string[]
   description?: string
   status?: number
-  /** 所属社区：0=全局角色（仅超管可见可管），>0=社区私有角色 */
+  /** 所属社区：>0=社区私有角色（业务唯一口径）；0=历史保留值，仅存量兼容数据 */
   community_id?: number
+  /** 所属社区名称：仅「社区角色」跨社区总览（scope=all）返回 */
+  community_name?: string
+  /** 该角色当前任职人数：仅「社区角色」跨社区总览（scope=all）返回 */
+  assignment_count?: number
 }
 
 /**

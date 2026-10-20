@@ -960,7 +960,7 @@ func (h *AdminHandler) RemoveCommunityAdmin(c *gin.Context) {
 }
 
 // ListRoles 获取角色列表
-// 默认返回当前社区的角色；超管可传 scope=global 查看全局角色，
+// 默认返回当前社区的角色；超管可传 scope=all 跨社区总览（含所属社区名与任职人数），
 // 或传 community_id 查看任意社区的角色（社区权限分配页使用）
 // 参数：
 //   - c: gin 上下文
@@ -969,12 +969,17 @@ func (h *AdminHandler) ListRoles(c *gin.Context) {
 	isSuper := uc.Role == "super_admin"
 
 	req := &user.ListRolesReq{CommunityId: h.getAdminCommunityID(c)}
-	if c.Query("scope") == "global" {
+	switch c.Query("scope") {
+	case "all":
 		if !isSuper {
 			response.Error(c, errcode.NoPermission)
 			return
 		}
-		req.CommunityId = 0
+		req.AllCommunities = true
+	case "global":
+		// 旧入口：角色一律社区私有，不再维护全局角色
+		response.Error(c, errcode.ParamError, "scope=global 已废弃，请使用 scope=all")
+		return
 	}
 	if id, err := strconv.ParseInt(c.Query("community_id"), 10, 64); err == nil && id > 0 {
 		if !isSuper {
@@ -997,12 +1002,12 @@ type CreateRoleReq struct {
 	Code        string   `json:"code" binding:"required"`
 	Permissions []string `json:"permissions"`
 	Description string   `json:"description"`
-	// 角色归属社区：0=全局角色（仅超管可建）；缺省为当前社区
+	// 角色归属社区：必填且 >0（超管显式指定；非超管忽略此字段，落到当前社区语境）
 	CommunityID int64 `json:"community_id"`
 }
 
 // CreateRole 创建角色
-// 非超管仅能在当前社区创建，且权限点不得超出自身权限范围
+// 角色一律社区私有：超管必须显式指定 community_id，非超管只能在当前社区创建且权限点不得超出自身范围
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) CreateRole(c *gin.Context) {
@@ -1014,13 +1019,20 @@ func (h *AdminHandler) CreateRole(c *gin.Context) {
 
 	uc := appcontext.GetUserContext(c)
 	isSuper := uc.Role == "super_admin"
+	if !isSuper && req.CommunityID != 0 {
+		response.Error(c, errcode.ParamError, "只能为当前社区创建角色")
+		return
+	}
+
 	communityID := req.CommunityID
-	if communityID < 0 || (!isSuper && communityID != 0) {
-		response.Error(c, errcode.ParamError)
+	if !isSuper {
+		communityID = h.getAdminCommunityID(c)
+	}
+	if communityID <= 0 {
+		response.Error(c, errcode.ParamError, "角色必须归属于某个社区，请先选择社区")
 		return
 	}
 	if !isSuper {
-		communityID = h.getAdminCommunityID(c)
 		if err := h.validatePermissionsSubset(c, communityID, req.Permissions); err != nil {
 			response.Error(c, errcode.ParamError, err.Error())
 			return
@@ -1050,7 +1062,7 @@ type UpdateRoleReq struct {
 }
 
 // UpdateRole 更新角色
-// 全局角色仅超管可改；内置社区管理员角色仅超管可改；
+// 历史保留行（community_id=0）与内置社区管理员角色仅超管可改；
 // 非超管的权限点不得超出自身权限范围
 // 参数：
 //   - c: gin 上下文
@@ -1113,7 +1125,7 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 }
 
 // DeleteRole 删除角色
-// 全局角色仅超管可删；内置社区管理员角色不可删除（服务层校验）
+// 历史保留行（community_id=0）仅超管可删；内置社区管理员角色不可删除（服务层校验）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) DeleteRole(c *gin.Context) {

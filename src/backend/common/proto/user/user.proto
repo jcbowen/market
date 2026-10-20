@@ -504,15 +504,21 @@ message RoleInfo {
   string code = 3;
   repeated string permissions = 4;
   string description = 5;
-  // 所属社区：0=全局角色（仅超管相关），>0=社区私有角色
+  // 所属社区：>0=社区私有角色（业务唯一口径）；0=历史保留值，仅存量兼容数据
   int64 community_id = 6;
+  // 所属社区名称：仅 all_communities 跨社区查询时回填
+  string community_name = 7;
+  // 该角色当前任职人数：仅 all_communities 跨社区查询时回填
+  int64 assignment_count = 8;
 }
 
 message ListRolesReq {
-  // 社区语境：>0 返回该社区角色；0 仅返回全局角色
+  // 社区语境：>0 返回该社区角色；0 返回历史保留的全局行
   int64 community_id = 1;
   // 是否附带全局角色（超管视角）
   bool include_global = 2;
+  // 跨社区总览：忽略 community_id，返回全部社区的角色并回填社区名与任职人数（仅超管可用）
+  bool all_communities = 3;
 }
 
 message ListRolesResp {
@@ -530,7 +536,7 @@ message CreateRoleReq {
   string code = 2;
   repeated string permissions = 3;
   string description = 4;
-  // 所属社区：0=全局（仅超管可建），>0=社区私有角色
+  // 所属社区：必填且须 >0，角色一律社区私有（0 会被服务端拒绝）
   int64 community_id = 5;
 }
 

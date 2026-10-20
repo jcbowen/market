@@ -183,7 +183,7 @@ test.describe.serial('统计口径与越权防护', () => {
     expect(superCommunityId, '应能取到超管当前社区 ID').toBeGreaterThan(0);
 
     // 超管建最小权限测试角色（统计查看 + 订单查看）与测试员工，用完即删
-    // 注意：超管建角色不传 community_id 会建成全局角色，此处显式传当前社区建私有角色
+    // 注意：角色一律社区私有，超管建角色必须显式传当前社区的 community_id
     const stamp = Date.now();
     const roleResp = await api.post('/api/v1/admin/roles', {
       data: {
@@ -197,7 +197,7 @@ test.describe.serial('统计口径与越权防护', () => {
     expect(roleBody.code, `建角色失败：${roleBody.message}`).toBe(0);
     staffRoleId = roleBody.data?.id ?? 0;
     expect(staffRoleId, '建角色应返回角色 ID').toBeGreaterThan(0);
-    expect(roleBody.data?.community_id, '测试角色应归属当前社区（非全局角色）').toBe(superCommunityId);
+    expect(roleBody.data?.community_id, '测试角色应归属当前社区').toBe(superCommunityId);
 
     const username = `stats_scope_${stamp}`;
     const staffResp = await api.post('/api/v1/admin/admins', {

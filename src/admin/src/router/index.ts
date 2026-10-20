@@ -309,10 +309,11 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '角色管理', permission: 'role:view', group: '门店管理' },
       },
       {
-        path: 'system/roles-global',
-        name: 'RoleListGlobal',
+        // 跨社区角色总览：只读展示各社区的角色与权限，写操作回到对应社区语境的「角色管理」
+        path: 'system/community-roles',
+        name: 'CommunityRoleList',
         component: () => import('@/views/system/roles.vue'),
-        meta: { title: '全局角色', permission: 'role:view', group: '系统管理', space: 'system' },
+        meta: { title: '社区角色', permission: 'role:view', group: '系统管理', space: 'system' },
       },
       // 账号管理：全局账号维度（超管专用，处理器与服务端双重限制）
       {
