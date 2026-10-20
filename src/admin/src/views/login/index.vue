@@ -4,10 +4,11 @@
     <section class="brand-pane">
       <div class="brand-inner">
         <div class="brand-logo">
-          <div class="logo-badge" aria-hidden="true">
+          <img v-if="branding.logoURL" :src="branding.logoURL" alt="站点 Logo" class="logo-img" />
+          <div v-else class="logo-badge" aria-hidden="true">
             <n-icon :component="CartOutline" :size="24" />
           </div>
-          <span class="brand-name">社区商超管理平台</span>
+          <span class="brand-name">{{ branding.siteName }}管理平台</span>
         </div>
         <div class="brand-hero">
           <h1 class="brand-slogan">让社区生意，管得更简单</h1>
@@ -80,25 +81,27 @@
             @click="onLogin"
           >登 录</n-button>
         </n-form>
-        <p class="form-foot">© {{ year }} 社区商超管理平台</p>
+        <p class="form-foot">{{ footText }}</p>
       </div>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 import { CartOutline, CheckmarkOutline, LockClosedOutline, PersonOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import { useBrandingStore } from '@/stores/branding'
 import { resolveHomePath } from '@/router'
 
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const authStore = useAuthStore()
+const branding = useBrandingStore()
 
 /** 表单引用 */
 const formRef = ref<FormInst | null>(null)
@@ -106,6 +109,10 @@ const formRef = ref<FormInst | null>(null)
 const loading = ref(false)
 /** 版权年份 */
 const year = new Date().getFullYear()
+/** 页脚文案：优先展示站点设置里的版权与备案号，未配置时回落默认署名 */
+const footText = computed(() => branding.footerText || `© ${year} ${branding.siteName}管理平台`)
+
+onMounted(() => branding.load())
 
 /** 品牌区产品特性文案 */
 const feats = [
@@ -204,6 +211,15 @@ async function onLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.logo-img {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 12px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .brand-logo {

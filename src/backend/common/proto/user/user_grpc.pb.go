@@ -68,6 +68,8 @@ const (
 	UserService_SaveClientChannel_FullMethodName         = "/user.UserService/SaveClientChannel"
 	UserService_GetUserChannelOpenid_FullMethodName      = "/user.UserService/GetUserChannelOpenid"
 	UserService_UpsertUserChannelIdentity_FullMethodName = "/user.UserService/UpsertUserChannelIdentity"
+	UserService_GetSiteConfig_FullMethodName             = "/user.UserService/GetSiteConfig"
+	UserService_SaveSiteConfig_FullMethodName            = "/user.UserService/SaveSiteConfig"
 )
 
 // UserServiceClient is the client API for UserService service.
@@ -144,6 +146,10 @@ type UserServiceClient interface {
 	GetUserChannelOpenid(ctx context.Context, in *GetUserChannelOpenidReq, opts ...grpc.CallOption) (*GetUserChannelOpenidResp, error)
 	// 登录后写入/更新用户在指定渠道的微信身份（幂等 upsert）
 	UpsertUserChannelIdentity(ctx context.Context, in *UpsertUserChannelIdentityReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 站点设置：平台级品牌与部署域名（单行配置，仅超管可写）
+	// base_url 是部署域名的唯一来源，网关据此派生支付回调地址、附件外链与 HTML 品牌注入
+	GetSiteConfig(ctx context.Context, in *GetSiteConfigReq, opts ...grpc.CallOption) (*SiteConfigInfo, error)
+	SaveSiteConfig(ctx context.Context, in *SaveSiteConfigReq, opts ...grpc.CallOption) (*SiteConfigInfo, error)
 }
 
 type userServiceClient struct {
@@ -634,6 +640,26 @@ func (c *userServiceClient) UpsertUserChannelIdentity(ctx context.Context, in *U
 	return out, nil
 }
 
+func (c *userServiceClient) GetSiteConfig(ctx context.Context, in *GetSiteConfigReq, opts ...grpc.CallOption) (*SiteConfigInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SiteConfigInfo)
+	err := c.cc.Invoke(ctx, UserService_GetSiteConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) SaveSiteConfig(ctx context.Context, in *SaveSiteConfigReq, opts ...grpc.CallOption) (*SiteConfigInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SiteConfigInfo)
+	err := c.cc.Invoke(ctx, UserService_SaveSiteConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UserServiceServer is the server API for UserService service.
 // All implementations must embed UnimplementedUserServiceServer
 // for forward compatibility.
@@ -708,6 +734,10 @@ type UserServiceServer interface {
 	GetUserChannelOpenid(context.Context, *GetUserChannelOpenidReq) (*GetUserChannelOpenidResp, error)
 	// 登录后写入/更新用户在指定渠道的微信身份（幂等 upsert）
 	UpsertUserChannelIdentity(context.Context, *UpsertUserChannelIdentityReq) (*common.CommonResponse, error)
+	// 站点设置：平台级品牌与部署域名（单行配置，仅超管可写）
+	// base_url 是部署域名的唯一来源，网关据此派生支付回调地址、附件外链与 HTML 品牌注入
+	GetSiteConfig(context.Context, *GetSiteConfigReq) (*SiteConfigInfo, error)
+	SaveSiteConfig(context.Context, *SaveSiteConfigReq) (*SiteConfigInfo, error)
 	mustEmbedUnimplementedUserServiceServer()
 }
 
@@ -861,6 +891,12 @@ func (UnimplementedUserServiceServer) GetUserChannelOpenid(context.Context, *Get
 }
 func (UnimplementedUserServiceServer) UpsertUserChannelIdentity(context.Context, *UpsertUserChannelIdentityReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpsertUserChannelIdentity not implemented")
+}
+func (UnimplementedUserServiceServer) GetSiteConfig(context.Context, *GetSiteConfigReq) (*SiteConfigInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSiteConfig not implemented")
+}
+func (UnimplementedUserServiceServer) SaveSiteConfig(context.Context, *SaveSiteConfigReq) (*SiteConfigInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveSiteConfig not implemented")
 }
 func (UnimplementedUserServiceServer) mustEmbedUnimplementedUserServiceServer() {}
 func (UnimplementedUserServiceServer) testEmbeddedByValue()                     {}
@@ -1747,6 +1783,42 @@ func _UserService_UpsertUserChannelIdentity_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_GetSiteConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSiteConfigReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetSiteConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetSiteConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetSiteConfig(ctx, req.(*GetSiteConfigReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_SaveSiteConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveSiteConfigReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).SaveSiteConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_SaveSiteConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).SaveSiteConfig(ctx, req.(*SaveSiteConfigReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // UserService_ServiceDesc is the grpc.ServiceDesc for UserService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1945,6 +2017,14 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpsertUserChannelIdentity",
 			Handler:    _UserService_UpsertUserChannelIdentity_Handler,
+		},
+		{
+			MethodName: "GetSiteConfig",
+			Handler:    _UserService_GetSiteConfig_Handler,
+		},
+		{
+			MethodName: "SaveSiteConfig",
+			Handler:    _UserService_SaveSiteConfig_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -352,3 +352,50 @@ export function updateClientChannel(id: number, data: Pick<ClientChannel, 'code'
     data,
   })
 }
+
+/** 站点设置（平台品牌与部署域名） */
+export interface SiteSetting {
+  base_url: string
+  site_name: string
+  logo_url: string
+  favicon_url: string
+  copyright_text: string
+  icp_number: string
+  seo_description: string
+  seo_keywords: string
+  updated_at: string
+  version: number
+  /** 当前生效的部署域名（环境变量优先于本页配置） */
+  effective_base_url: string
+  /** 生效域名来源：env 环境变量 / db 站点设置 / request 未配置按请求现推 */
+  base_url_source: 'env' | 'db' | 'request'
+  /** 以下为按生效域名派生的回调地址，仅出参 */
+  wechat_notify_url: string
+  alipay_notify_url: string
+  alipay_return_url: string
+}
+
+/**
+ * 获取站点设置
+ * @returns 站点设置详情与派生的回调地址
+ */
+export function getSiteSetting() {
+  return request<ApiResult<SiteSetting>>({
+    url: '/api/v1/admin/settings/site',
+    method: 'GET',
+  })
+}
+
+/**
+ * 保存站点设置
+ * 覆盖式写入：字段提交空串即清空该配置
+ * @param data 站点设置数据（仅品牌字段）
+ * @returns 保存结果与新版本号
+ */
+export function updateSiteSetting(data: Pick<SiteSetting, 'base_url' | 'site_name' | 'logo_url' | 'favicon_url' | 'copyright_text' | 'icp_number' | 'seo_description' | 'seo_keywords'>) {
+  return request<ApiResult<{ success: boolean; version: number }>>({
+    url: '/api/v1/admin/settings/site',
+    method: 'PUT',
+    data,
+  })
+}

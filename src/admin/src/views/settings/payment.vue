@@ -68,7 +68,8 @@
 
           <n-alert type="info" style="margin-bottom: 16px;">
             请将下方回调地址配置到微信商户平台（API 安全 → 支付通知 URL），配置后支付结果才能通知到本系统。
-            地址由当前后台访问域名自动生成；若通过反向代理部署，请确认地址对外可访问。
+            地址由「站点设置」的部署域名自动派生并在保存时写入配置，本页无需填写；
+            若通过反向代理部署，请确认该地址对外可访问。
           </n-alert>
           <div class="url-guide-row">
             <n-text code>{{ paymentForm.suggested_urls.wechat_notify_url }}</n-text>
@@ -100,11 +101,6 @@
             <n-grid-item>
               <n-form-item label="证书序列号">
                 <n-input v-model:value="paymentForm.wechat.cert_serial_no" :disabled="!canUpdate" placeholder="微信支付商户证书序列号" />
-              </n-form-item>
-            </n-grid-item>
-            <n-grid-item>
-              <n-form-item label="通知 URL">
-                <n-input v-model:value="paymentForm.wechat.notify_url" :disabled="!canUpdate" placeholder="建议使用上方生成的回调地址" />
               </n-form-item>
             </n-grid-item>
             <n-grid-item :span="2">
@@ -166,6 +162,7 @@
             <strong>公钥模式</strong>需填写应用私钥与支付宝公钥；
             <strong>证书模式</strong>需上传应用公钥证书、支付宝公钥证书与支付宝根证书（应用私钥仍单独上传）。
             方式不匹配会导致签名或验签失败，配置后支付结果才能通知到本系统。
+            通知地址由「站点设置」的部署域名派生，本页只读。
           </n-alert>
           <div class="url-guide-row">
             <n-text code>{{ paymentForm.suggested_urls.alipay_notify_url }}</n-text>
@@ -199,7 +196,7 @@
             </n-grid-item>
             <n-grid-item>
               <n-form-item label="异步通知 URL">
-                <n-input v-model:value="paymentForm.alipay.notify_url" :disabled="!canUpdate" placeholder="建议使用上方生成的回调地址" />
+                <n-text code>{{ paymentForm.alipay.notify_url || '未派生' }}</n-text>
               </n-form-item>
             </n-grid-item>
             <n-grid-item :span="2">
@@ -225,18 +222,13 @@
             </n-grid-item>
             <n-grid-item :span="2">
               <n-form-item label="支付完成回跳 URL">
-                <n-input
-                  v-model:value="paymentForm.alipay.return_url"
-                  :disabled="!canUpdate"
-                  placeholder="支付完成后浏览器回跳的 C 端 H5 地址，建议指向订单详情页，可留空"
-                />
+                <n-text code>{{ paymentForm.alipay.return_url || '未派生' }}</n-text>
               </n-form-item>
             </n-grid-item>
             <n-grid-item :span="2">
               <n-text depth="3" class="form-hint">
-                回跳地址必须是浏览器可访问的绝对地址（http/https）。留空时用户在支付宝收银台完成支付后不会自动回到本站，
-                需要手动切回浏览器查看订单，因此 C 端 H5 对外可访问时建议填写，例如
-                {{ alipayReturnUrlSuggestion }}。回跳仅作体验用途，支付结果一律以异步通知与订单状态为准。
+                通知与回跳地址一律由「站点设置」的部署域名派生，保存站点设置时自动写入本系统配置，
+                改域名请到站点设置页。回跳仅作体验用途，支付结果一律以异步通知与订单状态为准。
               </n-text>
             </n-grid-item>
             <n-grid-item v-if="!isAlipayCertMode" :span="2">
@@ -566,12 +558,6 @@ const alipayStatus = computed<{ level: 'ready' | 'invalid' | 'incomplete'; reaso
   return { level: 'invalid', reason: paymentForm.alipay_ready_message }
 })
 
-/** 回跳地址建议值：C 端 H5 以 hash 路由部署在 /s/ 下，给出订单详情页形态供管理员照抄 */
-const alipayReturnUrlSuggestion = computed(() => {
-  const base = paymentForm.suggested_urls.base_url
-  return base ? `${base}/s/#/pages/order/detail?id=订单ID` : 'https://你的C端域名/s/#/pages/order/detail?id=订单ID'
-})
-
 /**
  * 渠道在启用序列中的序号（0 起）
  * @param value 渠道标识
@@ -778,13 +764,7 @@ async function persistChannels() {
  */
 function validateAlipayForm(): string {
   const urlPattern = /^https?:\/\/\S+$/
-  const { notify_url: notifyUrl, return_url: returnUrl, gateway_url: gateway } = paymentForm.alipay
-  if (notifyUrl && !urlPattern.test(notifyUrl)) {
-    return '异步通知 URL 必须是 http/https 开头的绝对地址'
-  }
-  if (returnUrl && !urlPattern.test(returnUrl)) {
-    return '支付完成回跳 URL 必须是 http/https 开头的绝对地址'
-  }
+  const { gateway_url: gateway } = paymentForm.alipay
   if (gateway && !urlPattern.test(gateway)) {
     return '网关地址必须是 http/https 开头的绝对地址'
   }

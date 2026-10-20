@@ -73,5 +73,6 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.RegionUpdateTask{},
 		&model.ClientChannel{},
 		&model.UserChannelIdentity{},
+		&model.SiteConfig{},
 	)
 }

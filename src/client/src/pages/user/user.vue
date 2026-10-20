@@ -95,6 +95,8 @@
       <!-- 显式指定样式（plain 透明底 + 固定红色描边），不依赖 uview 默认卡片背景变量，规避深色模式漂移 -->
       <u-button text="退出登录" plain type="error" @click="onLogout" />
     </view>
+
+    <SiteFooter />
   </view>
 </template>
 
@@ -118,6 +120,7 @@ import {
   goHome,
 } from '@/utils/navigate'
 import type { Product } from '@/api/types'
+import SiteFooter from '@/components/SiteFooter.vue'
 
 const userStore = useUserStore()
 

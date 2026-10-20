@@ -96,6 +96,9 @@
           </view>
         </view>
 
+        <!-- 版权与备案号随列表滚动到底部展示，未配置时整块不渲染 -->
+        <SiteFooter />
+
         <!-- 底部占位，避免内容被固定购物车栏遮挡 -->
         <view style="height: 140rpx" />
       </scroll-view>
@@ -223,6 +226,7 @@ import { getCommunityList } from '@/api/user'
 import { formatPrice } from '@/utils/format'
 import { goOrderConfirm, goLogin, goCommunitySelect, goPage } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
+import SiteFooter from '@/components/SiteFooter.vue'
 import {
   addLocalCartItem,
   updateLocalCartItem,

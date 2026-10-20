@@ -261,10 +261,14 @@ test.describe.serial('支付宝加签方式与通知地址校验', () => {
     }
   });
 
-  test('11. 非法异步通知地址被服务端拒绝且不落库', async () => {
+  // 站点设置落地后，回调地址唯一来源是部署域名派生：前端入参（含伪造的非法地址）不参与落库，
+  // payment 侧的格式兜底校验只对 gRPC 直连调用生效，管理端不再提供手填入口
+  test('11. 异步通知地址为派生值，前端入参不被采信', async () => {
     if (!original) test.skip(true, '支付配置未读取');
     const current = await readSetting();
-    const before = (current.alipay as AlipaySetting).notify_url ?? '';
+    const derived = (current.suggested_urls as { alipay_notify_url?: string }).alipay_notify_url ?? '';
+    expect(derived, '读取接口应返回派生的支付宝通知地址').toContain('/api/v1/payments/callback/alipay');
+
     const resp = await adminApi.put('/api/v1/admin/settings/payment', {
       data: {
         ...current,
@@ -273,11 +277,13 @@ test.describe.serial('支付宝加签方式与通知地址校验', () => {
       },
     });
     const body = (await resp.json()) as ApiResponse;
-    expect(body.code, '缺协议的异步通知地址应被拒绝').not.toBe(0);
-    expect(body.message ?? '', '拒绝原因应透传到管理端').toContain('异步通知地址');
+    expect(body.code, `保存支付配置失败: ${body.message}`).toBe(0);
 
     const after = await readSetting();
-    expect((after.alipay as AlipaySetting).notify_url, '拒绝后通知地址不应被改写').toBe(before);
+    expect(
+      (after.alipay as AlipaySetting).notify_url ?? '',
+      '伪造的通知地址应被派生值覆写',
+    ).toBe(derived);
   });
 
   test('12. 恢复原加签方式（不污染环境）', async () => {

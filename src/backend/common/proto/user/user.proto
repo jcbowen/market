@@ -86,6 +86,10 @@ service UserService {
   rpc GetUserChannelOpenid(GetUserChannelOpenidReq) returns (GetUserChannelOpenidResp);
   // 登录后写入/更新用户在指定渠道的微信身份（幂等 upsert）
   rpc UpsertUserChannelIdentity(UpsertUserChannelIdentityReq) returns (common.CommonResponse);
+  // 站点设置：平台级品牌与部署域名（单行配置，仅超管可写）
+  // base_url 是部署域名的唯一来源，网关据此派生支付回调地址、附件外链与 HTML 品牌注入
+  rpc GetSiteConfig(GetSiteConfigReq) returns (SiteConfigInfo);
+  rpc SaveSiteConfig(SaveSiteConfigReq) returns (SiteConfigInfo);
 }
 
 message GetUserByIdReq {
@@ -781,4 +785,46 @@ message UpsertUserChannelIdentityReq {
   string channel_code = 2;
   string openid = 3;
   string unionid = 4;
+}
+
+// --- 站点设置（平台品牌与部署域名） ---
+
+// SiteConfigInfo 站点设置（全平台单行）
+message SiteConfigInfo {
+  int64 id = 1;
+  // 部署域名基址：scheme://host，不含路径与尾斜杠；为空时网关回落按请求现推
+  string base_url = 2;
+  // 平台品牌名，用于后台/H5 标题与侧边栏品牌位
+  string site_name = 3;
+  // 站点 logo（附件外链 URL），为空时前端使用内置默认图
+  string logo_url = 4;
+  // favicon（附件外链 URL），为空时不注入 icon 链接
+  string favicon_url = 5;
+  // 版权文字（C 端页脚与后台登录页展示）
+  string copyright_text = 6;
+  // ICP 备案号
+  string icp_number = 7;
+  // SEO 描述（H5 <meta name=description> 与 og:description）
+  string seo_description = 8;
+  // SEO 关键词，逗号分隔
+  string seo_keywords = 9;
+  // 配置版本号，每次保存递增；网关内存缓存据此失效
+  int64 version = 10;
+  string updated_at = 11;
+}
+
+message GetSiteConfigReq {
+}
+
+// SaveSiteConfigReq 保存站点设置
+// 覆盖式写入：各字段以请求值为准，传空串即清空该配置
+message SaveSiteConfigReq {
+  string base_url = 1;
+  string site_name = 2;
+  string logo_url = 3;
+  string favicon_url = 4;
+  string copyright_text = 5;
+  string icp_number = 6;
+  string seo_description = 7;
+  string seo_keywords = 8;
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
+	"github.com/jcbowen/market/src/backend/gateway/brand"
 	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 )
 
@@ -4549,51 +4550,79 @@ func (h *AdminHandler) wechatPayAppIDFromChannel(ctx context.Context) (string, b
 	return chResp.AppId, true
 }
 
-// syncWechatPayAppID 将渠道管理的微信 AppID 回写到支付配置并返回最新配置
+// writeBackPayConfig 以「读取到的配置为底 + 局部覆写」回写支付配置并返回最新配置
 // 回写携带读取时的版本号，并发下若配置已被他人改写则放弃本次回写（仅记日志，下一次读取重新同步）；
 // 回写成功后必须重新读取配置，使返回给前端的 updated_at 与库中版本一致，
 // 否则前端下一次保存会被乐观锁误判为冲突
+// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
+//
+// 参数：
+//   - ctx: 上下文
+//   - resp: 本次读取到的支付配置
+//   - apply: 需要覆写的字段，nil 表示仅原样回写
+//
+// 返回值：
+//   - *payment.PayConfig: 最新配置，回写或重读失败时原样返回入参
+func (h *AdminHandler) writeBackPayConfig(ctx context.Context, resp *payment.PayConfig, apply func(*payment.PayConfig)) *payment.PayConfig {
+	payload := &payment.PayConfig{
+		EnabledChannels:    resp.EnabledChannels,
+		WechatAppId:        resp.WechatAppId,
+		WechatAppSecret:    resp.WechatAppSecret,
+		WechatMchId:        resp.WechatMchId,
+		WechatApiV3Key:     resp.WechatApiV3Key,
+		WechatCertSerialNo: resp.WechatCertSerialNo,
+		WechatNotifyUrl:    resp.WechatNotifyUrl,
+		AlipayAppId:        resp.AlipayAppId,
+		AlipayPublicKey:    resp.AlipayPublicKey,
+		AlipayNotifyUrl:    resp.AlipayNotifyUrl,
+		AlipayReturnUrl:    resp.AlipayReturnUrl,
+		AlipayGatewayUrl:   resp.AlipayGatewayUrl,
+		// 加签方式原样回写，避免每次回写都把证书模式重置为公钥模式
+		AlipayMode:           resp.AlipayMode,
+		WechatClientChannels: resp.WechatClientChannels,
+		AlipayClientChannels: resp.AlipayClientChannels,
+		UpdatedAt:            resp.UpdatedAt,
+	}
+	if apply != nil {
+		apply(payload)
+	}
+
+	if _, err := h.paymentClient.SavePayConfig(ctx, payload); err != nil {
+		log.Printf("回写支付配置失败: %v", err)
+		return resp
+	}
+	fresh, err := h.paymentClient.GetPayConfig(ctx, &payment.GetPayConfigReq{})
+	if err != nil {
+		log.Printf("回写支付配置后重读失败: %v", err)
+		return resp
+	}
+	return fresh
+}
+
+// syncWechatPayAppID 将渠道管理的微信 AppID 回写到支付配置并返回最新配置
+//
 // 参数：
 //   - ctx: 上下文
 //   - resp: 本次读取到的支付配置
 //   - appID: 渠道管理侧的微信 AppID
 //
 // 返回值：
-//   - *payment.PayConfig: 最新配置，回写或重读失败时原样返回入参
+//   - *payment.PayConfig: 最新配置
 func (h *AdminHandler) syncWechatPayAppID(ctx context.Context, resp *payment.PayConfig, appID string) *payment.PayConfig {
-	_, err := h.paymentClient.SavePayConfig(ctx, &payment.PayConfig{
-		EnabledChannels:    resp.EnabledChannels,
-		WechatAppId:        appID,
-		WechatAppSecret:    resp.WechatAppSecret,
-		WechatMchId:        resp.WechatMchId,
-		WechatApiV3Key:     resp.WechatApiV3Key,
-		WechatCertSerialNo: resp.WechatCertSerialNo,
-		// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
-		WechatPrivateKey: "",
-		WechatNotifyUrl:  resp.WechatNotifyUrl,
-		AlipayAppId:      resp.AlipayAppId,
-		AlipayPrivateKey: "",
-		AlipayPublicKey:  resp.AlipayPublicKey,
-		// 加签方式原样回写，避免每次读取配置都把证书模式重置为公钥模式
-		AlipayMode:           resp.AlipayMode,
-		AlipayNotifyUrl:      resp.AlipayNotifyUrl,
-		AlipayReturnUrl:      resp.AlipayReturnUrl,
-		AlipayGatewayUrl:     resp.AlipayGatewayUrl,
-		WechatClientChannels: resp.WechatClientChannels,
-		AlipayClientChannels: resp.AlipayClientChannels,
-		UpdatedAt:            resp.UpdatedAt,
-	})
-	if err != nil {
-		log.Printf("同步渠道 AppID 到支付配置失败: %v", err)
-		return resp
-	}
+	return h.writeBackPayConfig(ctx, resp, func(p *payment.PayConfig) { p.WechatAppId = appID })
+}
 
-	fresh, err := h.paymentClient.GetPayConfig(ctx, &payment.GetPayConfigReq{})
-	if err != nil {
-		log.Printf("AppID 同步后重读支付配置失败: %v", err)
-		return resp
-	}
-	return fresh
+// payCallbackURLsFor 按部署域名派生支付回调地址
+//
+// 参数：
+//   - base: 部署域名基址，形如 https://host
+//
+// 返回值：
+//   - string: 微信异步通知地址
+//   - string: 支付宝异步通知地址
+//   - string: 支付宝支付完成回跳地址
+func payCallbackURLsFor(base string) (string, string, string) {
+	return base + wechatPayCallbackPath, base + alipayPayCallbackPath, base + h5OrderListHashURL
 }
 
 // GetPaymentSetting 获取支付配置
@@ -4618,6 +4647,19 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 	if wechatAppID != resp.WechatAppId {
 		resp = h.syncWechatPayAppID(c.Request.Context(), resp, wechatAppID)
 	}
+
+	// 回调地址一律由部署域名派生：站点设置显式配置了域名（env 或 DB）且库中值与派生值不一致时回写自愈；
+	// 未显式配置时只按当前请求展示、不写库，避免把临时访问到的 host 固化进配置
+	base := platformBaseURL(c)
+	wechatNotify, alipayNotify, alipayReturn := payCallbackURLsFor(base)
+	if snap := brand.Get(c.Request.Context()); snap.BaseURL != "" &&
+		(resp.WechatNotifyUrl != wechatNotify || resp.AlipayNotifyUrl != alipayNotify || resp.AlipayReturnUrl != alipayReturn) {
+		resp = h.writeBackPayConfig(c.Request.Context(), resp, func(p *payment.PayConfig) {
+			p.WechatNotifyUrl = wechatNotify
+			p.AlipayNotifyUrl = alipayNotify
+			p.AlipayReturnUrl = alipayReturn
+		})
+	}
 	// AppID 来源改为渠道管理后，就绪判定在网关重算，不再依赖 payment 服务基于 pay_config.AppID 的口径
 	wechatReady := wechatAppID != "" &&
 		resp.WechatMchId != "" &&
@@ -4636,14 +4678,15 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 			MchID:        resp.WechatMchId,
 			APIV3Key:     resp.WechatApiV3Key,
 			CertSerialNo: resp.WechatCertSerialNo,
-			NotifyURL:    resp.WechatNotifyUrl,
+			// 回调地址由部署域名派生，前端只读展示
+			NotifyURL: wechatNotify,
 		},
 		Alipay: config.AlipayConfig{
 			AppID:           resp.AlipayAppId,
 			Mode:            resp.AlipayMode,
 			AlipayPublicKey: resp.AlipayPublicKey,
-			NotifyURL:       resp.AlipayNotifyUrl,
-			ReturnURL:       resp.AlipayReturnUrl,
+			NotifyURL:       alipayNotify,
+			ReturnURL:       alipayReturn,
 			GatewayURL:      resp.AlipayGatewayUrl,
 		},
 		WechatPaymentReady:       wechatReady,
@@ -4682,6 +4725,8 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 		wechatAppID = appID
 	}
 
+	// 回调地址不接受前端入参：一律按部署域名派生后落库，与只读展示口径一致
+	saveWechatNotify, saveAlipayNotify, saveAlipayReturn := payCallbackURLsFor(platformBaseURL(c))
 	_, err := h.paymentClient.SavePayConfig(c.Request.Context(), &payment.PayConfig{
 		EnabledChannels:    req.EnabledChannels,
 		WechatAppId:        wechatAppID,
@@ -4691,14 +4736,14 @@ func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
 		WechatCertSerialNo: req.Wechat.CertSerialNo,
 		// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
 		WechatPrivateKey: "",
-		WechatNotifyUrl:  req.Wechat.NotifyURL,
+		WechatNotifyUrl:  saveWechatNotify,
 		AlipayAppId:      req.Alipay.AppID,
 		AlipayPrivateKey: "",
 		AlipayPublicKey:  req.Alipay.AlipayPublicKey,
 		// 加签方式随表单整行覆写（证书内容不在本接口维护，由上传接口单独写入）
 		AlipayMode:       req.Alipay.Mode,
-		AlipayNotifyUrl:  req.Alipay.NotifyURL,
-		AlipayReturnUrl:  req.Alipay.ReturnURL,
+		AlipayNotifyUrl:  saveAlipayNotify,
+		AlipayReturnUrl:  saveAlipayReturn,
 		AlipayGatewayUrl: req.Alipay.GatewayURL,
 
 		WechatClientChannels: req.WechatClientChannels,
@@ -4768,26 +4813,18 @@ func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
 	response.Success(c, gin.H{"success": true, "message": resp.Message})
 }
 
-// buildSuggestedURLs 根据当前请求生成支付平台回调地址建议
-// 优先取反向代理透传的 X-Forwarded-Proto，兼容 HTTPS 部署场景
+// buildSuggestedURLs 生成支付平台回调地址
+// 基址取站点设置的部署域名（未配置时回落按当前请求现推），回调路径固定在网关路由上
 // 参数：
 //   - c: gin 上下文
 //
 // 返回值：
-//   - PaymentSuggestedURLs: 回调地址建议
+//   - PaymentSuggestedURLs: 回调地址
 func buildSuggestedURLs(c *gin.Context) PaymentSuggestedURLs {
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	}
-
-	base := scheme + "://" + c.Request.Host
+	base := platformBaseURL(c)
 	return PaymentSuggestedURLs{
 		BaseURL:         base,
-		WechatNotifyURL: base + "/api/v1/payments/callback/wechat",
-		AlipayNotifyURL: base + "/api/v1/payments/callback/alipay",
+		WechatNotifyURL: base + wechatPayCallbackPath,
+		AlipayNotifyURL: base + alipayPayCallbackPath,
 	}
 }

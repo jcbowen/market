@@ -222,8 +222,9 @@ func (h *AttachmentHandler) ListAttachments(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// baseURLOf 根据当前请求拼接基础地址
-// 优先取反向代理透传的 X-Forwarded-Proto，兼容 HTTPS 部署场景
+// baseURLOf 获取附件外链的基础地址
+// 一律以站点设置的部署域名为准（未配置时回落按当前请求现推），
+// 保证后台/POS 与 C 端拿到的外链在同一域名下，跨端口访问不会拼出错误 host
 //
 // 参数:
 //   - c: gin 上下文
@@ -231,14 +232,7 @@ func (h *AttachmentHandler) ListAttachments(c *gin.Context) {
 // 返回值:
 //   - string: 形如 http(s)://host 的基础地址
 func baseURLOf(c *gin.Context) string {
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	}
-	return scheme + "://" + c.Request.Host
+	return platformBaseURL(c)
 }
 
 // --- 附件迁移（本地 → OSS） ---

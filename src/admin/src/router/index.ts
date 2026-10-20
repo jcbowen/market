@@ -335,6 +335,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '全平台统计', permission: 'statistics:view', group: '数据统计', space: 'system', superOnly: true },
       },
       {
+        path: 'system/site',
+        name: 'SiteSetting',
+        component: () => import('@/views/settings/site.vue'),
+        meta: { title: '站点设置', permission: 'settings:view', group: '系统管理', space: 'system' },
+      },
+      {
         path: 'system/payment',
         name: 'PaymentSetting',
         component: () => import('@/views/settings/payment.vue'),

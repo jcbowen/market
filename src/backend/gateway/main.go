@@ -20,6 +20,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/response"
+	"github.com/jcbowen/market/src/backend/gateway/brand"
 	"github.com/jcbowen/market/src/backend/gateway/client"
 	"github.com/jcbowen/market/src/backend/gateway/handler"
 	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
@@ -43,6 +44,9 @@ func main() {
 		log.Fatalf("初始化 gRPC 客户端失败: %v", err)
 	}
 	defer func() { _ = clients.Close() }()
+
+	// 站点设置（部署域名与品牌）内存缓存：支付回调派生、附件外链基址、HTML 品牌注入共用
+	brand.SetDefault(brand.New(clients.UserClient, os.Getenv("SITE_BASE_URL")))
 
 	r := gin.New()
 	applyTrustedProxies(r, cfg)
@@ -141,6 +145,12 @@ func getConfigPath() string {
 //   - clients: gRPC 服务客户端集合
 //   - cfg: 全局配置
 func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.ServiceClients, cfg *config.Config) {
+	// HTML 品牌注入须先于路由注册：中间件在路由前命中前端入口页，
+	// 既避免与 r.Static 的 /b/*filepath 通配路由冲突，也让 SPA 深链兜底同样带上品牌
+	h5Path := filepath.Join(getBinDir(), "static", "h5")
+	adminPath := filepath.Join(getBinDir(), "static", "admin")
+	registerHTMLInjection(r, adminPath, h5Path)
+
 	r.GET("/health", func(c *gin.Context) {
 		response.Success(c, gin.H{
 			"service": "gateway",
@@ -254,6 +264,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	}
 
 	adminHandler := handler.NewAdminHandler(jwtManager, clients.UserClient, clients.ProductClient, clients.OrderClient, clients.PaymentClient, cfg)
+	// 站点品牌信息：登录页与 C 端首屏免登录读取，仅含非敏感字段
+	apiV1.GET("/site-info", adminHandler.GetPublicSiteInfo)
 	// 多社区模型：权限随当前社区变化，注入实时权限上下文解析器（user 服务）
 	gwMiddleware.SetPermissionResolver(clients.UserClient)
 	admin := r.Group("/api/v1/admin")
@@ -407,6 +419,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/banners/:id", gwMiddleware.RequirePermission("marketing:update"), adminHandler.UpdateBanner)
 			authAdmin.DELETE("/banners/:id", gwMiddleware.RequirePermission("marketing:delete"), adminHandler.DeleteBanner)
 
+			authAdmin.GET("/settings/site", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetSiteSetting)
+			authAdmin.PUT("/settings/site", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateSiteSetting)
 			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentSetting)
 			authAdmin.PUT("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdatePaymentSetting)
 			authAdmin.POST("/settings/payment/cert", gwMiddleware.RequirePermission("settings:update"), adminHandler.UploadPaymentCert)
@@ -478,16 +492,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		}
 	}
 
-	h5Path := filepath.Join(getBinDir(), "static", "h5")
-
 	// 根路径自动跳转到 H5 静态资源入口
 	r.GET("/", func(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/s/")
 	})
 
 	r.Static("/s", h5Path)
-
-	adminPath := filepath.Join(getBinDir(), "static", "admin")
 	r.Static("/b", adminPath)
 
 	// 本地附件静态服务：与 product 服务落盘目录（<bin>/attachment/）保持一致，

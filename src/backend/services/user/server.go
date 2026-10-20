@@ -25,6 +25,7 @@ type server struct {
 	roleService      *service.RoleService
 	regionService    *service.RegionService
 	channelService   *service.ChannelService
+	siteService      *service.SiteService
 }
 
 // newServer 创建用户服务 gRPC 实现
@@ -42,6 +43,7 @@ func newServer(db *mysql.Instance) *server {
 		roleService:      service.NewRoleService(db),
 		regionService:    service.NewRegionService(db),
 		channelService:   service.NewChannelService(db),
+		siteService:      service.NewSiteService(db),
 	}
 }
 
@@ -707,4 +709,22 @@ func (s *server) UpsertUserChannelIdentity(ctx stdctx.Context, req *user.UpsertU
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// GetSiteConfig 读取站点设置（平台品牌与部署域名）
+func (s *server) GetSiteConfig(ctx stdctx.Context, req *user.GetSiteConfigReq) (*user.SiteConfigInfo, error) {
+	row, err := s.siteService.GetSiteConfig(ctx)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToSiteConfigInfo(row), nil
+}
+
+// SaveSiteConfig 保存站点设置，版本号递增以驱动网关缓存失效
+func (s *server) SaveSiteConfig(ctx stdctx.Context, req *user.SaveSiteConfigReq) (*user.SiteConfigInfo, error) {
+	row, err := s.siteService.SaveSiteConfig(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToSiteConfigInfo(row), nil
 }

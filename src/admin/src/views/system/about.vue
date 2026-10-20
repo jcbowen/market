@@ -7,7 +7,7 @@
           <n-icon size="32" color="#fff"><storefront-outline /></n-icon>
         </div>
         <div class="hero-info">
-          <div class="hero-name">社区商超</div>
+          <div class="hero-name">{{ branding.siteName }}</div>
           <div class="hero-desc">社区团购与门店收银一体化系统</div>
         </div>
         <div class="hero-version-wrap">
@@ -80,7 +80,10 @@
       <div class="support-tip">使用问题、功能建议或缺陷反馈，欢迎通过邮件联系</div>
     </n-card>
 
-    <div class="about-footer">社区商超 · 让社区生意更简单</div>
+    <div class="about-footer">
+      {{ branding.siteName }} · 让社区生意更简单
+      <template v-if="branding.footerText"> · {{ branding.footerText }}</template>
+    </div>
   </div>
 </template>
 
@@ -89,6 +92,7 @@ import { onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { GitNetworkOutline, LogoDocker, MailOutline, ServerOutline, StorefrontOutline } from '@vicons/ionicons5'
 import { getAbout, getUpdateCheck, type SystemAbout, type UpdateCheck } from '@/api/about'
+import { useBrandingStore } from '@/stores/branding'
 
 /**
  * 关于页面
@@ -97,6 +101,7 @@ import { getAbout, getUpdateCheck, type SystemAbout, type UpdateCheck } from '@/
  * 更新提示来自 /api/v1/admin/about/updates（Docker Hub 最新版本比对）
  */
 const message = useMessage()
+const branding = useBrandingStore()
 
 /** 技术支持邮箱（页面静态常量） */
 const SUPPORT_EMAIL = 'jiuqi@jiuchet.com'
@@ -148,7 +153,10 @@ async function loadAbout() {
   }
 }
 
-onMounted(loadAbout)
+onMounted(() => {
+  loadAbout()
+  branding.load()
+})
 </script>
 
 <style lang="scss" scoped>

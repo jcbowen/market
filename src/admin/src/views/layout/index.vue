@@ -10,8 +10,9 @@
       :native-scrollbar="false"
     >
       <div class="logo">
-        <span v-if="!collapsed">{{ isSystemSpace ? '管理后台' : '社区商超' }}</span>
-        <span v-else>{{ isSystemSpace ? '系统' : '商超' }}</span>
+        <img v-if="branding.logoURL" :src="branding.logoURL" alt="站点 Logo" class="logo-img" />
+        <span v-if="!collapsed">{{ isSystemSpace ? '管理后台' : branding.siteName }}</span>
+        <span v-else>{{ isSystemSpace ? '系统' : branding.siteNameShort }}</span>
       </div>
       <!-- 系统空间：提供返回业务后台的出口，保证两套菜单完全隔离互不混排 -->
       <div v-if="isSystemSpace" class="sider-back">
@@ -32,6 +33,8 @@
         @update:value="onMenuChange"
         @update:expanded-keys="onExpandedKeysChange"
       />
+      <!-- 页脚：版权与备案号取自站点设置，未配置时整块不占位 -->
+      <div v-if="!collapsed && branding.footerText" class="sider-foot">{{ branding.footerText }}</div>
     </n-layout-sider>
 
     <!-- 主内容区 -->
@@ -111,6 +114,7 @@ import { MenuOutline, PersonCircleOutline, HomeOutline, GridOutline, CubeOutline
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
+import { useBrandingStore } from '@/stores/branding'
 import { resolveHomePath } from '@/router'
 import { getCommunityList } from '@/api/user'
 
@@ -120,6 +124,7 @@ const message = useMessage()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const tabsStore = useTabsStore()
+const branding = useBrandingStore()
 
 const collapsed = computed(() => appStore.collapsed)
 const activeKey = computed(() => route.path)
@@ -243,6 +248,7 @@ onMounted(() => {
   updateSiderByWidth()
   window.addEventListener('resize', updateSiderByWidth)
   loadCommunityNames()
+  branding.load()
 })
 
 onUnmounted(() => {
@@ -431,6 +437,7 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
       key: 'sys-group-config',
       icon: renderIcon(SettingsOutline),
       children: [
+        { label: '站点设置', key: '/system/site', permission: 'settings:view' },
         { label: '支付配置', key: '/system/payment', permission: 'settings:view' },
         { label: '渠道管理', key: '/system/channels', permission: 'settings:view' },
         { label: '售后配置', key: '/system/refund', permission: 'settings:view' },
@@ -634,6 +641,18 @@ function onUserAction(key: string) {
 }
 .sider-back {
   padding: 8px 12px 0;
+}
+.logo-img {
+  height: 24px;
+  margin-right: 8px;
+}
+.sider-foot {
+  padding: 12px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #999;
+  text-align: center;
+  word-break: break-all;
 }
 .header {
   height: 56px;

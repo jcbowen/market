@@ -712,3 +712,18 @@ message CheckFulfillerResp {
 - `GetUserChannelOpenid(user_id, channel_code)`：查询用户在指定渠道的微信 openid/unionid；渠道身份表（user_channel_identities）优先，mp 渠道回落存量 `users.openid`（排除 phone_ 占位），零迁移兼容。
 - `UpsertUserChannelIdentity(user_id, channel_code, openid, unionid)`：登录成功后幂等写入/更新用户渠道身份；内容一致时跳过写入，并发唯一索引冲突视为已存在。
 - 服务归属说明：渠道本质是「客户端身份与准入」（登录换 openid、按端授权、未来的渠道访问开关），与 identities 同域闭环在 user 服务；支付仅是消费场景，payment 侧不感知渠道表，按网关传入的 app_id+openid 下单。
+
+### 站点设置（2026-10-20 新增 RPC）
+
+```protobuf
+  // 站点设置：平台级品牌与部署域名（单行配置，仅超管可写）
+  // base_url 是部署域名的唯一来源，网关据此派生支付回调地址、附件外链与 HTML 品牌注入
+  rpc GetSiteConfig(GetSiteConfigReq) returns (SiteConfigInfo);
+  rpc SaveSiteConfig(SaveSiteConfigReq) returns (SiteConfigInfo);
+```
+
+- `GetSiteConfig`：读取 `site_configs` 单行配置（固定主键 id=1），行不存在时惰性创建后返回，调用方恒能拿到非 nil 结果；并发创建靠主键冲突后重读兜底，不会产生多行。
+- `SaveSiteConfig`：覆盖式写入，**传空串即清空该项**（与 `SaveClientChannel` 的「留空保留原值」口径不同，品牌字段需要能主动清空）。服务端校验：`base_url` 归一为 `scheme://host[:port]`（小写协议、去尾斜杠，缺协议/带路径参数/非 http(s) 返回 `InvalidArgument`）、`site_name` ≤32 字、`seo_description`/`seo_keywords`/`copyright_text` ≤200 字、`icp_number` ≤64 字、`logo_url`/`favicon_url` 须为站内绝对路径或 http(s) 外链。
+- `SiteConfigInfo`：八个配置项 + `version`（每次保存 +1）+ `updated_at`。`version` 是网关内存快照与 favicon 长缓存的失效依据，故必须每次保存递增，不随内容是否变化而定。
+- 服务归属说明：与 `client_channels` 同理——表放在 user 服务（平台级单行配置、与社区无隔离关系），消费方几乎全在网关（品牌快照、回调地址派生、附件外链基址、HTML 注入），payment 侧只被动接收派生结果，不新增 payment 侧配置入口。
+

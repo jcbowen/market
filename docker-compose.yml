@@ -196,6 +196,10 @@ services:
       # 会把所有用户合并成网桥地址；留空即不采信任何代理头（按直连 IP 处理）；
       # 填 0.0.0.0/0 等于允许伪造 X-Forwarded-For 绕过限流，禁止。
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      # 部署域名基址（scheme://host，不含路径），仅 gateway 需要：设置后优先于后台「站点设置」的
+      # base_url，支付回调地址、附件外链与 HTML 品牌注入一律按它派生。
+      # 本地与自动化测试保持留空——留空时按当前请求域名现推，测试用例据此断言派生值。
+      SITE_BASE_URL: ${SITE_BASE_URL:-}
     depends_on:
       user-service:
         condition: service_healthy
