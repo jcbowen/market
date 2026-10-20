@@ -58,6 +58,13 @@ if (push && !tag) {
   process.exit(1);
 }
 
+// tag 白名单校验：下方 docker 调用在 Windows 上走 shell:true，未校验的参数
+// 会被拼进 shell 执行（如 --tag 'x&&cmd'），故只允许镜像名的合法字符集
+if (tag && !/^[a-zA-Z0-9][a-zA-Z0-9._\-/:]*$/.test(tag)) {
+  console.error(`错误: --tag 含非法字符: ${tag}`);
+  process.exit(1);
+}
+
 // 平台解析：默认本机架构（本地 Docker load 仅支持单平台）
 const hostArch = os.arch() === 'arm64' ? 'arm64' : 'amd64';
 let platforms = platformsArg

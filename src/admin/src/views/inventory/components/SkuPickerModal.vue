@@ -39,7 +39,7 @@
  * 便于在采购单/入库单/出库单/盘点详情的明细行间一行替换切换。
  * 弹窗内多列展示完整信息（名称/规格/编码/条形码/库存/成本），无截断遮挡。
  */
-import { computed, h, ref, watch } from 'vue'
+import { computed, h, onUnmounted, ref, watch } from 'vue'
 import { NTag, NText } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getSkuStockList } from '@/api/inventory'
@@ -62,6 +62,12 @@ const selectedSku = ref<Sku | null>(null)
 const pagination = ref({ page: 1, pageSize: 10, itemCount: 0 })
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let requestSeq = 0 // 防止乱序响应覆盖新结果
+
+// 防抖计时器需在卸载时清掉：组件常驻父页面时，弹窗关闭前残留的计时会在下次打开后误触发加载
+onUnmounted(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = null
+})
 
 /** 回显文本：选中后触发按钮内显示「商品名 · 规格」，超长省略并悬浮全量提示 */
 const echoText = computed(() => {

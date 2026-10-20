@@ -1,6 +1,7 @@
 # 忽略 IDE 与系统文件
 .idea/
 .vscode/
+.run/
 .DS_Store
 *.swp
 *.swo
@@ -26,14 +27,43 @@ tmp/
 .git/
 .gitignore
 
-# 已构建的二进制和前端产物需要打包进镜像，不要忽略
-# bin/gateway
-# bin/*-service
-# bin/static
+# ===== 敏感与本地态文件：一律不进构建上下文 =====
+# .env 含在用的 JWT_SECRET / 数据库口令，镜像本身不 COPY 它（配置走运行时
+# volume 挂载），但它会随上下文整体上传 daemon，故必须排除
+.env
+.env.*
+# 本地 Go module 缓存与依赖仓库目录
+pkg/
+# 测试与本机记录（Playwright 产物、每日决策留档）
+tests/
+test-results/
+.workbuddy/
+docs/
+.github/
 
-# 忽略前端源码（Docker 内不依赖源码编译，最终镜像通过 COPY bin/static 引入）
-src/admin/
-src/client/
+# ===== bin/ 仅保留镜像实际需要的内容 =====
+# 三个 Dockerfile 只引用 bin/linux-${TARGETARCH}/ 下的二进制、bin/static
+# 与 bin/config.allinone.yaml；其余平台产物与旧布局目录（合计约 1.6G）
+# 是本地运行用的，进上下文只会拖慢每次构建
+bin/darwin/
+bin/darwin-amd64/
+bin/darwin-arm64/
+bin/windows/
+bin/windows-amd64/
+bin/windows-arm64/
+bin/linux/
+bin/gateway
+bin/user-service
+bin/product-service
+bin/order-service
+bin/cart-service
+bin/payment-service
+bin/market-admin
+# 运行时挂载目录（compose bind mount 用宿主路径，与镜像构建无关）
+bin/data/
+bin/attachment/
+bin/logs/
+bin/runtime/
 
 # 忽略文档与计划文件
 *.md

@@ -40,9 +40,17 @@ grpc:
     cart_service: 127.0.0.1:50054
     payment_service: 127.0.0.1:50055
 jwt:
-    secret: market-secret-key-change-in-production
+    # 密钥不入仓库：all-in-one 由 entrypoint.sh 集中生成或读 JWT_SECRET 环境变量，
+    # 再注入容器内 7 个进程（同容器共享环境，token 互认一致）
+    secret: ""
     access_token_ttl: 7200
     refresh_token_ttl: 604800
+security:
+    # 可信反向代理网段（CIDR 或单个 IP），空 = 不信任任何代理头（只认直连地址）。
+    # all-in-one 由宿主 nginx 反代时，用 docker run -e TRUSTED_PROXIES=<网段> 注入即可
+    # （common/config.ApplyEnvOverrides 覆盖本项，无需改镜像内配置）；
+    # 未配置时限流与访问日志会把所有用户合并成代理 IP，填 0.0.0.0/0 则等于放开伪造
+    trusted_proxies: []
 log:
     level: info
     format: json

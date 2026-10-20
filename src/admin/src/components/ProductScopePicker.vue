@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { SearchOutline } from '@vicons/ionicons5'
 import { getProductList, getCategoryList } from '@/api/product'
 import type { Product, Category } from '@/api/types'
@@ -174,6 +174,17 @@ const pickedCategories = ref<ScopeItem[]>([])
 const pickedProducts = ref<ScopeItem[]>([])
 
 let keywordTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 请求序号：防抖搜索与分类筛选交错时，只采用最后一次请求的响应，
+ * 否则慢响应会后到并覆盖新结果，列表显示与筛选条件不一致
+ */
+let loadSeq = 0
+
+onUnmounted(() => {
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = null
+})
 
 const categoryOptions = computed(() =>
   categories.value.map((c) => ({ label: c.name, value: c.id }))
@@ -237,6 +248,7 @@ async function loadCategories() {
  * 加载商品分页列表（关键字 + 分类过滤）
  */
 async function loadList() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const params: Parameters<typeof getProductList>[0] = { page: page.value, page_size: pageSize }
@@ -247,11 +259,12 @@ async function loadList() {
       params.category_id = filterCategoryId.value
     }
     const res = await getProductList(params)
+    if (seq !== loadSeq) return
     // proto3 omitempty：空列表时 total/list 字段可能缺省，需兜底
     list.value = res.data.data.list || []
     total.value = res.data.data.total || 0
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 

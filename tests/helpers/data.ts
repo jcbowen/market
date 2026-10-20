@@ -4,8 +4,82 @@
  * 管理端造数统一使用 AUTO-TEST 前缀便于清理。
  */
 
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
 /** 常用 C 端测试手机号（init.dev.sql 预置用户） */
 export const PRESET_PHONE = '13800138000';
+
+/**
+ * 本轮创建的 C 端会员登记表（JSONL，一行一条）
+ * 会员没有删除接口（后台只有 PUT /admin/users/:id/status），所以回收口径是「登记 + 停用」：
+ * 用例经 clientLogin 造出的每个会员都落表，globalTeardown 读取后逐个停用，
+ * 让脏数据停在可识别、不可登录的状态；要彻底清行只能重建库（init.dev.sql）。
+ * 预置账号（PRESET_PHONE）与人工使用的固定账号一律不登记，避免把共享数据停用。
+ *
+ * 路径锚定用 `__dirname`（helpers/ 的上一级即 tests/）：Playwright 把 TS 转成 CommonJS 执行，
+ * 这里写 `import.meta.url` 会在收集阶段直接报 "Cannot use 'import.meta' outside a module"。
+ */
+export const TEST_USER_REGISTRY = join(__dirname, '..', 'test-results', 'test-users.jsonl');
+
+/** 登记表一行：会员 ID、手机号、所属社区（停用时需带对应社区语境头） */
+export interface TestUserRecord {
+  user_id: number;
+  phone: string;
+  community_id: number;
+}
+
+/**
+ * 登记一个本轮创建的测试会员
+ * - 函数名: recordTestUser
+ * - 参数: rec — 会员 ID / 手机号 / 社区 ID
+ * - 返回: void
+ * - 异常: 写文件失败时抛错（登记表缺失会让回收失去依据，宁可显式失败也不静默）
+ * - 使用示例: recordTestUser({ user_id: info.user.id, phone, community_id: info.user.community_id });
+ */
+export function recordTestUser(rec: TestUserRecord): void {
+  const dir = dirname(TEST_USER_REGISTRY);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  appendFileSync(TEST_USER_REGISTRY, `${JSON.stringify(rec)}\n`, 'utf8');
+}
+
+/**
+ * 读取本轮登记表（globalTeardown 用）
+ * - 函数名: readTestUserRegistry
+ * - 参数: 无
+ * - 返回: TestUserRecord[]，按会员 ID 去重（同号重登会产生多条）；文件不存在时返回空数组
+ * - 异常: 单行 JSON 解析失败时跳过该行并保留其余，不让回收整体中断
+ * - 使用示例: const users = readTestUserRegistry();
+ */
+export function readTestUserRegistry(): TestUserRecord[] {
+  if (!existsSync(TEST_USER_REGISTRY)) return [];
+  const seen = new Set<number>();
+  const out: TestUserRecord[] = [];
+  for (const line of readFileSync(TEST_USER_REGISTRY, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const rec = JSON.parse(line) as TestUserRecord;
+      if (!rec.user_id || seen.has(rec.user_id)) continue;
+      seen.add(rec.user_id);
+      out.push(rec);
+    } catch {
+      // 半行（进程被强杀时可能截断）忽略即可，回收尽力而为
+    }
+  }
+  return out;
+}
+
+/**
+ * 删除登记表（回收完成后调用，避免下一轮重复停用上一轮的会员）
+ * - 函数名: clearTestUserRegistry
+ * - 参数: 无
+ * - 返回: void
+ * - 异常: force 删除，文件不存在不报错
+ * - 使用示例: clearTestUserRegistry();
+ */
+export function clearTestUserRegistry(): void {
+  rmSync(TEST_USER_REGISTRY, { force: true });
+}
 
 /** 随机手机号池前缀（测试专用号段） */
 const PHONE_PREFIXES = ['139', '150', '176'];

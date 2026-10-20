@@ -24,8 +24,15 @@ export const REQUEST_TIMEOUT = 15000
 /** 本地存储 token 的 key */
 export const TOKEN_KEY = 'access_token'
 
-/** 本地存储刷新令牌的 key，401 时用于静默续期 */
+/** 本地存储刷新令牌的 key，401 时用于静默续期（仅小程序/App；H5 改由 httpOnly cookie 承载） */
 export const REFRESH_TOKEN_KEY = 'refresh_token'
+
+/**
+ * 声明「refresh_token 由 httpOnly cookie 承载」的请求头
+ * 后端见该头则在登录/刷新时下发 cookie 且不再把 refresh_token 放进响应体；
+ * H5 携带，小程序与 App 不携带（无 httpOnly cookie 语义），保持响应体下发
+ */
+export const REFRESH_COOKIE_HEADER = 'X-Refresh-Cookie'
 
 /** 业务响应成功码 */
 export const SUCCESS_CODE = 0

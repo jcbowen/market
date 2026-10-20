@@ -4,11 +4,17 @@
  */
 
 import { post } from './request'
+import { REFRESH_COOKIE_HEADER } from './config'
+import { isH5 } from '@/utils/platform'
 
 /** 登录响应数据 */
 export interface LoginResult {
   access_token: string
-  refresh_token: string
+  /**
+   * 刷新令牌：H5 由后端 httpOnly cookie 承载，响应体不再返回（F2）；
+   * 小程序与 App 无 httpOnly cookie 语义，仍在此返回并需本地持久化
+   */
+  refresh_token?: string
   expires_in: number
   user: {
     id: number
@@ -17,6 +23,14 @@ export interface LoginResult {
     phone: string
     community_id: number
   }
+}
+
+/**
+ * H5 下声明「refresh_token 走 httpOnly cookie」的请求头
+ * @returns H5 返回带值的头对象，其他平台返回 undefined（后端保持响应体下发）
+ */
+function refreshCookieHeader(): Record<string, string> | undefined {
+  return isH5() ? { [REFRESH_COOKIE_HEADER]: '1' } : undefined
 }
 
 /**
@@ -44,14 +58,14 @@ export function sendPhoneCode(phone: string) {
  * @returns 登录结果
  */
 export function phoneLogin(phone: string) {
-  return post<LoginResult>('/auth/login/phone', { phone })
+  return post<LoginResult>('/auth/login/phone', { phone }, refreshCookieHeader())
 }
 
 /**
- * 使用 refresh_token 换取新的 access_token
- * @param refreshToken 刷新令牌
- * @returns 新的 token 信息
+ * 登出：请后端清除 refresh_token 的 httpOnly cookie
+ * JS 删不掉 httpOnly cookie，只能由后端下发过期值；仅 H5 需要
+ * @returns 后端响应
  */
-export function refreshToken(refreshToken: string) {
-  return post<LoginResult>('/auth/refresh', { refresh_token: refreshToken })
+export function logout() {
+  return post('/auth/logout', {}, refreshCookieHeader())
 }

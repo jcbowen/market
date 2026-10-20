@@ -80,20 +80,19 @@ func (s *StockBillService) CreateStockInOrder(ctx context.Context, req *product.
 		}
 
 		// 汇总入库金额（先校验 SKU 合法性）
+		// SKU 按 sku_id 升序统一加行锁：并发入库若各自按入参顺序对多行 FOR UPDATE，
+		// 会互相持有对方等待的行锁形成死锁；一次 IN 查询同时把 N 次加锁往返压成 1 次
 		var totalAmount float64
-		skus := make(map[int64]*model.Sku, len(req.Items))
+		skuIDs := make([]int64, 0, len(req.Items))
 		for _, item := range req.Items {
-			sku, ok := skus[item.SkuId]
-			if !ok {
-				sku = &model.Sku{}
-				if err := tx.Clauses(lockClause()).First(sku, item.SkuId).Error; err != nil {
-					return invalidArg("SKU %d 不存在", item.SkuId)
-				}
-				if sku.CommunityID != req.CommunityId {
-					return invalidArg("SKU %d 不属于当前社区", item.SkuId)
-				}
-				skus[item.SkuId] = sku
-			}
+			skuIDs = append(skuIDs, item.SkuId)
+		}
+		skus, err := lockSkus(tx, skuIDs, req.CommunityId)
+		if err != nil {
+			return err
+		}
+		for _, item := range req.Items {
+			sku := skus[item.SkuId]
 			unitCost := item.UnitCost
 			if unitCost <= 0 {
 				unitCost = sku.CostPrice
@@ -321,6 +320,9 @@ func (s *StockBillService) GetStockInOrder(ctx context.Context, req *product.Get
 	if err := s.db.GetDb().WithContext(ctx).First(&order, req.Id).Error; err != nil {
 		return nil, err
 	}
+	if err := EnsureScope(req.CommunityId, order.CommunityID, "入库单"); err != nil {
+		return nil, err
+	}
 
 	var itemRows []model.StockInOrderItem
 	if err := s.db.GetDb().WithContext(ctx).Where("in_order_id = ?", order.ID).Order("id asc").Find(&itemRows).Error; err != nil {
@@ -427,21 +429,26 @@ func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product
 			return err
 		}
 
+		// SKU 按 sku_id 升序统一加行锁（与入库单同因）：避免并发出库按不同顺序
+		// 锁多行造成死锁，并把 N 次 FOR UPDATE 往返压成一次 IN 查询
+		skuIDs := make([]int64, 0, len(req.Items))
+		for _, item := range req.Items {
+			skuIDs = append(skuIDs, item.SkuId)
+		}
+		locked, err := lockSkus(tx, skuIDs, req.CommunityId)
+		if err != nil {
+			return err
+		}
+
 		items = make([]*model.StockOutOrderItem, 0, len(req.Items))
 		for _, item := range req.Items {
-			var sku model.Sku
-			if err := tx.Clauses(lockClause()).First(&sku, item.SkuId).Error; err != nil {
-				return invalidArg("SKU %d 不存在", item.SkuId)
-			}
-			if sku.CommunityID != req.CommunityId {
-				return invalidArg("SKU %d 不属于当前社区", item.SkuId)
-			}
+			sku := locked[item.SkuId]
 			if sku.Stock < item.Quantity {
 				return bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足（当前 %d）", sku.SkuCode, sku.Stock))
 			}
 
 			before := sku.Stock
-			takes, err := deductBatches(tx, &sku, item.Quantity, now)
+			takes, err := deductBatches(tx, sku, item.Quantity, now)
 			if err != nil {
 				return err
 			}
@@ -541,6 +548,9 @@ func (s *StockBillService) ListStockOutOrders(ctx context.Context, req *product.
 func (s *StockBillService) GetStockOutOrder(ctx context.Context, req *product.GetStockOutOrderReq) (*product.StockOutOrderDetail, error) {
 	var order model.StockOutOrder
 	if err := s.db.GetDb().WithContext(ctx).First(&order, req.Id).Error; err != nil {
+		return nil, err
+	}
+	if err := EnsureScope(req.CommunityId, order.CommunityID, "出库单"); err != nil {
 		return nil, err
 	}
 

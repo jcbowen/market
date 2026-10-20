@@ -9,6 +9,7 @@
 
 services:
   # ===== 微服务 =====
+  # 与默认 docker-compose.yml 一致：统一 restart: unless-stopped，宿主机重启或 OOM 后自愈
   user-service:
     build:
       context: .
@@ -16,6 +17,7 @@ services:
       args:
         SERVICE_NAME: user
     container_name: market-user
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
     volumes:
@@ -30,6 +32,7 @@ services:
       args:
         SERVICE_NAME: product
     container_name: market-product
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
     volumes:
@@ -47,6 +50,7 @@ services:
       args:
         SERVICE_NAME: order
     container_name: market-order
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
     volumes:
@@ -61,6 +65,7 @@ services:
       args:
         SERVICE_NAME: cart
     container_name: market-cart
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
     depends_on:
@@ -78,6 +83,7 @@ services:
       args:
         SERVICE_NAME: payment
     container_name: market-payment
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
     depends_on:
@@ -93,8 +99,12 @@ services:
       context: .
       dockerfile: src/backend/deploy/Dockerfile.gateway
     container_name: market-gateway
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # 可信反向代理网段（逗号分隔 CIDR/IP），与 docker-compose.yml 同口径：
+      # 留空 = 不采信任何代理头；宿主 nginx 反代时必填其网段，详见 07-基础设施/02 与开发计划第 69 项
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     depends_on:
       user-service:
         condition: service_started

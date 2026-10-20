@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import Cookies from 'js-cookie'
-import { login as loginApi, getAdminInfo, refreshToken as refreshTokenApi } from '@/api/auth'
+import { login as loginApi, getAdminInfo, logout as logoutApi } from '@/api/auth'
 import { useTabsStore } from '@/stores/tabs'
 import type { AdminInfo, LoginParams } from '@/api/types'
 
@@ -24,8 +24,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** 访问 token */
   const accessToken = ref(Cookies.get('access_token') || '')
-  /** 刷新 token */
-  const refreshTokenValue = ref(Cookies.get('refresh_token') || '')
   /** 当前管理员信息 */
   const admin = ref<AdminInfo | null>(null)
   /** 权限列表 */
@@ -125,19 +123,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * 设置 token 到 cookie 和响应式状态
+   * 写入访问 token 到 cookie 与响应式状态
+   * refresh_token 不在此列：由后端下发 httpOnly cookie（F2），JS 读不到也无需读
    * @param token 访问 token
-   * @param refresh 刷新 token
    * @param expiresIn 过期时间（秒）
    */
-  function setTokens(token: string, refresh: string, expiresIn: number) {
+  function setTokens(token: string, expiresIn: number) {
     const expiresDay = expiresIn / 86400
-    // sameSite 显式声明为 lax：网关 CORS 为全开放（jcbaseGo Cors 回显 Origin），
-    // 显式 Lax 确保跨站请求不携带 token cookie，不依赖浏览器默认行为
+    // sameSite 必须显式声明为 lax：网关的 jcbaseGo Cors 会回显任意 Origin 并置
+    // Access-Control-Allow-Credentials: true，靠 Lax 挡住跨站 XHR 携带 cookie，
+    // 不能依赖浏览器默认行为
     Cookies.set('access_token', token, { expires: expiresDay, path: '/', sameSite: 'lax' })
-    Cookies.set('refresh_token', refresh, { expires: expiresDay * 2, path: '/', sameSite: 'lax' })
     accessToken.value = token
-    refreshTokenValue.value = refresh
   }
 
   /**
@@ -163,39 +160,27 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(params: LoginParams) {
     const res = await loginApi(params)
     const data = res.data.data
-    setTokens(data.access_token, data.refresh_token, data.expires_in)
+    setTokens(data.access_token, data.expires_in)
     setAdminInfo(data.admin)
     return true
   }
 
   /**
    * 登出：清空 token 与管理员信息，状态机转移至 unauthenticated，并同步清空标签页
+   * 同时请后端清除 refresh_token 的 httpOnly cookie（JS 删不掉，只能后端下发过期值）；
+   * 该请求失败不阻塞本地登出——cookie 最长 7 天后自然过期
    * 保留持久化的当前社区（"上次选中的社区"），同浏览器下次登录优先沿用；
    * 更换账号时由归一化逻辑校验：不合法则回退到新账号绑定列表的第一个社区
    */
   function logout() {
     Cookies.remove('access_token', { path: '/' })
-    Cookies.remove('refresh_token', { path: '/' })
     accessToken.value = ''
-    refreshTokenValue.value = ''
     admin.value = null
     permissions.value = []
     status.value = 'unauthenticated'
+    void logoutApi().catch(() => {})
     // 清空标签页，避免残留上一个账号的标签与页面缓存
     useTabsStore().reset()
-  }
-
-  /**
-   * 刷新访问 token
-   * @returns 是否刷新成功
-   */
-  async function refreshToken() {
-    const token = refreshTokenValue.value
-    if (!token) return false
-    const res = await refreshTokenApi(token)
-    const data = res.data.data
-    setTokens(data.access_token, data.refresh_token, data.expires_in)
-    return true
   }
 
   /**
@@ -244,7 +229,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     accessToken,
-    refreshTokenValue,
     admin,
     permissions,
     status,
@@ -256,7 +240,6 @@ export const useAuthStore = defineStore('auth', () => {
     needsCommunitySelection,
     login,
     logout,
-    refreshToken,
     fetchAdminInfo,
     ensureReady,
     hasPermission,

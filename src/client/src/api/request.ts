@@ -3,6 +3,7 @@ import {
   REQUEST_TIMEOUT,
   TOKEN_KEY,
   REFRESH_TOKEN_KEY,
+  REFRESH_COOKIE_HEADER,
   SUCCESS_CODE,
   UNAUTHORIZED_CODES,
 } from './config'
@@ -133,6 +134,12 @@ function buildQueryString(params?: Record<string, unknown>): string {
  * 调用 /auth/refresh 换取新令牌并持久化（滑动续期：响应含新 refresh_token）
  * 刷新请求为裸 uni.request 直调，不经过 requestOnce/静默续期逻辑，天然防递归死循环
  *
+ * 令牌载体按平台分岔（F2）：
+ * - H5：refresh_token 由后端下发 httpOnly cookie，JS 读不到也无需读，
+ *   请求带 X-Refresh-Cookie: 1 声明该承载方式，响应体不再返回 refresh_token
+ * - 小程序/App：无 httpOnly cookie 语义（小程序不自管浏览器 cookie、App 无同源），
+ *   仍用本地存储的 refresh_token 走请求体
+ *
  * 失败语义：
  * - refresh_token 缺失或被服务端判定无效：清空登录态并跳转登录页
  * - 网络异常：保留本地令牌，下次请求再触发重试（不误杀登录态）
@@ -140,6 +147,8 @@ function buildQueryString(params?: Record<string, unknown>): string {
  * @returns 刷新成功返回 true；失败返回 false
  */
 async function doRefresh(): Promise<boolean> {
+  // H5 的 refresh_token 只存在于后端下发的 httpOnly cookie，JS 读不到，凭 cookie 续期
+  if (isH5()) return doRefreshByCookie()
   const refreshToken = getRefreshToken()
   if (!refreshToken) {
     handleUnauthorized()
@@ -172,6 +181,39 @@ async function doRefresh(): Promise<boolean> {
   }
   uni.setStorageSync(TOKEN_KEY, body.data.access_token)
   uni.setStorageSync(REFRESH_TOKEN_KEY, body.data.refresh_token)
+  return true
+}
+
+/**
+ * H5 专属：凭 httpOnly cookie 静默续期
+ * 与小程序/App 分支同一套失败语义，仅令牌载体不同
+ *
+ * @returns 续期成功返回 true；cookie 缺失/失效返回 false（已跳转登录页）；
+ *          网络异常返回 false（保留登录态，下次请求再触发）
+ */
+async function doRefreshByCookie(): Promise<boolean> {
+  const resp = await new Promise<{
+    statusCode: number
+    data: ApiResponse<LoginResult>
+  } | null>((resolve) => {
+    uni.request({
+      url: `${BASE_URL}/auth/refresh`,
+      method: 'POST',
+      header: { [REFRESH_COOKIE_HEADER]: '1' },
+      // cookie 承载下请求体无需携带令牌，空对象保证后端按 JSON 解析
+      data: {},
+      timeout: REQUEST_TIMEOUT,
+      success: (res) => resolve(res as unknown as { statusCode: number; data: ApiResponse<LoginResult> }),
+      fail: () => resolve(null),
+    })
+  })
+  if (!resp) return false
+  const body = resp.data
+  if (resp.statusCode === 401 || !body || body.code !== SUCCESS_CODE || !body.data) {
+    handleUnauthorized()
+    return false
+  }
+  uni.setStorageSync(TOKEN_KEY, body.data.access_token)
   return true
 }
 

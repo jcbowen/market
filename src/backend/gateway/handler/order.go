@@ -218,8 +218,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *OrderHandler) ListOrders(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
 	// 仅显式传 community_id > 0 时按社区过滤，默认展示该用户全部订单

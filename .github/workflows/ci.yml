@@ -24,6 +24,38 @@ jobs:
     runs-on: ubuntu-latest
     # tag 推送仅触发 release job，检查类 job 跳过（release 内含 go test 回归）
     if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    # 集成测试依赖：MySQL/Redis 以 service 容器提供，端口映射到 runner 宿主 127.0.0.1。
+    # 支付与调度器测试以 TEST_MYSQL_PASSWORD 为守卫，此前 CI 不设该变量导致
+    # 资金链路用例恒 skip（假绿），现由下方 env 真正启用；测试库表由用例自行 AutoMigrate
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-mysql
+          MYSQL_DATABASE: market
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-mysql"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      TEST_MYSQL_HOST: 127.0.0.1
+      TEST_MYSQL_PORT: '3306'
+      TEST_MYSQL_USER: root
+      TEST_MYSQL_PASSWORD: ci-mysql
+      TEST_MYSQL_DBNAME: market
+      TEST_REDIS_ADDR: 127.0.0.1:6379
     defaults:
       run:
         working-directory: src/backend

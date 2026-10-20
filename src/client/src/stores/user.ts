@@ -6,6 +6,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getUserInfo, updateCommunity, getCommunityById } from '@/api/user'
+import { logout as logoutApi } from '@/api/auth'
+import { isH5 } from '@/utils/platform'
 import type { UserInfo, Community, Address } from '@/api/types'
 
 const TOKEN_KEY = 'access_token'
@@ -136,6 +138,8 @@ export const useUserStore = defineStore('user', () => {
 
   /**
    * 退出登录，清空本地状态与缓存
+   * H5 还需请后端清除 refresh_token 的 httpOnly cookie（JS 删不掉，只能后端下发过期值）；
+   * 失败不阻塞本地登出，cookie 最长 7 天后自然过期
    */
   function logout() {
     token.value = ''
@@ -148,6 +152,9 @@ export const useUserStore = defineStore('user', () => {
     uni.removeStorageSync(USER_KEY)
     uni.removeStorageSync(COMMUNITY_KEY)
     uni.removeStorageSync(ADDRESS_KEY)
+    if (isH5()) {
+      void logoutApi().catch(() => {})
+    }
   }
 
   /**

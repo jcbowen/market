@@ -33,9 +33,20 @@ grpc:
     cart_service: cart-service:50054
     payment_service: payment-service:50055
 jwt:
-    secret: market-secret-key-change-in-production
+    # 密钥不入仓库：由 compose 经 JWT_SECRET 环境变量注入（缺失时服务拒绝启动，
+    # 见 common/config.EnsureSecureJWT）；此处留空即为「未配置」，与历史硬编码
+    # 默认占位串的区别是后者随 git 公开、可被用来伪造超管 token
+    secret: ""
     access_token_ttl: 7200
     refresh_token_ttl: 604800
+security:
+    # 可信反向代理网段（CIDR 或单个 IP），决定 ClientIP 是否采信 X-Forwarded-For 等代理头。
+    # 空 = 不信任任何代理（只认直连地址），伪造代理头绕过限流的口子由此封死。
+    # 生产为宿主机 nginx 反代容器发布端口时必须配置为 compose 网络实际网段
+    # （docker network inspect market_default 取 Configurations.Subnet，如 172.18.0.0/16）；
+    # 留空会让所有用户共用网桥地址这一个限流桶（整站 429），填 0.0.0.0/0 等于放开伪造。
+    # 也可不改本文件、改由 compose 的 TRUSTED_PROXIES 环境变量注入（ApplyEnvOverrides 覆盖）
+    trusted_proxies: []
 log:
     level: info
     format: json

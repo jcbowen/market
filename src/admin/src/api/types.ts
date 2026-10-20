@@ -69,7 +69,8 @@ export interface LoginParams {
  */
 export interface LoginResult {
   access_token: string
-  refresh_token: string
+  /** 刷新令牌：登录带 X-Refresh-Cookie 声明时由后端 httpOnly cookie 承载，响应体不再返回（F2） */
+  refresh_token?: string
   expires_in: number
   admin: AdminInfo
 }

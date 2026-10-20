@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -62,6 +64,11 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 		if err := tx.First(&check, req.Id).Error; err != nil {
 			return err
 		}
+		// 社区隔离强校验：管理端提交必传 community_id（>0 时校验盘点单归属社区），
+		// 与订单/退款族同口径；内部调用传 0 跳过
+		if req.CommunityId > 0 && check.CommunityID != req.CommunityId {
+			return bizerr.New(codes.PermissionDenied, "无权操作其他社区的盘点单")
+		}
 		if check.Status != 1 {
 			return fmt.Errorf("盘点单状态不允许提交")
 		}
@@ -70,11 +77,21 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 		diffItems := 0
 		now := time.Now().Format("2006-01-02 15:04:05")
 
+		// 明细 SKU 按 sku_id 升序统一加锁：并发盘点/入库若按各自入参顺序对多行
+		// FOR UPDATE，会互相持有对方等待的行锁形成死锁；一次 IN 查询同时把
+		// N 次加锁往返压成 1 次。归属社区取盘点单自身，杜绝把其他社区的 SKU
+		// 塞进本单以改写其库存
+		skuIDs := make([]int64, 0, len(req.Items))
 		for _, item := range req.Items {
-			var sku model.Sku
-			if err := tx.Clauses(lockClause()).First(&sku, item.SkuId).Error; err != nil {
-				return err
-			}
+			skuIDs = append(skuIDs, item.SkuId)
+		}
+		locked, err := lockSkus(tx, skuIDs, check.CommunityID)
+		if err != nil {
+			return err
+		}
+
+		for _, item := range req.Items {
+			sku := locked[item.SkuId]
 			before := sku.Stock
 			diff := item.ActualStock - before
 			var batchID int64
@@ -82,7 +99,7 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 				diffItems++
 				if diff < 0 {
 					// 盘亏：按 FEFO 扣减批次
-					takes, err := deductBatches(tx, &sku, -diff, now)
+					takes, err := deductBatches(tx, sku, -diff, now)
 					if err != nil {
 						return err
 					}
@@ -163,6 +180,10 @@ func (s *StockCheckService) GetStockCheck(ctx context.Context, req *product.GetS
 	var check model.StockCheck
 	if err := s.db.GetDb().WithContext(ctx).First(&check, req.Id).Error; err != nil {
 		return nil, err
+	}
+	// 社区隔离强校验：与 SubmitStockCheck 同口径，防止跨社区读取盘点单明细
+	if req.CommunityId > 0 && check.CommunityID != req.CommunityId {
+		return nil, bizerr.New(codes.PermissionDenied, "无权查看其他社区的盘点单")
 	}
 
 	type itemRow struct {
@@ -262,13 +283,14 @@ func ToStockCheckInfo(c *model.StockCheck) *product.StockCheckInfo {
 		return nil
 	}
 	return &product.StockCheckInfo{
-		Id:         c.ID,
-		CheckNo:    c.CheckNo,
-		Status:     c.Status,
-		TotalItems: c.TotalItems,
-		DiffItems:  c.DiffItems,
-		Remark:     c.Remark,
-		CreatedAt:  c.CreatedAt,
+		Id:          c.ID,
+		CheckNo:     c.CheckNo,
+		Status:      c.Status,
+		TotalItems:  c.TotalItems,
+		DiffItems:   c.DiffItems,
+		Remark:      c.Remark,
+		CreatedAt:   c.CreatedAt,
+		CommunityId: c.CommunityID,
 	}
 }
 

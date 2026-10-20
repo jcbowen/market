@@ -17,8 +17,9 @@ type Order struct {
 	// 社区维度复合索引（community_id,status,created_at）：覆盖社区订单列表、营收报表按状态聚合
 	CommunityID int64 `gorm:"column:community_id;type:bigint;not null;index:idx_orders_community_status_created,priority:1;comment:社区 ID" json:"community_id"`
 	UserID      int64 `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
-	// 状态参与两个复合索引：社区列表/报表（community_status_created）与履约指派查询（delivery_status）
-	Status int32 `gorm:"column:status;type:tinyint;default:1;index:idx_orders_community_status_created,priority:2;index:idx_orders_delivery_status,priority:2;comment:1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款" json:"status"`
+	// 状态参与三个复合索引：社区列表/报表（community_status_created）、履约指派（delivery_status）、
+	// 调度器按状态扫描（status_updated / status_created，见下方时间列）
+	Status int32 `gorm:"column:status;type:tinyint;default:1;index:idx_orders_community_status_created,priority:2;index:idx_orders_delivery_status,priority:2;index:idx_orders_status_updated,priority:1;index:idx_orders_status_created,priority:1;comment:1待支付 2已支付 3备货中 4配送中 5已完成 6已取消 7退款中 8已退款" json:"status"`
 	TotalAmount    float64 `gorm:"column:total_amount;type:decimal(10,2);not null;comment:订单总额" json:"total_amount"`
 	DiscountAmount float64 `gorm:"column:discount_amount;type:decimal(10,2);default:0.00;comment:优惠金额，默认0" json:"discount_amount"`
 	DeliveryFee    float64 `gorm:"column:delivery_fee;type:decimal(10,2);default:0.00;comment:配送费，默认0" json:"delivery_fee"`
@@ -54,8 +55,11 @@ type Order struct {
 	CompleteTime        *string `gorm:"column:complete_time;type:datetime;comment:完成时间" json:"complete_time"`
 	CancelTime          *string `gorm:"column:cancel_time;type:datetime;comment:取消时间" json:"cancel_time"`
 	CancelReason        string  `gorm:"column:cancel_reason;type:varchar(255);comment:取消原因" json:"cancel_reason"`
-	CreatedAt           string  `gorm:"column:created_at;type:datetime;index:idx_orders_community_status_created,priority:3;comment:创建时间" json:"created_at"`
-	UpdatedAt           string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	// 时间列参与调度器复合索引：超时扫描按 (status, created_at)、
+	// 卡单恢复与抢占按 (status, updated_at)；此前的 (community_id,status,created_at)
+	// 因缺少 community_id 前导列无法被这些查询使用
+	CreatedAt           string  `gorm:"column:created_at;type:datetime;index:idx_orders_community_status_created,priority:3;index:idx_orders_status_created,priority:2;comment:创建时间" json:"created_at"`
+	UpdatedAt           string  `gorm:"column:updated_at;type:datetime;index:idx_orders_status_updated,priority:2;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回订单表名
@@ -136,12 +140,14 @@ type Refund struct {
 	FreightAmount float64 `gorm:"column:freight_amount;type:decimal(10,2);not null;default:0.00;comment:本单退还的运费金额" json:"freight_amount"`
 	Type          int32   `gorm:"column:type;type:tinyint;not null;default:1;comment:1整单退 2部分退 3仅金额退（全额退完时升级为1）" json:"type"`
 	Reason        string  `gorm:"column:reason;type:varchar(255);comment:退款原因" json:"reason"`
-	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
+	// 状态参与调度器扫描索引：超时审批按 (status, created_at)、
+	// 卡单重试按 (status, updated_at)，此前 refunds 无任何 status 索引，两处均全表扫
+	Status        int32   `gorm:"column:status;type:tinyint;default:1;index:idx_refunds_status_created,priority:1;index:idx_refunds_status_updated,priority:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
 	RejectReason  string  `gorm:"column:reject_reason;type:varchar(255);comment:拒绝原因" json:"reject_reason"`
 	OperatorID    int64   `gorm:"column:operator_id;type:bigint;default:0;comment:审核操作人 ID" json:"operator_id"`
 	RefundTime    *string `gorm:"column:refund_time;type:datetime;comment:退款成功时间" json:"refund_time"`
-	CreatedAt     string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt     string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	CreatedAt     string  `gorm:"column:created_at;type:datetime;index:idx_refunds_status_created,priority:2;comment:创建时间" json:"created_at"`
+	UpdatedAt     string  `gorm:"column:updated_at;type:datetime;index:idx_refunds_status_updated,priority:2;comment:更新时间" json:"updated_at"`
 
 	// OrderNo 关联订单号（非表字段，列表查询时填充）
 	OrderNo string `gorm:"-" json:"order_no"`

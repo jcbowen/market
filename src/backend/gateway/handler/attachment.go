@@ -205,8 +205,7 @@ func (h *AttachmentHandler) AttachmentConfirm(c *gin.Context) {
 // 参数:
 //   - c: gin 上下文
 func (h *AttachmentHandler) ListAttachments(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "12"))
+	page, pageSize := parsePageParams(c, 12)
 
 	resp, err := h.productClient.ListAttachments(c.Request.Context(), &product.ListAttachmentsReq{
 		AdminId:   appcontext.GetUserContext(c).UserID,
@@ -266,8 +265,7 @@ func (h *AttachmentHandler) ScanAttachmentMigrate(c *gin.Context) {
 // 参数:
 //   - c: gin 上下文
 func (h *AttachmentHandler) ListAttachmentMigrate(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize := parsePageParams(c, 20)
 
 	resp, err := h.productClient.ListAttachmentMigrate(c.Request.Context(), &product.AttachmentMigrateListReq{
 		Status:     c.Query("status"),

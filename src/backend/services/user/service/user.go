@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -236,6 +238,53 @@ func (s *UserService) ListUsers(ctx context.Context, communityID int64, keyword 
 	return list, total, communityName, nil
 }
 
+// batchGetUsersMaxIDs 单次批量查询的会员 ID 上限
+// 调用方为后台列表（每页最多 50 行），200 足够又不给构造超大 IN 清单留空间
+const batchGetUsersMaxIDs = 200
+
+// BatchGetUsers 按 ID 集合批量查询会员（后台订单列表按行取会员名的收口）
+// 逐行 GetUserById 会把一页放大成 N 次 RPC；本方法一次往返取回整页会员。
+// 社区语境（communityID>0）按会员-社区关联表过滤：越权 ID 直接不出现在结果里，
+// 而不是报错——既防止通过列表接口读其他社区会员的昵称/手机号，
+// 也让「会员已解绑该社区」的历史订单仍能正常展示（留空而非整页 500）。
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: 会员 ID 集合（可重复、可含 0，自动忽略）
+//   - communityID: 操作者社区语境，0=超管或内部调用（不过滤）
+//
+// 返回值：
+//   - []*model.User: 命中的会员（顺序不保证，调用方按 ID 建索引）
+//   - error: ID 集合超限或数据库错误
+//
+// 使用示例：
+//
+//	users, err := userService.BatchGetUsers(ctx, []int64{1, 2, 3}, communityID)
+func (s *UserService) BatchGetUsers(ctx context.Context, ids []int64, communityID int64) ([]*model.User, error) {
+	clean := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			clean = append(clean, id)
+		}
+	}
+	if len(clean) == 0 {
+		return nil, nil
+	}
+	if len(clean) > batchGetUsersMaxIDs {
+		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("单次批量查询会员数不能超过 %d", batchGetUsersMaxIDs))
+	}
+
+	db := s.db.GetDb().WithContext(ctx).Model(&model.User{}).Where("id IN ?", clean)
+	if communityID > 0 {
+		db = db.Where("id IN (SELECT user_id FROM user_communities WHERE community_id = ?)", communityID)
+	}
+	var list []*model.User
+	if err := db.Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 // getCommunityName 查询社区名称
 // 参数：
 //   - ctx: 上下文
@@ -290,13 +339,28 @@ func (s *UserService) MarkUserCommunity(ctx context.Context, userID, communityID
 //   - ctx: 上下文
 //   - id: 用户 ID
 //   - status: 0 拉黑 1 正常
+//   - communityId: 操作者社区语境（>0 时要求会员与本社区有绑定关系，防止跨社区拉黑；0=超管）
 // 返回：
-//   - error: 错误信息
-func (s *UserService) SetUserStatus(ctx context.Context, id int64, status int32) error {
+//   - error: 参数非法/会员不存在/无权操作
+func (s *UserService) SetUserStatus(ctx context.Context, id int64, status int32, communityId int64) error {
 	if id <= 0 || (status != 0 && status != 1) {
 		return fmt.Errorf("参数错误")
 	}
-	res := s.db.GetDb().WithContext(ctx).
+	db := s.db.GetDb().WithContext(ctx)
+	if communityId > 0 {
+		// 状态为用户级全局字段（拉黑即全站拦截登录），故必须确认操作者社区与该会员有关系，
+		// 否则 A 社区管理员可冻结仅在 B 社区消费的会员
+		var bound int64
+		if err := db.Model(&model.UserCommunity{}).
+			Where("user_id = ? AND community_id = ?", id, communityId).
+			Count(&bound).Error; err != nil {
+			return err
+		}
+		if bound == 0 {
+			return fmt.Errorf("会员不存在或无权操作")
+		}
+	}
+	res := db.
 		Model(&model.User{}).
 		Where("id = ?", id).
 		Update("status", status)

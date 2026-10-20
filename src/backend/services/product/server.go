@@ -75,7 +75,7 @@ func (s *server) ListCategories(ctx stdctx.Context, req *product.ListCategoriesR
 
 // GetCategory 获取分类详情
 func (s *server) GetCategory(ctx stdctx.Context, req *product.GetCategoryReq) (*product.CategoryInfo, error) {
-	c, err := s.categoryService.GetCategory(ctx, req.Id)
+	c, err := s.categoryService.GetCategory(ctx, req.Id, req.CommunityId)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
@@ -102,7 +102,7 @@ func (s *server) UpdateCategory(ctx stdctx.Context, req *product.UpdateCategoryR
 
 // DeleteCategory 删除分类
 func (s *server) DeleteCategory(ctx stdctx.Context, req *product.DeleteCategoryReq) (*common.CommonResponse, error) {
-	if err := s.categoryService.DeleteCategory(ctx, req.Id); err != nil {
+	if err := s.categoryService.DeleteCategory(ctx, req.Id, req.CommunityId); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
@@ -158,6 +158,9 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 	p, err := s.productService.GetProduct(ctx, req.Id)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
+	}
+	if err := service.EnsureScope(req.GetCommunityId(), p.CommunityID, "商品"); err != nil {
+		return nil, bizerr.ToStatus(err)
 	}
 	skus, err := s.productService.ListSkusByProductID(ctx, req.Id)
 	if err != nil {
@@ -259,7 +262,7 @@ func (s *server) UpdateProduct(ctx stdctx.Context, req *product.UpdateProductReq
 
 // DeleteProduct 删除商品
 func (s *server) DeleteProduct(ctx stdctx.Context, req *product.DeleteProductReq) (*common.CommonResponse, error) {
-	if err := s.productService.DeleteProduct(ctx, req.Id); err != nil {
+	if err := s.productService.DeleteProduct(ctx, req.Id, req.CommunityId); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
@@ -267,7 +270,7 @@ func (s *server) DeleteProduct(ctx stdctx.Context, req *product.DeleteProductReq
 
 // UpdateProductStatus 更新商品状态
 func (s *server) UpdateProductStatus(ctx stdctx.Context, req *product.UpdateProductStatusReq) (*common.CommonResponse, error) {
-	if err := s.productService.UpdateProductStatus(ctx, req.Id, req.Status); err != nil {
+	if err := s.productService.UpdateProductStatus(ctx, req.Id, req.Status, req.CommunityId); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
@@ -371,10 +374,45 @@ func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*pr
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
+	if err := service.EnsureScope(req.GetCommunityId(), sku.CommunityID, "SKU"); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
 	info := service.ToSkuInfo(sku)
 	// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
 	info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
 	return info, nil
+}
+
+// BatchGetSkus SKU 批量查询（下单/收银明细取价取库存，替代逐行 GetSkuById）
+func (s *server) BatchGetSkus(ctx stdctx.Context, req *product.BatchGetSkusReq) (*product.BatchGetSkusResp, error) {
+	skus, err := s.skuService.BatchGetSkus(ctx, req.Ids, req.GetCommunityId())
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	list := make([]*product.SkuInfo, 0, len(skus))
+	for _, sku := range skus {
+		info := service.ToSkuInfo(sku)
+		// 与 GetSkuById 同口径：出库统一拼接完整访问 URL
+		info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+		list = append(list, info)
+	}
+	return &product.BatchGetSkusResp{List: list}, nil
+}
+
+// BatchGetProducts 商品批量查询（下单明细取商品名/封面/分类，替代逐行 GetProduct）
+// 只回主表字段：调用方不需要 SKU 明细、规格树与图集，避免按行放大附属查询
+func (s *server) BatchGetProducts(ctx stdctx.Context, req *product.BatchGetProductsReq) (*product.BatchGetProductsResp, error) {
+	products, err := s.productService.BatchGetProducts(ctx, req.Ids, req.GetCommunityId())
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	list := make([]*product.ProductInfo, 0, len(products))
+	for _, p := range products {
+		info := service.ToProductInfo(p, "", nil)
+		info.CoverImage = s.attachmentService.ToMediaURL(ctx, p.CoverImage)
+		list = append(list, info)
+	}
+	return &product.BatchGetProductsResp{List: list}, nil
 }
 
 // SetCommunityPricing 设置社区定价
@@ -439,6 +477,39 @@ func (s *server) DeductFlashSaleStock(ctx stdctx.Context, req *product.DeductFla
 // ReleaseFlashSaleStock 释放秒杀库存
 func (s *server) ReleaseFlashSaleStock(ctx stdctx.Context, req *product.ReleaseFlashSaleStockReq) (*common.CommonResponse, error) {
 	if err := s.stockService.ReleaseFlashSaleStock(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// BatchDeductStock 批量扣减库存（整单明细一事务一次往返）
+func (s *server) BatchDeductStock(ctx stdctx.Context, req *product.BatchDeductStockReq) (*product.BatchDeductStockResp, error) {
+	success, err := s.stockService.BatchDeductStock(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &product.BatchDeductStockResp{Success: success}, nil
+}
+
+// BatchReleaseStock 批量释放库存
+func (s *server) BatchReleaseStock(ctx stdctx.Context, req *product.BatchReleaseStockReq) (*common.CommonResponse, error) {
+	if err := s.stockService.BatchReleaseStock(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// BatchDeductFlashSaleStock 批量扣减秒杀库存
+func (s *server) BatchDeductFlashSaleStock(ctx stdctx.Context, req *product.BatchDeductFlashSaleStockReq) (*common.CommonResponse, error) {
+	if err := s.stockService.BatchDeductFlashSaleStock(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// BatchReleaseFlashSaleStock 批量回补秒杀库存
+func (s *server) BatchReleaseFlashSaleStock(ctx stdctx.Context, req *product.BatchReleaseFlashSaleStockReq) (*common.CommonResponse, error) {
+	if err := s.stockService.BatchReleaseFlashSaleStock(ctx, req); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
@@ -778,7 +849,7 @@ func (s *server) ListCoupons(ctx stdctx.Context, req *product.ListCouponsReq) (*
 
 // GetCoupon 获取优惠券详情
 func (s *server) GetCoupon(ctx stdctx.Context, req *product.GetCouponReq) (*product.CouponInfo, error) {
-	c, err := s.marketingService.GetCoupon(ctx, req.Id)
+	c, err := s.marketingService.GetCoupon(ctx, req.Id, req.CommunityId)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
@@ -897,9 +968,29 @@ func (s *server) ListFlashSales(ctx stdctx.Context, req *product.ListFlashSalesR
 
 // GetFlashSale 获取秒杀活动详情
 func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) (*product.FlashSaleDetail, error) {
-	fs, items, err := s.marketingService.GetFlashSale(ctx, req.Id)
+	fs, items, err := s.marketingService.GetFlashSale(ctx, req.Id, req.CommunityId)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
+	}
+
+	// 明细档案批量回填：原先逐行 GetSkuByID + GetProduct（N 行 2N 次查询），
+	// 这里固定 2 次查询取回全部 SKU 与商品；取不到留空而非整体报错，
+	// 与改造前「sku, _ :=」的容错口径一致
+	skuIDs := make([]int64, 0, len(items))
+	for _, item := range items {
+		skuIDs = append(skuIDs, item.SkuID)
+	}
+	skuByID, err := s.skuService.FindSkusByIDs(ctx, skuIDs)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	productIDs := make([]int64, 0, len(skuByID))
+	for _, sku := range skuByID {
+		productIDs = append(productIDs, sku.ProductID)
+	}
+	productByID, err := s.productService.FindProductsByIDs(ctx, productIDs)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
 	}
 
 	detail := &product.FlashSaleDetail{
@@ -907,11 +998,10 @@ func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) 
 		Items: make([]*product.FlashSaleItemInfo, 0, len(items)),
 	}
 	for _, item := range items {
-		sku, _ := s.skuService.GetSkuByID(ctx, item.SkuID)
+		sku := skuByID[item.SkuID]
 		var productName string
 		if sku != nil {
-			p, _ := s.productService.GetProduct(ctx, sku.ProductID)
-			if p != nil {
+			if p := productByID[sku.ProductID]; p != nil {
 				productName = p.Name
 			}
 		}
@@ -1053,7 +1143,7 @@ func (s *server) UpdateBanner(ctx stdctx.Context, req *product.UpdateBannerReq) 
 
 // DeleteBanner 删除 Banner
 func (s *server) DeleteBanner(ctx stdctx.Context, req *product.DeleteBannerReq) (*common.CommonResponse, error) {
-	if err := s.bannerService.DeleteBanner(ctx, req.Id); err != nil {
+	if err := s.bannerService.DeleteBanner(ctx, req.Id, req.CommunityId); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{}, nil

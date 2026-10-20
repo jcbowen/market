@@ -306,6 +306,85 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 	return &p, err
 }
 
+// BatchGetProducts 按 ID 批量查询商品（下单/收银按明细取商品名与封面，替代逐行 GetProduct 的 N 次往返）
+// 只查主表：列表口径不需要 SKU 明细、规格树与图集，避免 GetProduct 的 4 组附属查询被放大 N 倍。
+// 任一 ID 不存在或不属于操作者社区即整体报错（订单明细不允许部分命中）。
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: 商品 ID 列表（重复 ID 只查一次）
+//   - communityID: 操作者社区语境，<=0 跳过归属校验
+//
+// 返回值：
+//   - []*model.Product: 商品模型列表（按首次出现顺序去重）
+//   - error: 参数非法/不存在/越权/数据库错误
+//
+// 使用示例：
+//
+//	products, err := svc.BatchGetProducts(ctx, []int64{1, 2}, 456)
+func (s *ProductService) BatchGetProducts(ctx context.Context, ids []int64, communityID int64) ([]*model.Product, error) {
+	ordered := dedupIDs(ids)
+	if len(ordered) == 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "请选择要查询的商品")
+	}
+	var rows []*model.Product
+	if err := s.db.GetDb().WithContext(ctx).Find(&rows, ordered).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]*model.Product, len(rows))
+	for _, p := range rows {
+		if err := EnsureScope(communityID, p.CommunityID, "商品"); err != nil {
+			return nil, err
+		}
+		byID[p.ID] = p
+	}
+	list := make([]*model.Product, 0, len(ordered))
+	for _, id := range ordered {
+		p, ok := byID[id]
+		if !ok {
+			return nil, bizerr.New(codes.NotFound, fmt.Sprintf("商品 %d 不存在", id))
+		}
+		list = append(list, p)
+	}
+	return list, nil
+}
+
+// FindProductsByIDs 按 ID 集合批量取商品，返回 ID->商品 映射；缺失的 ID 直接不出现在结果里
+// 口径与 SkuService.FindSkusByIDs 一致：列表回填用，容忍个别商品被删、不做越权校验，
+// ID 须来自服务端已过滤的数据。
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: 商品 ID 集合（重复、0 与负数自动忽略）
+//
+// 返回值：
+//   - map[int64]*model.Product: 商品 ID -> 商品模型
+//   - error: 数据库错误
+//
+// 使用示例：
+//
+//	productByID, err := svc.FindProductsByIDs(ctx, []int64{1, 2})
+func (s *ProductService) FindProductsByIDs(ctx context.Context, ids []int64) (map[int64]*model.Product, error) {
+	positive := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			positive = append(positive, id)
+		}
+	}
+	if len(positive) == 0 {
+		return map[int64]*model.Product{}, nil
+	}
+	var rows []*model.Product
+	if err := s.db.GetDb().WithContext(ctx).Find(&rows, dedupIDs(positive)).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]*model.Product, len(rows))
+	for _, p := range rows {
+		byID[p.ID] = p
+	}
+	return byID, nil
+}
+
 // CreateProduct 创建商品
 // 创建商品主记录的同时，将请求中的图片 URL 按顺序写入 `product_images` 表，
 // 并继续保留 `products.images` JSON 字段作为过渡兼容。
@@ -322,6 +401,9 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateProductReq) (*model.Product, error) {
 	if len(req.SkuItems) == 0 {
 		return nil, fmt.Errorf("请填写商品价格与库存")
+	}
+	if err := ensureCategoryInCommunity(ctx, s.db.GetDb(), req.CategoryId, req.CommunityId); err != nil {
+		return nil, err
 	}
 
 	imagesJSON, _ := json.Marshal(req.Images)
@@ -375,8 +457,14 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	if err != nil {
 		return nil, err
 	}
+	if err := EnsureScope(req.CommunityId, p.CommunityID, "商品"); err != nil {
+		return nil, err
+	}
 
 	if req.CategoryId > 0 {
+		if err := ensureCategoryInCommunity(ctx, s.db.GetDb(), req.CategoryId, p.CommunityID); err != nil {
+			return nil, err
+		}
 		p.CategoryID = req.CategoryId
 	}
 	if req.Name != "" {
@@ -435,14 +523,16 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 // 参数：
 //   - ctx: 上下文
 //   - id: 商品 ID
+//   - communityId: 操作者社区语境（>0 时仅删除归属该社区的商品，见 scope.go）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *ProductService) DeleteProduct(ctx context.Context, id int64) error {
-	return s.db.GetDb().WithContext(ctx).
-		Model(&model.Product{}).
-		Where("id = ?", id).
-		Update("status", 2).Error
+func (s *ProductService) DeleteProduct(ctx context.Context, id, communityId int64) error {
+	db := s.db.GetDb().WithContext(ctx)
+	if err := ensureProductInScope(db, id, communityId); err != nil {
+		return err
+	}
+	return db.Model(&model.Product{}).Where("id = ?", id).Update("status", 2).Error
 }
 
 // UpdateProductStatus 更新商品状态
@@ -450,14 +540,44 @@ func (s *ProductService) DeleteProduct(ctx context.Context, id int64) error {
 //   - ctx: 上下文
 //   - id: 商品 ID
 //   - status: 状态
+//   - communityId: 操作者社区语境（>0 时仅更新归属该社区的商品，见 scope.go）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *ProductService) UpdateProductStatus(ctx context.Context, id int64, status int32) error {
-	return s.db.GetDb().WithContext(ctx).
-		Model(&model.Product{}).
-		Where("id = ?", id).
-		Update("status", status).Error
+func (s *ProductService) UpdateProductStatus(ctx context.Context, id int64, status int32, communityId int64) error {
+	if status != 0 && status != 1 {
+		return bizerr.New(codes.InvalidArgument, "目标状态非法")
+	}
+	db := s.db.GetDb().WithContext(ctx)
+	if err := ensureProductInScope(db, id, communityId); err != nil {
+		return err
+	}
+	return db.Model(&model.Product{}).Where("id = ?", id).Update("status", status).Error
+}
+
+// ensureProductInScope 确认商品存在且落在操作者社区语境内（更新前先计数，
+// 避免直接按条件 UPDATE 后无法区分「不存在/跨社区」与「值未变化导致 0 行受影响」）
+//
+// 参数：
+//   - db: 已绑定上下文的 GORM 实例
+//   - id: 商品 ID
+//   - communityId: 操作者社区语境（0=跳过归属过滤）
+//
+// 返回值：
+//   - error: 不存在或跨社区时返回 NotFound
+func ensureProductInScope(db *gorm.DB, id, communityId int64) error {
+	query := db.Model(&model.Product{}).Where("id = ? AND status <> ?", id, 2)
+	if communityId > 0 {
+		query = query.Where("community_id = ?", communityId)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return bizerr.New(codes.NotFound, "商品不存在或无权操作")
+	}
+	return nil
 }
 
 // UpdateProductName 更新商品名称（列表页行内改名轻量接口）
@@ -485,16 +605,8 @@ func (s *ProductService) UpdateProductName(ctx context.Context, id int64, name s
 	}
 
 	db := s.db.GetDb().WithContext(ctx)
-	var count int64
-	query := db.Model(&model.Product{}).Where("id = ? AND status <> ?", id, 2)
-	if communityId > 0 {
-		query = query.Where("community_id = ?", communityId)
-	}
-	if err := query.Count(&count).Error; err != nil {
+	if err := ensureProductInScope(db, id, communityId); err != nil {
 		return err
-	}
-	if count == 0 {
-		return bizerr.New(codes.NotFound, "商品不存在或无权操作")
 	}
 	return db.Model(&model.Product{}).Where("id = ?", id).Update("name", name).Error
 }

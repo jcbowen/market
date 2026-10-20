@@ -110,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { PersonAddOutline, SearchOutline } from '@vicons/ionicons5'
 import { createUser, getUserList } from '@/api/user'
@@ -174,6 +174,17 @@ const disabledIdSet = ref<Set<number>>(new Set(props.disabledIds))
 
 let keywordTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * 请求序号：防抖搜索与翻页交错时，只采用最后一次请求的响应，
+ * 否则慢响应会后到并覆盖新结果，列表显示与关键字不一致
+ */
+let loadSeq = 0
+
+onUnmounted(() => {
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = null
+})
+
 watch(
   () => props.show,
   (v) => {
@@ -219,6 +230,7 @@ function reload() {
  * 加载会员分页列表（当前社区语境）
  */
 async function loadList() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const params: Parameters<typeof getUserList>[0] = { page: page.value, page_size: PAGE_SIZE }
@@ -226,11 +238,12 @@ async function loadList() {
       params.keyword = keyword.value.trim()
     }
     const res = await getUserList(params)
+    if (seq !== loadSeq) return
     // proto3 omitempty：空列表时 total/list 字段可能缺省，需兜底
     list.value = res.data.data.list || []
     total.value = res.data.data.total || 0
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 

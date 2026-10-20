@@ -12,6 +12,8 @@ import "common/common.proto";
 service PaymentService {
   rpc CreatePayment(CreatePaymentReq) returns (CreatePaymentResp);
   rpc GetPayment(GetPaymentReq) returns (PaymentInfo);
+  // 按订单批量取支付记录：后台订单列表按行显示支付方式，替代逐行 GetPayment 的 N 次往返
+  rpc BatchGetPayments(BatchGetPaymentsReq) returns (BatchGetPaymentsResp);
   rpc HandleWechatCallback(WechatCallbackReq) returns (common.CommonResponse);
   rpc HandleAlipayCallback(AlipayCallbackReq) returns (common.CommonResponse);
   rpc ProcessRefund(ProcessRefundReq) returns (common.CommonResponse);
@@ -28,6 +30,7 @@ message CreatePaymentReq {
   int32 pay_type = 3;       // 1微信 2支付宝 3现金
   double amount = 4;
   string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
+  string app_id = 6;        // 微信下单 AppID，由网关按客户端渠道解析后传入；为空回落 pay_config 默认 AppID
 }
 
 message CreatePaymentResp {
@@ -52,6 +55,15 @@ message PaymentInfo {
   int32 status = 7;
   string transaction_id = 8;
   string pay_time = 9;
+}
+
+// 每个订单可能有多条支付记录，服务端按订单只回传口径与 GetPayment 一致的那条
+message BatchGetPaymentsReq {
+  repeated int64 order_ids = 1;
+}
+
+message BatchGetPaymentsResp {
+  repeated PaymentInfo list = 1;
 }
 
 message WechatCallbackReq {
@@ -101,6 +113,13 @@ message PayConfig {
   string updated_at = 16;
   bool wechat_payment_ready = 17;
   bool alipay_ready = 18;
+  // 适用客户端渠道（勾选的客户端渠道 code 列表：mp/gzh/app/h5；空=全部客户端渠道可用，兼容存量数据）
+  repeated string wechat_client_channels = 19;
+  repeated string alipay_client_channels = 20;
+  // 支付宝网关地址，空=生产环境 https://openapi.alipay.com（填沙箱网关即切沙箱）
+  string alipay_gateway_url = 21;
+  // 支付宝配置自检失败原因，空表示自检通过；就绪状态为「字段齐全且自检通过」
+  string alipay_ready_message = 22;
 }
 
 message UploadPayCertReq {
@@ -124,7 +143,9 @@ message UploadPayCertResp {
 
 ### 支付回调与关单语义
 
-- **回调金额强校验**：`HandleWechatCallback` 落账前将回调报文中的金额与支付单 `amount` 强制比对（注意微信侧单位为分、支付单为元），不一致直接拒绝并返回失败，防止篡改金额或串单；`HandleAlipayCallback` 同口径。支付宝回调路由当前已在网关下线（渠道未接入、回调无 RSA2 验签，公开暴露可被伪造支付成功），接入官方 SDK 完成验签后再开放。
+- **回调金额强校验**：`HandleWechatCallback` 落账前将回调报文中的金额与支付单 `amount` 强制比对（注意微信侧单位为分、支付单为元），不一致直接拒绝并返回失败，防止篡改金额或串单；`HandleAlipayCallback` 同口径。
+- **支付宝回调验签（已实装）**：网关 `POST /api/v1/payments/callback/alipay` 为公开路由，验签在 payment 服务 `parseAlipayCallback` 内完成——`alipaysdk.RsaCheckV1` 用 `alipay_public_key` 做 RSA2 验签（普通公钥模式，非证书模式），随后依次校验通知身份 `app_id` 与本地配置一致、`trade_status` 仅限 `TRADE_SUCCESS`/`TRADE_FINISHED`、`total_amount` 解析成功且大于 0，任一项不过即拒绝处理。支付宝公钥未配置时直接拒绝，不存在「未验签放行」的路径。
+- **支付宝渠道开关**：就绪判定为「必填字段齐全且配置自检通过」（`alipay_ready` + `alipay_ready_message`，见 `PayConfig` 18/22 号字段），配置来源是数据库 `pay_config` 单行而非环境变量；就绪即可下单、回调与退款。当前仅实现手机网站支付（`alipay.trade.wap.pay`），小程序/公众号客户端渠道不支持，网关会明确拒绝。
 - **回调幂等**：置支付成功采用条件更新 `WHERE payment_no=? AND status=1`，重复回调与并发回调只生效一次；支付单/订单已处于终态时走终态兜底，不再重复推进订单状态。
 - **支付确认与订单同步解耦（2026-10-17）**：`handlePaySuccess` 拆分为两阶段——阶段一仅在数据库事务内落支付单成功状态（不依赖 order-service 可用性，事务内不再有跨服务 RPC）；阶段二在事务提交后调用 order 服务 `UpdateOrderStatus` 同步订单状态，失败重试 3 次仍不成功时记录 `[CRITICAL]` 日志（支付已确认但订单状态未同步，需人工介入排查），不再因跨服务 RPC 失败回滚已确认的支付，避免回调超时导致渠道重复通知与支付状态反复。
 - **ClosePayments**：订单取消（用户取消/后台取消）或调度器超时关单后，由 order 服务调用本 RPC，将该订单下全部 `status=1`（待支付）支付单条件更新为 `status=5 已关闭`；此后到达的迟到回调因状态不匹配被幂等拦截，防止"已关单却回调成功"造成资损。`ClosePaymentsReq` 按订单维度（`order_id`）批量关闭，无需逐单枚举支付单号。

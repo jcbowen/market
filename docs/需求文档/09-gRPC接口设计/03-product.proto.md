@@ -26,23 +26,72 @@ service ProductService {
   rpc UpdateProduct(UpdateProductReq) returns (ProductDetail);
   rpc DeleteProduct(DeleteProductReq) returns (common.CommonResponse);
   rpc UpdateProductStatus(UpdateProductStatusReq) returns (common.CommonResponse);
+  // 批量上下架（管理端列表多选操作，不触碰已删除商品）
+  rpc BatchUpdateProductStatus(BatchUpdateProductStatusReq) returns (common.CommonResponse);
+  // 商品状态统计（口径与列表筛选条件一致，供 Tab 计数展示）
+  rpc GetProductStatusStats(GetProductStatusStatsReq) returns (GetProductStatusStatsResp);
+  // 列表页行内改名轻量接口（仅更新 name，避免全量提交覆盖规格/SKU）
   rpc UpdateProductName(UpdateProductNameReq) returns (common.CommonResponse);
 
   // SKU
   rpc ListSkus(ListSkusReq) returns (ListSkusResp);
+  // 社区内 SKU 级搜索（join products 携带商品名）；keyword 匹配商品名/SKU 编码/条形码（LIKE），
+  // 为空时返回全量（分页）。供库存工作台列表与进销存表单的 SKU 选择器复用，替代网关侧 N+1 组合查询
+  rpc SearchSkus(SearchSkusReq) returns (SearchSkusResp);
   rpc CreateSku(CreateSkuReq) returns (SkuInfo);
   rpc UpdateSku(UpdateSkuReq) returns (SkuInfo);
   rpc GetSkuById(GetSkuByIdReq) returns (SkuInfo);
+  // SKU 批量查询：下单/收银按明细取价取库存，替代逐行 GetSkuById 的 N 次往返
+  rpc BatchGetSkus(BatchGetSkusReq) returns (BatchGetSkusResp);
+  // 商品批量查询：下单按明细取商品名/封面/分类，替代逐行 GetProduct
+  rpc BatchGetProducts(BatchGetProductsReq) returns (BatchGetProductsResp);
 
   // 库存
   rpc DeductStock(DeductStockReq) returns (DeductStockResp);
   rpc ReleaseStock(ReleaseStockReq) returns (common.CommonResponse);
+  // 批量库存操作：整单明细一事务完成，下单 2N 次扣减往返压缩为 1 次
+  rpc BatchDeductStock(BatchDeductStockReq) returns (BatchDeductStockResp);
+  rpc BatchReleaseStock(BatchReleaseStockReq) returns (common.CommonResponse);
   rpc AdjustSalesCount(AdjustSalesCountReq) returns (common.CommonResponse);
-  rpc StockEntry(StockEntryReq) returns (common.CommonResponse);
-  rpc StockOut(StockOutReq) returns (common.CommonResponse);
   rpc ListStockRecords(ListStockRecordsReq) returns (ListStockRecordsResp);
   rpc GetStockWarnings(GetStockWarningsReq) returns (ListStockWarningsResp);
   rpc GeneratePurchaseOrder(GeneratePurchaseOrderReq) returns (GeneratePurchaseOrderResp);
+  // 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
+  rpc DeductFlashSaleStock(DeductFlashSaleStockReq) returns (common.CommonResponse);
+  rpc ReleaseFlashSaleStock(ReleaseFlashSaleStockReq) returns (common.CommonResponse);
+  rpc BatchDeductFlashSaleStock(BatchDeductFlashSaleStockReq) returns (common.CommonResponse);
+  rpc BatchReleaseFlashSaleStock(BatchReleaseFlashSaleStockReq) returns (common.CommonResponse);
+
+  // 供应商
+  rpc ListSuppliers(ListSuppliersReq) returns (ListSuppliersResp);
+  rpc CreateSupplier(CreateSupplierReq) returns (SupplierInfo);
+  rpc UpdateSupplier(UpdateSupplierReq) returns (SupplierInfo);
+  rpc DeleteSupplier(DeleteSupplierReq) returns (common.CommonResponse);
+
+  // 采购单
+  rpc CreatePurchaseOrder(CreatePurchaseOrderReq) returns (PurchaseOrderDetail);
+  rpc UpdatePurchaseOrder(UpdatePurchaseOrderReq) returns (PurchaseOrderDetail);
+  rpc SubmitPurchaseOrder(SubmitPurchaseOrderReq) returns (common.CommonResponse);
+  rpc CancelPurchaseOrder(CancelPurchaseOrderReq) returns (common.CommonResponse);
+  rpc ListPurchaseOrders(ListPurchaseOrdersReq) returns (ListPurchaseOrdersResp);
+  rpc GetPurchaseOrder(GetPurchaseOrderReq) returns (PurchaseOrderDetail);
+
+  // 入库单（创建即生效：生成批次 + 回写汇总库存 + 移动加权平均成本）
+  rpc CreateStockInOrder(CreateStockInOrderReq) returns (StockInOrderDetail);
+  rpc ListStockInOrders(ListStockInOrdersReq) returns (ListStockInOrdersResp);
+  rpc GetStockInOrder(GetStockInOrderReq) returns (StockInOrderDetail);
+
+  // 出库单（报损/领用/调整，后端枚举校验）
+  rpc CreateStockOutOrder(CreateStockOutOrderReq) returns (StockOutOrderDetail);
+  rpc ListStockOutOrders(ListStockOutOrdersReq) returns (ListStockOutOrdersResp);
+  rpc GetStockOutOrder(GetStockOutOrderReq) returns (StockOutOrderDetail);
+
+  // 批次库存
+  rpc ListStockBatches(ListStockBatchesReq) returns (ListStockBatchesResp);
+
+  // 报表
+  rpc GetInventorySummaryReport(GetInventorySummaryReportReq) returns (GetInventorySummaryReportResp);
+  rpc GetProfitReport(GetProfitReportReq) returns (GetProfitReportResp);
 
   // 盘点
   rpc CreateStockCheck(CreateStockCheckReq) returns (StockCheckInfo);
@@ -412,36 +461,6 @@ message AdjustSalesCountItem {
 // 结果向下钳制为 0 防负数；无幂等键，调用方必须在主事务提交成功后调用）
 message AdjustSalesCountReq {
   repeated AdjustSalesCountItem items = 1;
-}
-
-message StockEntryItem {
-  int64 sku_id = 1;
-  int32 quantity = 2;
-  string batch_no = 3;
-  string production_date = 4;
-  string expire_date = 5;
-}
-
-message StockEntryReq {
-  int64 community_id = 1;
-  int32 type = 2;
-  repeated StockEntryItem items = 3;
-  int64 operator_id = 4;
-  string remark = 5;
-}
-
-message StockOutItem {
-  int64 sku_id = 1;
-  int32 quantity = 2;
-  string remark = 3;
-}
-
-message StockOutReq {
-  int64 community_id = 1;
-  int32 type = 2;
-  repeated StockOutItem items = 3;
-  int64 operator_id = 4;
-  string remark = 5;
 }
 
 message ListStockRecordsReq {

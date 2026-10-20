@@ -6,6 +6,8 @@
   "scripts": {
     "test": "playwright test",
     "test:api": "playwright test api/",
+    "test:api:strict": "playwright test api/ && node scripts/check-test-integrity.mjs --max 0",
+    "check:integrity": "node scripts/check-test-integrity.mjs",
     "test:e2e": "playwright test e2e/",
     "test:fullflow": "playwright test e2e/fullflow.spec.ts",
     "test:admin": "playwright test e2e/admin/",

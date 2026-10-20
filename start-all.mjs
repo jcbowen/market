@@ -145,10 +145,11 @@ const ADMIN_DIR = path.join(ROOT_DIR, 'src', 'admin');
 const CLIENT_DIR = path.join(ROOT_DIR, 'src', 'client');
 
 // docker exec 辅助（静默执行，返回是否成功）
-function dockerExec(args) {
+function dockerExec(args, env = {}) {
   const r = spawnSync('docker', ['exec', ...args], {
     encoding: 'utf8',
     shell: process.platform === 'win32',
+    env: { ...process.env, ...env },
   });
   return { ok: r.status === 0, stdout: r.stdout || '' };
 }
@@ -195,6 +196,12 @@ if (!MYSQL_ROOT_PASSWORD) {
   console.error('错误: 未在项目根目录 .env 中配置 MYSQL_ROOT_PASSWORD（docker-compose.yml 同源要求）');
   process.exit(1);
 }
+
+// mysql 口令经 docker exec 的环境继承传入（-e MYSQL_PWD 不带值，取值自本进程 env），
+// 不再写 -p<口令> 到命令行：命令行参数在宿主 ps/进程列表里明文可见，
+// Windows 下还会被拼进 shell 字符串
+const MYSQL_EXEC_ARGS = ['-e', 'MYSQL_PWD'];
+const MYSQL_EXEC_ENV = { MYSQL_PWD: MYSQL_ROOT_PASSWORD };
 
 // 本地附件共享目录（Docker bind mount 挂载点）：
 // product-service 落盘与 gateway /uploads 静态服务共用，宿主目录不存在时先创建，
@@ -248,7 +255,7 @@ if (FRONTEND_REBUILT) {
 // 等待 MySQL 健康
 console.log('==> 等待 MySQL 就绪...');
 for (let i = 1; i <= 60; i++) {
-  if (dockerExec(['market-mysql', 'mysqladmin', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'ping']).ok) {
+  if (dockerExec([...MYSQL_EXEC_ARGS, 'market-mysql', 'mysqladmin', '-uroot', 'ping'], MYSQL_EXEC_ENV).ok) {
     console.log('    MySQL 已就绪');
     break;
   }
@@ -263,9 +270,10 @@ for (let i = 1; i <= 60; i++) {
 console.log('==> 等待微服务完成自动迁移...');
 for (let i = 1; i <= 60; i++) {
   if (dockerExec([
-    '-i', 'market-mysql', 'mysql', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'market',
+    ...MYSQL_EXEC_ARGS,
+    '-i', 'market-mysql', 'mysql', '-uroot', 'market',
     '--default-character-set=utf8mb4', '-e', 'SELECT 1 FROM categories LIMIT 1',
-  ]).ok) {
+  ], MYSQL_EXEC_ENV).ok) {
     console.log('    数据库表已就绪');
     break;
   }
@@ -281,17 +289,23 @@ if (dotenv.get('APP_ENV') === 'production' || process.env.APP_ENV === 'productio
   console.log('    已跳过：APP_ENV=production 生产环境禁止导入开发测试数据（deploy/init.dev.sql）');
 } else {
   const exists = dockerExec([
-    '-i', 'market-mysql', 'mysql', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'market',
+    ...MYSQL_EXEC_ARGS,
+    '-i', 'market-mysql', 'mysql', '-uroot', 'market',
     '--default-character-set=utf8mb4', '-N', '-s', '-e', 'SELECT id FROM communities LIMIT 1',
-  ]);
+  ], MYSQL_EXEC_ENV);
   if (exists.ok && /^\d+\s*$/m.test(exists.stdout.trim())) {
     console.log('    测试数据已存在，跳过初始化');
   } else {
     const sql = fs.readFileSync(path.join(ROOT_DIR, 'deploy', 'init.dev.sql'), 'utf8');
     const r = spawnSync('docker', [
-      'exec', '-i', 'market-mysql', 'mysql', '-uroot', `-p${MYSQL_ROOT_PASSWORD}`, 'market',
+      'exec', ...MYSQL_EXEC_ARGS, '-i', 'market-mysql', 'mysql', '-uroot', 'market',
       '--default-character-set=utf8mb4',
-    ], { input: sql, encoding: 'utf8', shell: process.platform === 'win32' });
+    ], {
+      input: sql,
+      encoding: 'utf8',
+      shell: process.platform === 'win32',
+      env: { ...process.env, ...MYSQL_EXEC_ENV },
+    });
     if (r.status === 0) {
       console.log('    测试数据初始化完成');
     } else {

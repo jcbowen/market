@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,14 +40,19 @@ func NewAdminService(db *mysql.Instance) *AdminService {
 //
 // 返回：
 //   - *model.Admin: 管理员模型
-//   - error: 错误信息
+//   - error: 账号不存在返回 codes.NotFound 业务错误；数据库等其他故障原样上抛
+//     （由调用方归为 Internal）。区分口径是登录链路需要的：只有「账号不存在」才算凭证失败，
+//     基础设施故障不能伪装成不存在，否则网关会误计失败次数把正常管理员锁在门外
 func (s *AdminService) GetAdminByUsername(ctx context.Context, username string) (*model.Admin, error) {
 	var a model.Admin
 	err := s.db.GetDb().WithContext(ctx).Where("username = ?", username).First(&a).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("管理员不存在")
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, bizerr.New(codes.NotFound, "管理员不存在")
 	}
-	return &a, err
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 // ListAdmins 分页查询员工列表（账号 + 指定社区任职）

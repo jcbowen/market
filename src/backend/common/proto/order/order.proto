@@ -477,6 +477,8 @@ message GetUserFrequentProductsReq {
   int32 page = 3;
   // 每页条数（分页模式生效，默认 5）
   int32 page_size = 4;
+  // 操作者社区语境：>0 时仅统计/返回该社区的订单数据，防止跨社区读取会员消费记录（超管/C 端传 0）
+  int64 community_id = 5;
 }
 
 message FrequentProductItem {

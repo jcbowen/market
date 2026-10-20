@@ -1,10 +1,12 @@
 import { test, expect, type Playwright } from '@playwright/test';
 import {
   clientLogin,
+  createFulfillerStaff,
   newAdminContext,
   newAuthedRequest,
   pickSku,
   ensureStock,
+  removeFulfillerStaff,
   assertOk,
   asList,
   type ApiResponse,
@@ -17,8 +19,9 @@ import { uniquePhone } from '../helpers/data';
  * 模块 16：订单配送协同
  * 覆盖：创建员工并绑定履约会员 → 买家下配送单 → 后台指派配送员 →
  *       履约工作台可见 → 开始配送 → 送达拍照 → 解绑履约会员
- * 说明：履约人员 = 本社区任职且绑定会员的员工（员工编辑页配置）；
- *       履约人员与买家均走 C 端手机号直登，履约接口要求操作者为本社区履约人员
+ * 说明：履约人员 = 本社区任职且绑定会员的员工（员工编辑页配置，造数统一走 createFulfillerStaff）；
+ *       履约人员与买家均走 C 端手机号直登，履约接口要求操作者为本社区履约人员。
+ *       造数失败不再 try/catch 置空后 skip：那会让链路坏了也报绿。
  */
 
 interface OrderResult {
@@ -69,12 +72,9 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
   adminCommunityId = admin.communityId;
-  try {
-    sku = await pickSku(adminApi, undefined, buyer.user.community_id);
-    await ensureStock(adminApi, sku.id, 100);
-  } catch {
-    sku = null;
-  }
+  // 不包 try/catch：环境无在售商品/无库存 SKU 属于前置不满足，应让整轮红而不是集体 skip
+  sku = await pickSku(adminApi, undefined, buyer.user.community_id);
+  await ensureStock(adminApi, sku.id, 100);
 });
 
 test.afterAll(async () => {
@@ -86,31 +86,12 @@ test.describe.serial('配送协同全链路', () => {
   let fulfillOrderId = 0;
 
   test('创建员工并绑定履约会员', async () => {
-    test.skip(!fulfiller, '履约账号未创建');
-    // 履约人员 = 本社区任职且绑定会员的员工：取本社区内置社区管理员角色建员工，创建时绑定会员
-    const rolesResp = await adminApi.get('/api/v1/admin/roles', {
-      params: { community_id: adminCommunityId },
-    });
-    const rolesBody = (await rolesResp.json()) as ApiResponse<{ id: number; code?: string }[] | { list: { id: number; code?: string }[] }>;
-    const builtin = asList<{ id: number; code?: string }>(rolesBody.data).find((r) => r.code === 'community_admin');
-    expect(builtin, '本社区无内置社区管理员角色').toBeTruthy();
-    const resp = await adminApi.post('/api/v1/admin/admins', {
-      data: {
-        username: `auto_ff_${uniquePhone()}`,
-        password: 'Ff123456',
-        real_name: 'AUTO-TEST 履约员工',
-        role_ids: [builtin!.id],
-        user_id: fulfiller!.user.id,
-      },
-    });
-    const body = (await resp.json()) as ApiResponse<{ id?: number }>;
-    expect(body.code, `创建履约员工失败: ${body.message}`).toBe(0);
-    staffId = body.data?.id ?? 0;
-    expect(staffId).toBeGreaterThan(0);
+    // 履约人员 = 本社区任职且绑定会员的员工：helper 内取本社区内置 community_admin 角色建员工并绑会员，
+    // 造数失败直接抛错（整轮红），不写成 skip
+    staffId = await createFulfillerStaff(adminApi, adminCommunityId, fulfiller!.user.id);
   });
 
   test('履约人员状态查询为 true', async ({ playwright }) => {
-    if (!fulfiller) test.skip(true, '履约账号未创建');
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       const resp = await fApi.get('/api/v1/user/fulfillment-status');
@@ -123,7 +104,6 @@ test.describe.serial('配送协同全链路', () => {
   });
 
   test('买家创建收货地址', async ({ playwright }) => {
-    if (!buyerToken) test.skip(true, '买家账号未创建');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const resp = await buyerApi.post('/api/v1/user/addresses', {
@@ -137,7 +117,6 @@ test.describe.serial('配送协同全链路', () => {
   });
 
   test('买家下送货上门订单并现金支付', async ({ playwright }) => {
-    test.skip(!sku || !buyerToken, '环境缺 SKU 或买家');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       // 取刚创建的地址 id
@@ -256,12 +235,11 @@ test.describe.serial('配送协同全链路', () => {
     }
   });
 
-  test('清理：解绑履约会员', async () => {
-    if (!staffId) test.skip(true, '履约员工未创建');
-    const resp = await adminApi.put(`/api/v1/admin/admins/${staffId}`, {
-      data: { user_id: 0 },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `解绑履约会员失败: ${body.message}`).toBe(0);
+  test('清理：解绑并删除履约员工', async () => {
+    // staffId 为 0 说明创建用例就没成功（该用例已红），此处无需再回收
+    if (!staffId) return;
+    const warns = await removeFulfillerStaff(adminApi, staffId);
+    staffId = 0;
+    for (const warn of warns) console.warn(`[16] ${warn}`);
   });
 });

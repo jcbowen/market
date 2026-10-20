@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -61,6 +63,106 @@ func (s *SkuService) GetSkuByID(ctx context.Context, id int64) (*model.Sku, erro
 		return nil, fmt.Errorf("SKU 不存在")
 	}
 	return &sku, err
+}
+
+// BatchGetSkus 按 ID 批量查询 SKU（下单/收银按明细取价取库存，替代逐行 GetSkuByID 的 N 次往返）
+// 任一 ID 不存在或不属于操作者社区即整体报错：订单明细不允许部分命中，
+// 缺项继续算价会造成金额与库存双口径偏差
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: SKU ID 列表（重复 ID 只查一次，返回值按首次出现顺序去重）
+//   - communityID: 操作者社区语境，<=0 跳过归属校验
+//
+// 返回值：
+//   - []*model.Sku: SKU 模型列表
+//   - error: 参数非法/不存在/越权/数据库错误
+//
+// 使用示例：
+//
+//	skus, err := svc.BatchGetSkus(ctx, []int64{1, 2, 3}, 456)
+func (s *SkuService) BatchGetSkus(ctx context.Context, ids []int64, communityID int64) ([]*model.Sku, error) {
+	ordered := dedupIDs(ids)
+	if len(ordered) == 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "请选择要查询的 SKU")
+	}
+	var rows []*model.Sku
+	if err := s.db.GetDb().WithContext(ctx).Find(&rows, ordered).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]*model.Sku, len(rows))
+	for _, sku := range rows {
+		if err := EnsureScope(communityID, sku.CommunityID, "SKU"); err != nil {
+			return nil, err
+		}
+		byID[sku.ID] = sku
+	}
+	list := make([]*model.Sku, 0, len(ordered))
+	for _, id := range ordered {
+		sku, ok := byID[id]
+		if !ok {
+			return nil, bizerr.New(codes.NotFound, fmt.Sprintf("SKU %d 不存在", id))
+		}
+		list = append(list, sku)
+	}
+	return list, nil
+}
+
+// FindSkusByIDs 按 ID 集合批量取 SKU，返回 ID->SKU 映射；缺失的 ID 直接不出现在结果里
+// 与 BatchGetSkus 的差别：本方法用于「取到就填充、取不到就留空」的列表回填，
+// 个别 SKU 被删除不应让整页报错；因此也不做社区越权校验，
+// ID 必须来自服务端已过滤的数据（如秒杀商品项表），不可直接透传客户端入参。
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: SKU ID 集合（重复、0 与负数自动忽略）
+//
+// 返回值：
+//   - map[int64]*model.Sku: SKU ID -> SKU 模型
+//   - error: 数据库错误
+//
+// 使用示例：
+//
+//	skuByID, err := svc.FindSkusByIDs(ctx, []int64{1, 2})
+func (s *SkuService) FindSkusByIDs(ctx context.Context, ids []int64) (map[int64]*model.Sku, error) {
+	positive := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			positive = append(positive, id)
+		}
+	}
+	if len(positive) == 0 {
+		return map[int64]*model.Sku{}, nil
+	}
+	var rows []*model.Sku
+	if err := s.db.GetDb().WithContext(ctx).Find(&rows, dedupIDs(positive)).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]*model.Sku, len(rows))
+	for _, sku := range rows {
+		byID[sku.ID] = sku
+	}
+	return byID, nil
+}
+
+// dedupIDs 去重并保持首次出现顺序
+//
+// 参数：
+//   - ids: 原始 ID 列表
+//
+// 返回值：
+//   - []int64: 按首次出现顺序排列的唯一 ID
+func dedupIDs(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	ordered := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ordered = append(ordered, id)
+	}
+	return ordered
 }
 
 // CreateSku 创建 SKU
@@ -121,6 +223,10 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 func (s *SkuService) UpdateSku(ctx context.Context, req *product.UpdateSkuReq) (*model.Sku, error) {
 	sku, err := s.GetSkuByID(ctx, req.Id)
 	if err != nil {
+		return nil, err
+	}
+	// 社区隔离：本接口可改售价/成本价，跨社区改动即他社区资损，须强校验
+	if err := EnsureScope(req.CommunityId, sku.CommunityID, "SKU"); err != nil {
 		return nil, err
 	}
 

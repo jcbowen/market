@@ -9,8 +9,8 @@ import (
 // 注意：支付配置（微信支付/支付宝/渠道开关）已迁移至数据库 pay_config 表，由后台配置管理，
 // 此处仅保留微信小程序登录配置（AppID/AppSecret）
 type Config struct {
-	WebServer jcbaseGo.WebServer `json:"web_server" yaml:"web_server"`
-	Db        jcbaseGo.DbStruct  `json:"db" yaml:"db"`
+	WebServer jcbaseGo.WebServer   `json:"web_server" yaml:"web_server"`
+	Db        jcbaseGo.DbStruct    `json:"db" yaml:"db"`
 	Redis     jcbaseGo.RedisStruct `json:"redis" yaml:"redis"`
 	Project   struct {
 		Name string `json:"name" yaml:"name" default:"社区商超"`
@@ -48,7 +48,14 @@ type Config struct {
 		// 缺失时 IP 定位接口返回未命中，不影响其他功能
 		DBPath string `json:"db_path" yaml:"db_path" default:"data/geoip/GeoLite2-City.mmdb"`
 	} `json:"geoip" yaml:"geoip"`
-	Wechat WechatConfig `json:"wechat" yaml:"wechat"`
+	Wechat   WechatConfig `json:"wechat" yaml:"wechat"`
+	Security struct {
+		// TrustedProxies 可信反向代理网段（CIDR 或单个 IP），决定 ClientIP 是否采信代理头
+		// 缺省为空＝不信任任何代理头，只认直连地址：伪造 X-Forwarded-For 绕过限流的口子由此封死
+		// nginx/caddy 与 gateway 同机或同网段反代时必须显式配置（如 ["127.0.0.1"]、["172.16.0.0/12"]），
+		// 否则限流、访问日志与 IP 定位会把所有用户合并成代理 IP（表现为整站共用一个限流桶）
+		TrustedProxies []string `json:"trusted_proxies" yaml:"trusted_proxies"`
+	} `json:"security" yaml:"security"`
 	SMS struct {
 		Provider     string `json:"provider" yaml:"provider" default:"aliyun"`
 		AccessKey    string `json:"access_key" yaml:"access_key"`

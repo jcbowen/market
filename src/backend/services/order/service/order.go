@@ -51,6 +51,45 @@ func (s *OrderService) WithRedis(client *redis.Client) *OrderService {
 	return s
 }
 
+// loadOrderItemCatalog 批量预取明细涉及的 SKU 与商品档案
+// 下单/试算原本逐行调用 GetSkuById + GetProduct（N 行 2N 次往返），改走两次批量 RPC 后
+// 整单固定 2 次往返；返回值以 ID 为键，重复 SKU 的多行共用同一份档案
+//
+// 参数：
+//   - ctx: 上下文
+//   - skuIDs: 明细 SKU ID 集合（可重复，product 侧会去重）
+//
+// 返回值：
+//   - map[int64]*product.SkuInfo: SKU ID -> SKU 档案
+//   - map[int64]*product.ProductInfo: 商品 ID -> 商品档案
+//   - error: RPC 失败（SKU/商品缺失由 product 侧整体报错，不会返回部分结果）
+//
+// 使用示例：
+//
+//	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, []int64{11, 12})
+func (s *OrderService) loadOrderItemCatalog(ctx context.Context, skuIDs []int64) (map[int64]*product.SkuInfo, map[int64]*product.ProductInfo, error) {
+	skuResp, err := grpcclient.ProductClient.BatchGetSkus(ctx, &product.BatchGetSkusReq{Ids: skuIDs})
+	if err != nil {
+		return nil, nil, fmt.Errorf("批量获取 SKU 失败: %w", err)
+	}
+	skuByID := make(map[int64]*product.SkuInfo, len(skuResp.List))
+	productIDs := make([]int64, 0, len(skuResp.List))
+	for _, sku := range skuResp.List {
+		skuByID[sku.Id] = sku
+		productIDs = append(productIDs, sku.ProductId)
+	}
+
+	productResp, err := grpcclient.ProductClient.BatchGetProducts(ctx, &product.BatchGetProductsReq{Ids: productIDs})
+	if err != nil {
+		return nil, nil, fmt.Errorf("批量获取商品失败: %w", err)
+	}
+	productByID := make(map[int64]*product.ProductInfo, len(productResp.List))
+	for _, p := range productResp.List {
+		productByID[p.Id] = p
+	}
+	return skuByID, productByID, nil
+}
+
 // CreateOrder 创建订单
 // 参数：
 //   - ctx: 上下文
@@ -110,26 +149,34 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	// 免配送费范围判定上下文（参与商品额计算用，见 calcFreeShipping）
 	var itemScopes []itemScope
 
+	// 明细商品预取：原先每行 2 次 RPC（SKU + 商品），N 行订单即 2N 次往返，
+	// 收银台整单尤其明显；收口为两次批量查询后按 ID 取内存结果。
+	// 批量查询任一 ID 缺失即整体报错，不会出现「部分明细算价」的金额/库存双口径偏差。
+	// 社区语境传 0（服务间内部调用约定），越权收口在网关与后台写接口侧
+	skuIDs := make([]int64, 0, len(req.Items))
+	for _, item := range req.Items {
+		skuIDs = append(skuIDs, item.SkuId)
+	}
+	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs)
+	if err != nil {
+		return nil, err
+	}
+	// 秒杀价按请求维度一次取回，明细侧查表（原先逐明细 ListFlashSales + GetFlashSale，N 行放大为 N×(1+K) 次 RPC）
+	flashPriceByID := s.loadFlashSalePrices(ctx, req.CommunityId)
+
 	for _, item := range req.Items {
 		if item.Quantity <= 0 || item.Quantity > 999 {
 			return nil, bizerr.New(codes.InvalidArgument, "单品购买数量须在 1~999 之间")
 		}
-		skuInfo, err := grpcclient.ProductClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: item.SkuId})
-		if err != nil {
-			return nil, fmt.Errorf("获取 SKU 失败: %w", err)
-		}
+		skuInfo := skuByID[item.SkuId]
 		if skuInfo.Stock < item.Quantity {
 			return nil, bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足", skuInfo.SkuCode))
 		}
-
-		productInfo, err := grpcclient.ProductClient.GetProduct(ctx, &product.GetProductReq{Id: skuInfo.ProductId})
-		if err != nil {
-			return nil, fmt.Errorf("获取商品失败: %w", err)
-		}
+		productInfo := productByID[skuInfo.ProductId]
 
 		// 优先使用生效的秒杀价
 		price := skuInfo.Price
-		if flashPrice, flashErr := s.getActiveFlashSalePrice(ctx, req.CommunityId, item.SkuId); flashErr == nil && flashPrice > 0 {
+		if flashPrice := flashPriceByID[item.SkuId]; flashPrice > 0 {
 			price = flashPrice
 		}
 
@@ -148,16 +195,16 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		totalAmount += totalPrice
 		itemScopes = append(itemScopes, itemScope{
 			productID:  skuInfo.ProductId,
-			categoryID: productInfo.Product.CategoryId,
+			categoryID: productInfo.CategoryId,
 			totalPrice: totalPrice,
 		})
 
 		orderItems = append(orderItems, &model.OrderItem{
 			ProductID:     skuInfo.ProductId,
 			SkuID:         item.SkuId,
-			ProductName:   productInfo.Product.Name,
+			ProductName:   productInfo.Name,
 			SpecName:      skuInfo.SpecName,
-			ProductImage:  productInfo.Product.CoverImage,
+			ProductImage:  productInfo.CoverImage,
 			Price:         price,
 			Quantity:      item.Quantity,
 			TotalPrice:    totalPrice,
@@ -327,12 +374,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 // 返回值：
 //   - error: 事务错误信息
 func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *model.Order, orderItems []*model.OrderItem, req *order.CreateOrderReq, userCouponID int64, source int32) error {
-	// 已成功扣减库存的商品下标：事务失败时逐项补偿释放（扣减在 product 服务已落库，
-	// 本地事务回滚不会同步回滚远端扣减）
-	deductedIdx := make([]int, 0, len(req.Items))
-	// 已成功扣减秒杀库存的商品下标：非秒杀商品在 product 侧 no-op 成功，同样进入列表
-	//（释放侧对无秒杀扣减日志的请求自动 no-op，多一次空 RPC 但行为无害）
-	flashDeductedIdx := make([]int, 0, len(req.Items))
+	// 整单库存收口为两次批量 RPC（主库存 + 秒杀库存），替代原先逐行各一次的 2N 次往返。
+	// 批量在 product 侧同一事务内完成：要么整单扣减成功，要么一条都没扣，
+	// 因此补偿只需按「是否已提交成功」整单回补，不再逐项追踪下标
+	stockItems := toStockItemQtys(req.Items)
+	var stockDeducted, flashDeducted bool
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(orderModel).Error; err != nil {
 			return err
@@ -343,27 +389,23 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 				return err
 			}
 		}
-		for i, item := range req.Items {
-			_, err := grpcclient.ProductClient.DeductStock(ctx, &product.DeductStockReq{
-				SkuId:    item.SkuId,
-				Quantity: item.Quantity,
-				OrderId:  orderModel.ID,
-			})
-			if err != nil {
-				return fmt.Errorf("扣减库存失败: %w", err)
-			}
-			deductedIdx = append(deductedIdx, i)
-
-			// 秒杀独立库存：命中秒杀价的商品在 product 侧自动识别扣减（无生效秒杀时 no-op）
-			if _, err = grpcclient.ProductClient.DeductFlashSaleStock(ctx, &product.DeductFlashSaleStockReq{
-				OrderId:  orderModel.ID,
-				SkuId:    item.SkuId,
-				Quantity: item.Quantity,
-			}); err != nil {
-				return fmt.Errorf("扣减秒杀库存失败: %w", err)
-			}
-			flashDeductedIdx = append(flashDeductedIdx, i)
+		if _, err := grpcclient.ProductClient.BatchDeductStock(ctx, &product.BatchDeductStockReq{
+			OrderId: orderModel.ID,
+			Items:   stockItems,
+		}); err != nil {
+			return fmt.Errorf("扣减库存失败: %w", err)
 		}
+		stockDeducted = true
+
+		// 秒杀独立库存：命中秒杀价的商品在 product 侧自动识别扣减（无生效秒杀时 no-op）
+		if _, err := grpcclient.ProductClient.BatchDeductFlashSaleStock(ctx, &product.BatchDeductFlashSaleStockReq{
+			OrderId: orderModel.ID,
+			Items:   stockItems,
+		}); err != nil {
+			return fmt.Errorf("扣减秒杀库存失败: %w", err)
+		}
+		flashDeducted = true
+
 		if userCouponID > 0 {
 			if _, err := grpcclient.ProductClient.UseCoupon(ctx, &product.UseCouponReq{
 				UserCouponId: userCouponID,
@@ -380,28 +422,25 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 		return s.createStatusLogTx(tx, orderModel.ID, 0, 1, logType, logOperator, "创建订单")
 	}); err != nil {
 		// 补偿路径：释放已扣减的库存，尽力而为不掩盖原错误；
-		// biz_no 按订单+SKU 独立，重复补偿重试仍被幂等约束拦截
-		for _, idx := range deductedIdx {
-			item := req.Items[idx]
-			if _, rErr := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
-				SkuId:    item.SkuId,
-				Quantity: item.Quantity,
-				OrderId:  orderModel.ID,
-				BizNo:    fmt.Sprintf("comp:%d:%d", orderModel.ID, item.SkuId),
+		// biz_no 用 comp:{orderID} 与取消/退款链路区分，重复补偿重试被幂等约束拦截
+		compBizNo := fmt.Sprintf("comp:%d", orderModel.ID)
+		if stockDeducted {
+			if _, rErr := grpcclient.ProductClient.BatchReleaseStock(ctx, &product.BatchReleaseStockReq{
+				OrderId: orderModel.ID,
+				BizNo:   compBizNo,
+				Items:   stockItems,
 			}); rErr != nil {
-				log.Printf("下单失败补偿释放库存失败（订单 %d, SKU %d）: %v", orderModel.ID, item.SkuId, rErr)
+				log.Printf("下单失败补偿释放库存失败（订单 %d）: %v", orderModel.ID, rErr)
 			}
 		}
 		// 秒杀库存同样在远端已提交：一并回补（非秒杀商品由 product 侧幂等日志判无后 no-op）
-		for _, idx := range flashDeductedIdx {
-			item := req.Items[idx]
-			if _, rErr := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
-				OrderId:  orderModel.ID,
-				SkuId:    item.SkuId,
-				Quantity: item.Quantity,
-				BizNo:    fmt.Sprintf("comp:%d:%d", orderModel.ID, item.SkuId),
+		if flashDeducted {
+			if _, rErr := grpcclient.ProductClient.BatchReleaseFlashSaleStock(ctx, &product.BatchReleaseFlashSaleStockReq{
+				OrderId: orderModel.ID,
+				BizNo:   compBizNo,
+				Items:   stockItems,
 			}); rErr != nil {
-				log.Printf("下单失败补偿释放秒杀库存失败（订单 %d, SKU %d）: %v", orderModel.ID, item.SkuId, rErr)
+				log.Printf("下单失败补偿释放秒杀库存失败（订单 %d）: %v", orderModel.ID, rErr)
 			}
 		}
 		// 优惠券核销同样在远端已提交：一并回补，保证换号重试时同一张券可再次使用
@@ -413,6 +452,21 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 		return err
 	}
 	return nil
+}
+
+// toStockItemQtys 把下单明细转换为库存批量操作项（SKU + 数量）
+//
+// 参数：
+//   - items: 下单商品明细
+//
+// 返回值：
+//   - []*product.StockItemQty: 批量库存操作项（同一 SKU 的多行由 product 侧聚合）
+func toStockItemQtys(items []*order.OrderItem) []*product.StockItemQty {
+	list := make([]*product.StockItemQty, 0, len(items))
+	for _, item := range items {
+		list = append(list, &product.StockItemQty{SkuId: item.SkuId, Quantity: item.Quantity})
+	}
+	return list
 }
 
 // isDuplicateOrderNoErr 判断错误是否为订单号唯一索引冲突（MySQL 1062 Duplicate entry）
@@ -715,24 +769,8 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
 			return err
 		}
-		for _, item := range items {
-			if _, err := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
-				SkuId:    item.SkuID,
-				Quantity: item.Quantity,
-				OrderId:  o.ID,
-				BizNo:    fmt.Sprintf("cancel:%d", o.ID),
-			}); err != nil {
-				return fmt.Errorf("释放库存失败: %w", err)
-			}
-			// 秒杀独立库存回补（非秒杀商品 no-op）
-			if _, err := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
-				OrderId:  o.ID,
-				SkuId:    item.SkuID,
-				Quantity: item.Quantity,
-				BizNo:    fmt.Sprintf("cancel:%d", o.ID),
-			}); err != nil {
-				return fmt.Errorf("释放秒杀库存失败: %w", err)
-			}
+		if err := releaseOrderStock(ctx, o.ID, items); err != nil {
+			return err
 		}
 
 		// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）
@@ -749,6 +787,67 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		closePendingPayments(ctx, req.Id)
 	}
 	return err
+}
+
+// releaseOrderStock 整单回补库存（C 端取消 / 后台取消 / 超时关单共用）
+// 取消整单时明细数量固定为全量，收口为两次批量 RPC（主库存 + 秒杀库存），
+// 替代原先逐行各一次共 2N 次往返；biz_no 统一为 cancel:{orderID}，
+// 幂等由 product 侧 order_id+sku_id+op_type+biz_no 唯一键保证，重复取消只生效一次。
+// 事务内调用：远端已提交的回补在本地事务回滚后无法撤回，故与扣减侧同样保持
+// 「批量成功即视为已回补」，失败直接返回错误由上层回滚整单取消。
+//
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//   - items: 订单明细
+//
+// 返回值：
+//   - error: 释放库存/秒杀库存失败
+func releaseOrderStock(ctx context.Context, orderID int64, items []*model.OrderItem) error {
+	stockItems := make([]*product.StockItemQty, 0, len(items))
+	for _, item := range items {
+		stockItems = append(stockItems, &product.StockItemQty{SkuId: item.SkuID, Quantity: item.Quantity})
+	}
+	return releaseStockBatch(ctx, orderID, stockItems, fmt.Sprintf("cancel:%d", orderID))
+}
+
+// releaseStockBatch 整批回补库存（主库存 + 秒杀库存各一次批量 RPC）
+// bizNo 为幂等业务号：取消用 cancel:{orderID}、退款用退款单号，
+// 由 product 侧 order_id+sku_id+op_type+biz_no 唯一键保证重复调用只生效一次。
+// 空明细直接返回（仅金额退无商品明细时不回补库存）。
+//
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//   - stockItems: 待回补的 SKU 数量清单（同一 SKU 多行由 product 侧聚合）
+//   - bizNo: 幂等业务号
+//
+// 返回值：
+//   - error: 释放库存/秒杀库存失败
+//
+// 使用示例：
+//
+//	err := releaseStockBatch(ctx, orderID, stockItems, refund.RefundNo)
+func releaseStockBatch(ctx context.Context, orderID int64, stockItems []*product.StockItemQty, bizNo string) error {
+	if len(stockItems) == 0 {
+		return nil
+	}
+	if _, err := grpcclient.ProductClient.BatchReleaseStock(ctx, &product.BatchReleaseStockReq{
+		OrderId: orderID,
+		BizNo:   bizNo,
+		Items:   stockItems,
+	}); err != nil {
+		return fmt.Errorf("释放库存失败: %w", err)
+	}
+	// 秒杀独立库存回补（非秒杀商品 product 侧自动 no-op）
+	if _, err := grpcclient.ProductClient.BatchReleaseFlashSaleStock(ctx, &product.BatchReleaseFlashSaleStockReq{
+		OrderId: orderID,
+		BizNo:   bizNo,
+		Items:   stockItems,
+	}); err != nil {
+		return fmt.Errorf("释放秒杀库存失败: %w", err)
+	}
+	return nil
 }
 
 // closePendingPayments 关闭订单的待支付支付单（订单取消后的收尾动作）
@@ -1051,24 +1150,8 @@ func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *mode
 	if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
 		return err
 	}
-	for _, item := range items {
-		if _, err := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
-			SkuId:    item.SkuID,
-			Quantity: item.Quantity,
-			OrderId:  o.ID,
-			BizNo:    fmt.Sprintf("cancel:%d", o.ID),
-		}); err != nil {
-			return fmt.Errorf("释放库存失败: %w", err)
-		}
-		// 秒杀独立库存回补（非秒杀商品 no-op）
-		if _, err := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
-			OrderId:  o.ID,
-			SkuId:    item.SkuID,
-			Quantity: item.Quantity,
-			BizNo:    fmt.Sprintf("cancel:%d", o.ID),
-		}); err != nil {
-			return fmt.Errorf("释放秒杀库存失败: %w", err)
-		}
+	if err := releaseOrderStock(ctx, o.ID, items); err != nil {
+		return err
 	}
 
 	// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）
@@ -1180,27 +1263,34 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 	return calculateDiscount(eligible, coupon), target.Id, nil
 }
 
-// getActiveFlashSalePrice 获取 SKU 在当前社区生效的秒杀价
-// 参数：
-//   - ctx: 上下文
-//   - communityID: 社区 ID
-//   - skuID: SKU ID
-//
-// 返回值：
-//   - float64: 秒杀价，无生效活动返回 0
-//   - error: 错误信息
-//
 // flashSalePriceEnabled 秒杀价开关：库存扣减与限购校验尚未实现，关闭防止超卖资损；
 // 待 DeductFlashStock + LimitPerUser 完整实现后置为 true
 const flashSalePriceEnabled = false
 
-func (s *OrderService) getActiveFlashSalePrice(ctx context.Context, communityID, skuID int64) (float64, error) {
+// loadFlashSalePrices 一次取回社区当前生效的秒杀价表
+// 原先按明细逐条查价：每条明细都要 ListFlashSales + 逐个生效活动 GetFlashSale，
+// N 行明细即 N×(1+K) 次 RPC；本函数按请求维度只取一次，调用方用 sku_id 查表。
+// 取数失败返回空表（与原先「flashErr 忽略、按原价成交」同口径，不阻断下单）。
+//
+// 参数：
+//   - ctx: 上下文
+//   - communityID: 社区 ID
+//
+// 返回值：
+//   - map[int64]float64: SKU ID -> 生效秒杀价；无生效活动或开关关闭时为空表
+//
+// 使用示例：
+//
+//	prices := s.loadFlashSalePrices(ctx, communityID)
+//	price := prices[skuID] // 未命中为 0，调用方按 >0 判定
+func (s *OrderService) loadFlashSalePrices(ctx context.Context, communityID int64) map[int64]float64 {
+	prices := make(map[int64]float64)
 	if !flashSalePriceEnabled {
-		return 0, nil
+		return prices
 	}
 	fsResp, err := grpcclient.ProductClient.ListFlashSales(ctx, &product.ListFlashSalesReq{CommunityId: communityID})
 	if err != nil {
-		return 0, err
+		return prices
 	}
 	now := time.Now()
 	for _, fs := range fsResp.List {
@@ -1217,12 +1307,13 @@ func (s *OrderService) getActiveFlashSalePrice(ctx context.Context, communityID,
 			continue
 		}
 		for _, item := range detail.Items {
-			if item.SkuId == skuID {
-				return item.FlashPrice, nil
+			// 同一 SKU 命中多个生效活动时以先遍历到的活动为准，与逐条查价口径一致
+			if _, ok := prices[item.SkuId]; !ok {
+				prices[item.SkuId] = item.FlashPrice
 			}
 		}
 	}
-	return 0, nil
+	return prices
 }
 
 // calculateFullReduction 计算当前社区生效的满减优惠
@@ -1418,10 +1509,15 @@ func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.G
 
 	// 基础查询（Join + 过滤条件）供总数与分页两处复用，避免重复拼装导致口径漂移
 	baseQuery := func() *gorm.DB {
-		return s.db.GetDb().WithContext(ctx).
+		q := s.db.GetDb().WithContext(ctx).
 			Table("order_items").
 			Joins("JOIN orders ON orders.id = order_items.order_id").
 			Where("orders.user_id = ? AND orders.status IN ?", req.UserId, validStatuses)
+		// 社区语境：管理端仅统计本社区订单（超管/C 端本人查询传 0 表示不过滤）
+		if req.CommunityId > 0 {
+			q = q.Where("orders.community_id = ?", req.CommunityId)
+		}
+		return q
 	}
 
 	// 分页模式下先查商品总数（去重商品 ID），供前端计算页数

@@ -90,7 +90,12 @@ function packageRelease() {
   copyIfExists('deps-tools.mjs');
   copyIfExists('download-geoip.mjs');
   if (fs.existsSync(path.join(ROOT_DIR, 'deploy'))) {
-    fs.cpSync(path.join(ROOT_DIR, 'deploy'), path.join(DIST_DIR, 'deploy'), { recursive: true });
+    // init.dev.sql 是开发种子数据（超管 admin/admin123、C 端固定验证码 123456），
+    // 不随发布包分发：生产环境一旦被手工导入即得到已知超管口令
+    fs.cpSync(path.join(ROOT_DIR, 'deploy'), path.join(DIST_DIR, 'deploy'), {
+      recursive: true,
+      filter: (src) => path.basename(src) !== 'init.dev.sql',
+    });
   }
 
   // 生成版本信息

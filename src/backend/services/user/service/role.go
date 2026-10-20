@@ -41,6 +41,7 @@ type RoleService struct {
 // NewRoleService 创建角色业务服务
 // 参数：
 //   - db: MySQL 实例
+//
 // 返回：
 //   - *RoleService: 角色业务服务实例
 func NewRoleService(db *mysql.Instance) *RoleService {
@@ -80,6 +81,7 @@ func (s *RoleService) ListRoles(ctx context.Context, communityID int64, includeG
 // 参数：
 //   - ctx: 上下文
 //   - id: 角色 ID
+//
 // 返回：
 //   - *model.Role: 角色模型
 //   - error: 错误信息
@@ -96,6 +98,7 @@ func (s *RoleService) GetRoleByID(ctx context.Context, id int64) (*model.Role, e
 // 参数：
 //   - ctx: 上下文
 //   - ids: 角色 ID 列表
+//
 // 返回：
 //   - map[int64]*model.Role: 角色 ID → 角色
 //   - error: 错误信息
@@ -120,6 +123,7 @@ func (s *RoleService) GetRolesByIDs(ctx context.Context, ids []int64) (map[int64
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建请求
+//
 // 返回：
 //   - *model.Role: 角色模型
 //   - error: 错误信息
@@ -146,12 +150,17 @@ func (s *RoleService) CreateRole(ctx context.Context, req *user.CreateRoleReq) (
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新请求
+//
 // 返回：
 //   - *model.Role: 角色模型
 //   - error: 错误信息
 func (s *RoleService) UpdateRole(ctx context.Context, req *user.UpdateRoleReq) (*model.Role, error) {
 	r, err := s.GetRoleByID(ctx, req.Id)
 	if err != nil {
+		return nil, err
+	}
+	// 服务端第二道防线：网关已按社区语境筛过，这里再校验，防止其他调用方绕过网关改他社区角色权限
+	if err := EnsureScope(req.CommunityId, r.CommunityID, "角色"); err != nil {
 		return nil, err
 	}
 
@@ -182,11 +191,15 @@ func (s *RoleService) UpdateRole(ctx context.Context, req *user.UpdateRoleReq) (
 // 参数：
 //   - ctx: 上下文
 //   - id: 角色 ID
+//
 // 返回：
 //   - error: 错误信息
-func (s *RoleService) DeleteRole(ctx context.Context, id int64) error {
+func (s *RoleService) DeleteRole(ctx context.Context, id, communityId int64) error {
 	r, err := s.GetRoleByID(ctx, id)
 	if err != nil {
+		return err
+	}
+	if err := EnsureScope(communityId, r.CommunityID, "角色"); err != nil {
 		return err
 	}
 	if r.IsBuiltinCommunityAdmin() {
@@ -240,6 +253,7 @@ func (s *RoleService) GetBuiltinCommunityAdminRole(ctx context.Context, communit
 // 参数：
 //   - ctx: 上下文
 //   - communityID: 社区 ID
+//
 // 返回：
 //   - *model.Role: 内置角色
 //   - error: 错误信息
@@ -274,6 +288,7 @@ func (s *RoleService) EnsureCommunityAdminRole(ctx context.Context, communityID 
 // ToRoleInfo 将角色模型转换为 proto 角色信息
 // 参数：
 //   - r: 角色模型
+//
 // 返回：
 //   - *user.RoleInfo: proto 角色信息
 func ToRoleInfo(r *model.Role) *user.RoleInfo {

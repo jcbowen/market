@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { useMessage, type UploadCustomRequestOptions } from 'naive-ui'
 import {
   CheckmarkOutline,
@@ -165,6 +165,17 @@ const previewItem = ref<AttachmentItem | null>(null)
 
 let keywordTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * 请求序号：防抖搜索与翻页交错时，只采用最后一次请求的响应，
+ * 否则慢响应会后到并覆盖新结果，列表显示与筛选条件不一致
+ */
+let loadSeq = 0
+
+onUnmounted(() => {
+  if (keywordTimer) clearTimeout(keywordTimer)
+  keywordTimer = null
+})
+
 watch(
   () => props.show,
   (v) => {
@@ -206,6 +217,7 @@ function reload() {
  * 按上传时间倒序，筛选条件含关键字与时间范围
  */
 async function loadList() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const params: Record<string, unknown> = { page: page.value, page_size: pageSize }
@@ -218,11 +230,12 @@ async function loadList() {
       params.end_time = dayBoundary(end, true)
     }
     const res = await listAttachments(params)
+    if (seq !== loadSeq) return
     // proto3 omitempty：空列表时 total/list 字段可能缺省，需兜底
     list.value = res.data.data.list || []
     total.value = res.data.data.total || 0
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 

@@ -2,11 +2,14 @@ services:
   # ===== 基础设施 =====
   # 口令一律经项目根目录 .env 注入（compose 自动读取，.env 不入 git），
   # 缺失时直接报错拒绝启动，防止弱口令静默上线
+  # 全部服务统一 restart: unless-stopped：宿主机重启或 OOM 后自愈，
+  # 与 docs/需求文档/10-部署方案 中 all-in-one 的 --restart unless-stopped 口径一致
   # 微服务容器以非 root（UID 10001）运行：Linux 部署时宿主写目录需执行
   # chown -R 10001:10001 bin/runtime bin/attachment（Docker Desktop 无需处理）
   mysql:
     image: mysql:8.0
     container_name: market-mysql
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: market
@@ -26,6 +29,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: market-redis
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD}
@@ -54,12 +58,13 @@ services:
         # 传入镜像供 HEALTHCHECK 探测正确端口
         SERVICE_PORT: 50051
     container_name: market-user
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
       mysql:
         condition: service_healthy
@@ -78,12 +83,13 @@ services:
         SERVICE_NAME: product
         SERVICE_PORT: 50052
     container_name: market-product
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
       mysql:
         condition: service_healthy
@@ -105,12 +111,13 @@ services:
         SERVICE_NAME: order
         SERVICE_PORT: 50053
     container_name: market-order
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
       mysql:
         condition: service_healthy
@@ -129,12 +136,13 @@ services:
         SERVICE_NAME: cart
         SERVICE_PORT: 50054
     container_name: market-cart
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
       redis:
         condition: service_healthy
@@ -153,12 +161,13 @@ services:
         SERVICE_NAME: payment
         SERVICE_PORT: 50055
     container_name: market-payment
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
       mysql:
         condition: service_healthy
@@ -174,12 +183,19 @@ services:
       context: .
       dockerfile: src/backend/deploy/Dockerfile.gateway
     container_name: market-gateway
+    restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # 可信反向代理网段（逗号分隔的 CIDR 或单个 IP），仅 gateway 需要（ClientIP/限流只在网关侧）。
+      # 生产为宿主机 nginx 反代容器发布端口时，必须填 compose 网络实际网段
+      # （docker network inspect market_default 取 Configurations.Subnet），否则限流与访问日志
+      # 会把所有用户合并成网桥地址；留空即不采信任何代理头（按直连 IP 处理）；
+      # 填 0.0.0.0/0 等于允许伪造 X-Forwarded-For 绕过限流，禁止。
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     depends_on:
       user-service:
         condition: service_healthy

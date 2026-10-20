@@ -37,11 +37,7 @@ func NewReportService(db *mysql.Instance) *ReportService {
 //   - *product.GetInventorySummaryReportResp: 分页汇总行
 //   - error: 错误信息
 func (s *ReportService) GetInventorySummaryReport(ctx context.Context, req *product.GetInventorySummaryReportReq) (*product.GetInventorySummaryReportResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize, offset := reportPage(req.Pagination)
 	start, end := reportRange(req.StartDate, req.EndDate)
 
 	type summaryRow struct {
@@ -79,15 +75,26 @@ func (s *ReportService) GetInventorySummaryReport(ctx context.Context, req *prod
 		WHERE s.community_id = ? AND s.status = 1`
 
 	args := []interface{}{start, end, start, end, start, end, req.CommunityId}
+	keywordSQL := ""
+	var keywordArgs []interface{}
 	if req.Keyword != "" {
-		baseWhere += " AND (p.name LIKE ? OR s.sku_code LIKE ?)"
+		keywordSQL = " AND (p.name LIKE ? OR s.sku_code LIKE ?)"
 		kw := "%" + req.Keyword + "%"
-		args = append(args, kw, kw)
+		keywordArgs = []interface{}{kw, kw}
 	}
+	args = append(args, keywordArgs...)
 
+	// 计数只依赖基础表：期初/期末两个相关子查询与入出聚合子查询都是 LEFT JOIN，
+	// 不会改变行数（agg 已按 sku_id 分组，每 SKU 至多一行），留在 COUNT 里
+	// 等于把「每 SKU 两次相关子查询」的费用白付一遍——报表页每翻一页都要付两遍
+	countQuery := `
+		FROM product_skus s
+		INNER JOIN products p ON p.id = s.product_id
+		WHERE s.community_id = ? AND s.status = 1` + keywordSQL
 	var total int64
-	countArgs := append([]interface{}{}, args...)
-	if err := s.db.GetDb().WithContext(ctx).Raw("SELECT COUNT(*) "+baseWhere, countArgs...).Scan(&total).Error; err != nil {
+	if err := s.db.GetDb().WithContext(ctx).
+		Raw("SELECT COUNT(*) "+countQuery, append([]interface{}{req.CommunityId}, keywordArgs...)...).
+		Scan(&total).Error; err != nil {
 		return nil, err
 	}
 
@@ -99,7 +106,7 @@ func (s *ReportService) GetInventorySummaryReport(ctx context.Context, req *prod
 			COALESCE(lr.after_stock, s.stock) AS closing_stock,
 			s.cost_price, s.price` + baseWhere + `
 		ORDER BY s.id ASC LIMIT ? OFFSET ?`
-	args = append(args, pageSize, (page-1)*pageSize)
+	args = append(args, pageSize, offset)
 
 	var rows []summaryRow
 	if err := s.db.GetDb().WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
@@ -140,11 +147,7 @@ func (s *ReportService) GetInventorySummaryReport(ctx context.Context, req *prod
 //   - *product.GetProfitReportResp: 分页毛利行
 //   - error: 错误信息
 func (s *ReportService) GetProfitReport(ctx context.Context, req *product.GetProfitReportReq) (*product.GetProfitReportResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize, offset := reportPage(req.Pagination)
 	start, end := reportRange(req.StartDate, req.EndDate)
 
 	type profitRow struct {
@@ -157,16 +160,20 @@ func (s *ReportService) GetProfitReport(ctx context.Context, req *product.GetPro
 		CostPrice   float64 `gorm:"column:cost_price"`
 	}
 
+	// 销售聚合下推为 INNER JOIN + HAVING：原先 LEFT JOIN 后在 WHERE 里过滤 COALESCE(agg.q,0)>0，
+	// 派生表要把期间内所有流水的 SKU 全部物化再逐行判空；
+	// 改成聚合内 HAVING 后派生表只剩「期间有销量」的 SKU，连接基数与两次查询的扫描量同时下降
 	baseWhere := `
 		FROM product_skus s
 		INNER JOIN products p ON p.id = s.product_id
-		LEFT JOIN (
+		INNER JOIN (
 			SELECT sku_id, SUM(-quantity) AS q
 			FROM stock_records
 			WHERE type = 2 AND ref_no = '' AND created_at >= ? AND created_at <= ?
 			GROUP BY sku_id
+			HAVING SUM(-quantity) > 0
 		) agg ON agg.sku_id = s.id
-		WHERE s.community_id = ? AND s.status = 1 AND COALESCE(agg.q, 0) > 0`
+		WHERE s.community_id = ? AND s.status = 1`
 
 	args := []interface{}{start, end, req.CommunityId}
 	if req.Keyword != "" {
@@ -183,9 +190,9 @@ func (s *ReportService) GetProfitReport(ctx context.Context, req *product.GetPro
 
 	query := `
 		SELECT s.id AS sku_id, s.sku_code, s.spec_name, p.name AS product_name,
-			COALESCE(agg.q, 0) AS quantity, s.price, s.cost_price` + baseWhere + `
+			agg.q AS quantity, s.price, s.cost_price` + baseWhere + `
 		ORDER BY quantity DESC LIMIT ? OFFSET ?`
-	args = append(args, pageSize, (page-1)*pageSize)
+	args = append(args, pageSize, offset)
 
 	var rows []profitRow
 	if err := s.db.GetDb().WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
@@ -215,6 +222,40 @@ func (s *ReportService) GetProfitReport(ctx context.Context, req *product.GetPro
 			PageSize: int32(pageSize),
 		},
 	}, nil
+}
+
+// reportMaxPageSize 报表单页行数上限
+// 报表走 Raw SQL 且带 LIMIT/OFFSET，不做封顶时调用方可用 page_size=100000
+// 让每行的相关子查询（期初/期末流水定位）执行十万次，单请求即可打垮数据库
+const reportMaxPageSize = 100
+
+// reportPage 归一化报表分页参数
+// 参数：
+//   - pg: 请求分页（可为 nil，取缺省 1/10）
+//
+// 返回值：
+//   - int: 页码（>=1）
+//   - int: 每页行数（1~reportMaxPageSize）
+//   - int: OFFSET
+//
+// 使用示例：
+//
+//	page, pageSize, offset := reportPage(req.Pagination)
+func reportPage(pg *common.Pagination) (int, int, int) {
+	page, pageSize := 1, 10
+	if pg != nil {
+		page, pageSize = int(pg.Page), int(pg.PageSize)
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > reportMaxPageSize {
+		pageSize = reportMaxPageSize
+	}
+	return page, pageSize, (page - 1) * pageSize
 }
 
 // reportRange 归一化报表时间范围（空值回退：近 30 天）

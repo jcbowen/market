@@ -32,8 +32,7 @@ func NewProductHandler(productClient product.ProductServiceClient) *ProductHandl
 // 参数：
 //   - c: gin 上下文
 func (h *ProductHandler) ListProducts(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	communityID, _ := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64)
 	categoryID, _ := strconv.ParseInt(c.DefaultQuery("category_id", "0"), 10, 64)
 	// status 透传：C 端传 status=1 只看上架商品；缺省 0 时服务端仅排除删除态
@@ -248,15 +247,11 @@ func (h *ProductHandler) ListFlashSales(c *gin.Context) {
 
 		items := make([]gin.H, 0, len(detail.Items))
 		for _, it := range detail.Items {
-			productID := int64(0)
-			sku, skuErr := h.productClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: it.SkuId})
-			if skuErr == nil && sku != nil {
-				productID = sku.ProductId
-			}
 			items = append(items, gin.H{
 				"id":             it.Id,
 				"sku_id":         it.SkuId,
-				"product_id":     productID,
+				// product_id 由秒杀服务随 SKU 一并回填，无需逐行再查一次 SKU
+				"product_id":     it.ProductId,
 				"product_name":   it.ProductName,
 				"spec_name":      it.SpecName,
 				"flash_price":    it.FlashPrice,

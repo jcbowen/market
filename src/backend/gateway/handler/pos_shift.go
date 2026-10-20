@@ -147,21 +147,43 @@ func (h *AdminHandler) listShifts(c *gin.Context, operatorID int64, page, pageSi
 	})
 }
 
-// parsePageParams 解析分页参数（page/page_size，缺省 1/10）
+// maxPageSize 网关列表接口单页条数上限
+// 所有分页解析必须走 parsePageParams 收口：不设上限时调用方可用 page_size=100000
+// 把「列表」变成全表捞取 + 全量序列化，单请求即可打垮服务与网关内存
+const maxPageSize = 100
+
+// parsePageParams 解析分页参数（page/page_size）并封顶单页条数
+// 越界处理：page<1 归 1；page_size<=0 或无法解析回落缺省值；
+// page_size 超上限时截断为上限而非重置为缺省值——请求大页量的调用方（如导出）
+// 若突然只拿到 10 条会出现分页口径错乱。
+//
 // 参数：
 //   - c: gin 上下文
+//   - def: page_size 缺省值，省略时为 10
 //
 // 返回值：
-//   - int: 页码
-//   - int: 每页条数
-func parsePageParams(c *gin.Context) (int, int) {
+//   - int: 页码（>=1）
+//   - int: 每页条数（1~maxPageSize）
+//
+// 使用示例：
+//
+//	page, pageSize := parsePageParams(c)     // 缺省 10
+//	page, pageSize := parsePageParams(c, 20) // 缺省 20
+func parsePageParams(c *gin.Context, def ...int) (int, int) {
+	defaultSize := 10
+	if len(def) > 0 && def[0] > 0 {
+		defaultSize = def[0]
+	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	pageSize, err := strconv.Atoi(c.DefaultQuery("page_size", strconv.Itoa(defaultSize)))
 	if page <= 0 {
 		page = 1
 	}
-	if pageSize <= 0 || pageSize > 100 {
-		pageSize = 10
+	if err != nil || pageSize <= 0 {
+		pageSize = defaultSize
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
 	}
 	return page, pageSize
 }

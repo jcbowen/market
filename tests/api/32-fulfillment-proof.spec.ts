@@ -1,10 +1,12 @@
 import { test, expect, type Playwright } from '@playwright/test';
 import {
   clientLogin,
+  createFulfillerStaff,
   newAdminContext,
   newAuthedRequest,
   pickSku,
   ensureStock,
+  removeFulfillerStaff,
   assertOk,
   asList,
   type ApiResponse,
@@ -18,7 +20,10 @@ import { uniquePhone } from '../helpers/data';
  * 覆盖：后台指派 → 开始配送 → 送达拍照（强制 1~N 张）→
  *       C 端订单详情可见签收凭证（delivery_proof_images）与配送员姓名快照（delivery_user_name）；
  *       后台订单详情同样可见（需求：订单列表/详情展示配送员与签收凭证图片）
- * 前置：履约人员与买家均为 C 端账号；履约接口要求操作者为本社区履约人员
+ * 前置：履约人员与买家均为 C 端账号；履约身份 = 本社区任职且绑定会员的员工
+ *       （is_fulfiller 标记已废弃并在启动时 DropColumn，后台无独立履约开关接口），
+ *       故身份通过 createFulfillerStaff 造、结束后解绑回收。
+ *       造数失败一律抛错或让用例失败，不再 try/catch 置空后 test.skip。
  */
 
 const PROOF_IMAGES = ['https://cdn.example.com/proof/auto-32-1.jpg', 'https://cdn.example.com/proof/auto-32-2.jpg'];
@@ -47,6 +52,8 @@ async function newClientUser(playwright: Playwright): Promise<ClientLoginInfo> {
 
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
 let fulfiller: ClientLoginInfo | null = null;
+/** 绑定履约会员的员工账号 ID（创建用例写入，afterAll 回收） */
+let staffId = 0;
 let buyerToken = '';
 let buyerCommunityId = 0;
 let sku: SkuRef | null = null;
@@ -58,18 +65,15 @@ test.beforeAll(async ({ playwright }) => {
   buyerCommunityId = buyer.user.community_id;
   const admin = await newAdminContext(playwright, undefined, undefined, buyerCommunityId);
   adminApi = admin.api;
-  try {
-    sku = await pickSku(adminApi, undefined, buyerCommunityId);
-    await ensureStock(adminApi, sku.id, 100);
-  } catch {
-    sku = null;
-  }
+  // 不包 try/catch：环境无在售 SKU 或补库存失败时必须让整轮红
+  sku = await pickSku(adminApi, undefined, buyerCommunityId);
+  await ensureStock(adminApi, sku.id, 100);
 });
 
 test.afterAll(async () => {
-  // 恢复履约账号为普通用户
-  if (adminApi && fulfiller) {
-    await adminApi.put(`/api/v1/admin/users/${fulfiller.user.id}/fulfiller`, { data: { is_fulfiller: false } });
+  // 回收本轮员工：解绑会员（履约身份必须即时失效）后尽力删除账号
+  if (adminApi && staffId) {
+    for (const warn of await removeFulfillerStaff(adminApi, staffId)) console.warn(`[32] ${warn}`);
   }
   await adminApi?.dispose();
 });
@@ -79,7 +83,6 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
   let fulfillOrderId = 0;
 
   test('履约人员设置昵称（姓名快照取昵称，直登新号默认无昵称）', async ({ playwright }) => {
-    test.skip(!fulfiller, '履约账号未创建');
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       const resp = await fApi.put('/api/v1/user/profile', {
@@ -92,17 +95,11 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
     }
   });
 
-  test('后台设置履约人员', async () => {
-    test.skip(!fulfiller, '履约账号未创建');
-    const resp = await adminApi.put(`/api/v1/admin/users/${fulfiller!.user.id}/fulfiller`, {
-      data: { is_fulfiller: true },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `设置履约人员失败: ${body.message}`).toBe(0);
+  test('创建员工并绑定履约会员（即成为本社区履约人员）', async () => {
+    staffId = await createFulfillerStaff(adminApi, buyerCommunityId, fulfiller!.user.id);
   });
 
   test('买家下配送单并现金支付', async ({ playwright }) => {
-    test.skip(!sku || !buyerToken, '环境缺 SKU 或买家');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const addrResp = (await (await buyerApi.post('/api/v1/user/addresses', {
@@ -132,7 +129,6 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
   });
 
   test('后台指派配送员 → 详情可见配送员姓名快照', async () => {
-    test.skip(!orderId || !fulfiller, '订单或履约账号未就绪');
     const assign = (await (await adminApi.put(`/api/v1/admin/orders/${orderId}/assign-delivery`, {
       data: { delivery_user_id: fulfiller!.user.id },
     })).json()) as ApiResponse;
@@ -144,7 +140,6 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
   });
 
   test('履约工作台开始配送', async ({ playwright }) => {
-    test.skip(!orderId || !fulfiller, '订单或履约账号未就绪');
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       const listResp = (await (await fApi.get('/api/v1/fulfillment/orders', {
@@ -162,7 +157,6 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
   });
 
   test('送达拍照完成（2 张凭证）', async ({ playwright }) => {
-    test.skip(!fulfillOrderId, '工作台订单未定位');
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       const resp = await fApi.post(`/api/v1/fulfillment/orders/${fulfillOrderId}/complete-delivery`, {
@@ -176,7 +170,6 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
   });
 
   test('C 端订单详情可见签收凭证与配送员姓名快照', async ({ playwright }) => {
-    test.skip(!orderId, '订单未创建');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const detail = (await (await buyerApi.get(`/api/v1/orders/${orderId}`)).json()) as ApiResponse<{
@@ -194,7 +187,6 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
   });
 
   test('后台订单详情同样可见签收凭证与配送员姓名', async () => {
-    test.skip(!orderId, '订单未创建');
     const detail = (await (await adminApi.get(`/api/v1/admin/orders/${orderId}`)).json()) as ApiResponse<{
       status: number;
       delivery_user_name?: string;
@@ -205,3 +197,4 @@ test.describe.serial('签收凭证与配送员姓名快照', () => {
     expect(detail.data?.delivery_proof_images).toEqual(PROOF_IMAGES);
   });
 });
+

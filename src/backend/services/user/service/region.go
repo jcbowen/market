@@ -12,6 +12,7 @@ import (
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -304,7 +305,7 @@ func (s *RegionService) GetRegionUpdateTask(ctx context.Context, id int64) (*mod
 }
 
 // ApplyRegionUpdateTask 将已完成任务的差异覆盖入库
-// 事务内执行：新增直接插入；更名更新名称；停用软标记（不做物理删除，
+// 事务内执行：新增批量插入；更名按主键 code 整批 upsert；停用软标记（不做物理删除，
 // 避免业务表已引用的区划代码悬空）；全程幂等（applied 标记防重复执行）
 // 参数：
 //   - ctx: 上下文
@@ -336,10 +337,10 @@ func (s *RegionService) ApplyRegionUpdateTask(ctx context.Context, id int64) err
 	}
 
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 批量插入时 base 的 BeforeCreate 钩子不生效（Dest 为 slice），
+		// 显式赋值避免 created_at/updated_at 零值空串写入 datetime 报 1292
+		now := time.Now().Format("2006-01-02 15:04:05")
 		if len(added) > 0 {
-			// 批量插入时 base 的 BeforeCreate 钩子不生效（Dest 为 slice），
-			// 显式赋值避免 created_at/updated_at 零值空串写入 datetime 报 1292
-			now := time.Now().Format("2006-01-02 15:04:05")
 			rows := make([]*model.Region, 0, len(added))
 			for _, item := range added {
 				rows = append(rows, &model.Region{
@@ -356,15 +357,27 @@ func (s *RegionService) ApplyRegionUpdateTask(ctx context.Context, id int64) err
 				return fmt.Errorf("写入新增区划失败: %w", err)
 			}
 		}
-		for _, item := range updated {
-			updates := map[string]interface{}{
-				"name":        item.NewName,
-				"parent_code": item.ParentCode,
-				"level":       item.Level,
-				"status":      model.RegionStatusActive,
+		if len(updated) > 0 {
+			// 更名差异整批 upsert（主键 code 冲突则覆盖）：一条语句替代逐条 UPDATE，
+			// 避免全量校准数千条差异时逐条往返；行被并发删除时按远端数据补回，
+			// 与「以远端为准覆盖」语义一致；created_at 不参与覆盖，保留原创建时间
+			rows := make([]*model.Region, 0, len(updated))
+			for _, item := range updated {
+				rows = append(rows, &model.Region{
+					Code:       item.Code,
+					Name:       item.NewName,
+					ParentCode: item.ParentCode,
+					Level:      item.Level,
+					Status:     model.RegionStatusActive,
+					CreatedAt:  now,
+					UpdatedAt:  now,
+				})
 			}
-			if err := tx.Model(&model.Region{}).Where("code = ?", item.Code).Updates(updates).Error; err != nil {
-				return fmt.Errorf("更新区划 %s 失败: %w", item.Code, err)
+			if err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "code"}},
+				DoUpdates: clause.AssignmentColumns([]string{"name", "parent_code", "level", "status", "updated_at"}),
+			}).Create(&rows).Error; err != nil {
+				return fmt.Errorf("更新区划失败: %w", err)
 			}
 		}
 		if len(removed) > 0 {

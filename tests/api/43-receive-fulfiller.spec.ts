@@ -1,12 +1,13 @@
 import { test, expect, type Playwright } from '@playwright/test';
 import {
   clientLogin,
+  createFulfillerStaff,
   newAdminContext,
   newAuthedRequest,
   pickSku,
   ensureStock,
+  removeFulfillerStaff,
   assertOk,
-  asList,
   type ApiResponse,
   type ClientLoginInfo,
   type SkuRef,
@@ -19,10 +20,13 @@ import { uniquePhone } from '../helpers/data';
  *   - 后台发货 POST /admin/orders/:id/ship（物流公司/单号必填，2→4）
  *   - C 端确认收货 POST /orders/:id/receive 正向路径（4→5）
  *   - 负向：待支付/未发货单确认收货被状态机拒绝；重复确认收货被拒
- *   - 履约身份失效立即性：取消履约标记后 fulfillment-status 即时 false，
- *     工作台查单/开始配送立即 NoPermission
+ *   - 履约身份失效立即性：解绑员工与会员的绑定后 fulfillment-status 即时 false，
+ *     工作台查单/开始配送立即无权限
  * 说明：配送单（delivery_type=2）承载发货与收货链路；履约正向协同已在 16 号覆盖，
- *       本模块聚焦后台发货口径与身份撤销的即时生效
+ *       本模块聚焦后台发货口径与身份撤销的即时生效。
+ *       履约人员 = 本社区任职且绑定会员的员工（is_fulfiller 标记已废弃并在启动时 DropColumn），
+ *       故身份造数走 helpers/api.ts 的 createFulfillerStaff，撤销走解绑。
+ *       造数失败一律抛错让整轮红，不再 try/catch 置空后 test.skip（那会让链路坏了也显示绿）。
  */
 
 interface OrderResult {
@@ -82,6 +86,7 @@ async function createPaidDeliveryOrder(
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
 let buyerToken = '';
 let fulfiller: ClientLoginInfo | null = null;
+let staffId = 0;
 let sku: SkuRef | null = null;
 let addressId = 0;
 
@@ -91,21 +96,23 @@ test.beforeAll(async ({ playwright }) => {
   fulfiller = await newClientUser(playwright);
   const admin = await newAdminContext(playwright, undefined, undefined, buyer.user.community_id);
   adminApi = admin.api;
+  // 造数不再包 try/catch：SKU、库存、地址任一步失败都必须让整轮红，
+  // 静默置 null 会让后面的用例集体 skip，链路坏了也报绿
+  sku = await pickSku(adminApi, undefined, buyer.user.community_id);
+  await ensureStock(adminApi, sku.id, 200);
+  const buyerApi = await newAuthedRequest(playwright, buyerToken);
   try {
-    sku = await pickSku(adminApi, undefined, buyer.user.community_id);
-    await ensureStock(adminApi, sku.id, 200);
-    const buyerApi = await newAuthedRequest(playwright, buyerToken);
-    try {
-      addressId = await createAddress(buyerApi);
-    } finally {
-      await buyerApi.dispose();
-    }
-  } catch {
-    sku = null;
+    addressId = await createAddress(buyerApi);
+  } finally {
+    await buyerApi.dispose();
   }
 });
 
 test.afterAll(async () => {
+  // 回收本轮员工：解绑会员（履约身份必须即时失效，否则下一轮误判）后尽力删除账号
+  if (adminApi && staffId) {
+    for (const warn of await removeFulfillerStaff(adminApi, staffId)) console.warn(`[43] ${warn}`);
+  }
   await adminApi?.dispose();
 });
 
@@ -113,7 +120,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   let orderId = 0;
 
   test('1. 买家下配送单并现金支付（status=2）', async ({ playwright }) => {
-    test.skip(!sku || !addressId, '环境缺 SKU 或地址');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       orderId = await createPaidDeliveryOrder(buyerApi, sku!, addressId, true);
@@ -124,7 +130,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   });
 
   test('2. 待发货单 C 端确认收货被拒', async ({ playwright }) => {
-    if (!orderId) test.skip(true, '订单未创建');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const resp = await buyerApi.post(`/api/v1/orders/${orderId}/receive`, { data: {} });
@@ -136,7 +141,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   });
 
   test('3. 发货缺物流公司被拒', async () => {
-    if (!orderId) test.skip(true, '订单未创建');
     const resp = await adminApi.post(`/api/v1/admin/orders/${orderId}/ship`, {
       data: { express_company: '', express_no: 'SF1234567890' },
     });
@@ -145,7 +149,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   });
 
   test('4. 发货缺物流单号被拒', async () => {
-    if (!orderId) test.skip(true, '订单未创建');
     const resp = await adminApi.post(`/api/v1/admin/orders/${orderId}/ship`, {
       data: { express_company: '顺丰速运', express_no: '' },
     });
@@ -154,7 +157,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   });
 
   test('5. 后台发货成功（2→4）', async () => {
-    if (!orderId) test.skip(true, '订单未创建');
     const resp = await adminApi.post(`/api/v1/admin/orders/${orderId}/ship`, {
       data: { express_company: '顺丰速运', express_no: 'SF43AUTO0001', remark: 'AUTO-TEST 发货' },
     });
@@ -164,7 +166,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   });
 
   test('6. 买家确认收货成功（4→5）', async ({ playwright }) => {
-    if (!orderId) test.skip(true, '订单未创建');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const resp = await buyerApi.post(`/api/v1/orders/${orderId}/receive`, { data: {} });
@@ -177,7 +178,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   });
 
   test('7. 重复确认收货被状态机拒绝', async ({ playwright }) => {
-    if (!orderId) test.skip(true, '订单未创建');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const resp = await buyerApi.post(`/api/v1/orders/${orderId}/receive`, { data: {} });
@@ -189,7 +189,6 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
   });
 
   test('8. 待支付订单确认收货被拒', async ({ playwright }) => {
-    test.skip(!sku || !addressId, '环境缺 SKU 或地址');
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     let pendingId = 0;
     try {
@@ -205,44 +204,38 @@ test.describe.serial('后台发货 + C 端确认收货', () => {
 });
 
 test.describe.serial('履约身份撤销立即生效', () => {
-  test('9. 设置履约人员后状态为 true', async ({ playwright }) => {
-    test.skip(!fulfiller, '履约账号未创建');
-    const resp = await adminApi.put(`/api/v1/admin/users/${fulfiller!.user.id}/fulfiller`, {
-      data: { is_fulfiller: true },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `设置履约失败: ${body.message}`).toBe(0);
+  test('9. 绑定会员的员工即为履约人员', async ({ playwright }) => {
+    const communityId = fulfiller!.user.community_id;
+    staffId = await createFulfillerStaff(adminApi, communityId, fulfiller!.user.id);
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       const status = (await (
         await fApi.get('/api/v1/user/fulfillment-status')
       ).json()) as ApiResponse<{ is_fulfiller: boolean }>;
-      expect(assertOk(status, '履约状态查询').is_fulfiller).toBe(true);
+      expect(assertOk(status, '履约状态查询').is_fulfiller, '绑定会员后应立即具备履约身份').toBe(true);
     } finally {
       await fApi.dispose();
     }
   });
 
-  test('10. 取消履约身份后状态立即为 false', async ({ playwright }) => {
-    if (!fulfiller) test.skip(true, '履约账号未创建');
-    const resp = await adminApi.put(`/api/v1/admin/users/${fulfiller!.user.id}/fulfiller`, {
-      data: { is_fulfiller: false },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `取消履约失败: ${body.message}`).toBe(0);
+  test('10. 解绑会员后状态立即为 false', async ({ playwright }) => {
+    const unbind = (await (
+      await adminApi.put(`/api/v1/admin/admins/${staffId}`, { data: { user_id: 0 } })
+    ).json()) as ApiResponse;
+    expect(unbind.code, `解绑履约会员失败: ${unbind.message}`).toBe(0);
+    // staffId 保留：afterAll 仍会尝试删除该员工账号（再解绑一次是无操作）
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       const status = (await (
         await fApi.get('/api/v1/user/fulfillment-status')
       ).json()) as ApiResponse<{ is_fulfiller: boolean }>;
-      expect(assertOk(status, '履约状态查询').is_fulfiller, '取消后应立即失效').toBe(false);
+      expect(assertOk(status, '履约状态查询').is_fulfiller, '解绑后应立即失效').toBe(false);
     } finally {
       await fApi.dispose();
     }
   });
 
   test('11. 工作台查单立即无权限', async ({ playwright }) => {
-    if (!fulfiller) test.skip(true, '履约账号未创建');
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       const resp = await fApi.get('/api/v1/fulfillment/orders', {
@@ -256,7 +249,6 @@ test.describe.serial('履约身份撤销立即生效', () => {
   });
 
   test('12. 开始配送立即无权限', async ({ playwright }) => {
-    if (!fulfiller) test.skip(true, '履约账号未创建');
     const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
     try {
       // 目标订单可为任意 ID：权限校验先于订单校验，用不存在的 ID 也能区分 403 与 404 语义
@@ -268,3 +260,4 @@ test.describe.serial('履约身份撤销立即生效', () => {
     }
   });
 });
+

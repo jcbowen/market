@@ -12,6 +12,8 @@ service UserService {
   rpc CreateOrUpdateUser(CreateUserReq) returns (UserInfo);
   rpc UpdateUserCommunity(UpdateCommunityReq) returns (common.CommonResponse);
   rpc ListUsers(ListUsersReq) returns (ListUsersResp);
+  // BatchGetUsers 会员批量查询：后台订单列表按行取会员名，替代逐行 GetUserById 的 N 次往返
+  rpc BatchGetUsers(BatchGetUsersReq) returns (BatchGetUsersResp);
 
   // 地址
   rpc ListAddresses(ListAddressesReq) returns (ListAddressesResp);
@@ -146,6 +148,18 @@ message ListUsersReq {
 message ListUsersResp {
   repeated UserInfo list = 1;
   common.PaginationResponse pagination = 2;
+}
+
+// BatchGetUsersReq 会员批量查询（后台订单列表按行取会员名，替代逐行 GetUserById 的 N 次往返）
+// community_id 为操作者社区语境：>0 时逐个校验会员与该社区的关联关系，任一越权即整体拒绝；
+// 0 表示超管跨社区或服务间内部调用
+message BatchGetUsersReq {
+  repeated int64 ids = 1;
+  int64 community_id = 2;
+}
+
+message BatchGetUsersResp {
+  repeated UserInfo list = 1;
 }
 
 message ListAddressesReq {

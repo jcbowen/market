@@ -9,6 +9,8 @@ import "common/common.proto";
 service PaymentService {
   rpc CreatePayment(CreatePaymentReq) returns (CreatePaymentResp);
   rpc GetPayment(GetPaymentReq) returns (PaymentInfo);
+  // BatchGetPayments 按订单批量取支付记录：后台订单列表按行显示支付方式，替代逐行 GetPayment 的 N 次往返
+  rpc BatchGetPayments(BatchGetPaymentsReq) returns (BatchGetPaymentsResp);
   rpc HandleWechatCallback(WechatCallbackReq) returns (common.CommonResponse);
   rpc HandleAlipayCallback(AlipayCallbackReq) returns (common.CommonResponse);
   rpc ProcessRefund(ProcessRefundReq) returns (common.CommonResponse);
@@ -50,6 +52,16 @@ message PaymentInfo {
   int32 status = 7;
   string transaction_id = 8;
   string pay_time = 9;
+}
+
+// BatchGetPaymentsReq 支付记录批量查询（后台订单列表按行取支付方式，替代逐行 GetPayment）
+// 每个订单可能有多条支付记录，服务端按订单只回传口径与 GetPayment 一致的那条
+message BatchGetPaymentsReq {
+  repeated int64 order_ids = 1;
+}
+
+message BatchGetPaymentsResp {
+  repeated PaymentInfo list = 1;
 }
 
 message WechatCallbackReq {

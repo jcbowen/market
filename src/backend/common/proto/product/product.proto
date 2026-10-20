@@ -39,16 +39,25 @@ service ProductService {
   rpc CreateSku(CreateSkuReq) returns (SkuInfo);
   rpc UpdateSku(UpdateSkuReq) returns (SkuInfo);
   rpc GetSkuById(GetSkuByIdReq) returns (SkuInfo);
+  // BatchGetSkus SKU 批量查询：下单/收银按明细取价取库存，替代逐行 GetSkuById 的 N 次往返
+  rpc BatchGetSkus(BatchGetSkusReq) returns (BatchGetSkusResp);
+  // BatchGetProducts 商品批量查询：下单按明细取商品名/封面/分类，替代逐行 GetProduct
+  rpc BatchGetProducts(BatchGetProductsReq) returns (BatchGetProductsResp);
 
   // 库存
   rpc DeductStock(DeductStockReq) returns (DeductStockResp);
   rpc ReleaseStock(ReleaseStockReq) returns (common.CommonResponse);
+  // 批量库存操作：整单明细一事务完成，下单 2N 次扣减往返压缩为 1 次
+  rpc BatchDeductStock(BatchDeductStockReq) returns (BatchDeductStockResp);
+  rpc BatchReleaseStock(BatchReleaseStockReq) returns (common.CommonResponse);
   rpc ListStockRecords(ListStockRecordsReq) returns (ListStockRecordsResp);
   rpc GetStockWarnings(GetStockWarningsReq) returns (ListStockWarningsResp);
   rpc GeneratePurchaseOrder(GeneratePurchaseOrderReq) returns (GeneratePurchaseOrderResp);
   // 秒杀独立库存（flash_sale_items.stock）：下单扣减/取消退款回补，幂等键与主库存区分（op_type 3/4）
   rpc DeductFlashSaleStock(DeductFlashSaleStockReq) returns (common.CommonResponse);
   rpc ReleaseFlashSaleStock(ReleaseFlashSaleStockReq) returns (common.CommonResponse);
+  rpc BatchDeductFlashSaleStock(BatchDeductFlashSaleStockReq) returns (common.CommonResponse);
+  rpc BatchReleaseFlashSaleStock(BatchReleaseFlashSaleStockReq) returns (common.CommonResponse);
   // 销量调整（净成交口径）：支付成功累加、取消/退款回退；SKU 行与商品汇总行同事务同步
   rpc AdjustSalesCount(AdjustSalesCountReq) returns (common.CommonResponse);
 
@@ -155,6 +164,8 @@ message ListCategoriesReq {
 
 message GetCategoryReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验分类归属，防止跨社区读取（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message CreateCategoryReq {
@@ -171,10 +182,14 @@ message UpdateCategoryReq {
   string icon = 3;
   int32 sort = 4;
   int32 status = 5;
+  // 操作者社区语境：>0 时服务端强校验分类归属，防止跨社区修改（超管传 0 放行）
+  int64 community_id = 6;
 }
 
 message DeleteCategoryReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验分类归属，防止跨社区删除（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message CategoryInfo {
@@ -248,15 +263,21 @@ message UpdateProductReq {
   repeated SkuItemReq sku_items = 13; // SKU 组合列表（全量提交）
   bool show_sales = 14;     // C端是否显示销量
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
+  // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区修改（超管传 0 放行）
+  int64 community_id = 16;
 }
 
 message DeleteProductReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区删除（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message UpdateProductStatusReq {
   int64 id = 1;
   int32 status = 2;
+  // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区上下架（超管传 0 放行）
+  int64 community_id = 3;
 }
 
 // BatchUpdateProductStatusReq 批量上下架请求（管理端列表多选操作）
@@ -391,6 +412,8 @@ message ListSkusReq {
 
 message GetSkuByIdReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区读取（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message CreateSkuReq {
@@ -417,6 +440,8 @@ message UpdateSkuReq {
   string image = 7;
   int32 status = 8;
   string barcode = 9; // 商品条形码
+  // 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区改价/改状态（超管传 0 放行）
+  int64 community_id = 10;
 }
 
 message SkuInfo {
@@ -454,11 +479,69 @@ message ListSkusResp {
   repeated SkuInfo list = 1;
 }
 
+// BatchGetSkusReq SKU 批量查询（下单/收银等按明细取价取库存，替代逐行 GetSkuById 的 N 次往返）
+// community_id 为操作者社区语境：>0 时逐个校验 SKU 归属，任一越权即整体拒绝
+message BatchGetSkusReq {
+  repeated int64 ids = 1;
+  int64 community_id = 2;
+}
+
+message BatchGetSkusResp {
+  repeated SkuInfo list = 1;
+}
+
+// BatchGetProductsReq 商品批量查询（下单按明细取商品名/封面/分类，替代逐行 GetProduct）
+message BatchGetProductsReq {
+  repeated int64 ids = 1;
+  int64 community_id = 2;
+}
+
+message BatchGetProductsResp {
+  repeated ProductInfo list = 1;
+}
+
 // --- 库存 ---
 message DeductStockReq {
   int64 sku_id = 1;
   int32 quantity = 2;
   int64 order_id = 3;
+}
+
+// StockItemQty 库存操作明细项
+message StockItemQty {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+}
+
+// BatchDeductStockReq 批量扣减库存：整单明细在同一事务内按 SKU 主键升序加锁扣减，
+// 幂等键仍为 order_id + sku_id + op_type（+ biz_no），整单要么全扣要么全不扣
+message BatchDeductStockReq {
+  int64 order_id = 1;
+  repeated StockItemQty items = 2;
+}
+
+message BatchDeductStockResp {
+  bool success = 1;
+}
+
+// BatchReleaseStockReq 批量释放库存（取消/退款/超时关单整单回补）
+message BatchReleaseStockReq {
+  int64 order_id = 1;
+  string biz_no = 2;
+  repeated StockItemQty items = 3;
+}
+
+// BatchDeductFlashSaleStockReq 批量扣减秒杀独立库存：无生效秒杀的 SKU 自动 no-op
+message BatchDeductFlashSaleStockReq {
+  int64 order_id = 1;
+  repeated StockItemQty items = 2;
+}
+
+// BatchReleaseFlashSaleStockReq 批量回补秒杀独立库存（biz_no 为空时由服务端按 cancel:{order_id} 生成）
+message BatchReleaseFlashSaleStockReq {
+  int64 order_id = 1;
+  repeated StockItemQty items = 2;
+  string biz_no = 3;
 }
 
 message DeductStockResp {
@@ -770,6 +853,8 @@ message ListStockInOrdersResp {
 
 message GetStockInOrderReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验入库单归属（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 // --- 出库单 ---
@@ -825,6 +910,8 @@ message ListStockOutOrdersResp {
 
 message GetStockOutOrderReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验出库单归属（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 // --- 批次库存 ---
@@ -926,6 +1013,8 @@ message StockCheckItem {
 message SubmitStockCheckReq {
   int64 id = 1;
   repeated StockCheckItem items = 2;
+  // 操作者所属社区：>0 时服务端强校验盘点单归属，防止跨社区提交（与订单/退款族同口径）
+  int64 community_id = 3;
 }
 
 message StockCheckInfo {
@@ -936,6 +1025,7 @@ message StockCheckInfo {
   int32 diff_items = 5;
   string remark = 6;
   string created_at = 7;
+  int64 community_id = 8;
 }
 
 message ListStockChecksReq {
@@ -950,6 +1040,8 @@ message ListStockChecksResp {
 
 message GetStockCheckReq {
   int64 id = 1;
+  // 操作者所属社区：>0 时服务端强校验盘点单归属
+  int64 community_id = 2;
 }
 
 message StockCheckDetailItem {
@@ -1008,6 +1100,8 @@ message ListCouponsReq {
 
 message GetCouponReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验券归属社区（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 // 优惠券商品范围项
@@ -1059,6 +1153,8 @@ message UpdateCouponReq {
   string use_end_time = 17;
   string rule_text = 18;
   repeated CouponScopeReq scopes = 19; // 全量替换；nil=不修改
+  // 操作者社区语境：>0 时服务端强校验券归属社区，防止跨社区改券（超管传 0 放行）
+  int64 community_id = 20;
 }
 
 message DeleteCouponReq {
@@ -1211,6 +1307,8 @@ message ListFlashSalesReq {
 
 message GetFlashSaleReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验活动归属社区（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message CreateFlashSaleReq {
@@ -1227,6 +1325,8 @@ message UpdateFlashSaleReq {
   string start_time = 3;
   string end_time = 4;
   int32 status = 5;
+  // 操作者社区语境：>0 时服务端强校验活动归属社区，防止跨社区改秒杀（超管传 0 放行）
+  int64 community_id = 6;
 }
 
 message FlashSaleItemReq {
@@ -1253,6 +1353,8 @@ message FlashSaleDetail {
 message FlashSaleItemInfo {
   int64 id = 1;
   int64 sku_id = 2;
+  // 商品 ID：由服务端随 SKU 一并回填，避免调用方为拿 product_id 逐行再查一次 SKU
+  int64 product_id = 10;
   string sku_code = 3;
   string product_name = 4;
   string spec_name = 5;
@@ -1422,10 +1524,15 @@ message UpdateBannerReq {
   string end_time = 9;
   // 适用社区（optional 显式传参才更新；0=全部社区通用）
   optional int64 community_id = 10;
+  // 操作者社区语境：>0 时服务端强校验 banner 归属，社区管理员不得改全局 banner 与其他社区数据
+  // 与上面的 community_id（业务字段"适用社区"）语义不同，故独立命名
+  int64 scope_community_id = 11;
 }
 
 message DeleteBannerReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验 banner 归属（超管传 0 放行）
+  int64 community_id = 2;
 }
 
 // --- 附件 ---

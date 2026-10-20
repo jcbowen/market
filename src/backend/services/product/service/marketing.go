@@ -61,10 +61,14 @@ func (s *MarketingService) ListCoupons(ctx context.Context, req *product.ListCou
 }
 
 // GetCoupon 获取优惠券详情（含商品范围）
-func (s *MarketingService) GetCoupon(ctx context.Context, id int64) (*model.Coupon, error) {
+// communityId>0 时校验券归属社区（见 scope.go），防止跨社区读取券配置
+func (s *MarketingService) GetCoupon(ctx context.Context, id, communityId int64) (*model.Coupon, error) {
 	var c model.Coupon
 	err := s.db.GetDb().WithContext(ctx).First(&c, id).Error
 	if err != nil {
+		return nil, err
+	}
+	if err := EnsureScope(communityId, c.CommunityID, "优惠券"); err != nil {
 		return nil, err
 	}
 	if err := s.loadCouponScopes(ctx, []*model.Coupon{&c}); err != nil {
@@ -154,6 +158,10 @@ func (s *MarketingService) CreateCoupon(ctx context.Context, req *product.Create
 func (s *MarketingService) UpdateCoupon(ctx context.Context, req *product.UpdateCouponReq) (*model.Coupon, error) {
 	var c model.Coupon
 	if err := s.db.GetDb().WithContext(ctx).First(&c, req.Id).Error; err != nil {
+		return nil, err
+	}
+	// 社区隔离：仅允许修改本社区语境下的券（超管传 0 放行）
+	if err := EnsureScope(req.CommunityId, c.CommunityID, "优惠券"); err != nil {
 		return nil, err
 	}
 
@@ -655,9 +663,12 @@ func (s *MarketingService) ListFlashSales(ctx context.Context, req *product.List
 //   - *model.FlashSale: 秒杀活动模型
 //   - []*model.FlashSaleItem: 秒杀商品项列表
 //   - error: 错误信息
-func (s *MarketingService) GetFlashSale(ctx context.Context, id int64) (*model.FlashSale, []*model.FlashSaleItem, error) {
+func (s *MarketingService) GetFlashSale(ctx context.Context, id, communityId int64) (*model.FlashSale, []*model.FlashSaleItem, error) {
 	var fs model.FlashSale
 	if err := s.db.GetDb().WithContext(ctx).First(&fs, id).Error; err != nil {
+		return nil, nil, err
+	}
+	if err := EnsureScope(communityId, fs.CommunityID, "秒杀活动"); err != nil {
 		return nil, nil, err
 	}
 	var items []*model.FlashSaleItem
@@ -690,8 +701,10 @@ func (s *MarketingService) CreateFlashSale(ctx context.Context, req *product.Cre
 		if err := tx.Create(fs).Error; err != nil {
 			return err
 		}
+		// 商品项一次批量插入：逐条 Create 在事务里发 N 次往返，秒杀活动常配数十个 SKU
+		items := make([]*model.FlashSaleItem, 0, len(req.Items))
 		for _, item := range req.Items {
-			fi := &model.FlashSaleItem{
+			items = append(items, &model.FlashSaleItem{
 				FlashSaleID:  fs.ID,
 				SkuID:        item.SkuId,
 				FlashPrice:   item.FlashPrice,
@@ -700,8 +713,10 @@ func (s *MarketingService) CreateFlashSale(ctx context.Context, req *product.Cre
 				Status:       1,
 				CreatedAt:    now,
 				UpdatedAt:    now,
-			}
-			if err := tx.Create(fi).Error; err != nil {
+			})
+		}
+		if len(items) > 0 {
+			if err := tx.Create(&items).Error; err != nil {
 				return err
 			}
 		}
@@ -723,6 +738,10 @@ func (s *MarketingService) CreateFlashSale(ctx context.Context, req *product.Cre
 func (s *MarketingService) UpdateFlashSale(ctx context.Context, req *product.UpdateFlashSaleReq) (*model.FlashSale, error) {
 	var fs model.FlashSale
 	if err := s.db.GetDb().WithContext(ctx).First(&fs, req.Id).Error; err != nil {
+		return nil, err
+	}
+	// 社区隔离：秒杀可改起止时间与状态，跨社区改动直接影响他社区库存与价格，须强校验
+	if err := EnsureScope(req.CommunityId, fs.CommunityID, "秒杀活动"); err != nil {
 		return nil, err
 	}
 	if req.Name != "" {
@@ -1045,19 +1064,21 @@ func (s *MarketingService) GetActiveFreeShipping(ctx context.Context, req *produ
 // 返回值：
 //   - error: 错误信息
 func (s *MarketingService) saveScopesTx(tx *gorm.DB, activityID int64, scopes []*product.FreeShippingScopeReq, now string) error {
+	rows := make([]*model.FreeShippingScope, 0, len(scopes))
 	for _, sc := range scopes {
-		row := &model.FreeShippingScope{
+		rows = append(rows, &model.FreeShippingScope{
 			ActivityID: activityID,
 			ScopeType:  sc.ScopeType,
 			CategoryID: sc.CategoryId,
 			ProductID:  sc.ProductId,
 			CreatedAt:  now,
-		}
-		if err := tx.Create(row).Error; err != nil {
-			return err
-		}
+		})
 	}
-	return nil
+	if len(rows) == 0 {
+		return nil
+	}
+	// 一次批量插入：逐条 Create 会把「保存活动范围」变成 N 次往返
+	return tx.Create(&rows).Error
 }
 
 // fillScopeNames 批量回填范围项的分类名/商品名（展示用，失败静默跳过）
@@ -1264,23 +1285,25 @@ func (s *MarketingService) fillCouponScopeNames(ctx context.Context, scopes []*m
 
 // saveCouponScopesTx 事务内保存优惠券商品范围（全量）
 func (s *MarketingService) saveCouponScopesTx(tx *gorm.DB, couponID int64, scopes []*product.CouponScopeReq, now string) error {
+	rows := make([]*model.CouponProductScope, 0, len(scopes))
 	for _, sc := range scopes {
 		// 全场语义不落行（无行=全场），避免冗余
 		if sc.ScopeType == model.CouponScopeTypeAll {
 			continue
 		}
-		row := &model.CouponProductScope{
+		rows = append(rows, &model.CouponProductScope{
 			CouponID:   couponID,
 			ScopeType:  sc.ScopeType,
 			CategoryID: sc.CategoryId,
 			ProductID:  sc.ProductId,
 			CreatedAt:  now,
-		}
-		if err := tx.Create(row).Error; err != nil {
-			return err
-		}
+		})
 	}
-	return nil
+	if len(rows) == 0 {
+		return nil
+	}
+	// 一次批量插入：逐条 Create 在券模板范围多达数十项时把保存变成 N 次往返
+	return tx.Create(&rows).Error
 }
 
 // ToCouponScopeInfo 将优惠券范围模型转换为 proto 信息
@@ -1366,7 +1389,8 @@ func ToFlashSaleInfo(fs *model.FlashSale) *product.FlashSaleInfo {
 // ToFlashSaleItemInfo 将秒杀商品项模型转换为 proto 信息
 // 参数：
 //   - item: 秒杀商品项模型
-//   - sku: SKU 模型，用于补充商品信息
+//   - sku: SKU 模型，用于补充商品 ID/编码/规格/原价
+//   - productName: 商品名快照（SKU 表不含名称，由调用方批量取回后传入）
 //
 // 返回值：
 //   - *product.FlashSaleItemInfo: proto 秒杀商品项信息
@@ -1382,6 +1406,7 @@ func ToFlashSaleItemInfo(item *model.FlashSaleItem, sku *model.Sku, productName 
 		LimitPerUser: item.LimitPerUser,
 	}
 	if sku != nil {
+		info.ProductId = sku.ProductID
 		info.SkuCode = sku.SkuCode
 		info.SpecName = sku.SpecName
 		info.OriginalPrice = sku.Price

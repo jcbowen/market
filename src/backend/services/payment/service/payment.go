@@ -218,6 +218,58 @@ func (s *PaymentService) GetPayment(ctx context.Context, orderID int64) (*model.
 	return &p, nil
 }
 
+// BatchGetPaymentsMaxOrderIDs 单次批量查询的订单 ID 上限（后台列表每页最多 50，留足余量并封顶超大 IN）
+const BatchGetPaymentsMaxOrderIDs = 200
+
+// BatchGetPayments 按订单 ID 集合批量查询成功支付记录
+// 口径与 GetPayment 一致：一个订单可能有多条支付记录，只回传每个订单最近一次支付成功（status=2）的那条。
+// 后台订单列表原先逐行 GetPayment，一页 N 行即 N 次往返；本方法一次往返取回整页。
+// 未支付/无成功记录的订单不出现在结果里，调用方按「查不到即未支付」处理。
+//
+// 参数：
+//   - ctx: 上下文
+//   - orderIDs: 订单 ID 集合（可重复、可含 0，自动忽略）
+//
+// 返回值：
+//   - []*model.Payment: 每个订单至多一条支付记录
+//   - error: 参数超限或数据库错误
+//
+// 使用示例：
+//
+//	payments, err := paymentService.BatchGetPayments(ctx, []int64{11, 12})
+func (s *PaymentService) BatchGetPayments(ctx context.Context, orderIDs []int64) ([]*model.Payment, error) {
+	clean := make([]int64, 0, len(orderIDs))
+	for _, id := range orderIDs {
+		if id > 0 {
+			clean = append(clean, id)
+		}
+	}
+	if len(clean) == 0 {
+		return nil, nil
+	}
+	if len(clean) > BatchGetPaymentsMaxOrderIDs {
+		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("单次批量查询支付记录数不能超过 %d", BatchGetPaymentsMaxOrderIDs))
+	}
+
+	var rows []*model.Payment
+	// 按 id 倒序遍历、每个订单只留首条即「最近一次成功支付」，避免相关子查询
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("order_id IN ? AND status = ?", clean, 2).
+		Order("id DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	seen := make(map[int64]struct{}, len(clean))
+	list := make([]*model.Payment, 0, len(clean))
+	for _, p := range rows {
+		if _, ok := seen[p.OrderID]; ok {
+			continue
+		}
+		seen[p.OrderID] = struct{}{}
+		list = append(list, p)
+	}
+	return list, nil
+}
+
 // HandleWechatCallback 处理微信支付回调
 // 解析回调体，更新支付单状态，并同步订单状态为已支付
 // 参数：

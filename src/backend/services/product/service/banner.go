@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -99,6 +101,10 @@ func (s *BannerService) UpdateBanner(ctx context.Context, req *product.UpdateBan
 	if err := s.db.GetDb().WithContext(ctx).First(&banner, req.Id).Error; err != nil {
 		return nil, err
 	}
+	// 全局 banner（community_id=0）与其他社区 banner 仅超管可维护
+	if err := EnsureScope(req.ScopeCommunityId, banner.CommunityID, "Banner"); err != nil {
+		return nil, err
+	}
 	updates := map[string]any{
 		"title":     req.Title,
 		"image_url": req.ImageUrl,
@@ -111,6 +117,10 @@ func (s *BannerService) UpdateBanner(ctx context.Context, req *product.UpdateBan
 	}
 	// 适用社区仅显式传参时更新（optional 字段，nil=不修改；0=全部社区通用）
 	if req.CommunityId != nil {
+		// 社区管理员不得把 banner 改挂到其他社区或升级为全局 banner
+		if err := EnsureScope(req.ScopeCommunityId, req.GetCommunityId(), "Banner"); err != nil {
+			return nil, err
+		}
 		updates["community_id"] = *req.CommunityId
 	}
 	if err := s.db.GetDb().WithContext(ctx).Model(&banner).Updates(updates).Error; err != nil {
@@ -123,10 +133,18 @@ func (s *BannerService) UpdateBanner(ctx context.Context, req *product.UpdateBan
 // 参数：
 //   - ctx: 上下文
 //   - id: Banner ID
+//   - communityId: 操作者社区语境（>0 时校验归属，见 scope.go）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *BannerService) DeleteBanner(ctx context.Context, id int64) error {
+func (s *BannerService) DeleteBanner(ctx context.Context, id, communityId int64) error {
+	var banner model.Banner
+	if err := s.db.GetDb().WithContext(ctx).First(&banner, id).Error; err != nil {
+		return bizerr.New(codes.NotFound, "Banner不存在或无权操作")
+	}
+	if err := EnsureScope(communityId, banner.CommunityID, "Banner"); err != nil {
+		return err
+	}
 	return s.db.GetDb().WithContext(ctx).Delete(&model.Banner{}, id).Error
 }
 

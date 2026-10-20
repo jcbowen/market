@@ -1,5 +1,7 @@
 import type { APIRequest, APIRequestContext, Playwright } from '@playwright/test';
 
+import { PRESET_PHONE, recordTestUser, uniquePhone } from './data';
+
 /** 请求来源：可为现成的 APIRequestContext，或 Playwright.request 工厂（自动 newContext） */
 export type RequestSource = APIRequestContext | APIRequest;
 
@@ -58,6 +60,13 @@ export const ADMIN_USERNAME = process.env.TEST_ADMIN_USER ?? 'admin';
 export const ADMIN_PASSWORD = process.env.TEST_ADMIN_PASS ?? 'admin123';
 
 /**
+ * 本进程已登记过的会员 ID
+ * newClientUser 的标准做法是「同号登两次」（首登绑社区后重登刷新 JWT 社区语境），
+ * 无此去重集合会让登记表每轮翻倍；跨进程去重由 readTestUserRegistry 按 ID 兜底
+ */
+const registeredUsers = new Set<number>();
+
+/**
  * C 端手机号直登（免验证码免密码）
  * - 函数名: clientLogin
  * - 参数: request — Playwright 请求上下文；phone — 合法 11 位手机号
@@ -95,13 +104,36 @@ export async function clientLogin(request: RequestSource, phone: string): Promis
       ).json()) as ApiResponse<ClientLoginInfo>;
       if (relogin.code === 0 && relogin.data?.access_token) {
         relogin.data.user.community_id = first.id;
+        registerLoginUser(relogin.data, phone);
         return relogin.data;
       }
     }
+    registerLoginUser(info, phone);
     return info;
   } finally {
     if (ctx !== request) await ctx.dispose();
   }
+}
+
+/**
+ * 把登录到的会员登记进本轮回收清单（B5）
+ * 预置账号（PRESET_PHONE）与固定人工账号不登记：它们跨轮共享，停用会破坏别的用例
+ * - 函数名: registerLoginUser
+ * - 参数: info — 登录返回；phone — 登录手机号
+ * - 返回: void
+ * - 异常: 无（登记失败由 recordTestUser 抛错，正常写文件不会失败）
+ * - 使用示例: registerLoginUser(info, '13900000001');
+ */
+function registerLoginUser(info: ClientLoginInfo, phone: string): void {
+  if (phone === PRESET_PHONE || !info.user?.id) return;
+  const id = info.user.id;
+  if (registeredUsers.has(id)) return;
+  registeredUsers.add(id);
+  recordTestUser({
+    user_id: id,
+    phone,
+    community_id: info.user.community_id ?? 0,
+  });
 }
 
 /**
@@ -287,4 +319,71 @@ export async function ensureStock(api: APIRequestContext, skuId: number, qty: nu
   });
   const body = (await resp.json()) as ApiResponse;
   if (body.code !== 0) throw new Error(`补库存失败 code=${body.code} message=${body.message}`);
+}
+
+/**
+ * 造「本社区履约人员」：建员工并绑定 C 端会员
+ * 口径（is_fulfiller 标记已废弃，user_communities.is_fulfiller 在 user-service 启动时 DropColumn，
+ * 后台也没有 PUT /admin/users/:id/fulfiller 路由）：
+ *   履约人员 = admin_users.user_id 绑定会员 + admin_communities 存在该社区任职行 + 员工 status=1，
+ *   判定 SQL 见 services/user/service/user.go 的 CheckFulfiller，因此唯一的造数方式是建绑会员的员工。
+ * 角色取本社区内置 community_admin（只为满足「有任职角色」的常规口径，履约判定本身不看角色）。
+ * - 函数名: createFulfillerStaff
+ * - 参数: api — 管理端已认证上下文（X-Community-Id 需与会员同社区）；communityId — 履约社区 ID；memberUserId — 绑定的会员 ID
+ * - 返回: Promise<number> 员工账号 ID，供 removeFulfillerStaff 回收
+ * - 异常: 本社区无内置角色或创建员工业务失败时抛 Error。这里坚持抛错而不是 test.skip：
+ *         造数失败若跳过后续断言，履约链路坏了也会显示绿（假绿）
+ * - 使用示例: staffId = await createFulfillerStaff(adminApi, communityId, fulfiller.user.id);
+ */
+export async function createFulfillerStaff(
+  api: APIRequestContext,
+  communityId: number,
+  memberUserId: number,
+): Promise<number> {
+  const rolesResp = await api.get('/api/v1/admin/roles', { params: { community_id: communityId } });
+  const rolesBody = (await rolesResp.json()) as ApiResponse<
+    { id: number; code?: string }[] | { list: { id: number; code?: string }[] }
+  >;
+  const builtin = asList<{ id: number; code?: string }>(rolesBody.data).find((r) => r.code === 'community_admin');
+  if (!builtin) throw new Error(`社区 ${communityId} 无内置 community_admin 角色，无法造履约人员`);
+
+  const resp = await api.post('/api/v1/admin/admins', {
+    data: {
+      username: `auto_ff_${uniquePhone()}`,
+      password: 'Ff123456',
+      real_name: 'AUTO-TEST 履约员工',
+      role_ids: [builtin.id],
+      user_id: memberUserId,
+    },
+  });
+  const body = (await resp.json()) as ApiResponse<{ id?: number }>;
+  if (body.code !== 0) throw new Error(`创建履约员工失败 code=${body.code} message=${body.message}`);
+  const staffId = body.data?.id ?? 0;
+  if (!staffId) throw new Error('创建履约员工成功但未返回 ID');
+  return staffId;
+}
+
+/**
+ * 回收履约员工：先解绑会员，再尝试删除员工账号
+ * 解绑是必须的一步（履约判定看绑定关系，留着会让后续轮次误判身份）；
+ * 删除尽力而为——员工若已被历史订单引用，外键会拒绝删除，此时只告警不失败。
+ * - 函数名: removeFulfillerStaff
+ * - 参数: api — 管理端已认证上下文；staffId — createFulfillerStaff 返回的员工 ID
+ * - 返回: Promise<string[]> 回收告警清单（空数组表示两步都干净）
+ * - 异常: 不抛错。回收属清理动作，失败信息交给调用方 t.log/记录，避免掩盖用例本身的失败原因
+ * - 使用示例: const warns = await removeFulfillerStaff(adminApi, staffId); warns.forEach((w) => t.log(w));
+ */
+export async function removeFulfillerStaff(api: APIRequestContext, staffId: number): Promise<string[]> {
+  if (!staffId) return [];
+  const warns: string[] = [];
+  const unbind = (await (
+    await api.put(`/api/v1/admin/admins/${staffId}`, { data: { user_id: 0 } })
+  ).json()) as ApiResponse;
+  if (unbind.code !== 0) warns.push(`解绑履约员工 ${staffId} 失败 code=${unbind.code} message=${unbind.message}`);
+
+  const removed = (await (await api.delete(`/api/v1/admin/admins/${staffId}`)).json()) as ApiResponse;
+  if (removed.code !== 0) {
+    warns.push(`删除履约员工 ${staffId} 未成功（多为历史订单外键引用，可接受）code=${removed.code} message=${removed.message}`);
+  }
+  return warns;
 }

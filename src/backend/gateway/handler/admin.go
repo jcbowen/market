@@ -37,6 +37,8 @@ type AdminHandler struct {
 	orderClient   order.OrderServiceClient
 	paymentClient payment.PaymentServiceClient
 	cfg           *config.Config
+	// guard 登录失败锁定（D1）：按账号计数，防分布式慢速猜密码
+	guard *loginGuard
 }
 
 // NewAdminHandler 创建管理员接口处理器
@@ -58,6 +60,7 @@ func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient,
 		orderClient:   orderClient,
 		paymentClient: paymentClient,
 		cfg:           cfg,
+		guard:         newLoginGuard(cfg),
 	}
 }
 
@@ -70,9 +73,10 @@ type AdminLoginReq struct {
 
 // AdminLoginResp 管理员登录响应
 // 包含双 token、过期时间及管理员基本信息
+// refresh_token 带 omitempty：前端声明由 httpOnly cookie 承载时不再出现在响应体
 type AdminLoginResp struct {
 	AccessToken      string      `json:"access_token"`
-	RefreshToken     string      `json:"refresh_token"`
+	RefreshToken     string      `json:"refresh_token,omitempty"`
 	ExpiresIn        int64       `json:"expires_in"`
 	RefreshExpiresIn int64       `json:"refresh_expires_in"`
 	ExpiresAt        int64       `json:"expires_at"`
@@ -82,6 +86,10 @@ type AdminLoginResp struct {
 
 // Login 管理员登录
 // 校验用户名密码，校验通过后签发 access_token 与 refresh_token
+// 防护（D1）：连续失败达上限按账号锁定一段时间（计数存 Redis，跨 IP 有效）；
+// 「账号不存在」「密码错误」「token 无效」一律回同一句「用户名或密码错误」，消除账号枚举；
+// 禁用状态只在密码正确后才提示，避免未登录者据此探测账号是否存在；
+// 账号查询只有 NotFound 计入失败锁定，其他状态码按内部错误返回（避免服务抖动误锁正常账号）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) Login(c *gin.Context) {
@@ -91,8 +99,27 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		return
 	}
 
-	admin, err := h.userClient.GetAdminByUsername(c.Request.Context(), &user.GetAdminByUsernameReq{Username: req.Username})
+	ctx := c.Request.Context()
+	if ttl, locked := h.guard.lockedRemaining(ctx, loginSceneAdmin, req.Username); locked {
+		response.Error(c, errcode.LoginLocked, loginLockedMessage(ttl))
+		return
+	}
+
+	admin, err := h.userClient.GetAdminByUsername(ctx, &user.GetAdminByUsernameReq{Username: req.Username})
 	if err != nil {
+		// 只有「账号不存在」算凭证失败、计入锁定；服务不可用等故障不得污染计数，
+		// 否则 user-service 抖动或数据库故障会把正常管理员连带锁在门外
+		if status.Code(err) != codes.NotFound {
+			log.Printf("[WARN] 管理员登录查询账号失败 username=%s: %v", maskAccount(req.Username), err)
+			response.Error(c, errcode.InternalServerError)
+			return
+		}
+		h.guard.recordFailure(ctx, loginSceneAdmin, req.Username)
+		response.Error(c, errcode.IncorrectUsernameOrPassword)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(req.Password)); err != nil {
+		h.guard.recordFailure(ctx, loginSceneAdmin, req.Username)
 		response.Error(c, errcode.IncorrectUsernameOrPassword)
 		return
 	}
@@ -100,10 +127,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		response.Error(c, errcode.AccountDisabled)
 		return
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(req.Password)); err != nil {
-		response.Error(c, errcode.IncorrectUsernameOrPassword)
-		return
-	}
+	h.guard.clearFailures(ctx, loginSceneAdmin, req.Username)
 
 	// 权限按默认社区实时解析（多社区模型：不同社区权限不同，JWT 不再承载权限快照）
 	communityID := h.getAdminDefaultCommunityID(admin)
@@ -126,7 +150,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	}
 
 	now := time.Now()
-	response.Success(c, AdminLoginResp{
+	resp := AdminLoginResp{
 		AccessToken:      accessToken,
 		RefreshToken:     refreshToken,
 		ExpiresIn:        int64(accessExpire.Sub(now).Seconds()),
@@ -144,7 +168,23 @@ func (h *AdminHandler) Login(c *gin.Context) {
 			"community_ids": admin.CommunityIds,
 			"permissions":   permissions,
 		},
-	})
+	}
+	// 新版后台/H5 前端带 X-Refresh-Cookie: 1，refresh_token 改由 httpOnly cookie 下发，
+	// 响应体清空；未带该头（旧前端缓存、POS 未更新）时保持原行为，避免登录直接不可用
+	if wantsRefreshCookie(c) {
+		setRefreshTokenCookie(c, refreshToken, int64(refreshExpire.Sub(now).Seconds()))
+		resp.RefreshToken = ""
+	}
+	response.Success(c, resp)
+}
+
+// AdminLogout 后台登出：清除 refresh_token 的 httpOnly cookie
+// 前端本地 access_token 由 JS 自行删除，JS 删不掉的 cookie 必须由后端下发过期值清除
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) AdminLogout(c *gin.Context) {
+	clearRefreshTokenCookie(c)
+	response.Success(c, gin.H{})
 }
 
 // Info 获取当前登录管理员信息
@@ -329,8 +369,7 @@ func containsInt64(list []int64, item int64) bool {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdmins(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	keyword := c.Query("keyword")
 
 	resp, err := h.userClient.ListAdmins(c.Request.Context(), &user.ListAdminsReq{
@@ -544,8 +583,7 @@ func (h *AdminHandler) ListAllAccounts(c *gin.Context) {
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	keyword := c.Query("keyword")
 
 	resp, err := h.userClient.ListAdmins(c.Request.Context(), &user.ListAdminsReq{
@@ -1296,6 +1334,7 @@ type errorString string
 func (e errorString) Error() string { return string(e) }
 
 // RefreshToken 刷新管理员 access_token
+// 令牌来源：httpOnly cookie（新版前端）优先，表单/请求体兜底（旧前端缓存、POS 端）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) RefreshToken(c *gin.Context) {
@@ -1307,6 +1346,7 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		_ = c.ShouldBindJSON(&body)
 		token = body.RefreshToken
 	}
+	token = firstNonEmptyRefreshToken(c, token)
 	if token == "" {
 		response.Error(c, errcode.NotLoginOrTokenExpired)
 		return
@@ -1463,8 +1503,7 @@ func (h *AdminHandler) GetAdminProduct(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminProducts(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	categoryID, _ := strconv.ParseInt(c.DefaultQuery("category_id", "0"), 10, 64)
 	keyword := c.Query("keyword")
 	// 商品状态精确过滤（选品/收银台传 status=1 只取上架商品）
@@ -1972,8 +2011,7 @@ func (h *AdminHandler) adminOrderPayInfo(c *gin.Context, orderID int64) (int32, 
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
 	// 目标社区：默认当前社区语境；超管显式传 community_id 时以其为准（0=跨社区查全部）
@@ -2025,25 +2063,26 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 		}
 	}
 
+	// 逐行 RPC 收口：会员名与支付方式原先每行各 1 次调用（一页 50 行即 100 次往返），
+	// 改为整页一次批量查询后按 ID 查表。批量调用失败不阻断列表，退化为「会员名/支付方式留空」
+	memberNames, memberErr := h.batchUserNames(c, resp.List, communityID)
+	payTypes, payTypeErr := h.batchOrderPayTypes(c, resp.List)
+	if memberErr != nil {
+		log.Printf("[admin] 批量取会员名失败: %v", memberErr)
+	}
+	if payTypeErr != nil {
+		log.Printf("[admin] 批量取支付方式失败: %v", payTypeErr)
+	}
+
 	list := make([]gin.H, 0, len(resp.List))
 	for _, o := range resp.List {
-		userName := ""
-		if o.UserId > 0 {
-			userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: o.UserId})
-			if err == nil && userResp != nil {
-				userName = userResp.Nickname
-				if userName == "" {
-					userName = userResp.Phone
-				}
-			}
-		}
 		// 支付方式（列表与详情共用口径；0=未支付/未知）
-		payType, payTypeText := h.adminOrderPayInfo(c, o.Id)
+		payType := payTypes[o.Id]
 		list = append(list, gin.H{
 			"id":              o.Id,
 			"order_no":        o.OrderNo,
 			"user_id":         o.UserId,
-			"user_name":       userName,
+			"user_name":       memberNames[o.UserId],
 			"community_id":    o.CommunityId,
 			"community_name":  communityNames[o.CommunityId],
 			"total_amount":    o.TotalAmount,
@@ -2058,11 +2097,76 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"operator_name":   o.OperatorName,
 			"shift_id":        o.ShiftId,
 			"pay_type":        payType,
-			"pay_type_text":   payTypeText,
+			"pay_type_text":   payTypeTextOf(payType),
 			"created_at":      o.CreatedAt,
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
+}
+
+// batchUserNames 批量取订单列表涉及的会员展示名（昵称优先，回落手机号）
+// 社区语境沿用列表过滤口径：communityID>0 时由 user 服务按会员-社区关联过滤，
+// 越权/已解绑会员不会回传，对应订单展示空名而非泄露其他社区资料
+// 参数：
+//   - c: gin 上下文
+//   - orders: 订单 proto 列表
+//   - communityID: 当前查询的社区语境（0=超管跨社区）
+//
+// 返回值：
+//   - map[int64]string: 会员 ID -> 展示名
+//   - error: RPC 失败
+func (h *AdminHandler) batchUserNames(c *gin.Context, orders []*order.OrderInfo, communityID int64) (map[int64]string, error) {
+	names := make(map[int64]string)
+	ids := make([]int64, 0, len(orders))
+	for _, o := range orders {
+		if o.UserId > 0 {
+			ids = append(ids, o.UserId)
+		}
+	}
+	if len(ids) == 0 {
+		return names, nil
+	}
+	resp, err := h.userClient.BatchGetUsers(c.Request.Context(), &user.BatchGetUsersReq{
+		Ids: ids, CommunityId: communityID,
+	})
+	if err != nil {
+		return names, err
+	}
+	for _, u := range resp.List {
+		name := u.Nickname
+		if name == "" {
+			name = u.Phone
+		}
+		names[u.Id] = name
+	}
+	return names, nil
+}
+
+// batchOrderPayTypes 批量取订单列表涉及的支付方式（0=未支付/未知）
+// 参数：
+//   - c: gin 上下文
+//   - orders: 订单 proto 列表
+//
+// 返回值：
+//   - map[int64]int32: 订单 ID -> 支付类型
+//   - error: RPC 失败
+func (h *AdminHandler) batchOrderPayTypes(c *gin.Context, orders []*order.OrderInfo) (map[int64]int32, error) {
+	payTypes := make(map[int64]int32)
+	ids := make([]int64, 0, len(orders))
+	for _, o := range orders {
+		ids = append(ids, o.Id)
+	}
+	if len(ids) == 0 {
+		return payTypes, nil
+	}
+	resp, err := h.paymentClient.BatchGetPayments(c.Request.Context(), &payment.BatchGetPaymentsReq{OrderIds: ids})
+	if err != nil {
+		return payTypes, err
+	}
+	for _, p := range resp.List {
+		payTypes[p.OrderId] = p.PayType
+	}
+	return payTypes, nil
 }
 
 // GetAdminOrder 获取管理端订单详情
@@ -2591,8 +2695,7 @@ func (h *AdminHandler) GetRevenueReport(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListStockRecords(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	skuID, _ := strconv.ParseInt(c.DefaultQuery("sku_id", "0"), 10, 64)
 	recordType, _ := strconv.Atoi(c.DefaultQuery("type", "0"))
 	startDate := c.Query("start_date")
@@ -2644,8 +2747,7 @@ func (h *AdminHandler) GetStockWarnings(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListSkuStock(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize := parsePageParams(c, 20)
 	keyword := strings.TrimSpace(c.Query("keyword"))
 
 	resp, err := h.productClient.SearchSkus(c.Request.Context(), &product.SearchSkusReq{
@@ -2667,8 +2769,7 @@ func (h *AdminHandler) ListSkuStock(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListStockChecks(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 
 	resp, err := h.productClient.ListStockChecks(c.Request.Context(), &product.ListStockChecksReq{
 		CommunityId: h.getAdminCommunityID(c),
@@ -2794,8 +2895,7 @@ func (h *AdminHandler) SubmitStockCheck(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminCoupons(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 	resp, err := h.productClient.ListCoupons(c.Request.Context(), &product.ListCouponsReq{
 		CommunityId: h.getAdminCommunityID(c),
@@ -3046,12 +3146,11 @@ func (h *AdminHandler) GrantCoupon(c *gin.Context) {
 }
 
 // ListCouponRecords 领取/发放记录（user_coupons 按当前社区语境过滤）
-// 会员昵称/手机号按记录 user_id 逐个回填（与订单列表同一模式）
+// 会员昵称/手机号整页一次 BatchGetUsers 批量回填（与订单列表同一模式）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListCouponRecords(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	couponID, _ := strconv.ParseInt(c.Query("coupon_id"), 10, 64)
 	userID, _ := strconv.ParseInt(c.Query("user_id"), 10, 64)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
@@ -3073,22 +3172,31 @@ func (h *AdminHandler) ListCouponRecords(c *gin.Context) {
 		return
 	}
 
-	// 回填会员昵称/手机号（同人缓存避免重复 RPC）
-	userCache := make(map[int64]*user.UserInfo)
+	// 回填会员昵称/手机号：原先逐行 GetUserById（同人缓存只去重，一页仍有 N 次往返），
+	// 改为整页一次 BatchGetUsers；取不到的会员留空，不阻断列表
+	ids := make([]int64, 0, len(resp.List))
 	for _, r := range resp.List {
-		if r.UserId <= 0 {
-			continue
+		if r.UserId > 0 {
+			ids = append(ids, r.UserId)
 		}
-		if u, ok := userCache[r.UserId]; ok {
-			r.UserNickname = u.Nickname
-			r.UserPhone = u.Phone
-			continue
-		}
-		u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: r.UserId})
-		if err == nil && u != nil {
-			userCache[r.UserId] = u
-			r.UserNickname = u.Nickname
-			r.UserPhone = u.Phone
+	}
+	if len(ids) > 0 {
+		users, err := h.userClient.BatchGetUsers(c.Request.Context(), &user.BatchGetUsersReq{
+			Ids: ids, CommunityId: h.getAdminCommunityID(c),
+		})
+		if err != nil {
+			log.Printf("[admin] 批量取会员失败: %v", err)
+		} else {
+			byID := make(map[int64]*user.UserInfo, len(users.List))
+			for _, u := range users.List {
+				byID[u.Id] = u
+			}
+			for _, r := range resp.List {
+				if u := byID[r.UserId]; u != nil {
+					r.UserNickname = u.Nickname
+					r.UserPhone = u.Phone
+				}
+			}
 		}
 	}
 
@@ -3099,8 +3207,7 @@ func (h *AdminHandler) ListCouponRecords(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminFlashSales(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	resp, err := h.productClient.ListFlashSales(c.Request.Context(), &product.ListFlashSalesReq{
 		CommunityId: h.getAdminCommunityID(c),
 	})
@@ -3186,8 +3293,7 @@ func (h *AdminHandler) UpdateFlashSale(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListFullReductions(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	resp, err := h.productClient.ListFullReductions(c.Request.Context(), &product.ListFullReductionsReq{
 		CommunityId: h.getAdminCommunityID(c),
 	})
@@ -3289,8 +3395,7 @@ type FreeShippingScopeInput struct {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListFreeShippings(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	resp, err := h.productClient.ListFreeShippings(c.Request.Context(), &product.ListFreeShippingsReq{
 		CommunityId: h.getAdminCommunityID(c),
 	})
@@ -3607,8 +3712,7 @@ func (h *AdminHandler) MyCommunities(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListUsers(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	keyword := c.DefaultQuery("keyword", "")
 	statusFilter, _ := strconv.Atoi(c.DefaultQuery("status_filter", "-1"))
 
@@ -3657,8 +3761,7 @@ func (h *AdminHandler) ListUserFrequentProducts(c *gin.Context) {
 		response.Error(c, errcode.ParamError)
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "5"))
+	page, pageSize := parsePageParams(c, 5)
 
 	resp, err := h.orderClient.GetUserFrequentProducts(c.Request.Context(), &order.GetUserFrequentProductsReq{
 		UserId:      userID,
@@ -3782,8 +3885,7 @@ func (h *AdminHandler) SetUserStatus(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminCommunities(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	// 状态筛选：-1 全部（默认），0 停业，1 营业
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "-1"))
 
@@ -4203,8 +4305,7 @@ func (h *AdminHandler) AdminCreateRefund(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListRefunds(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
 	resp, err := h.orderClient.ListRefunds(c.Request.Context(), &order.ListRefundsReq{

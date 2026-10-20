@@ -345,7 +345,14 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 				OperatorType: "system",
 				Remark:       "支付成功（超时取消前反查支付单补同步）",
 			}); uErr != nil {
-				log.Printf("[CRITICAL] 订单 %d 已收款但补同步失败（下轮调度重试）: %v", o.ID, uErr)
+				// 补同步与支付回调二阶段可能同时命中同一订单：先到者已把状态置为已支付族，
+				// 后到者必然报「状态已变更」。此处复核实际状态，只有仍停留未支付态才是真卡单，
+				// 否则只是竞态下的重复补同步，误报 CRITICAL 会淹没真实的资损告警
+				if synced, sErr := s.isPaidSynced(ctx, o.ID); sErr == nil && synced {
+					log.Printf("[order-scheduler] 订单 %d 已由支付回调置为已支付，补同步无需重复执行", o.ID)
+				} else {
+					log.Printf("[CRITICAL] 订单 %d 已收款但补同步失败（下轮调度重试）: %v", o.ID, uErr)
+				}
 			} else {
 				log.Printf("[order-scheduler] 订单 %d 已收款但状态未同步，已补为已支付并跳过取消", o.ID)
 			}
@@ -382,15 +389,10 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 		if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
 			return err
 		}
-		for _, item := range items {
-			if _, err := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
-				SkuId:    item.SkuID,
-				Quantity: item.Quantity,
-				OrderId:  o.ID,
-				BizNo:    fmt.Sprintf("cancel:%d", o.ID),
-			}); err != nil {
-				return fmt.Errorf("释放库存失败: %w", err)
-			}
+		// 与 C 端取消/后台取消共用整单回补：此前本路径只回补主库存，
+		// 命中秒杀的超时单会把活动池扣减永久悬空（下单时扣了、取消时不补）
+		if err := releaseOrderStock(ctx, o.ID, items); err != nil {
+			return err
 		}
 
 		// 回补优惠券：与 CancelOrder/cancelOrderInTx 同口径，防止超时取消吞券；
@@ -431,6 +433,24 @@ func isOrderPaid(ctx context.Context, orderID int64) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// isPaidSynced 复核订单是否已处于收款后的状态（2已支付/3备货中/4配送中/5已完成/7退款中/8已退款）
+// 用于区分「补同步被并发抢先」与「订单确实仍停留在未支付态」：前者无需告警，后者才是需要人工介入的卡单
+//
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - bool: 订单是否已同步为收款后状态
+//   - error: 查询失败错误（调用方按未同步处理，保留 CRITICAL 告警）
+func (s *Scheduler) isPaidSynced(ctx context.Context, orderID int64) (bool, error) {
+	var count int64
+	err := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
+		Where("id = ? AND status IN ?", orderID, []int32{2, 3, 4, 5, 7, 8}).
+		Count(&count).Error
+	return count > 0, err
 }
 
 // completeOrderTx 在事务中完成订单

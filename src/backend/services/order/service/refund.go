@@ -182,9 +182,12 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		if err := tx.Create(refund).Error; err != nil {
 			return err
 		}
+		// 明细一次批量插入：逐条 Create 在同一事务里发 N 次往返，多商品退款尤其明显
 		for _, item := range refund.Items {
 			item.RefundID = refund.ID
-			if err := tx.Create(item).Error; err != nil {
+		}
+		if len(refund.Items) > 0 {
+			if err := tx.Create(&refund.Items).Error; err != nil {
 				return err
 			}
 		}
@@ -296,9 +299,12 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 		if err := tx.Create(refund).Error; err != nil {
 			return err
 		}
+		// 明细一次批量插入：逐条 Create 在同一事务里发 N 次往返，多商品退款尤其明显
 		for _, item := range refund.Items {
 			item.RefundID = refund.ID
-			if err := tx.Create(item).Error; err != nil {
+		}
+		if len(refund.Items) > 0 {
+			if err := tx.Create(&refund.Items).Error; err != nil {
 				return err
 			}
 		}
@@ -1036,26 +1042,15 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 			return err
 		}
 
-		// 按退款明细逐行释放库存（仅金额退无商品明细，不回补库存）；
-		// biz_no=退款单号：每笔退款独立幂等槽位，同一订单同一 SKU 多笔部分退款互不吞并
+		// 按退款明细整批释放库存（仅金额退无商品明细，不回补库存）；
+		// biz_no=退款单号：每笔退款独立幂等槽位，同一订单同一 SKU 多笔部分退款互不吞并。
+		// 原先逐行 ReleaseStock + ReleaseFlashSaleStock（2N 次往返），收口为 2 次批量 RPC
+		stockItems := make([]*product.StockItemQty, 0, len(items))
 		for _, item := range items {
-			if _, err := grpcclient.ProductClient.ReleaseStock(ctx, &product.ReleaseStockReq{
-				SkuId:    item.SkuID,
-				Quantity: item.Quantity,
-				OrderId:  o.ID,
-				BizNo:    refundCompleted.RefundNo,
-			}); err != nil {
-				return fmt.Errorf("释放库存失败: %w", err)
-			}
-			// 秒杀独立库存回补（非秒杀商品 no-op）
-			if _, err := grpcclient.ProductClient.ReleaseFlashSaleStock(ctx, &product.ReleaseFlashSaleStockReq{
-				OrderId:  o.ID,
-				SkuId:    item.SkuID,
-				Quantity: item.Quantity,
-				BizNo:    refundCompleted.RefundNo,
-			}); err != nil {
-				return fmt.Errorf("释放秒杀库存失败: %w", err)
-			}
+			stockItems = append(stockItems, &product.StockItemQty{SkuId: item.SkuID, Quantity: item.Quantity})
+		}
+		if err := releaseStockBatch(ctx, o.ID, stockItems, refundCompleted.RefundNo); err != nil {
+			return err
 		}
 
 		// 订单去向与类型升级（money 口径）：累计成功退款（含运费）达到实付 → 订单 8 已退款，

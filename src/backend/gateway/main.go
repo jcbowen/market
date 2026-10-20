@@ -45,15 +45,16 @@ func main() {
 	defer func() { _ = clients.Close() }()
 
 	r := gin.New()
+	applyTrustedProxies(r, cfg)
 	r.Use(gin.Recovery())
 	r.Use(gwMiddleware.RequestLoggerMiddleware())
 	r.Use(gwMiddleware.SecurityHeadersMiddleware())
 	r.Use(gwMiddleware.BlockTraceMiddleware())
+	r.Use(gwMiddleware.RealIPMiddleware())
 	r.Use(gwMiddleware.RateLimitMiddleware(100, 150))
 
 	baseMw := jcMiddleware.Base{}
 	r.Use(baseMw.Cors())
-	r.Use(baseMw.SetRealIP(true))
 	r.Use(baseMw.SetGPC(r))
 	r.Use(staticCacheMiddleware())
 
@@ -76,6 +77,28 @@ func main() {
 	<-quit
 
 	shutdown(srv)
+}
+
+// applyTrustedProxies 配置可信反向代理网段，决定 ClientIP 是否采信代理头
+// gin 缺省信任所有代理，客户端自填 X-Forwarded-For 就能任意伪造来源 IP——限流按 IP 分桶会被直接绕过，
+// 访问日志与 IP 定位也会记下假 IP。故这里显式落配置：未配置网段即不信任任何代理（只认直连地址）
+// 参数：
+//   - r: gin 引擎
+//   - cfg: 全局配置
+//
+// 异常：
+//   - 网段格式非法（既非 CIDR 也非 IP）时拒绝启动，避免带着「以为已放行反代、实际全不采信」的误配上线
+func applyTrustedProxies(r *gin.Engine, cfg *config.Config) {
+	proxies := cfg.Security.TrustedProxies
+	if err := r.SetTrustedProxies(proxies); err != nil {
+		log.Fatalf("可信代理网段配置非法: %v（security.trusted_proxies 仅接受 CIDR 或单个 IP）", err)
+	}
+	if len(proxies) == 0 {
+		log.Printf("未配置可信代理（security.trusted_proxies / TRUSTED_PROXIES）：一律按直连 IP 处理；" +
+			"若前置 nginx 等反向代理，必须放行其网段，否则限流与日志会把所有用户合并成代理 IP")
+		return
+	}
+	log.Printf("已信任反向代理网段: %v", proxies)
 }
 
 // loadConfig 加载全局配置
@@ -162,10 +185,16 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.GET("/regions/children", regionHandler.ListChildren)
 			public.GET("/regions/locate", regionHandler.Locate)
 
-			public.POST("/auth/phone-code", authHandler.SendPhoneCode)
-			public.POST("/auth/login/phone", authHandler.PhoneLogin)
-			public.POST("/auth/weixin-login", authHandler.WechatLogin)
-			public.POST("/auth/refresh", authHandler.RefreshToken)
+			// 认证入口独立收紧限流（D1）：全局 IP 桶（100 r/s）对「批量试探登录」形同不设防。
+			// 缺口的真实防线在按账号的失败锁定（后台登录）与按 IP 的独立桶（C 端登录）：
+			// C 端小区/NAT 出口共用 IP，额度给到能容纳真实并发登录的量级，仍远低于全局限流
+			cAuthLimiter := gwMiddleware.RateLimitMiddleware(10, 30)
+			public.POST("/auth/phone-code", cAuthLimiter, authHandler.SendPhoneCode)
+			public.POST("/auth/login/phone", cAuthLimiter, authHandler.PhoneLogin)
+			public.POST("/auth/weixin-login", cAuthLimiter, authHandler.WechatLogin)
+			public.POST("/auth/refresh", cAuthLimiter, authHandler.RefreshToken)
+			// 登出仅需清除 httpOnly refresh cookie，无需登录态（access 可能已过期仍要能登出）
+			public.POST("/auth/logout", cAuthLimiter, authHandler.Logout)
 
 			public.POST("/payments/callback/wechat", paymentHandler.WechatCallback)
 			// 支付宝回调：payment 服务内先做 RSA2 验签（支付宝公钥），验签失败拒绝处理
@@ -229,8 +258,13 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	gwMiddleware.SetPermissionResolver(clients.UserClient)
 	admin := r.Group("/api/v1/admin")
 	{
-		admin.POST("/auth/login", adminHandler.Login)
-		admin.POST("/auth/refresh", adminHandler.RefreshToken)
+		// 后台登录独立收紧（D1）：突发 20、持续 1 r/s，配合按账号的失败锁定；
+		// 额度需容纳 Playwright/多标签页连续登录，故不按最激进口径设
+		adminAuthLimiter := gwMiddleware.RateLimitMiddleware(1, 20)
+		admin.POST("/auth/login", adminAuthLimiter, adminHandler.Login)
+		admin.POST("/auth/refresh", adminAuthLimiter, adminHandler.RefreshToken)
+		// 登出仅需清除 httpOnly refresh cookie，无需登录态（access 已过期也要能登出）
+		admin.POST("/auth/logout", adminAuthLimiter, adminHandler.AdminLogout)
 
 		authAdmin := admin.Group("")
 		authAdmin.Use(gwMiddleware.AuthMiddleware(jwtManager, jwt.TokenTypeAdmin))

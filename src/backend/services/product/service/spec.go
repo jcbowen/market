@@ -194,6 +194,8 @@ func (s *ProductService) saveSpecTree(
 }
 
 // saveSkus 保存 SKU 组合并统计价格区间与汇总库存
+// 逐条写入是有意的、不做整批插入：每行新建后需立即用其 ID 建初始批次（createInitBatch），
+// 批量插入只能靠切片顺序反查 ID，映射易错而 SKU 本就只有数个到数十个，收益低于回归风险
 // 参数：
 //   - tx: GORM 事务对象
 //   - p: 商品模型

@@ -166,7 +166,8 @@ func couponEligibleAmount(coupon *product.CouponInfo, items []itemScope) float64
 }
 
 // PreviewFreeShipping 免配送费试算（C 端确认页展示）
-// 按商品清单逐个取 SKU/商品（价格口径与 CreateOrder 一致：优先生效秒杀价），
+// 商品清单一次批量取回 SKU/商品档案（口径与 CreateOrder 完全一致：同样走 loadOrderItemCatalog
+// 与 loadFlashSalePrices，优先使用生效秒杀价），避免 N 条明细放大为 2N+(1+K)N 次 RPC；
 // 计算参与商品额与门槛差额，供确认页展示「已免配送费 / 还差 X 元 / 不参与商品」
 // 参数：
 //   - ctx: 上下文
@@ -179,24 +180,28 @@ func (s *OrderService) PreviewFreeShipping(ctx context.Context, req *order.Previ
 	if len(req.Items) == 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "商品清单不能为空")
 	}
+	skuIDs := make([]int64, 0, len(req.Items))
+	for _, item := range req.Items {
+		skuIDs = append(skuIDs, item.SkuId)
+	}
+	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs)
+	if err != nil {
+		return nil, err
+	}
+	flashPriceByID := s.loadFlashSalePrices(ctx, req.CommunityId)
+
 	items := make([]itemScope, 0, len(req.Items))
 	for _, item := range req.Items {
-		skuInfo, err := grpcclient.ProductClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: item.SkuId})
-		if err != nil {
-			return nil, fmt.Errorf("获取 SKU 失败: %w", err)
-		}
-		productInfo, err := grpcclient.ProductClient.GetProduct(ctx, &product.GetProductReq{Id: skuInfo.ProductId})
-		if err != nil {
-			return nil, fmt.Errorf("获取商品失败: %w", err)
-		}
+		skuInfo := skuByID[item.SkuId]
+		productInfo := productByID[skuInfo.ProductId]
 		// 价格口径与 CreateOrder 一致：优先使用生效的秒杀价
 		price := skuInfo.Price
-		if flashPrice, flashErr := s.getActiveFlashSalePrice(ctx, req.CommunityId, item.SkuId); flashErr == nil && flashPrice > 0 {
+		if flashPrice := flashPriceByID[item.SkuId]; flashPrice > 0 {
 			price = flashPrice
 		}
 		items = append(items, itemScope{
 			productID:  skuInfo.ProductId,
-			categoryID: productInfo.Product.CategoryId,
+			categoryID: productInfo.CategoryId,
 			totalPrice: price * float64(item.Quantity),
 		})
 	}

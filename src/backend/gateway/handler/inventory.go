@@ -107,8 +107,7 @@ func (h *AdminHandler) DeleteSupplier(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListSuppliers(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
 	resp, err := h.productClient.ListSuppliers(c.Request.Context(), &product.ListSuppliersReq{
@@ -218,8 +217,7 @@ func (h *AdminHandler) CancelPurchaseOrder(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListPurchaseOrders(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 	supplierID, _ := strconv.ParseInt(c.DefaultQuery("supplier_id", "0"), 10, 64)
 
@@ -287,8 +285,7 @@ func (h *AdminHandler) CreateStockInOrder(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListStockInOrders(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	purchaseOrderID, _ := strconv.ParseInt(c.DefaultQuery("purchase_order_id", "0"), 10, 64)
 
 	resp, err := h.productClient.ListStockInOrders(c.Request.Context(), &product.ListStockInOrdersReq{
@@ -317,7 +314,7 @@ func (h *AdminHandler) GetStockInOrder(c *gin.Context) {
 		response.Error(c, errcode.ParamError)
 		return
 	}
-	detail, err := h.productClient.GetStockInOrder(c.Request.Context(), &product.GetStockInOrderReq{Id: id})
+	detail, err := h.productClient.GetStockInOrder(c.Request.Context(), &product.GetStockInOrderReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -355,8 +352,7 @@ func (h *AdminHandler) CreateStockOutOrder(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListStockOutOrders(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	outType, _ := strconv.Atoi(c.DefaultQuery("type", "0"))
 
 	resp, err := h.productClient.ListStockOutOrders(c.Request.Context(), &product.ListStockOutOrdersReq{
@@ -385,7 +381,7 @@ func (h *AdminHandler) GetStockOutOrder(c *gin.Context) {
 		response.Error(c, errcode.ParamError)
 		return
 	}
-	detail, err := h.productClient.GetStockOutOrder(c.Request.Context(), &product.GetStockOutOrderReq{Id: id})
+	detail, err := h.productClient.GetStockOutOrder(c.Request.Context(), &product.GetStockOutOrderReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -403,8 +399,7 @@ func (h *AdminHandler) GetStockOutOrder(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListStockBatches(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	skuID, _ := strconv.ParseInt(c.DefaultQuery("sku_id", "0"), 10, 64)
 	inStockOnly := c.Query("in_stock_only") == "1" || c.Query("in_stock_only") == "true"
 
@@ -431,8 +426,7 @@ func (h *AdminHandler) ListStockBatches(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetInventorySummaryReport(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 
 	resp, err := h.productClient.GetInventorySummaryReport(c.Request.Context(), &product.GetInventorySummaryReportReq{
 		CommunityId: h.getAdminCommunityID(c),
@@ -455,8 +449,7 @@ func (h *AdminHandler) GetInventorySummaryReport(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetProfitReport(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 
 	resp, err := h.productClient.GetProfitReport(c.Request.Context(), &product.GetProfitReportReq{
 		CommunityId: h.getAdminCommunityID(c),

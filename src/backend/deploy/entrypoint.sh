@@ -191,6 +191,24 @@ else
   fi
 fi
 
+# ---------- JWT 密钥 ----------
+# 密钥模板留空且不入仓库，必须在各进程启动前定下来：容器内 7 个进程共享同一环境，
+# 在此集中决定一次，避免各自随机导致签发的 token 互不认。
+# 优先级：docker run -e JWT_SECRET > 宿主机持久化文件 > 首次随机生成并持久化
+#（持久化文件随 runtime 目录 bind mount 落宿主机，容器重建不使既有 token 失效）
+if [ -z "$JWT_SECRET" ]; then
+  if [ -s "$RUNTIME_DIR/jwt_secret" ]; then
+    JWT_SECRET=$(cat "$RUNTIME_DIR/jwt_secret")
+    log "JWT 密钥取自持久化文件 $RUNTIME_DIR/jwt_secret"
+  else
+    JWT_SECRET=$(head -c 48 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    printf '%s' "$JWT_SECRET" > "$RUNTIME_DIR/jwt_secret"
+    chmod 600 "$RUNTIME_DIR/jwt_secret" 2>/dev/null || true
+    log "已随机生成 JWT 密钥并持久化到 $RUNTIME_DIR/jwt_secret"
+  fi
+fi
+export JWT_SECRET
+
 SERVICES_LIST="user-service product-service order-service cart-service payment-service gateway market-admin"
 for svc in $SERVICES_LIST; do
   cp -f "$CONFIG_TEMPLATE" "$RUNTIME_DIR/config.$svc.yaml"
@@ -202,9 +220,11 @@ done
 # 口令已回填时 sed 不命中，幂等
 DB_ESC=$(sed_escape "$MYSQL_ROOT_PASSWORD")
 REDIS_ESC=$(sed_escape "$REDIS_PASSWORD")
+JWT_ESC=$(sed_escape "$JWT_SECRET")
 for f in "$RUNTIME_DIR"/config.*.yaml; do
   sed -i "/^db:/,/^redis:/ s/password: \"\"/password: \"$DB_ESC\"/" "$f"
   sed -i "/^redis:/,/^project:/ s/password: \"\"/password: \"$REDIS_ESC\"/" "$f"
+  sed -i "/^jwt:/,/^log:/ s/secret: \"\"/secret: \"$JWT_ESC\"/" "$f"
   chmod 600 "$f" 2>/dev/null || true
 done
 chown -R appuser:appuser "$RUNTIME_DIR" 2>/dev/null || true

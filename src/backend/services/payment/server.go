@@ -62,6 +62,19 @@ func (s *server) GetPayment(ctx stdctx.Context, req *payment.GetPaymentReq) (*pa
 	return service.ToPaymentInfo(p), nil
 }
 
+// BatchGetPayments 按订单批量查询成功支付记录（后台订单列表一次往返取回整页支付方式）
+func (s *server) BatchGetPayments(ctx stdctx.Context, req *payment.BatchGetPaymentsReq) (*payment.BatchGetPaymentsResp, error) {
+	list, err := s.paymentService.BatchGetPayments(ctx, req.OrderIds)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	infos := make([]*payment.PaymentInfo, 0, len(list))
+	for _, p := range list {
+		infos = append(infos, service.ToPaymentInfo(p))
+	}
+	return &payment.BatchGetPaymentsResp{List: infos}, nil
+}
+
 // HandleWechatCallback 处理微信支付回调
 func (s *server) HandleWechatCallback(ctx stdctx.Context, req *payment.WechatCallbackReq) (*common.CommonResponse, error) {
 	if err := s.paymentService.HandleWechatCallback(ctx, req); err != nil {

@@ -328,8 +328,7 @@ func (h *UserHandler) DeleteAddress(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *UserHandler) ListCommunities(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	page, pageSize := parsePageParams(c)
 	keyword := c.Query("keyword")
 	longitude, _ := strconv.ParseFloat(c.Query("longitude"), 64)
 	latitude, _ := strconv.ParseFloat(c.Query("latitude"), 64)

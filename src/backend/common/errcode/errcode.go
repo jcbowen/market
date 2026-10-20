@@ -22,6 +22,8 @@ const (
 	IncorrectUsernameOrPassword = 11007
 	// UserBlocked 会员已被拉黑（C 端访问拦截，文案按需求伪装为系统错误）
 	UserBlocked = 11008
+	// LoginLocked 连续登录失败已达上限，账号在锁定期内拒绝再次尝试（具体剩余时间由调用方拼进文案）
+	LoginLocked = 11009
 
 	// ----- 商品模块 -----
 	ProductNotFoundOrOffline = 12001
@@ -81,6 +83,7 @@ var Message = map[int]string{
 	AccountDisabled:        "账号已被禁用",
 	IncorrectUsernameOrPassword: "用户名或密码错误",
 	UserBlocked:                 "系统错误，请联系工作人员",
+	LoginLocked:                 "登录失败次数过多，请稍后再试",
 	ProductNotFoundOrOffline: "商品不存在或已下架",
 	ProductStockInsufficient: "商品库存不足",
 	CategoryNotFound:       "分类不存在",

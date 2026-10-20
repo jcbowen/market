@@ -48,17 +48,24 @@ func (s *CategoryService) ListCategories(ctx context.Context, communityID int64)
 // 参数：
 //   - ctx: 上下文
 //   - id: 分类 ID
+//   - communityId: 操作者社区语境（>0 时校验归属，见 scope.go）
 //
 // 返回值：
 //   - *model.Category: 分类模型
 //   - error: 错误信息
-func (s *CategoryService) GetCategory(ctx context.Context, id int64) (*model.Category, error) {
+func (s *CategoryService) GetCategory(ctx context.Context, id, communityId int64) (*model.Category, error) {
 	var c model.Category
 	err := s.db.GetDb().WithContext(ctx).First(&c, id).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, fmt.Errorf("分类不存在")
 	}
-	return &c, err
+	if err != nil {
+		return nil, err
+	}
+	if err := EnsureScope(communityId, c.CommunityID, "分类"); err != nil {
+		return nil, err
+	}
+	return &c, nil
 }
 
 // CreateCategory 创建分类
@@ -93,7 +100,7 @@ func (s *CategoryService) CreateCategory(ctx context.Context, req *product.Creat
 //   - *model.Category: 分类模型
 //   - error: 错误信息
 func (s *CategoryService) UpdateCategory(ctx context.Context, req *product.UpdateCategoryReq) (*model.Category, error) {
-	c, err := s.GetCategory(ctx, req.Id)
+	c, err := s.GetCategory(ctx, req.Id, req.CommunityId)
 	if err != nil {
 		return nil, err
 	}
@@ -113,10 +120,14 @@ func (s *CategoryService) UpdateCategory(ctx context.Context, req *product.Updat
 // 参数：
 //   - ctx: 上下文
 //   - id: 分类 ID
+//   - communityId: 操作者社区语境（>0 时校验归属，见 scope.go）
 //
 // 返回值：
 //   - error: 错误信息
-func (s *CategoryService) DeleteCategory(ctx context.Context, id int64) error {
+func (s *CategoryService) DeleteCategory(ctx context.Context, id, communityId int64) error {
+	if _, err := s.GetCategory(ctx, id, communityId); err != nil {
+		return err
+	}
 	var count int64
 	if err := s.db.GetDb().WithContext(ctx).Model(&model.Category{}).Where("parent_id = ?", id).Count(&count).Error; err != nil {
 		return err

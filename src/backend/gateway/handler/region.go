@@ -148,8 +148,7 @@ func (h *RegionHandler) Locate(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *RegionHandler) ListRegions(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize := parsePageParams(c, 20)
 	level, _ := strconv.Atoi(c.DefaultQuery("level", "0"))
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 

@@ -54,6 +54,12 @@ const (
 
 	// md5HexLength MD5 十六进制字符串长度
 	md5HexLength = 32
+
+	// attachmentConfigCacheTTL 附件配置进程内缓存有效期
+	// 命中期内不再查库：附件配置只有单行，却经 ToMediaURL 被逐行调用（列表页每行一次查询）
+	// 取值权衡：越短配置变更生效越快，越长查库越少；
+	// 本实例保存配置时立即失效，滞后只发生在多实例部署的其他进程，60s 足够
+	attachmentConfigCacheTTL = 60 * time.Second
 )
 
 // imageAllowedExts 允许上传的图片扩展名（与 jcbaseGo attachment image 类型白名单对齐）
@@ -65,9 +71,11 @@ var imageAllowedExts = map[string]bool{
 // AttachmentService 附件业务服务
 // 覆盖附件配置管理、本地上传、OSS 预签名直传（presign/confirm）与 MD5 秒传
 type AttachmentService struct {
-	db        *mysql.Instance
+	db *mysql.Instance
+	// 附件配置进程内缓存：mu 保护 cachedCfg 与 cachedAt 的读写
 	mu        sync.RWMutex
 	cachedCfg *model.AttachmentConfig
+	cachedAt  time.Time
 }
 
 // NewAttachmentService 创建附件业务服务实例
@@ -109,37 +117,47 @@ func (s *AttachmentService) EnsureDefaultAttachmentConfig() error {
 	return nil
 }
 
-// getConfigCached 获取附件配置（带进程内缓存与版本检测）
-// 缓存版本与数据库 updated_at 一致时直接复用，不一致时刷新缓存
-// 数据库查询失败时降级返回当前缓存，避免 DB 抖动阻断上传链路
+// configCacheFresh 判断进程内附件配置缓存是否在有效期内（调用方需已持有读锁）
+//
+// 参数:
+//   - now: 判定基准时间
+//
+// 返回值:
+//   - bool: 缓存非空且未过期时为 true
+func (s *AttachmentService) configCacheFresh(now time.Time) bool {
+	return s.cachedCfg != nil && now.Sub(s.cachedAt) < attachmentConfigCacheTTL
+}
+
+// getConfigCached 获取附件配置（进程内缓存，有效期内不查库）
+// 缓存未过期直接复用，过期后查库刷新；查库失败时降级返回旧缓存，
+// 避免 DB 抖动阻断上传与图片 URL 拼接链路（配置行恒在，读失败只可能是瞬时故障）
 //
 // 参数:
 //   - ctx: 上下文
 //
 // 返回值:
-//   - *model.AttachmentConfig: 附件配置行（缓存或最新），均不可用时返回 nil
+//   - *model.AttachmentConfig: 附件配置（缓存或最新），均不可用时返回 nil
+//
+// 异常:
+//   - 返回的是缓存内共享指针，调用方只读；需改写请自行复制（见 SaveConfig）
 func (s *AttachmentService) getConfigCached(ctx context.Context) *model.AttachmentConfig {
+	s.mu.RLock()
+	cached, fresh := s.cachedCfg, s.configCacheFresh(time.Now())
+	s.mu.RUnlock()
+	if fresh {
+		return cached
+	}
+
 	var row model.AttachmentConfig
 	if err := s.db.GetDb().WithContext(ctx).First(&row, attachmentConfigID).Error; err != nil {
 		log.Printf("读取附件配置失败（使用缓存兜底）: %v", err)
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		return s.cachedCfg
-	}
-
-	s.mu.RLock()
-	unchanged := s.cachedCfg != nil && s.cachedCfg.UpdatedAt == row.UpdatedAt
-	s.mu.RUnlock()
-	if unchanged {
-		return s.cachedCfg
+		return cached
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// 双重检查：等待锁期间其他协程可能已完成刷新
-	if s.cachedCfg == nil || s.cachedCfg.UpdatedAt != row.UpdatedAt {
-		s.cachedCfg = &row
-	}
+	s.cachedCfg = &row
+	s.cachedAt = time.Now()
 	return s.cachedCfg
 }
 
@@ -161,8 +179,8 @@ func (s *AttachmentService) GetConfigMasked(ctx context.Context) (*product.Attac
 }
 
 // SaveConfig 保存附件配置
-// AccessKeySecret 为空串或脱敏掩码时保留原值；保存后更新 updated_at 作为版本号，
-// 各实例在下一次上传链路调用时自动检测并重建 OSS 客户端
+// AccessKeySecret 为空串或脱敏掩码时保留原值；保存后更新 updated_at 并立即刷新本实例缓存，
+// 其余实例在进程内缓存过期（attachmentConfigCacheTTL）后自动读到新配置并重建 OSS 客户端
 //
 // 参数:
 //   - ctx: 上下文
@@ -171,10 +189,12 @@ func (s *AttachmentService) GetConfigMasked(ctx context.Context) (*product.Attac
 // 返回值:
 //   - error: 保存失败时返回错误
 func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.AttachmentConfig) error {
-	row := s.getConfigCached(ctx)
-	if row == nil {
+	cached := s.getConfigCached(ctx)
+	if cached == nil {
 		return errors.New("附件配置不存在")
 	}
+	// 副本改写：缓存指针在多协程间共享，原地改字段会与并发读取构成数据竞争
+	row := *cached
 
 	if err := validateStorageType(cfg.StorageType); err != nil {
 		return err
@@ -204,15 +224,16 @@ func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.Attachm
 	row.MaxSize = cfg.MaxSize
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
 
-	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
+	if err := s.db.GetDb().WithContext(ctx).Save(&row).Error; err != nil {
 		return fmt.Errorf("保存附件配置失败: %w", err)
 	}
 
-	// 本实例立即刷新缓存，其余实例在下次上传调用时按版本号自动刷新
+	// 本实例立即刷新缓存（存入独立副本，不把已被调用方持有的行指针交给缓存）
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cfgCopy := *row
-	s.cachedCfg = &cfgCopy
+	updated := row
+	s.cachedCfg = &updated
+	s.cachedAt = time.Now()
 	return nil
 }
 
@@ -1006,6 +1027,22 @@ func attachmentConverter(cfg *model.AttachmentConfig) *attachment.Attachment {
 	return &attachment.Attachment{BaseConfig: base}
 }
 
+// mediaConverter 取当前可用的图片 URL 转换器
+// 配置缺失，或 local 模式未填访问域名（拼不出可用地址）时返回 nil，调用方原样返回源值
+//
+// 参数:
+//   - ctx: 上下文
+//
+// 返回值:
+//   - *attachment.Attachment: 附件转换器；不可用时返回 nil
+func (s *AttachmentService) mediaConverter(ctx context.Context) *attachment.Attachment {
+	conv := attachmentConverter(s.getConfigCached(ctx))
+	if conv == nil || (conv.BaseConfig.StorageType != "oss" && conv.BaseConfig.LocalVisitDomain == "") {
+		return nil
+	}
+	return conv
+}
+
 // ToMediaURL 将入库相对路径补全为完整访问 URL
 // 空值与 http(s) 开头的存量完整 URL 原样返回；
 // local 模式未配置访问域名时拼不出可用地址，同样原样返回（需先在后台附件配置中填写）
@@ -1020,17 +1057,15 @@ func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
 	if src == "" {
 		return ""
 	}
-	conv := attachmentConverter(s.getConfigCached(ctx))
+	conv := s.mediaConverter(ctx)
 	if conv == nil {
-		return src
-	}
-	if conv.BaseConfig.StorageType != "oss" && conv.BaseConfig.LocalVisitDomain == "" {
 		return src
 	}
 	return conv.ToMedia(src)
 }
 
 // ToMediaURLs ToMediaURL 的批量版本
+// 整批共用一次配置读取与转换器构造，供列表接口的图集字段使用
 //
 // 参数:
 //   - ctx: 上下文
@@ -1042,9 +1077,14 @@ func (s *AttachmentService) ToMediaURLs(ctx context.Context, list []string) []st
 	if len(list) == 0 {
 		return list
 	}
+	conv := s.mediaConverter(ctx)
 	out := make([]string, 0, len(list))
 	for _, src := range list {
-		out = append(out, s.ToMediaURL(ctx, src))
+		if src == "" || conv == nil {
+			out = append(out, src)
+			continue
+		}
+		out = append(out, conv.ToMedia(src))
 	}
 	return out
 }

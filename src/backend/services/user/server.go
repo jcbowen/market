@@ -117,6 +117,20 @@ func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.Li
 	return resp, nil
 }
 
+// BatchGetUsers 按 ID 集合批量查询会员（后台订单列表一次往返取回整页会员名）
+// community_id 为操作者社区语境：>0 时只回传与该社区有关联的会员，越权 ID 静默剔除
+func (s *server) BatchGetUsers(ctx stdctx.Context, req *user.BatchGetUsersReq) (*user.BatchGetUsersResp, error) {
+	list, err := s.userService.BatchGetUsers(ctx, req.Ids, req.CommunityId)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	infos := make([]*user.UserInfo, 0, len(list))
+	for _, u := range list {
+		infos = append(infos, service.ToUserInfo(u))
+	}
+	return &user.BatchGetUsersResp{List: infos}, nil
+}
+
 // MarkUserCommunity 幂等记录会员-社区关联
 func (s *server) MarkUserCommunity(ctx stdctx.Context, req *user.MarkUserCommunityReq) (*common.CommonResponse, error) {
 	if err := s.userService.MarkUserCommunity(ctx, req.UserId, req.CommunityId, req.Source); err != nil {
@@ -310,10 +324,12 @@ func (s *server) DeleteCommunity(ctx stdctx.Context, req *user.DeleteCommunityRe
 }
 
 // GetAdminByUsername 根据用户名获取管理员
+// 错误口径按 bizerr 状态码透传：账号不存在为 NotFound，数据库故障等为 Internal，
+// 网关登录链路依赖该区分决定是否计入失败锁定
 func (s *server) GetAdminByUsername(ctx stdctx.Context, req *user.GetAdminByUsernameReq) (*user.AdminInfo, error) {
 	admin, err := s.adminService.GetAdminByUsername(ctx, req.Username)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID)
 	return service.ToAdminInfo(admin, communityIDs, nil), nil
