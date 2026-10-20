@@ -70,6 +70,28 @@ type Config struct {
 		OrderTimeout      int `json:"order_timeout" yaml:"order_timeout" default:"1800"`
 		AutoCompleteDays  int `json:"auto_complete_days" yaml:"auto_complete_days" default:"7"`
 	} `json:"business" yaml:"business"`
+	Debugger struct {
+		// Enabled 是否启用 debugger 请求日志（jcbaseGo 组件，写共享 debug_logs 表，前端页面见 BasePath）
+		Enabled bool `json:"enabled" yaml:"enabled" default:"false"`
+		// ServiceName 服务标识：多服务共享 debug_logs 表时区分日志来源
+		ServiceName string `json:"service_name" yaml:"service_name" default:"gateway"`
+		// AllowedIPs debugger 前端页面访问白名单（IP/CIDR），空 = 不限制，生产建议显式配置
+		AllowedIPs []string `json:"allowed_ips" yaml:"allowed_ips"`
+		// MaxBodySize 单条记录捕获的请求/响应体上限（KB），超出截断
+		MaxBodySize int64 `json:"max_body_size" yaml:"max_body_size" default:"16"`
+		// MaxRecords 表内最大记录条数，超过时清理最旧记录（0 = 不限制）
+		MaxRecords int `json:"max_records" yaml:"max_records" default:"20000"`
+		// RetentionDays 日志保留天数，启动时与每日定时清理过期记录
+		RetentionDays int `json:"retention_days" yaml:"retention_days" default:"7"`
+		// SampleRate 请求采样率 0-1，1 = 全量记录
+		SampleRate float64 `json:"sample_rate" yaml:"sample_rate" default:"1.0"`
+		// UseCDN 前置 CDN/代理时置 true，白名单校验按代理头取真实 IP
+		UseCDN bool `json:"use_cdn" yaml:"use_cdn" default:"false"`
+		// BasePath debugger 前端页面路径
+		BasePath string `json:"base_path" yaml:"base_path" default:"/jcbase/debug"`
+		// SkipPaths 额外跳过的路径前缀（默认追加 /health、/s/、/b/、/uploads）
+		SkipPaths []string `json:"skip_paths" yaml:"skip_paths"`
+	} `json:"debugger" yaml:"debugger"`
 
 	// 各微服务独立配置
 	UserService    ServiceConfig `json:"user_service" yaml:"user_service"`

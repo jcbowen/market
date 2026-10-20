@@ -37,6 +37,10 @@ func ApplyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("JWT_SECRET"); v != "" {
 		cfg.JWT.Secret = v
 	}
+	// DEBUGGER_ENABLED 强制开关 debugger 请求日志（compose 部署注入，优先于配置文件）
+	if v := os.Getenv("DEBUGGER_ENABLED"); v != "" {
+		cfg.Debugger.Enabled = v == "1" || strings.EqualFold(v, "true")
+	}
 	// TRUSTED_PROXIES 逗号分隔可信代理网段（compose/all-in-one 注入，避免配置文件里写死网段）
 	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
 		proxies := make([]string, 0, 4)

@@ -51,6 +51,8 @@ func main() {
 	r := gin.New()
 	applyTrustedProxies(r, cfg)
 	r.Use(gin.Recovery())
+	// debugger 请求日志紧跟 Recovery（记录最完整链路），未启用时内部直接返回
+	registerDebugger(r, cfg)
 	r.Use(gwMiddleware.RequestLoggerMiddleware())
 	r.Use(gwMiddleware.SecurityHeadersMiddleware())
 	r.Use(gwMiddleware.BlockTraceMiddleware())

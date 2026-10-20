@@ -82,6 +82,19 @@ business:
     expire_warning_days: 3
     order_timeout: 1800
     auto_complete_days: 7
+# debugger 请求日志（jcbaseGo 组件）：写共享 debug_logs 表，前端页面 /jcbase/debug；
+# 生产默认关闭，可经环境变量 DEBUGGER_ENABLED=1 开启；allowed_ips 建议按运维出口 IP 配置
+debugger:
+    enabled: false
+    service_name: gateway
+    allowed_ips: []
+    max_body_size: 16
+    max_records: 20000
+    retention_days: 7
+    sample_rate: 1.0
+    use_cdn: false
+    base_path: /jcbase/debug
+    skip_paths: []
 user_service:
     grpc_port: 50051
 product_service:
