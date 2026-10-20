@@ -21,8 +21,8 @@ import (
 )
 
 // Snapshot 站点设置快照
-// BaseURL 已合并环境变量优先级：SITE_BASE_URL 非空时恒以环境变量为准，
-// BaseURLSource 标记当前生效值来源，供后台页面回显
+// BaseURL 已合并兜底优先级：站点设置 base_url 恒优先，数据库未配置时回落 SITE_BASE_URL 环境变量；
+// BaseURLSource 标记当前生效值来源（db/env，均为空时由调用方按请求现推）
 type Snapshot struct {
 	BaseURL         string
 	BaseURLSource   string
@@ -54,7 +54,7 @@ type Cache struct {
 //
 // 参数：
 //   - client: user 服务 gRPC 客户端
-//   - envBaseURL: 环境变量 SITE_BASE_URL 的值，非空时优先于数据库配置
+//   - envBaseURL: 环境变量 SITE_BASE_URL 的值，数据库未配置时兜底
 //
 // 返回值：
 //   - *Cache: 缓存实例
@@ -62,7 +62,7 @@ func New(client user.UserServiceClient, envBaseURL string) *Cache {
 	return &Cache{client: client, envBaseURL: envBaseURL, ttl: 30 * time.Second}
 }
 
-// snapshot 组装当前快照（应用环境变量优先级）
+// snapshot 组装当前快照（应用兜底优先级：站点设置 > 环境变量）
 //
 // 返回值：
 //   - Snapshot: 快照副本
@@ -71,12 +71,15 @@ func (c *Cache) snapshot() Snapshot {
 	defer c.mu.RUnlock()
 
 	snap := c.snap
-	if c.envBaseURL != "" {
+	if snap.BaseURL != "" {
+		// 站点设置显式配置了域名：恒以数据库为准，保存即接管，环境变量退为兜底
+		snap.BaseURLSource = "db"
+		snap.FromEnvironment = false
+	} else if c.envBaseURL != "" {
+		// 数据库未配置时以环境变量兜底，后台页面据此回填默认值
 		snap.BaseURL = c.envBaseURL
 		snap.BaseURLSource = "env"
 		snap.FromEnvironment = true
-	} else if snap.BaseURL != "" {
-		snap.BaseURLSource = "db"
 	}
 	return snap
 }

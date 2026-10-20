@@ -149,14 +149,14 @@ const form = reactive({
 })
 
 const sourceLabels: Record<string, string> = {
-  env: '环境变量 SITE_BASE_URL',
+  env: '环境变量 SITE_BASE_URL（默认值）',
   db: '本页站点设置',
   request: '按当前访问请求推导（未配置）',
 }
 const sourceLabel = computed(() => sourceLabels[setting.value.base_url_source] || '未知')
 const sourceHint = computed(() =>
   setting.value.base_url_source === 'env'
-    ? '；环境变量优先级最高，本页填写的域名不会生效'
+    ? '；生效值已回填到输入框，保存后将以本页填写为准（环境变量仅在本页未配置时兑底）'
     : setting.value.base_url_source === 'request'
       ? '；建议填写正式域名，避免访问端口变化导致回调地址漂移'
       : '',
@@ -189,6 +189,11 @@ async function load() {
         seo_description: s.seo_description,
         seo_keywords: s.seo_keywords,
       })
+      // 部署侧 SITE_BASE_URL 兑底且本页未配置时，把生效值回填进输入框：
+      // 管理员可直接在其上修改，保存后 DB 有值即接管生效，环境变量退为兑底
+      if (!s.base_url && s.base_url_source === 'env') {
+        form.base_url = s.effective_base_url
+      }
     }
   } catch {
     // 错误提示由请求拦截器统一弹出

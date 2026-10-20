@@ -45,7 +45,7 @@ type SiteSetting struct {
 }
 
 // platformBaseURL 获取当前生效的部署域名基址
-// 优先级：SITE_BASE_URL 环境变量 > 站点设置 base_url > 按请求现推（未配置时的兜底）
+// 优先级：站点设置 base_url > SITE_BASE_URL 环境变量（兜底默认值） > 按请求现推（均未配置时）
 //
 // 参数：
 //   - c: gin 上下文

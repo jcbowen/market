@@ -223,7 +223,7 @@ func (h *AttachmentHandler) ListAttachments(c *gin.Context) {
 }
 
 // baseURLOf 获取附件外链的基础地址
-// 一律以站点设置的部署域名为准（未配置时回落按当前请求现推），
+// 一律以生效的部署域名为准（站点设置优先，未配置时回落 SITE_BASE_URL，再回落按当前请求现推），
 // 保证后台/POS 与 C 端拿到的外链在同一域名下，跨端口访问不会拼出错误 host
 //
 // 参数:

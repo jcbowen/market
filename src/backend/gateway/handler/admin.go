@@ -4648,8 +4648,8 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 		resp = h.syncWechatPayAppID(c.Request.Context(), resp, wechatAppID)
 	}
 
-	// 回调地址一律由部署域名派生：站点设置显式配置了域名（env 或 DB）且库中值与派生值不一致时回写自愈；
-	// 未显式配置时只按当前请求展示、不写库，避免把临时访问到的 host 固化进配置
+	// 回调地址一律由部署域名派生：站点设置已配置域名（或 SITE_BASE_URL 兜底）且库中值与派生值不一致时回写自愈；
+	// 两者均未配置时只按当前请求展示、不写库，避免把临时访问到的 host 固化进配置
 	base := platformBaseURL(c)
 	wechatNotify, alipayNotify, alipayReturn := payCallbackURLsFor(base)
 	if snap := brand.Get(c.Request.Context()); snap.BaseURL != "" &&

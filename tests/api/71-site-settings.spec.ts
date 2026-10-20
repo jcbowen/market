@@ -215,13 +215,9 @@ test.describe.serial('站点设置读写与品牌注入', () => {
 
     const data = await readSite();
     expect(data.base_url, '应回读到大写协议已归一的域名').toBe(TEST_DOMAIN);
-    if (data.base_url_source === 'env') {
-      // 部署侧用 SITE_BASE_URL 固定域名时环境变量优先，站点设置只入库不生效（见部署文档）
-      expect(data.effective_base_url, 'env 生效时应为环境变量域名').not.toBe(TEST_DOMAIN);
-    } else {
-      expect(data.base_url_source, '未设环境变量时来源应为站点设置').toBe('db');
-      expect(data.effective_base_url).toBe(TEST_DOMAIN);
-    }
+    // 站点设置显式保存后恒为最高优先级：即便部署侧设置了 SITE_BASE_URL，也只在 DB 未配置时兜底
+    expect(data.base_url_source, '显式保存后来源应为站点设置').toBe('db');
+    expect(data.effective_base_url).toBe(TEST_DOMAIN);
     const eff = data.effective_base_url;
     expect(data.wechat_notify_url).toBe(`${eff}${WECHAT_PATH}`);
     expect(data.alipay_notify_url).toBe(`${eff}${ALIPAY_PATH}`);

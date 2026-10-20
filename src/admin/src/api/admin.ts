@@ -367,7 +367,7 @@ export interface SiteSetting {
   version: number
   /** 当前生效的部署域名（环境变量优先于本页配置） */
   effective_base_url: string
-  /** 生效域名来源：env 环境变量 / db 站点设置 / request 未配置按请求现推 */
+  /** 生效域名来源：db 站点设置（显式保存后恒为最高优先级）/ env 环境变量兜底（本页未配置时回填默认值）/ request 未配置按请求现推 */
   base_url_source: 'env' | 'db' | 'request'
   /** 以下为按生效域名派生的回调地址，仅出参 */
   wechat_notify_url: string
