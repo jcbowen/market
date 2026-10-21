@@ -105,6 +105,9 @@ services:
       # 可信反向代理网段（逗号分隔 CIDR/IP），与 docker-compose.yml 同口径：
       # 留空 = 不采信任何代理头；宿主 nginx 反代时必填其网段，详见 07-基础设施/02 与开发计划第 69 项
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      # 可信平台专用头（前置 CDN 时填代理强制覆盖写入的客户端真实 IP 头，客户端伪造无效），
+      # 如阿里云 CDN 填 Ali-CDN-Real-IP；与 TRUSTED_PROXIES 同口径，留空不启用
+      TRUSTED_PLATFORM: ${TRUSTED_PLATFORM:-}
     depends_on:
       user-service:
         condition: service_started

@@ -132,11 +132,14 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 	}
 
 	// 当场结清：统一创建支付单（含 0 元全额优惠单，amount=0 创建即成功），保持「订单必有支付记录」口径
+	// 社区与订单号随订单一并带入，支付异常队列据此按社区隔离、后台据此展示可核对的订单号
 	if _, err := h.paymentClient.CreatePayment(c.Request.Context(), &payment.CreatePaymentReq{
-		OrderId: resp.Id,
-		UserId:  req.UserID,
-		PayType: req.PayType,
-		Amount:  resp.PayAmount,
+		OrderId:     resp.Id,
+		CommunityId: communityID,
+		OrderNo:     resp.OrderNo,
+		UserId:      req.UserID,
+		PayType:     req.PayType,
+		Amount:      resp.PayAmount,
 	}); err != nil {
 		log.Printf("收银台收款失败 order_id=%d pay_type=%d: %v", resp.Id, req.PayType, err)
 		response.Error(c, errcode.InternalServerError, "订单已创建（"+resp.OrderNo+"）但收款失败，请在订单列表处理")

@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"google.golang.org/grpc"
 
@@ -31,13 +35,27 @@ func main() {
 	if err := autoMigrate(db); err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
 	}
-	_ = bootstrap.InitRedis(cfg)
+	rds := bootstrap.InitRedis(cfg)
 
 	paymentService := service.NewPaymentService(db, cfg)
+
+	// 支付对账调度器：回查待支付单（回调丢失捞回）+ 挂账检出 + 流水清理
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	go service.NewScheduler(paymentService, rds.GetClient()).Start(schedulerCtx)
 
 	srv := grpc.NewServer()
 	payment.RegisterPaymentServiceServer(srv, newServer(paymentService))
 	bootstrap.RegisterHealth(srv)
+
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		log.Println("正在优雅关闭 payment-service...")
+		schedulerCancel()
+		srv.GracefulStop()
+	}()
 
 	if err := bootstrap.RunGRPCServer(srv, cfg.PaymentService.GrpcPort); err != nil {
 		log.Fatalf("启动失败: %v", err)
@@ -55,5 +73,7 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.Payment{},
 		&model.RefundPayment{},
 		&model.PayConfig{},
+		&model.NotifyLog{},
+		&model.SchedulerFailure{},
 	)
 }

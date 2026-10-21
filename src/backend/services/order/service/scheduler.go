@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -50,6 +51,8 @@ type Scheduler struct {
 	db            *mysql.Instance
 	redisClient   *redis.Client
 	refundService *RefundService
+	// cfg 全局配置：取消前置渠道确认开关（business.payment_reconcile）
+	cfg *config.Config
 }
 
 // NewScheduler 创建订单定时任务调度器
@@ -58,14 +61,16 @@ type Scheduler struct {
 //   - db: MySQL 实例
 //   - redisClient: Redis 客户端，用于分布式锁
 //   - refundService: 退款服务，用于卡单退款自动重试
+//   - cfg: 全局配置（可为 nil，按默认口径处理）
 //
 // 返回值：
 //   - *Scheduler: 调度器实例
-func NewScheduler(db *mysql.Instance, redisClient *redis.Client, refundService *RefundService) *Scheduler {
+func NewScheduler(db *mysql.Instance, redisClient *redis.Client, refundService *RefundService, cfg *config.Config) *Scheduler {
 	return &Scheduler{
 		db:            db,
 		redisClient:   redisClient,
 		refundService: refundService,
+		cfg:           cfg,
 	}
 }
 
@@ -336,6 +341,11 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 		paid, pErr := isOrderPaid(ctx, o.ID)
 		if pErr != nil {
 			return fmt.Errorf("取消前反查支付单失败: %w", pErr)
+		}
+		if !paid {
+			// 本地没有成功支付单不等于用户没付：回调可能丢失或验签失败。
+			// 渠道确认到已收款时，payment 服务已把订单补同步为已支付（100→2 合法），此处放弃取消
+			paid = confirmPaidWithChannel(ctx, o.ID, s.cfg)
 		}
 		if paid {
 			// 已收款：补同步订单为已支付（状态机已允许 100→2，与支付回调二阶段同接口，幂等）

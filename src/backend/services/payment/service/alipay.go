@@ -314,8 +314,9 @@ func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCall
 
 	// 交易状态校验：仅 TRADE_SUCCESS / TRADE_FINISHED 视为支付成功，
 	// 其余（WAIT_BUYER_PAY / TRADE_CLOSED 等）一律拒绝，防非成功通知误置已支付
+	// 用哨兵错误包装：这类是渠道的正常状态推送，流水记「幂等忽略」而非「验签失败」
 	if ts := params["trade_status"]; ts != "TRADE_SUCCESS" && ts != "TRADE_FINISHED" {
-		return nil, fmt.Errorf("支付宝交易状态非成功: %s", ts)
+		return nil, fmt.Errorf("%w: 支付宝交易状态 %s", errNotSuccessNotification, ts)
 	}
 
 	// 回调金额（元），供 handlePaySuccess 与应付金额强制比对，缺失或非法直接拒绝

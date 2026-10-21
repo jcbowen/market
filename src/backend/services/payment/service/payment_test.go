@@ -93,7 +93,7 @@ func newPaymentTestEnv(t *testing.T) (*PaymentService, *stubOrderClient, func())
 	if err != nil {
 		t.Fatalf("连接测试数据库失败: %v", err)
 	}
-	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}); err != nil {
+	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}, &model.NotifyLog{}, &model.SchedulerFailure{}); err != nil {
 		t.Fatalf("迁移支付测试表失败: %v", err)
 	}
 
@@ -107,6 +107,8 @@ func newPaymentTestEnv(t *testing.T) (*PaymentService, *stubOrderClient, func())
 		grpcclient.OrderClient = origOrder
 		dbInst.GetDb().Where("order_id >= ?", testOrderIDBase).Delete(&model.Payment{})
 		dbInst.GetDb().Where("order_id >= ?", testOrderIDBase).Delete(&model.RefundPayment{})
+		dbInst.GetDb().Where("order_id >= ?", testOrderIDBase).Delete(&model.NotifyLog{})
+		dbInst.GetDb().Where("order_id >= ?", testOrderIDBase).Delete(&model.SchedulerFailure{})
 	}
 	return s, stub, cleanup
 }

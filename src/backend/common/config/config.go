@@ -55,6 +55,13 @@ type Config struct {
 		// nginx/caddy 与 gateway 同机或同网段反代时必须显式配置（如 ["127.0.0.1"]、["172.16.0.0/12"]），
 		// 否则限流、访问日志与 IP 定位会把所有用户合并成代理 IP（表现为整站共用一个限流桶）
 		TrustedProxies []string `json:"trusted_proxies" yaml:"trusted_proxies"`
+		// TrustedPlatform 可信平台专用头名（gin Engine.TrustedPlatform）。
+		// 前置 CDN/云厂商代理时，由代理**强制覆盖**写入的客户端真实 IP 头（客户端伪造无效），
+		// 典型值：阿里云 CDN 的 Ali-CDN-Real-IP、Cloudflare 的 CF-Connecting-IP。
+		// ClientIP() 优先返回该头值，头缺失（如本地直连调试）时回落 trusted_proxies/直连逻辑，零影响。
+		// 与 trusted_proxies 的分工：后者解决「代理链要读哪段」；本项解决「厂商头值即真话」——
+		// CDN 回源 IP 无固定段不可枚举时，这是白名单/限流拿到真实 IP 的唯一可靠路径
+		TrustedPlatform string `json:"trusted_platform" yaml:"trusted_platform"`
 	} `json:"security" yaml:"security"`
 	SMS struct {
 		Provider     string `json:"provider" yaml:"provider" default:"aliyun"`
@@ -69,6 +76,34 @@ type Config struct {
 		ExpireWarningDays int `json:"expire_warning_days" yaml:"expire_warning_days" default:"3"`
 		OrderTimeout      int `json:"order_timeout" yaml:"order_timeout" default:"1800"`
 		AutoCompleteDays  int `json:"auto_complete_days" yaml:"auto_complete_days" default:"7"`
+		// PaymentReconcile 支付对账与回调可靠性配置（渠道为事实来源的最终一致兜底）
+		PaymentReconcile struct {
+			// Enabled 渠道主动回查 + 关单时关闭渠道交易的总开关。
+			// 使用 *bool 表达三态语义：nil（未配置）= 启用；显式 false = 关闭（退回纯回调路径 + 纯本地关单）。
+			// 不用 bool + default:"true"：CheckAndSetDefault 的布尔默认值机制无法区分「未配置」与「显式 false」，
+			// 会把显式关闭强行改回开启，导致回退开关失效
+			Enabled *bool `json:"enabled" yaml:"enabled"`
+			// CancelGuard 取消前置渠道确认（订单仍处待支付时问渠道，已收款则放弃取消，防资金挂账）
+			// 同为 *bool 三态：nil=启用；受 Enabled 约束（Enabled 关闭时本开关无效）
+			CancelGuard *bool `json:"cancel_guard" yaml:"cancel_guard"`
+			// AutoRefundStuck 挂账单自动退款。默认关闭：渠道退款回执需真实商户号联调验证后才能开启
+			AutoRefundStuck *bool `json:"auto_refund_stuck" yaml:"auto_refund_stuck"`
+			// PendingMaxMinutes 待支付单回查的时间上界（分钟），按微信 prepay 时效取值；
+			// 支付宝侧实际取 min(本值, business.order_timeout 换算分钟)，与下单 timeout_express 对齐
+			PendingMaxMinutes int `json:"pending_max_minutes" yaml:"pending_max_minutes" default:"120"`
+			// IntervalSeconds 对账调度轮询间隔（秒）
+			IntervalSeconds int `json:"interval_seconds" yaml:"interval_seconds" default:"60"`
+			// MinAgeSeconds 支付单创建后至少等待多少秒才回查渠道（给正常回调留时间，避免打扰渠道）
+			MinAgeSeconds int `json:"min_age_seconds" yaml:"min_age_seconds" default:"60"`
+			// ThrottleMinutes 同一支付单两次回查的最小间隔（分钟）
+			ThrottleMinutes int `json:"throttle_minutes" yaml:"throttle_minutes" default:"5"`
+			// MaxReconcileCount 同一支付单累计回查上限，超限写「放弃对账」流水并停止回查
+			MaxReconcileCount int `json:"max_reconcile_count" yaml:"max_reconcile_count" default:"24"`
+			// BatchSize 单轮每类扫描的支付单条数上限
+			BatchSize int `json:"batch_size" yaml:"batch_size" default:"100"`
+			// NotifyLogRetentionDays 通知与对账流水保留天数
+			NotifyLogRetentionDays int `json:"notify_log_retention_days" yaml:"notify_log_retention_days" default:"30"`
+		} `json:"payment_reconcile" yaml:"payment_reconcile"`
 	} `json:"business" yaml:"business"`
 	Debugger struct {
 		// Enabled 是否启用 debugger 请求日志（jcbaseGo 组件，写共享 debug_logs 表，前端页面见 BasePath）

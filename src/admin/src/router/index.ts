@@ -155,6 +155,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/order/refunds.vue'),
         meta: { title: '售后管理', permission: 'refund:view', group: '订单管理' },
       },
+      {
+        path: 'payment-anomalies',
+        name: 'PaymentAnomalies',
+        component: () => import('@/views/order/payment-anomalies.vue'),
+        meta: { title: '支付异常', permission: 'order:view', group: '订单管理' },
+      },
       // 用户管理
       {
         path: 'users',

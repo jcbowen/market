@@ -127,6 +127,61 @@ func (s *server) UploadPayCert(ctx stdctx.Context, req *payment.UploadPayCertReq
 	return &payment.UploadPayCertResp{Success: true, Message: "上传成功"}, nil
 }
 
+// SyncPaymentFromChannel 向渠道核实收款结果，已收款则补同步
+// 幂等可反复调用：渠道未收款时不改动任何本地状态，仅回传渠道事实
+func (s *server) SyncPaymentFromChannel(ctx stdctx.Context, req *payment.SyncPaymentReq) (*payment.SyncPaymentResp, error) {
+	reason := req.Reason
+	if reason == "" {
+		reason = model.ConfirmRefManualSync
+	}
+	outcome, err := s.paymentService.SyncPaymentFromChannel(ctx, req.OrderId, req.PaymentNo, reason)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToSyncPaymentResp(outcome), nil
+}
+
+// ListOrderPayments 按订单列出全部支付尝试（含未成功），供后台详情展示支付次数与状态
+func (s *server) ListOrderPayments(ctx stdctx.Context, req *payment.ListOrderPaymentsReq) (*payment.ListOrderPaymentsResp, error) {
+	list, err := s.paymentService.ListOrderPayments(ctx, req.OrderId)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	infos := make([]*payment.PaymentInfo, 0, len(list))
+	for _, p := range list {
+		infos = append(infos, service.ToPaymentInfo(p))
+	}
+	return &payment.ListOrderPaymentsResp{List: infos}, nil
+}
+
+// ListPaymentAnomalies 支付异常队列（含对账轨迹）
+// with_raw 由网关按 payment:raw:view 权限设置，community_id 由网关按管理员社区权限下发（超管为 0 表示不限）；
+// 权限判定只在网关做一次，服务层只按入参取数与回传原文
+func (s *server) ListPaymentAnomalies(ctx stdctx.Context, req *payment.ListPaymentAnomaliesReq) (*payment.ListPaymentAnomaliesResp, error) {
+	list, total, pending, err := s.paymentService.ListPaymentAnomalies(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &payment.ListPaymentAnomaliesResp{List: list, Total: total, Pending: pending}, nil
+}
+
+// MarkPaymentAnomalyHandled 异常销账，remark 记录人工核实依据
+func (s *server) MarkPaymentAnomalyHandled(ctx stdctx.Context, req *payment.MarkPaymentAnomalyReq) (*common.CommonResponse, error) {
+	if err := s.paymentService.MarkPaymentAnomalyHandled(ctx, req.Id, req.Remark, req.CommunityId); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// MarkPaymentPaid 人工把待支付单标记为已支付
+// 订单侧的「必须仍是待支付」约束由网关先读订单状态把关，服务层再按支付单状态兜底
+func (s *server) MarkPaymentPaid(ctx stdctx.Context, req *payment.MarkPaymentPaidReq) (*common.CommonResponse, error) {
+	if err := s.paymentService.MarkPaymentPaidManually(ctx, req.PaymentNo, req.TransactionId, req.Amount, req.Remark); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // toPayConfig 将支付配置模型转换为 proto 结构
 // 参数：
 //   - row: 支付配置模型

@@ -120,14 +120,16 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	paymentNo := generatePaymentNo()
 
 	p := &model.Payment{
-		PaymentNo: paymentNo,
-		OrderID:   req.OrderId,
-		UserID:    req.UserId,
-		PayType:   req.PayType,
-		Amount:    req.Amount,
-		Status:    1,
-		CreatedAt: now,
-		UpdatedAt: now,
+		PaymentNo:   paymentNo,
+		OrderID:     req.OrderId,
+		OrderNo:     req.OrderNo,
+		UserID:      req.UserId,
+		CommunityID: req.CommunityId,
+		PayType:     req.PayType,
+		Amount:      req.Amount,
+		Status:      1,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	var payParams string
@@ -138,8 +140,10 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		payParams, err = s.buildAlipayParams(ctx, p)
 	case 3, 4:
 		// 货到付款(3)/收银台现金(4)直接标记为支付成功，并同步订单状态（4 含 0 元全额优惠单）
+		// 确认来源标为线下：这类支付单没有渠道回调，统计「回调丢失率」时必须排除
 		p.Status = 2
 		p.PayTime = &now
+		p.ConfirmSource = model.ConfirmSourceOffline
 	}
 	if err != nil {
 		return nil, "", err
@@ -272,6 +276,7 @@ func (s *PaymentService) BatchGetPayments(ctx context.Context, orderIDs []int64)
 
 // HandleWechatCallback 处理微信支付回调
 // 解析回调体，更新支付单状态，并同步订单状态为已支付
+// 解析（验签/解密）失败同样落一条流水：否则事后无法区分「渠道发过但被拒」与「渠道根本没发」
 // 参数：
 //   - ctx: 上下文
 //   - req: 微信支付回调请求
@@ -289,9 +294,35 @@ func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.
 	}
 	params, err := parseWechatCallback(s, req.Body, headers)
 	if err != nil {
+		// 微信通知全文加密，验签/解密失败时连支付单号都解析不出，归属只能留空（community_id=0），
+		// 这类流水因此只出现在超管的全量队列
+		entry := notifyEntryFrom(nil, model.NotifyKindCallback, wechatCallbackFailureResult(err))
+		entry.Channel = 1
+		entry.ErrorMsg = err.Error()
+		entry.RawBody = truncateRunes(string(req.Body), notifyRawBodyMaxLen)
+		entry.Headers = maskWechatNotifyHeaders(headers)
+		s.recordNotifyLog(ctx, entry)
 		return err
 	}
+	params.NotifyKind = model.NotifyKindCallback
+	params.Channel = 1
+	params.RawBody = string(req.Body)
+	params.Headers = maskWechatNotifyHeaders(headers)
 	return s.handlePaySuccess(ctx, params)
+}
+
+// wechatCallbackFailureResult 回调解析失败的原因分类
+// 非支付成功通知（如退款通知）是正常分流，其余（验签、解密、报文解析）都是需要人工排查的异常
+// 参数：
+//   - err: parseWechatCallback 返回的错误
+//
+// 返回值：
+//   - int32: model.NotifyResult* 之一
+func wechatCallbackFailureResult(err error) int32 {
+	if errors.Is(err, errNotSuccessNotification) {
+		return model.NotifyResultIgnored
+	}
+	return model.NotifyResultVerifyFailed
 }
 
 // HandleAlipayCallback 处理支付宝支付回调
@@ -308,9 +339,34 @@ func (s *PaymentService) HandleAlipayCallback(ctx context.Context, req *payment.
 
 	params, err := s.parseAlipayCallback(req.Params)
 	if err != nil {
+		// 支付宝通知的 out_trade_no 是明文表单字段，验签失败前后都能读到；
+		// 据此反查支付单即可把流水归到正确社区（反查只做只读定位，不可信的单号查不到就是空）
+		paymentNo := req.Params["out_trade_no"]
+		entry := notifyEntryFrom(s.scopeByPaymentNo(ctx, paymentNo), model.NotifyKindCallback, alipayCallbackFailureResult(err))
+		entry.Channel = 2
+		entry.PaymentNo = paymentNo
+		entry.ErrorMsg = err.Error()
+		entry.RawBody = truncateRunes(maskAlipayNotifyParams(req.Params), notifyRawBodyMaxLen)
+		s.recordNotifyLog(ctx, entry)
 		return err
 	}
+	params.NotifyKind = model.NotifyKindCallback
+	params.Channel = 2
+	params.RawBody = maskAlipayNotifyParams(req.Params)
 	return s.handlePaySuccess(ctx, params)
+}
+
+// alipayCallbackFailureResult 支付宝回调解析失败的原因分类
+// 参数：
+//   - err: parseAlipayCallback 返回的错误
+//
+// 返回值：
+//   - int32: model.NotifyResult* 之一
+func alipayCallbackFailureResult(err error) int32 {
+	if errors.Is(err, errNotSuccessNotification) {
+		return model.NotifyResultIgnored
+	}
+	return model.NotifyResultVerifyFailed
 }
 
 // ProcessRefund 处理退款
@@ -459,6 +515,18 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 // ClosePayments 关闭订单的全部待支付支付单（status 1→5）
 // 订单取消/超时取消后由 order 服务调用：支付单置已关闭后，迟到的支付回调
 // 会被 handlePaySuccess 的终态兜底忽略，避免已取消订单被误置为已支付
+//
+// 调用本方法时订单取消事务已提交（订单已是 6，状态机禁止 6→2），
+// 因此这里绝不尝试把渠道核实到的收款「补同步」成已支付——那样只会得到
+// 「支付单已成功、订单已取消」的不一致体。正确处置是登记挂账异常，由人工退款。
+//
+// 对账开关（business.payment_reconcile.enabled）开启时，本地置 5 之前先逐笔问渠道：
+//   - 渠道已收款 → 写「挂账检出」异常流水（含渠道交易号与金额），进后台待办队列；
+//   - 渠道未支付/在途 → 顺带关闭渠道侧交易，用户在渠道 App 里不会再看到待付订单；
+//   - 渠道查询失败 → 不盲调关单（网络失败不等于用户没付），只本地置 5，交由对账调度器复核。
+//
+// 开关关闭时行为与改造前逐字一致：纯本地把 status=1 批量置 5，零渠道调用。
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 关闭请求（order_id）
@@ -469,6 +537,22 @@ func (s *PaymentService) ClosePayments(ctx context.Context, req *payment.ClosePa
 	if req.OrderId <= 0 {
 		return fmt.Errorf("参数错误")
 	}
+	var pending []model.Payment
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("order_id = ? AND status = 1", req.OrderId).
+		Find(&pending).Error; err != nil {
+		return err
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	if s.cfg.ReconcileEnabled() {
+		for i := range pending {
+			s.inspectForClose(ctx, &pending[i])
+		}
+	}
+
 	now := time.Now().Format("2006-01-02 15:04:05")
 	res := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
 		Where("order_id = ? AND status = 1", req.OrderId).
@@ -480,6 +564,29 @@ func (s *PaymentService) ClosePayments(ctx context.Context, req *payment.ClosePa
 		log.Printf("[ClosePayments] 订单 %d 已关闭 %d 笔待支付支付单", req.OrderId, res.RowsAffected)
 	}
 	return nil
+}
+
+// inspectForClose 关单前与渠道核实一笔待支付单，只做「留证据」与「关渠道交易」两件事
+// 参数：
+//   - ctx: 上下文
+//   - p: 待关闭的支付单
+func (s *PaymentService) inspectForClose(ctx context.Context, p *model.Payment) {
+	res, err := s.queryChannelOrder(ctx, p)
+	if err != nil || res == nil {
+		// 查询失败时不猜测资金状态：既不关渠道单也不写异常，
+		// 本地照常置 5 后由对账调度器按状态=5 再复核（挂账检出扫描）
+		log.Printf("[ClosePayments] 渠道查询失败 payment_no=%s: %v", p.PaymentNo, err)
+		return
+	}
+	if res.State == ChannelStatePaid {
+		s.recordStuckPayment(ctx, p, res)
+		return
+	}
+	if res.State == ChannelStateNotExist {
+		// 渠道从未创建这笔交易，无需关单
+		return
+	}
+	s.closeChannelTrade(ctx, p, res)
 }
 
 // findRefundPayment 查找退款对应的原支付单
@@ -578,20 +685,21 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 }
 
 // handlePaySuccess 统一处理支付成功逻辑
-// 三重防护（微信/支付宝回调通用）：
+// 四重防护（微信/支付宝回调、对账补偿、后台同步四条路径通用）：
 //  1. 金额强制比对：回调金额与应付金额统一换算为分后比对，不一致拒绝确认（防伪造回调少付）
 //  2. 条件更新幂等：仅 status=1（待支付）可流转为已支付，重复/并发回调安全
-//  3. 终态兜底：非待支付状态的回调直接忽略；已关闭(5) 的迟到成功回调记 CRITICAL 日志（资金挂账需人工退款）
+//  3. 终态兜底：非待支付状态的回调直接忽略；已关闭(5) 的迟到成功回调记 CRITICAL + 挂账流水（资金挂账需人工退款）
+//  4. 全程留痕：确认成功/幂等忽略/金额不符/挂账都落 payment_notify_logs，异常项进后台待办队列
 //
 // 两阶段设计：事务内仅更新支付单状态（快、无外部依赖），事务提交后再 RPC 同步订单状态；
 // 避免事务持锁期间依赖 order-service（慢/宕机时不会拖垮支付服务连接池）。
 // RPC 失败时立即重试 3 次；若仍失败则记 CRITICAL 日志（支付已确认但订单未同步）。
-// 兜底保障：order-service 调度器超时取消前会反查支付单（GetPayment），
-// 已收款订单不会被误取消，而是自动补同步为已支付——无需人工对账。
+// 兜底保障：支付服务自身的对账调度器每分钟回查待支付单（见 service/scheduler.go），
+// 回调丢失与订单同步失败都能被捞回——不再依赖「取消前反查」这一条路径。
 //
 // 参数：
 //   - ctx: 上下文
-//   - params: 解析后的回调参数
+//   - params: 解析后的回调参数（NotifyKind 非 0 时写流水，ConfirmSource 标明确认来源）
 //
 // 返回值：
 //   - error: 错误信息
@@ -607,55 +715,82 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 	now := time.Now().Format("2006-01-02 15:04:05")
 	var orderID int64
 	var needSync bool
+	// 流水结果以「确认成功」起草，各拒绝/忽略分支覆写；订单 ID 以支付单反查到的为准
+	notifyResult := int32(model.NotifyResultSuccess)
+	notifyMsg := ""
+	scope := notifyScope{orderID: params.OrderID}
 
 	// 阶段一：事务内完成支付单状态流转（纯 DB 操作，无外部依赖）
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var p model.Payment
 		if err := tx.Where("payment_no = ?", params.PaymentNo).First(&p).Error; err != nil {
+			notifyResult = model.NotifyResultError
+			notifyMsg = fmt.Sprintf("支付单不存在或查询失败: %s", params.PaymentNo)
 			return err
 		}
+		scope = notifyScope{orderID: p.OrderID, orderNo: p.OrderNo, communityID: p.CommunityID}
 		// 终态兜底：已支付/已关闭等状态的回调直接忽略
 		if p.Status != 1 {
 			if p.Status == 5 {
 				// 已关闭（订单取消/超时后关闭）却收到成功通知：钱已收、订单已取消，
 				// 属资金挂账，必须人工在渠道侧核对退款，故升级为 CRITICAL 供告警接入；
 				// 已支付等状态的重复通知是正常幂等，仍按普通日志忽略以免淹没告警
+				notifyResult = model.NotifyResultStuck
+				notifyMsg = fmt.Sprintf("订单已取消而用户完成付款（渠道交易号 %s，金额 %.2f），需人工退款",
+					params.TransactionID, params.Amount)
 				log.Printf("[CRITICAL] 已关闭支付单收到成功回调（订单已取消而用户仍完成付款，需人工对账退款）: "+
 					"payment_no=%s order_id=%d amount=%.2f transaction_id=%s",
 					p.PaymentNo, p.OrderID, p.Amount, params.TransactionID)
 			} else {
+				notifyResult = model.NotifyResultIgnored
+				notifyMsg = fmt.Sprintf("支付单状态 %d，非待支付，本次通知按幂等忽略", p.Status)
 				log.Printf("支付回调忽略非待支付单: payment_no=%s status=%d", p.PaymentNo, p.Status)
 			}
 			return nil
 		}
 		// 金额强制比对（统一换算为分，规避浮点精度误差）
 		if yuanToFen(params.Amount) != yuanToFen(p.Amount) {
+			notifyResult = model.NotifyResultAmountMismatch
+			notifyMsg = fmt.Sprintf("应付 %.2f，实际 %.2f", p.Amount, params.Amount)
 			log.Printf("支付回调金额不一致，拒绝确认: payment_no=%s 应付=%.2f 回调=%.2f",
 				p.PaymentNo, p.Amount, params.Amount)
 			return fmt.Errorf("回调金额与应付金额不一致")
 		}
+		// 确认来源：回调路径不显式赋值即渠道回调，其余路径由调用方标注
+		source := params.ConfirmSource
+		if source == 0 {
+			source = model.ConfirmSourceCallback
+		}
 		// 条件更新保证幂等：仅 status=1 时流转成功，并发回调只有一笔生效
-		result := tx.Model(&model.Payment{}).
+		res := tx.Model(&model.Payment{}).
 			Where("payment_no = ? AND status = ?", p.PaymentNo, 1).
 			Updates(map[string]interface{}{
 				"status":         2,
 				"transaction_id": params.TransactionID,
 				"pay_time":       now,
 				"updated_at":     now,
+				"confirm_source": source,
+				"confirm_ref":    params.ConfirmRef,
 			})
-		if result.Error != nil {
-			return result.Error
+		if res.Error != nil {
+			notifyResult = model.NotifyResultError
+			notifyMsg = res.Error.Error()
+			return res.Error
 		}
-		if result.RowsAffected == 0 {
+		if res.RowsAffected == 0 {
 			// 并发下另一笔回调已完成流转，幂等返回
+			notifyResult = model.NotifyResultIgnored
+			notifyMsg = "并发确认已先行完成流转"
 			return nil
 		}
 		orderID = p.OrderID
 		needSync = true
 		return nil
 	}); err != nil {
+		s.writeCallbackLog(ctx, params, scope, notifyResult, notifyMsg)
 		return err
 	}
+	s.writeCallbackLog(ctx, params, scope, notifyResult, notifyMsg)
 
 	// 阶段二：事务外 RPC 同步订单状态（带重试，不占用 DB 连接）
 	if !needSync {
@@ -676,16 +811,75 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 			return nil
 		}
 	}
-	log.Printf("[CRITICAL] 支付已确认但订单状态同步失败（调度器超时取消时会反查支付单自动补同步）: payment_no=%s order_id=%d err=%v",
+	log.Printf("[CRITICAL] 支付已确认但订单状态同步失败（对账调度器与取消前置会兜底）: payment_no=%s order_id=%d err=%v",
 		params.PaymentNo, orderID, lastErr)
 	return nil
 }
 
+// notifyScope 一条流水的归属定位（订单号、社区）
+// 三项均取自反查到的支付单快照；验签失败等连支付单都解析不出的场景全部为 0/空，
+// 这类流水因 community_id=0 只出现在超管的全量队列，不会串到别的社区管理员眼前
+type notifyScope struct {
+	orderID     int64
+	orderNo     string
+	communityID int64
+}
+
+// writeCallbackLog 登记一次「确认支付」动作的流水
+// NotifyKind 为 0 表示该入口不写流水；挂账事实的类别统一为 kind=3，
+// 无论它由渠道回调暴露还是对账任务查出，异常页只认这一类别
+// 原始报文只在异常结果下保存：成功条目事实已落 payments 表，重复存正文只会把表撑大
+//
+// 参数：
+//   - ctx: 上下文
+//   - params: 触发本次确认的参数（携带流水类别与原始报文）
+//   - scope: 流水归属（订单/社区/订单号快照）
+//   - result: model.NotifyResult* 结果
+//   - msg: 结果摘要
+func (s *PaymentService) writeCallbackLog(ctx context.Context, params *payCallbackParams, scope notifyScope, result int32, msg string) {
+	if params.NotifyKind == 0 {
+		return
+	}
+	kind := params.NotifyKind
+	if result == model.NotifyResultStuck {
+		kind = model.NotifyKindStuck
+	}
+	entry := &model.NotifyLog{
+		Kind:        kind,
+		Result:      result,
+		Channel:     params.Channel,
+		PaymentNo:   params.PaymentNo,
+		OrderID:     scope.orderID,
+		OrderNo:     scope.orderNo,
+		CommunityID: scope.communityID,
+		ErrorMsg:    msg,
+		Remark:      params.Remark,
+	}
+	if result != model.NotifyResultSuccess && result != model.NotifyResultIgnored {
+		entry.RawBody = truncateRunes(params.RawBody, notifyRawBodyMaxLen)
+		entry.Headers = params.Headers
+	}
+	s.recordNotifyLog(ctx, entry)
+}
+
 // payCallbackParams 支付回调解析后的通用参数
+// 三个字段扩展用于「谁确认了这笔支付」的可观测性：
+//   - ConfirmSource: 确认来源（model.ConfirmSource*），0 时按渠道回调处理
+//   - ConfirmRef: 来源凭据（后台手动/取消前置的场景标记），写入 payments.confirm_ref
+//   - NotifyKind: 流水类别（model.NotifyKind*），0 表示本次确认不写流水
+//   - Channel/RawBody/Headers: 流水的渠道与原始报文，仅失败场景需要保存正文
 type payCallbackParams struct {
 	PaymentNo     string
 	TransactionID string
 	Amount        float64
+	ConfirmSource int32
+	ConfirmRef    string
+	NotifyKind    int32
+	Channel       int32
+	OrderID       int64
+	Remark        string
+	RawBody       string
+	Headers       string
 }
 
 // ToPaymentInfo 将支付模型转换为 proto 信息
@@ -699,15 +893,20 @@ func ToPaymentInfo(p *model.Payment) *payment.PaymentInfo {
 		return nil
 	}
 	return &payment.PaymentInfo{
-		Id:            p.ID,
-		PaymentNo:     p.PaymentNo,
-		OrderId:       p.OrderID,
-		UserId:        p.UserID,
-		PayType:       p.PayType,
-		Amount:        p.Amount,
-		Status:        p.Status,
-		TransactionId: p.TransactionID,
-		PayTime:       ptrString(p.PayTime),
+		Id:               p.ID,
+		PaymentNo:        p.PaymentNo,
+		OrderId:          p.OrderID,
+		UserId:           p.UserID,
+		PayType:          p.PayType,
+		Amount:           p.Amount,
+		Status:           p.Status,
+		TransactionId:    p.TransactionID,
+		PayTime:          ptrString(p.PayTime),
+		ConfirmSource:    p.ConfirmSource,
+		ConfirmRef:       p.ConfirmRef,
+		ReconcileCount:   p.ReconcileCount,
+		LastReconciledAt: ptrString(p.LastReconciledAt),
+		CreatedAt:        p.CreatedAt,
 	}
 }
 

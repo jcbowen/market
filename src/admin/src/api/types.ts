@@ -333,6 +333,97 @@ export interface OrderDetail extends Order {
   status_logs: OrderStatusLog[]
   /** 本单每次售后（退款）记录，按时间正序 */
   refunds?: Refund[]
+  /** 本单全部支付尝试（含失败/关闭），按下单顺序 */
+  payments?: OrderPayment[]
+  /** 支付尝试汇总：attempts 总次数、succeeded 成功笔数（>1 即重复支付） */
+  payment_summary?: PaymentSummary
+  /** 支付记录取数失败提示，空串表示取到了（空数组是真的没有记录，不能混淆） */
+  payments_error?: string
+  /** 支付通知与对账时间线（含确认成功条目） */
+  payment_logs?: PaymentAnomaly[]
+  /** 通知时间线取数失败提示 */
+  payment_logs_error?: string
+  /** 是否具备查看支付报文原文权限（payment:raw:view，实际仅超管） */
+  can_view_payment_raw?: boolean
+}
+
+/**
+ * 订单支付尝试记录（payment 服务 payments 表一行）
+ * confirm_source 是「回调是否丢过」的直接证据：成功但来源不是 1，就是被补偿或人工捞回的
+ */
+export interface OrderPayment {
+  id: number
+  payment_no: string
+  pay_type: number
+  amount: number
+  status: number
+  transaction_id: string
+  pay_time: string
+  confirm_source: number
+  confirm_ref: string
+  reconcile_count: number
+  last_reconciled_at: string
+  created_at: string
+}
+
+/**
+ * 订单支付汇总（后端在详情里一次算好，避免前端多处重复统计）
+ */
+export interface PaymentSummary {
+  attempts: number
+  succeeded: number
+  succeeded_amount: number
+}
+
+/**
+ * 支付通知/对账流水一行（异常页与订单详情时间线共用）
+ * raw_body/headers 仅在有 payment:raw:view 权限时下发；has_raw 表示该行本来有没有原文
+ */
+export interface PaymentAnomaly {
+  id: number
+  kind: number
+  result: number
+  channel: number
+  payment_no: string
+  order_id: number
+  order_no: string
+  community_id: number
+  pay_type: number
+  amount: number
+  error_msg: string
+  handled: number
+  created_at: string
+  can_view_raw: boolean
+  has_raw: boolean
+  raw_body?: string
+  headers?: string
+}
+
+/**
+ * 支付异常分页结果
+ * pending 为当前社区范围内待处理条数（不受 handled 筛选影响，供红标/角标用）
+ * community_scope 为后端实际生效的社区范围，0=超管跨社区全量（此时才需要展示社区列）
+ */
+export interface PaymentAnomalyPage {
+  list: PaymentAnomaly[]
+  total: number
+  pending: number
+  can_view_raw: boolean
+  community_scope: number
+}
+
+/**
+ * 「同步支付状态」向渠道查询后的结论
+ * paid=渠道是否已收款，changed=本次是否真的把订单流转为已支付
+ */
+export interface PaymentSyncResult {
+  paid: boolean
+  changed: boolean
+  channel_state: string
+  transaction_id: string
+  amount: number
+  payment_no: string
+  message: string
 }
 
 /**

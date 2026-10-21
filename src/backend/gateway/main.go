@@ -87,7 +87,7 @@ func main() {
 	shutdown(srv)
 }
 
-// applyTrustedProxies 配置可信反向代理网段，决定 ClientIP 是否采信代理头
+// applyTrustedProxies 配置可信反向代理网段与可信平台头，决定 ClientIP 是否采信代理头
 // gin 缺省信任所有代理，客户端自填 X-Forwarded-For 就能任意伪造来源 IP——限流按 IP 分桶会被直接绕过，
 // 访问日志与 IP 定位也会记下假 IP。故这里显式落配置：未配置网段即不信任任何代理（只认直连地址）
 // 参数：
@@ -104,9 +104,16 @@ func applyTrustedProxies(r *gin.Engine, cfg *config.Config) {
 	if len(proxies) == 0 {
 		log.Printf("未配置可信代理（security.trusted_proxies / TRUSTED_PROXIES）：一律按直连 IP 处理；" +
 			"若前置 nginx 等反向代理，必须放行其网段，否则限流与日志会把所有用户合并成代理 IP")
-		return
 	}
-	log.Printf("已信任反向代理网段: %v", proxies)
+	// 可信平台头：前置 CDN 且其回源 IP 无固定段不可枚举时，靠放行网段拿真实 IP 不可行；
+	// 改由代理强制覆盖写入的专用头取值（如阿里云 CDN 的 Ali-CDN-Real-IP，伪造无效）。
+	// 头缺失时 gin 自动回落网段/直连逻辑，本地直连调试不受影响
+	if platform := strings.TrimSpace(cfg.Security.TrustedPlatform); platform != "" {
+		r.TrustedPlatform = platform
+		log.Printf("已信任平台头 %s：ClientIP 优先采信该头（应为 CDN 强制覆盖写入的客户端真实 IP），缺失时回落直连/可信代理链", platform)
+	} else {
+		log.Printf("已信任反向代理网段: %v", proxies)
+	}
 }
 
 // loadConfig 加载全局配置
@@ -340,6 +347,16 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 会员常买商品排行（会员订单弹窗板块）：订单/会员任一查看权限即可
 			authAdmin.GET("/users/:id/frequent-products", gwMiddleware.RequirePermission("order:view", "user:view"), adminHandler.ListUserFrequentProducts)
 			authAdmin.POST("/orders/:id/refund", gwMiddleware.RequirePermission("refund:update"), adminHandler.AdminCreateRefund)
+
+			// 支付可靠性后台入口（一切以渠道为准）：向渠道核实并补同步、线下核实后人工标记已支付，
+			// 两者都会流转订单状态，权限与改订单一致（order:update）
+			authAdmin.POST("/orders/:id/payment-sync", gwMiddleware.RequirePermission("order:update"), adminHandler.SyncAdminOrderPayment)
+			authAdmin.POST("/orders/:id/payment-mark-paid", gwMiddleware.RequirePermission("order:update"), adminHandler.MarkAdminOrderPaid)
+			// 支付异常队列：浏览与订单同域（order:view），销账属处置（order:update）；
+			// 报文原文另收一道 payment:raw:view（刻意不进社区管理员默认权限上限，实际只有超管能展开），
+			// 社区范围由 handler 按管理员语境下发
+			authAdmin.GET("/payments/anomalies", gwMiddleware.RequirePermission("order:view"), adminHandler.ListAdminPaymentAnomalies)
+			authAdmin.POST("/payments/anomalies/:id/handle", gwMiddleware.RequirePermission("order:update"), adminHandler.HandleAdminPaymentAnomaly)
 
 			// 收银台代客下单（G）：下单/挂单写操作用 order:create，挂单查看用 order:view
 			authAdmin.POST("/pos/orders", gwMiddleware.RequirePermission("order:create"), adminHandler.CreatePosOrder)

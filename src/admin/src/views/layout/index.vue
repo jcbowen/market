@@ -338,6 +338,7 @@ const menuOptions = computed<MenuOption[]>(() => {
       children: [
         { label: '订单列表', key: '/orders', permission: 'order:view' },
         { label: '售后管理', key: '/refunds', permission: 'refund:view' },
+        { label: '支付异常', key: '/payment-anomalies', permission: 'order:view' },
       ],
     },
     {

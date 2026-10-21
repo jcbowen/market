@@ -19,6 +19,7 @@ import { uniquePhone } from '../helpers/data';
  *   - 非法状态值 9 被状态机拒绝（10004）
  *   - 跳状态 1→3 被状态机拒绝（10004）
  *   - 合法主线 1→2→3→4→5：pay_time/deliver_time/complete_time 落库、status_logs 记录流转
+ *     （1→2 一段必须先有收款记录：本用例先断言手工置位被「改单护栏」拒绝，再走货到付款支付单入口流转）
  *   - 终态已完成(5) 再流转被拒
  *   - 自提单 2→5 直接完成
  *   - 已取消(6) 单再流转被拒
@@ -178,19 +179,35 @@ test.describe.serial('通用状态流转', () => {
     expect(detail.status, '被拒后保持待支付').toBe(1);
   });
 
-  test('5. 合法流转 1→2（pay_time 落库 + 状态日志）', async () => {
+  test('5. 合法流转 1→2（须经支付入口：改单护栏拦手工置位，货到付款创建支付单即流转）', async ({ playwright }) => {
     if (!mainOrderId) test.skip(true, '订单未创建');
-    const body = await putStatus(mainOrderId, 2, 'AUTO-TEST 49 手动置已支付');
-    expect(body.code, `1→2 失败: ${body.message}`).toBe(0);
-    expect(body.data?.status).toBe(2);
+    // 支付可靠性改造后，PUT 置「已支付」要求渠道已有收款记录（一切以渠道为准），
+    // 手工置位在这条主线上必然被护栏拒绝，1→2 的合法入口是支付单创建/回调/对账补同步
+    const manual = await putStatus(mainOrderId, 2, 'AUTO-TEST 49 手动置已支付');
+    expect(manual.code, '无收款记录不得手工置已支付').not.toBe(0);
+    expect(manual.message).toMatch(/收款记录|同步支付状态/);
+
+    const buyerApi = await newAuthedRequest(playwright, buyerToken);
+    try {
+      const pay = assertOk(
+        (await (
+          await buyerApi.post('/api/v1/payments', { data: { order_id: mainOrderId, channel: 'cash' } })
+        ).json()) as ApiResponse<{ payment_no: string }>,
+        '货到付款支付',
+      );
+      expect(pay.payment_no, '支付单号应落库').toBeTruthy();
+    } finally {
+      await buyerApi.dispose();
+    }
+
     const detail = await getAdminOrder(mainOrderId);
     expect(detail.status).toBe(2);
     expect(detail.pay_time, 'pay_time 应落库').toBeTruthy();
     const lastLog = detail.status_logs?.[detail.status_logs.length - 1];
     expect(lastLog?.from_status, '状态日志应记录 1→2').toBe(1);
     expect(lastLog?.to_status).toBe(2);
-    expect(lastLog?.operator_type).toBe('admin');
-    expect(lastLog?.remark).toBe('AUTO-TEST 49 手动置已支付');
+    expect(lastLog?.operator_type, '支付驱动的流转由系统记账').toBe('system');
+    expect(lastLog?.remark ?? '').toContain('支付成功');
   });
 
   test('6. 合法流转 2→3（备货中）', async () => {

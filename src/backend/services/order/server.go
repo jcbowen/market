@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -31,12 +32,13 @@ type server struct {
 // 参数：
 //   - db: MySQL 实例
 //   - paymentClient: 支付服务 gRPC 客户端
+//   - cfg: 全局配置（取消前置渠道确认开关）
 //
 // 返回值：
 //   - *server: gRPC 服务实现
-func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient) *server {
+func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient, cfg *config.Config) *server {
 	return &server{
-		orderService:   service.NewOrderService(db),
+		orderService:   service.NewOrderService(db, cfg),
 		refundService:  service.NewRefundService(db, paymentClient),
 		posHeldService: service.NewPosHeldService(db),
 		shiftService:   service.NewShiftService(db),

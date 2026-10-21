@@ -81,6 +81,27 @@ func RequirePermission(permissions ...string) gin.HandlerFunc {
 	}
 }
 
+// HasPermission 判断当前管理员在现社区语境下是否具备指定权限（超管与 "*" 通配恒为真）
+// 用于同一接口内部对敏感字段再做收窄（如支付报文原文只在 payment:raw:view 下回传），
+// 路由级鉴权请继续用 RequirePermission，两者共用同一份实时权限上下文缓存
+//
+// 参数：
+//   - c: gin 上下文
+//   - permission: 权限编码
+//
+// 返回值：
+//   - bool: 是否具备；权限上下文解析失败按不具备处理（宁可少给，不可多给）
+func HasPermission(c *gin.Context, permission string) bool {
+	ctxInfo := resolveAdminContext(c)
+	if ctxInfo == nil {
+		return false
+	}
+	if ctxInfo.IsSuper || contains(ctxInfo.Permissions, "*") {
+		return true
+	}
+	return contains(ctxInfo.Permissions, permission)
+}
+
 // RequireCommunityAccess 校验请求头声明的当前社区是否对管理员合法
 // 超管任意社区均合法；普通管理员的社区须在其绑定范围内
 // （先查 JWT 快照，未命中时实时查任职——覆盖登录后新授权的社区），越权直接 403

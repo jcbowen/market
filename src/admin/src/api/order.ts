@@ -6,6 +6,8 @@ import type {
   OrderDetail,
   PageParams,
   PageResult,
+  PaymentAnomalyPage,
+  PaymentSyncResult,
   PosHeldOrder,
   PosShift,
   PosShiftPage,
@@ -409,5 +411,68 @@ export function saveAppPreferences(app_keys: string[]) {
     url: '/api/v1/admin/app-preferences',
     method: 'PUT',
     data: { app_keys },
+  })
+}
+
+/**
+ * 主动向渠道同步支付状态（回调丢失时的手动补偿入口）
+ * @param id 订单 ID
+ * @param payment_no 支付单号，可选；多笔支付尝试时用它精确指定要查哪一笔
+ * @returns 渠道结论与是否已流转订单
+ */
+export function syncOrderPayment(id: number, payment_no?: string) {
+  return request<ApiResult<PaymentSyncResult>>({
+    url: `/api/v1/admin/orders/${id}/payment-sync`,
+    method: 'POST',
+    data: { payment_no },
+  })
+}
+
+/**
+ * 人工标记订单已支付（仅限渠道接口不可用但线下已核实到账的死角）
+ * 渠道交易号与核实依据必填：这条入口绕过了渠道核实，全靠留痕保证事后可追责
+ * @param id 订单 ID（仅待支付订单可用）
+ * @param data 支付单号 + 渠道交易号 + 收款金额 + 核实依据
+ * @returns 操作结果
+ */
+export function markOrderPaid(
+  id: number,
+  data: { payment_no: string; transaction_id: string; amount: number; remark: string },
+) {
+  return request<ApiResult<{ id: number; payment_no: string }>>({
+    url: `/api/v1/admin/orders/${id}/payment-mark-paid`,
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 支付异常/对账流水队列
+ * @param params 分页与筛选参数。handled 是筛选选择器（1 只看待处理 2 只看已处理 0/缺省 全部），
+ *   与行数据的 handled 字段口径不同（后者是落库标记：0 待处理 1 已处理），勿混用；
+ *   order_id 查单条订单的完整轨迹，include_ok 是否含确认成功的正常条目
+ * @returns 异常流水分页（含社区范围内待处理条数 pending，pending 不随筛选变化）
+ */
+export function getPaymentAnomalies(
+  params: PageParams & { handled?: number; order_id?: number; include_ok?: boolean },
+) {
+  return request<ApiResult<PaymentAnomalyPage>>({
+    url: '/api/v1/admin/payments/anomalies',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 支付异常销账（人工在渠道侧核对完成后关闭待办）
+ * @param id 流水 ID
+ * @param remark 核实依据（如渠道商户后台的交易状态截图说明）
+ * @returns 操作结果
+ */
+export function handlePaymentAnomaly(id: number, remark: string) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/payments/anomalies/${id}/handle`,
+    method: 'POST',
+    data: { remark },
   })
 }

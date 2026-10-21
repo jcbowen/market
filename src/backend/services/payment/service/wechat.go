@@ -191,8 +191,12 @@ func parseWechatCallback(s *PaymentService, body []byte, headers http.Header) (*
 	}
 
 	// 仅处理支付成功通知，避免退款等其他通知被误处理为支付成功
-	if notification == nil || notification.EventType != "TRANSACTION.SUCCESS" {
-		return nil, fmt.Errorf("非支付成功通知: %s", notification.EventType)
+	// notification 可能为 nil（VerifyNotification 对未知资源类型返回空指针），须先判空再取字段
+	if notification == nil {
+		return nil, fmt.Errorf("%w: 通知内容为空", errNotSuccessNotification)
+	}
+	if notification.EventType != "TRANSACTION.SUCCESS" {
+		return nil, fmt.Errorf("%w: %s", errNotSuccessNotification, notification.EventType)
 	}
 
 	var result struct {

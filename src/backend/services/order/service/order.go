@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -28,16 +29,19 @@ import (
 type OrderService struct {
 	db          *mysql.Instance
 	redisClient *redis.Client
+	// cfg 全局配置：取消前置渠道确认开关需要读 business.payment_reconcile
+	cfg *config.Config
 }
 
 // NewOrderService 创建订单业务服务
 // 参数：
 //   - db: MySQL 实例
+//   - cfg: 全局配置（可为 nil，此时按默认口径处理）
 //
 // 返回值：
 //   - *OrderService: 订单业务服务实例
-func NewOrderService(db *mysql.Instance) *OrderService {
-	return &OrderService{db: db}
+func NewOrderService(db *mysql.Instance, cfg *config.Config) *OrderService {
+	return &OrderService{db: db, cfg: cfg}
 }
 
 // WithRedis 注入 Redis 客户端（可选，用于取货码防暴力破解等场景）
@@ -712,6 +716,25 @@ func (s *OrderService) isCashOnDeliveryOrder(ctx context.Context, orderID int64)
 	return resp.PayType == 3
 }
 
+// isPendingPaymentOrder 订单是否仍处于「等钱到账」的状态
+// 含 100（超时取消处理中）：调度器抢占后订单短暂停留该态，此时同样需要渠道确认
+// 参数：
+//   - ctx: 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - bool: 仍需确认收款；查询失败返回 false（不因此阻断取消，渠道确认本就尽力而为）
+func (s *OrderService) isPendingPaymentOrder(ctx context.Context, orderID int64) bool {
+	var count int64
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
+		Where("id = ? AND status IN ?", orderID, []int32{1, processingStatusCancel}).
+		Count(&count).Error; err != nil {
+		log.Printf("[order] 查询订单 %d 状态失败: %v", orderID, err)
+		return false
+	}
+	return count > 0
+}
+
 // CancelOrder 取消订单
 // 货到付款订单未实际收款，未发货（status∈{2,3}）可直接取消：回滚库存、置已取消，不产生退款流水；
 // 在线支付订单仍仅允许待支付（status=1）取消，已支付走退款审核
@@ -916,6 +939,13 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 	var isCOD bool
 	if req.Status == 6 {
 		isCOD = s.isCashOnDeliveryOrder(ctx, req.Id)
+		// 取消前置渠道确认（P0-B′）：本地无成功支付单不代表用户没付——回调可能丢失。
+		// 订单进入 6 后状态机禁止 6→2，届时只能人工退款，所以必须在这里拦下。
+		// 仅待支付单需要确认：已支付/备货中取消属于退款流程，与「钱有没有到账」无关
+		if s.isPendingPaymentOrder(ctx, req.Id) &&
+			confirmPaidWithChannel(ctx, req.Id, s.cfg) {
+			return bizerr.New(codes.FailedPrecondition, "渠道已收款，订单已同步为已支付，请改走退款流程")
+		}
 	}
 	// 取消前的订单状态（req.Status=6 时用于判断是否回退销量：仅已支付/备货中取消需回退，待支付取消未计销量）
 	var statusBeforeCancel int32

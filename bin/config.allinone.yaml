@@ -51,6 +51,10 @@ security:
     # （common/config.ApplyEnvOverrides 覆盖本项，无需改镜像内配置）；
     # 未配置时限流与访问日志会把所有用户合并成代理 IP，填 0.0.0.0/0 则等于放开伪造
     trusted_proxies: []
+    # 可信平台专用头（前置 CDN 时填代理强制覆盖写入的客户端真实 IP 头，客户端伪造无效）：
+    # 阿里云 CDN 填 Ali-CDN-Real-IP，Cloudflare 填 CF-Connecting-IP；头缺失时回落直连/代理网段逻辑。
+    # 也可 docker run -e TRUSTED_PLATFORM=Ali-CDN-Real-IP 注入，留空不启用
+    trusted_platform: ""
 log:
     level: info
     format: json
@@ -88,12 +92,28 @@ business:
     expire_warning_days: 3
     order_timeout: 1800
     auto_complete_days: 7
+    # 支付对账与回调可靠性（渠道为事实来源的最终一致兜底），payment 与 order 服务共同读取：
+    # enabled 总开关（关闭=退回纯回调确认 + 纯本地关单）；cancel_guard 取消前置渠道确认（受 enabled 约束）；
+    # auto_refund_stuck 挂账自动退款——默认关闭，渠道退款回执需真实商户号联调验证后才能开启
+    payment_reconcile:
+        enabled: true
+        cancel_guard: true
+        auto_refund_stuck: false
+        pending_max_minutes: 120     # 待支付单回查时间上界；支付宝侧取 min(本值, order_timeout)
+        interval_seconds: 60         # 对账轮询间隔
+        min_age_seconds: 60          # 支付单创建后至少等待多久才回查（给正常回调留时间）
+        throttle_minutes: 5          # 同一支付单两次回查最小间隔
+        max_reconcile_count: 24      # 累计回查上限，超限写「放弃对账」流水并停止
+        batch_size: 100              # 单轮每类扫描条数上限
+        notify_log_retention_days: 30 # 通知/对账流水保留天数
 # debugger 请求日志（jcbaseGo 组件）：写共享 debug_logs 表，前端页面 /jcbase/debug；
 # 生产默认关闭。临时排查三件套：DEBUGGER_ENABLED=1 + DEBUGGER_ALLOWED_IPS=<运维 IP/CIDR>
 # （不给白名单则页面不注册，只记日志），排查完立刻关回：开启态每个采样请求都同步写库，
 # 并有额外内存与 DB 容量成本，故示例值收紧为采样 0.1 / 上限 5000 条 / 保留 3 天
 debugger:
     enabled: false
+    # 服务标识（debug_logs 日志来源）：当前仅 gateway 进程读取该字段；
+    # entrypoint 分发副本时会把非 gateway 副本覆写为各自进程名，此处值仅 gateway 副本生效
     service_name: gateway
     # 建议经 DEBUGGER_ALLOWED_IPS 注入，配置文件不写死运维 IP；留空 = 页面不注册（fail-closed）
     allowed_ips: []

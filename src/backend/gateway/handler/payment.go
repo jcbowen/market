@@ -328,6 +328,10 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		Amount:  orderResp.Order.PayAmount,
 		Openid:  openid,
 		AppId:   appID,
+		// 社区与订单号取自刚查到的订单（权威来源，不接受前端传入）：
+		// 支付异常队列按社区隔离、后台按订单号核对都依赖这两项快照
+		CommunityId: orderResp.Order.CommunityId,
+		OrderNo:     orderResp.Order.OrderNo,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

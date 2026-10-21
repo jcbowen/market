@@ -196,6 +196,10 @@ services:
       # 会把所有用户合并成网桥地址；留空即不采信任何代理头（按直连 IP 处理）；
       # 填 0.0.0.0/0 等于允许伪造 X-Forwarded-For 绕过限流，禁止。
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      # 可信平台专用头（前置 CDN 时填代理强制覆盖写入的客户端真实 IP 头，客户端伪造无效）：
+      # 阿里云 CDN 填 Ali-CDN-Real-IP，Cloudflare 填 CF-Connecting-IP；CDN 回源 IP 无固定段
+      # 不可枚举，靠放行网段拿真实 IP 不可行，此时用本项让白名单/限流拿到真实 IP；留空不启用
+      TRUSTED_PLATFORM: ${TRUSTED_PLATFORM:-}
       # 部署域名基址（scheme://host，不含路径），仅 gateway 需要：作为后台「站点设置」的兜底默认值
       # （站点设置页会回填该值，保存后以站点设置为准），支付回调地址、附件外链与 HTML 品牌注入按生效域名派生。
       # 本地与自动化测试保持留空——留空时按当前请求域名现推，测试用例据此断言派生值。

@@ -51,6 +51,11 @@ func ApplyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
 		cfg.Security.TrustedProxies = splitCSVList(v)
 	}
+	// TRUSTED_PLATFORM 可信平台专用头名（如前置阿里云 CDN 时注入 Ali-CDN-Real-IP，
+	// 该头由 CDN 强制覆盖写入、客户端伪造无效，ClientIP 优先采信）
+	if v := os.Getenv("TRUSTED_PLATFORM"); v != "" {
+		cfg.Security.TrustedPlatform = strings.TrimSpace(v)
+	}
 }
 
 // splitCSVList 解析逗号分隔列表（去空白、丢空项），供可信代理网段与调试白名单共用

@@ -56,6 +56,33 @@
         <!-- 商品明细：固定列宽,窄屏横向滚动 -->
         <n-data-table :columns="itemColumns" :data="detail.items" size="small" :bordered="true" :scroll-x="620" />
 
+        <!-- 支付记录：本单每次支付尝试（次数/金额/状态/渠道交易号/确认来源） -->
+        <div>
+          <div class="section-title">支付记录</div>
+          <n-space vertical :size="8">
+            <!-- 重复支付必须退款，这里给出合计方便核对 -->
+            <n-alert v-if="isDuplicatePayment(detail.payment_summary)" type="error" :bordered="false">
+              本单有 {{ detail.payment_summary?.succeeded }} 笔成功支付，合计
+              ￥{{ formatAmount(detail.payment_summary?.succeeded_amount ?? 0) }}，
+              超出实付金额的部分请在下方「退款」中处理。
+            </n-alert>
+            <!-- 待支付在线单：回调可能丢失，提示可用「同步支付状态」向渠道核实 -->
+            <n-alert v-else-if="isWaitingOnlinePayment" type="warning" :bordered="false">
+              订单仍处待支付且已有支付单。若顾客反馈已付款，可点「同步支付状态」直接向渠道核实，不必等回调。
+            </n-alert>
+            <n-text v-if="detail.payments_error" type="warning">支付记录暂时查不到：{{ detail.payments_error }}</n-text>
+            <n-empty v-else-if="!detail.payments || !detail.payments.length" description="本单暂无支付记录" size="small" />
+            <n-data-table
+              v-else
+              :columns="paymentColumns"
+              :data="detail.payments"
+              size="small"
+              :bordered="true"
+              :scroll-x="1040"
+            />
+          </n-space>
+        </div>
+
         <div v-if="detail.status_logs && detail.status_logs.length">
           <div class="section-title">状态流转</div>
           <n-data-table :columns="logColumns" :data="detail.status_logs" size="small" :scroll-x="620" />
@@ -67,6 +94,42 @@
           <n-data-table :columns="refundColumns" :data="detail.refunds" size="small" :scroll-x="620" />
         </div>
 
+        <!-- 支付通知轨迹：回调/对账/人工同步的全轨迹，用于判断「到底有没有回调进来过」 -->
+        <div v-if="detail.payment_logs && detail.payment_logs.length">
+          <div class="section-title">支付通知轨迹</div>
+          <n-timeline>
+            <n-timeline-item
+              v-for="log in detail.payment_logs"
+              :key="log.id"
+              :type="notifyResultTagType(log.result)"
+              :title="`${notifyKindText(log.kind)} · ${notifyResultText(log.result)}`"
+              :time="formatDateTime(log.created_at)"
+            >
+              <n-space vertical :size="4">
+                <n-text depth="3">
+                  {{ payChannelText(log.channel) }}　{{ log.payment_no || '未解析出支付单号' }}
+                  <template v-if="log.amount > 0">　￥{{ formatAmount(log.amount) }}</template>
+                </n-text>
+                <n-text v-if="log.error_msg">{{ log.error_msg }}</n-text>
+                <!-- 报文原文只对有 payment:raw:view 权限（实际仅超管）且入库时保存了原文的条目可见 -->
+                <n-button
+                  v-if="log.can_view_raw && log.has_raw"
+                  size="tiny"
+                  text
+                  type="primary"
+                  @click="toggleRaw(log.id)"
+                >
+                  {{ rawOpenIds.has(log.id) ? '收起原文' : '查看报文原文' }}
+                </n-button>
+                <pre v-if="rawOpenIds.has(log.id)" class="raw-body">{{ log.raw_body }}</pre>
+              </n-space>
+            </n-timeline-item>
+          </n-timeline>
+        </div>
+        <n-text v-else-if="detail.payment_logs_error" type="warning">
+          通知轨迹暂时查不到：{{ detail.payment_logs_error }}
+        </n-text>
+
         <!-- 操作区：按当前状态渲染与列表一致的操作按钮 -->
         <n-space v-if="actions.length" justify="end">
           <n-button
@@ -74,6 +137,7 @@
             :key="action.key"
             size="small"
             :type="action.type"
+            :loading="action.loading"
             @click="action.run()"
           >
             {{ action.label }}
@@ -87,6 +151,14 @@
   <ship-modal v-model:show="shipVisible" :order-ids="shipOrderIds" @success="onActionSuccess" />
   <cancel-order-modal v-model:show="cancelVisible" :order-id="cancelOrderId" @success="onActionSuccess" />
   <refund-modal v-model:show="refundVisible" :order-id="refundOrderId" @success="onActionSuccess" />
+
+  <!-- 人工标记已支付（渠道查不到但线下已核实到账的死角，四个字段均必填留痕） -->
+  <mark-paid-modal
+    v-model:show="markPaidVisible"
+    :order-id="detail?.id ?? null"
+    :payments="detail?.payments"
+    @success="onActionSuccess"
+  />
 
   <!-- 自提核销弹窗（凭取货码核销，防冒领） -->
   <n-modal
@@ -118,23 +190,34 @@
 // 底部按当前状态渲染操作按钮（发货/核销/完成/取消），操作后刷新详情并通知父级刷新列表
 defineOptions({ name: 'OrderDetailModal' })
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { NButton, NTag, useDialog } from 'naive-ui'
+import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { completeOrder, getOrderDetail, verifyPickup } from '@/api/order'
-import type { OrderDetail, OrderItem, OrderStatusLog, Refund } from '@/api/types'
+import { completeOrder, getOrderDetail, syncOrderPayment, verifyPickup } from '@/api/order'
+import type { OrderDetail, OrderItem, OrderPayment, OrderStatusLog, Refund } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import {
   DELIVERY_TYPE,
   ORDER_SOURCE,
   ORDER_STATUS,
+  PAY_TYPE,
   canAdminRefund,
   canCancelOrder,
   deliveryTypeText,
+  isDuplicatePayment,
+  notifyKindText,
+  notifyResultTagType,
+  notifyResultText,
   orderSourceTagType,
   orderSourceText,
   orderStatusTagType,
   orderStatusText,
+  payChannelText,
   payTypeText,
+  paymentConfirmRefText,
+  paymentConfirmSourceTagType,
+  paymentConfirmSourceText,
+  paymentStatusTagType,
+  paymentStatusText,
   refundStatusTagType,
   refundStatusText,
   refundTypeTagType,
@@ -143,6 +226,7 @@ import {
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
 import RefundModal from './components/RefundModal.vue'
+import MarkPaidModal from './components/MarkPaidModal.vue'
 
 /**
  * 订单详情弹窗组件
@@ -163,6 +247,7 @@ const emit = defineEmits<{
 }>()
 
 const dialog = useDialog()
+const message = useMessage()
 const loading = ref(false)
 const detail = ref<OrderDetail | null>(null)
 
@@ -172,6 +257,8 @@ const cancelVisible = ref(false)
 const cancelOrderId = ref<number | null>(null)
 const refundVisible = ref(false)
 const refundOrderId = ref<number | null>(null)
+const markPaidVisible = ref(false)
+const syncingPayment = ref(false)
 
 /**
  * 用户字段点击：上抛 view-user 事件，由页面层打开会员订单弹窗
@@ -251,13 +338,92 @@ const refundColumns: DataTableColumns<Refund> = [
   { title: '时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.refund_time || row.created_at) },
 ]
 
+/** 支付记录列：一次支付尝试一行，确认来源非「渠道回调」即说明回调出过问题 */
+const paymentColumns: DataTableColumns<OrderPayment> = [
+  { title: '支付单号', key: 'payment_no', width: 190, ellipsis: { tooltip: true } },
+  { title: '支付方式', key: 'pay_type', width: 90, render: (row) => payTypeText(row.pay_type) },
+  { title: '金额', key: 'amount', width: 100, render: (row) => `￥${formatAmount(row.amount)}` },
+  {
+    title: '状态',
+    key: 'status',
+    width: 90,
+    render: (row) =>
+      h(NTag, { size: 'small', type: paymentStatusTagType(row.status), bordered: false }, { default: () => paymentStatusText(row.status) }),
+  },
+  {
+    title: '确认来源',
+    key: 'confirm_source',
+    width: 150,
+    // 来源凭据一并展示：说明这条成功是取消前置确认、后台同步还是对账捞回的
+    // render() 生成的节点拿不到 scoped 样式作用域，故用内联样式
+    render: (row) => {
+      const refText = paymentConfirmRefText(row.confirm_ref)
+      return h('div', [
+        h(
+          NTag,
+          { size: 'small', type: paymentConfirmSourceTagType(row.confirm_source), bordered: false },
+          { default: () => paymentConfirmSourceText(row.confirm_source) },
+        ),
+        refText ? h('div', { style: 'margin-top:2px;font-size:12px;color:#8b8b8b' }, refText) : null,
+      ])
+    },
+  },
+  { title: '渠道交易号', key: 'transaction_id', width: 180, ellipsis: { tooltip: true }, render: (row) => row.transaction_id || '-' },
+  { title: '回查', key: 'reconcile_count', width: 70, render: (row) => (row.reconcile_count > 0 ? `${row.reconcile_count} 次` : '-') },
+  { title: '创建时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.created_at) },
+]
+
+/** 待支付的在线单：回调可能丢失，详情页给出「同步支付状态」入口并提示原因 */
+const isWaitingOnlinePayment = computed(() => {
+  const d = detail.value
+  if (!d || d.status !== ORDER_STATUS.PENDING_PAY) {
+    return false
+  }
+  return d.pay_type === PAY_TYPE.WECHAT || d.pay_type === PAY_TYPE.ALIPAY
+})
+
+// --- 通知报文原文按需展开（原文只在有 payment:raw:view 权限时下发，实际仅超管） ---
+const rawOpenIds = ref(new Set<number>())
+
+/**
+ * 展开/收起一条通知流水的报文原文
+ * @param id 流水 ID
+ */
+function toggleRaw(id: number) {
+  const next = new Set(rawOpenIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+  }
+  rawOpenIds.value = next
+}
+
+/** 操作按钮项：label 展示文案，run 执行动作，loading 让同步中的按钮自带上转圈态 */
+type OrderAction = {
+  key: string
+  label: string
+  type: 'default' | 'primary' | 'success' | 'error'
+  loading?: boolean
+  run: () => void
+}
+
 /**
  * 按当前订单状态生成可用操作按钮
  */
-const actions = computed(() => {
+const actions = computed<OrderAction[]>(() => {
   const d = detail.value
   if (!d) return []
-  const list: Array<{ key: string; label: string; type: 'default' | 'primary' | 'success' | 'error'; run: () => void }> = []
+  const list: OrderAction[] = []
+  // 取消订单：待支付恒可取消；货到付款单未发货（已支付/备货中）也可直接取消（与后端口径一致）
+  if (canCancelOrder(d)) {
+    list.push({ key: 'cancel', label: '取消订单', type: 'error', run: () => openCancel(d.id) })
+  }
+  // 待支付在线单：先向渠道核实一次，比等回调可靠；渠道查不到再走人工标记
+  if (isWaitingOnlinePayment.value) {
+    list.push({ key: 'sync', label: '同步支付状态', type: 'default', loading: syncingPayment.value, run: () => syncPayment(d) })
+    list.push({ key: 'mark-paid', label: '标记已支付', type: 'default', run: () => (markPaidVisible.value = true) })
+  }
   // 取消订单：待支付恒可取消；货到付款单未发货（已支付/备货中）也可直接取消（与后端口径一致）
   if (canCancelOrder(d)) {
     list.push({ key: 'cancel', label: '取消订单', type: 'error', run: () => openCancel(d.id) })
@@ -298,6 +464,32 @@ function openCancel(id: number) {
 function openRefund(id: number) {
   refundOrderId.value = id
   refundVisible.value = true
+}
+
+/**
+ * 向渠道同步支付状态：回调丢失时的人工补偿入口，走支付服务的渠道查询
+ * 渠道已收款则订单流转为已支付；未收款只回报渠道状态，不改任何数据
+ * @param d 订单详情
+ */
+async function syncPayment(d: OrderDetail) {
+  syncingPayment.value = true
+  try {
+    const res = await syncOrderPayment(d.id)
+    const r = res.data.data
+    if (r.changed) {
+      message.success(`渠道已收款（交易号 ${r.transaction_id}），订单已同步为已支付`)
+    } else if (r.paid) {
+      message.success('渠道已收款，订单此前已同步为已支付')
+    } else {
+      message.info(`渠道查询结果：${r.channel_state || '未支付'}${r.message ? `　${r.message}` : ''}`)
+    }
+    loadDetail(d.id)
+    emit('refresh')
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    syncingPayment.value = false
+  }
 }
 
 function confirmComplete(d: OrderDetail) {
@@ -405,6 +597,8 @@ watch(
   (visible) => {
     if (visible && props.orderId) {
       detail.value = null
+      // 换单时收起上一单展开的报文原文
+      rawOpenIds.value = new Set()
       loadDetail(props.orderId)
     }
   },
@@ -432,5 +626,19 @@ onUnmounted(() => {
 .section-title {
   font-weight: 600;
   margin-bottom: 8px;
+}
+
+/* 通知报文原文：等宽、限高滚动，避免详情弹窗被长正文撑爆 */
+.raw-body {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #f7f7f9;
+  border-radius: 4px;
 }
 </style>

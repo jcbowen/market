@@ -248,3 +248,191 @@ export function refundTypeTagType(type: number): 'default' | 'warning' | 'info' 
   if (type === 3) return 'success'
   return 'warning'
 }
+
+// ---------- 支付单与对账流水（订单详情「支付记录」/时间线 与「支付异常」页共用） ----------
+
+/** 支付单状态：1待支付 2支付成功 3支付失败 4已退款 5已关闭（与 payment 服务 payments.status 对齐） */
+export const PAYMENT_STATUS = {
+  PENDING: 1,
+  SUCCESS: 2,
+  FAILED: 3,
+  REFUNDED: 4,
+  CLOSED: 5,
+} as const
+
+/** 支付确认来源：区分「渠道回调正常确认」与「补偿/人工捞回」，非 1 的成功单就是回调丢过的证据 */
+export const PAYMENT_CONFIRM_SOURCE = {
+  NONE: 0,
+  CALLBACK: 1,
+  RECONCILE: 2,
+  MANUAL: 3,
+  OFFLINE: 4,
+} as const
+
+/** 流水类别：1渠道回调 2对账补同步 3挂账检出 4渠道关单 5后台手动同步 6放弃对账 */
+export const NOTIFY_KIND = {
+  CALLBACK: 1,
+  RECONCILE: 2,
+  STUCK: 3,
+  CHANNEL_CLOSE: 4,
+  MANUAL_SYNC: 5,
+  GIVE_UP: 6,
+} as const
+
+/** 流水结果：1确认成功 2幂等忽略 3验签失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 */
+export const NOTIFY_RESULT = {
+  SUCCESS: 1,
+  IGNORED: 2,
+  VERIFY_FAILED: 3,
+  AMOUNT_MISMATCH: 4,
+  ERROR: 5,
+  NOT_PAID: 6,
+  NOT_EXIST: 7,
+  CLOSED: 8,
+  STUCK: 9,
+} as const
+
+/** 渠道：1微信 2支付宝（支付流水只涉及在线渠道） */
+export const PAY_CHANNEL = {
+  WECHAT: 1,
+  ALIPAY: 2,
+} as const
+
+/** 流水处理标记：0 待人工处理（异常页队列） 1 已处理/无需处理 */
+export const NOTIFY_HANDLED = {
+  PENDING: 0,
+  HANDLED: 1,
+} as const
+
+/**
+ * 支付单状态文案
+ * @param status 支付单状态码
+ */
+export function paymentStatusText(status: number): string {
+  const map: Record<number, string> = { 1: '待支付', 2: '支付成功', 3: '支付失败', 4: '已退款', 5: '已关闭' }
+  return map[status] || `状态${status}`
+}
+
+/**
+ * 支付单状态标签颜色
+ * @param status 支付单状态码
+ */
+export function paymentStatusTagType(status: number): TagType {
+  const map: Record<number, TagType> = { 1: 'warning', 2: 'success', 3: 'error', 4: 'info', 5: 'default' }
+  return map[status] || 'default'
+}
+
+/**
+ * 支付确认来源文案：异常页与订单详情据此说明「这笔钱是谁确认的」
+ * @param source 确认来源码
+ */
+export function paymentConfirmSourceText(source: number): string {
+  const map: Record<number, string> = {
+    0: '未确认',
+    1: '渠道回调',
+    2: '对账补同步',
+    3: '后台同步/人工',
+    4: '线下收款',
+  }
+  return map[source] || `来源${source}`
+}
+
+/**
+ * 支付确认来源标签颜色：非「渠道回调」的成功一律标黄——那代表回调链路出过问题
+ * @param source 确认来源码
+ */
+export function paymentConfirmSourceTagType(source: number): TagType {
+  if (source === PAYMENT_CONFIRM_SOURCE.CALLBACK) return 'success'
+  if (source === PAYMENT_CONFIRM_SOURCE.OFFLINE) return 'info'
+  if (source === PAYMENT_CONFIRM_SOURCE.NONE) return 'default'
+  return 'warning'
+}
+
+/**
+ * 确认依据（payments.confirm_ref）文案：说明这条成功是被谁、在什么场景捞回来的
+ * @param ref 后端写入的标记串，空串表示无特殊来源
+ */
+export function paymentConfirmRefText(ref: string): string {
+  if (!ref) return ''
+  const map: Record<string, string> = {
+    'cancel-guard': '取消前置渠道确认',
+    'manual-sync': '后台手动同步',
+    'manual-mark': '后台人工标记',
+  }
+  if (map[ref]) return map[ref]
+  // 对账凭据形如 reconcile:ZFxxx，翻译前缀并保留单号便于回溯具体流水
+  if (ref.startsWith('reconcile:')) return `对账补同步（${ref.slice('reconcile:'.length)}）`
+  return ref
+}
+
+/**
+ * 流水类别文案
+ * @param kind 流水类别码
+ */
+export function notifyKindText(kind: number): string {
+  const map: Record<number, string> = {
+    1: '渠道回调',
+    2: '对账补同步',
+    3: '资金挂账',
+    4: '渠道关单',
+    5: '后台同步',
+    6: '放弃对账',
+  }
+  return map[kind] || `类别${kind}`
+}
+
+/**
+ * 流水结果文案
+ * @param result 流水结果码
+ */
+export function notifyResultText(result: number): string {
+  const map: Record<number, string> = {
+    1: '确认成功',
+    2: '幂等忽略',
+    3: '验签/解密失败',
+    4: '金额不符',
+    5: '处理异常',
+    6: '渠道未支付',
+    7: '渠道无此交易',
+    8: '已关单',
+    9: '资金挂账',
+  }
+  return map[result] || `结果${result}`
+}
+
+/**
+ * 流水结果标签颜色：验签失败、金额不符、处理异常、资金挂账是待办，其余是正常轨迹
+ * @param result 流水结果码
+ */
+export function notifyResultTagType(result: number): TagType {
+  const map: Record<number, TagType> = {
+    1: 'success',
+    2: 'default',
+    3: 'error',
+    4: 'error',
+    5: 'error',
+    6: 'warning',
+    7: 'info',
+    8: 'info',
+    9: 'error',
+  }
+  return map[result] || 'default'
+}
+
+/**
+ * 渠道文案（支付流水只涉及微信/支付宝）
+ * @param channel 渠道码
+ */
+export function payChannelText(channel: number): string {
+  if (channel === PAY_CHANNEL.WECHAT) return '微信'
+  if (channel === PAY_CHANNEL.ALIPAY) return '支付宝'
+  return '-'
+}
+
+/**
+ * 是否重复支付：同一订单成功支付笔数大于 1，说明用户被扣了两次，必须走退款
+ * @param summary 订单详情的支付汇总
+ */
+export function isDuplicatePayment(summary?: { attempts: number; succeeded: number }): boolean {
+  return (summary?.succeeded ?? 0) > 1
+}

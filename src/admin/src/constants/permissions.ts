@@ -47,6 +47,11 @@ export const permissionGroups: PermissionGroup[] = [
     ],
   },
   {
+    // 支付报文原文含顾客标识与签名信息，社区管理员权限上限不含此项，实际仅超级管理员可勾选生效
+    label: '支付（系统级）',
+    options: [{ label: '支付报文查看', value: 'payment:raw:view' }],
+  },
+  {
     label: '会员',
     options: [
       { label: '会员查看', value: 'user:view' },

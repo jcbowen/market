@@ -311,6 +311,49 @@ func (h *AdminHandler) getAdminCommunityID(c *gin.Context) int64 {
 	return uc.CommunityID
 }
 
+// checkOrderCommunity 校验订单是否落在当前管理员可操作的社区内（超管不受限）
+// 社区归属判定的唯一实现，供「只拦截」与「拦截后还要用订单」的两类入口共用，避免两处各写一份
+// 参数：
+//   - c: gin 上下文
+//   - o: 已取到的订单信息，nil 视为订单不存在
+//
+// 返回值：
+//   - error: 订单不存在或跨社区时返回错误
+func (h *AdminHandler) checkOrderCommunity(c *gin.Context, o *order.OrderInfo) error {
+	if o == nil || o.Id == 0 {
+		return errors.New("订单不存在")
+	}
+	if appcontext.GetUserContext(c).Role == "super_admin" {
+		return nil
+	}
+	if o.CommunityId != h.getAdminCommunityID(c) {
+		return errors.New("无权操作其他社区的订单")
+	}
+	return nil
+}
+
+// orderInCommunity 读取订单并做社区归属校验，返回订单信息
+// 「先读订单状态再决定动作」的接口用它（同步支付状态、人工标记已支付都要看订单当前状态），
+// 只做拦截的入口继续用 ensureOrderInCommunity——后者对超管免查订单，不必为校验多一次 RPC
+//
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - *order.OrderInfo: 订单信息
+//   - error: 订单不存在或跨社区时返回错误
+func (h *AdminHandler) orderInCommunity(c *gin.Context, orderID int64) (*order.OrderInfo, error) {
+	resp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: orderID})
+	if err != nil || resp == nil {
+		return nil, errors.New("订单不存在")
+	}
+	if err := h.checkOrderCommunity(c, resp.Order); err != nil {
+		return nil, err
+	}
+	return resp.Order, nil
+}
+
 // ensureOrderInCommunity 管理端订单操作前的社区归属校验（多社区隔离）
 // 超管跨社区操作不受限；普通管理员仅可操作自身社区订单。
 // 网关层第一道防线，order 服务端对出款链路另有强校验（纵深防御）
@@ -321,18 +364,15 @@ func (h *AdminHandler) getAdminCommunityID(c *gin.Context) int64 {
 // 返回值：
 //   - error: 订单不存在或跨社区时返回错误
 func (h *AdminHandler) ensureOrderInCommunity(c *gin.Context, orderID int64) error {
-	uc := appcontext.GetUserContext(c)
-	if uc.Role == "super_admin" {
+	// 超管跨社区均合法，无需为校验多查一次订单
+	if appcontext.GetUserContext(c).Role == "super_admin" {
 		return nil
 	}
 	resp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: orderID})
 	if err != nil || resp == nil || resp.Order == nil {
 		return errors.New("订单不存在")
 	}
-	if resp.Order.CommunityId != h.getAdminCommunityID(c) {
-		return errors.New("无权操作其他社区的订单")
-	}
-	return nil
+	return h.checkOrderCommunity(c, resp.Order)
 }
 
 // scopeCommunityID 返回下发给下游服务做归属校验的社区 ID
@@ -2289,6 +2329,19 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		})
 	}
 
+	// 支付明细与通知时间线（本轮可靠性改造的可观测面）：payment 服务旁路数据，
+	// 取回失败不让详情页打不开，只以 payments_error 告知前端「这里查不到」，
+	// 静默返回空表会被读成「这笔订单没有支付记录」，那是最坏的误导
+	payments, payErr := h.adminOrderPayments(c, id)
+	paymentLogs, canViewRaw, logErr := h.adminOrderPaymentLogs(c, id)
+	paymentsError, paymentLogsError := "", ""
+	if payErr != nil {
+		paymentsError = "支付记录读取失败，请稍后重试或查看支付异常页"
+	}
+	if logErr != nil {
+		paymentLogsError = "支付通知记录读取失败，请稍后重试"
+	}
+
 	data := gin.H{
 		"id":              o.Id,
 		"order_no":        o.OrderNo,
@@ -2325,8 +2378,145 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"address":               address,
 		"status_logs":           statusLogs,
 		"refunds":               refunds,
+		// 支付尝试明细（含失败/关闭）与顶部汇总：attempts/succeeded/amount 一眼看出重复支付
+		"payments":        payments,
+		"payment_summary": paymentSummaryRows(payments),
+		"payments_error":  paymentsError,
+		// 通知/对账时间线（含确认成功条目）；raw_body 只在有 payment:raw:view 时才带
+		"payment_logs":         paymentLogRows(paymentLogs, canViewRaw),
+		"payment_logs_error":   paymentLogsError,
+		"can_view_payment_raw": canViewRaw,
 	}
 	response.Success(c, data)
+}
+
+// adminOrderPayments 取订单的全部支付尝试（含失败与已关闭），供详情「支付记录」表渲染
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - []gin.H: 支付尝试行，失败时为空切片（调用方以 payments_error 区分「没有」与「查不到」）
+//   - error: 支付服务调用错误
+func (h *AdminHandler) adminOrderPayments(c *gin.Context, orderID int64) ([]gin.H, error) {
+	resp, err := h.paymentClient.ListOrderPayments(c.Request.Context(), &payment.ListOrderPaymentsReq{OrderId: orderID})
+	if err != nil {
+		return []gin.H{}, err
+	}
+	rows := make([]gin.H, 0, len(resp.List))
+	for _, p := range resp.List {
+		rows = append(rows, gin.H{
+			"id":                 p.Id,
+			"payment_no":         p.PaymentNo,
+			"pay_type":           p.PayType,
+			"amount":             p.Amount,
+			"status":             p.Status,
+			"transaction_id":     p.TransactionId,
+			"pay_time":           p.PayTime,
+			"confirm_source":     p.ConfirmSource,
+			"confirm_ref":        p.ConfirmRef,
+			"reconcile_count":    p.ReconcileCount,
+			"last_reconciled_at": p.LastReconciledAt,
+			"created_at":         p.CreatedAt,
+		})
+	}
+	return rows, nil
+}
+
+// paymentSummaryRows 汇总支付尝试：共几次、成功几笔、成功金额合计
+// succeeded>1 即重复支付（同一订单被扣两次），是详情页要立刻提醒去退款的信号
+// 参数：
+//   - rows: adminOrderPayments 的结果
+//
+// 返回值：
+//   - gin.H: attempts/succeeded/succeeded_amount 三项计数
+func paymentSummaryRows(rows []gin.H) gin.H {
+	succeeded, count := 0, 0
+	var total float64
+	for _, row := range rows {
+		if status, ok := row["status"].(int32); ok && status == 2 {
+			succeeded++
+			if amount, aok := row["amount"].(float64); aok {
+				total += amount
+			}
+		}
+		count++
+	}
+	return gin.H{"attempts": count, "succeeded": succeeded, "succeeded_amount": total}
+}
+
+// adminOrderPaymentLogs 取订单的支付通知与对账时间线（include_ok 带上确认成功条目，完整轨迹才有意义）
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - []*payment.PaymentAnomalyInfo: 时间线原始行
+//   - bool: 当前管理员是否具备查看报文原文权限
+//   - error: 支付服务调用错误
+func (h *AdminHandler) adminOrderPaymentLogs(c *gin.Context, orderID int64) ([]*payment.PaymentAnomalyInfo, bool, error) {
+	canViewRaw := gwMiddleware.HasPermission(c, "payment:raw:view")
+	resp, err := h.paymentClient.ListPaymentAnomalies(c.Request.Context(), &payment.ListPaymentAnomaliesReq{
+		Handled:     0,
+		OrderId:     orderID,
+		Page:        1,
+		PageSize:    50,
+		WithRaw:     canViewRaw,
+		IncludeOk:   true,
+		CommunityId: h.scopeCommunityID(c),
+	})
+	if err != nil {
+		return nil, canViewRaw, err
+	}
+	return resp.List, canViewRaw, nil
+}
+
+// paymentLogRows 把通知流水行映射为前端字段；无查看原文权限时不下发 raw_body/headers
+// 参数：
+//   - logs: 流水行
+//   - withRaw: 是否具备 payment:raw:view
+//
+// 返回值：
+//   - []gin.H: 时间线行
+func paymentLogRows(logs []*payment.PaymentAnomalyInfo, withRaw bool) []gin.H {
+	rows := make([]gin.H, 0, len(logs))
+	for _, row := range logs {
+		item := paymentAnomalyRow(row, withRaw)
+		rows = append(rows, item)
+	}
+	return rows
+}
+
+// paymentAnomalyRow 单条支付流水的前端字段映射（异常页与详情时间线共用，两侧字段口径必须一致）
+// 参数：
+//   - row: 流水行
+//   - withRaw: 是否具备 payment:raw:view，决定报文字段是否下发
+//
+// 返回值：
+//   - gin.H: 字段map
+func paymentAnomalyRow(row *payment.PaymentAnomalyInfo, withRaw bool) gin.H {
+	item := gin.H{
+		"id":           row.Id,
+		"kind":         row.Kind,
+		"result":       row.Result,
+		"channel":      row.Channel,
+		"payment_no":   row.PaymentNo,
+		"order_id":     row.OrderId,
+		"order_no":     row.OrderNo,
+		"community_id": row.CommunityId,
+		"pay_type":     row.PayType,
+		"amount":       row.Amount,
+		"error_msg":    row.ErrorMsg,
+		"handled":      row.Handled,
+		"created_at":   row.CreatedAt,
+		"can_view_raw": withRaw,
+		"has_raw":      row.RawBody != "" || row.Headers != "",
+	}
+	if withRaw {
+		item["raw_body"] = row.RawBody
+		item["headers"] = row.Headers
+	}
+	return item
 }
 
 // UpdateOrderStatusReq 更新订单状态请求
@@ -2363,6 +2553,16 @@ func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
 		return
 	}
 
+	// 改单护栏：置「已支付」必须以渠道收款事实为前提。
+	// 所有订单都有 payments 行（现金/货到付款单创建即成功），所以这里无需任何豁免分支：
+	// 查不到成功支付单就说明钱没到账，直接拒绝，再引导到「同步支付状态」/「标记已支付」两个正规入口
+	if req.Status == 2 {
+		if err := h.ensureOrderHasPaidRecord(c, id); err != nil {
+			response.Error(c, errcode.OperationNotAllowed, err.Error())
+			return
+		}
+	}
+
 	uc := appcontext.GetUserContext(c)
 	_, err = h.orderClient.UpdateOrderStatus(c.Request.Context(), &order.UpdateOrderStatusReq{
 		Id:           id,
@@ -2377,6 +2577,205 @@ func (h *AdminHandler) UpdateOrderStatus(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"id": id, "status": req.Status})
+}
+
+// ensureOrderHasPaidRecord 校验订单已有成功支付单（后台手工置「已支付」的前置条件）
+// GetPayment 口径为「该订单最近一笔 status=2 的支付单」，查不到即渠道没确认收款
+// 参数：
+//   - c: gin 上下文
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - error: 无成功支付单或支付服务不可达时返回错误，调用方据此拒绝改单
+func (h *AdminHandler) ensureOrderHasPaidRecord(c *gin.Context, orderID int64) error {
+	resp, err := h.paymentClient.GetPayment(c.Request.Context(), &payment.GetPaymentReq{OrderId: orderID})
+	if err != nil || resp == nil || resp.Status != 2 {
+		return errors.New("渠道尚无该订单的收款记录，不能手工置为已支付；请先用「同步支付状态」向渠道核实，" +
+			"线下已确认到账再用「标记已支付」")
+	}
+	return nil
+}
+
+// AdminSyncPaymentReq 后台同步支付状态请求（可选指定支付单号）
+// 同一订单可能有多次支付尝试，默认核实最近一笔待支付的渠道单；排查特定一笔时带上支付单号
+type AdminSyncPaymentReq struct {
+	PaymentNo string `json:"payment_no"`
+}
+
+// SyncAdminOrderPayment 后台「同步支付状态」：向渠道核实该订单是否已收款，已收款则补同步
+// 以渠道为准的最终一致入口，幂等可反复点：渠道未收款时不改动任何本地状态，只回传渠道事实
+// 响应字段用 gin.H 显式列出，paid=false/amount=0 这类零值不会被 omitempty 吞掉
+//
+// 接口: POST /api/v1/admin/orders/:id/payment-sync
+//
+// 参数：
+//   - c: gin 上下文，路径 :id 为订单 ID
+func (h *AdminHandler) SyncAdminOrderPayment(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	// 社区隔离 + 读出订单（同步本身要求订单仍处待支付族，取消单只能走退款）
+	o, err := h.orderInCommunity(c, id)
+	if err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+	if o.Status != 1 && o.Status != 100 {
+		response.Error(c, errcode.OperationNotAllowed, "订单当前状态无需同步支付状态")
+		return
+	}
+
+	var req AdminSyncPaymentReq
+	// 允许空 body：payment_no 只是可选定位条件，绑定失败按空值继续
+	_ = c.ShouldBindJSON(&req)
+
+	// reason 留空即由支付服务按 manual-sync 记入 payments.confirm_ref（区别于调度器的 cancel-guard）
+	resp, err := h.paymentClient.SyncPaymentFromChannel(c.Request.Context(), &payment.SyncPaymentReq{
+		OrderId:   id,
+		PaymentNo: req.PaymentNo,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"paid":           resp.Paid,
+		"changed":        resp.Changed,
+		"channel_state":  resp.ChannelState,
+		"transaction_id": resp.TransactionId,
+		"amount":         resp.Amount,
+		"payment_no":     resp.PaymentNo,
+		"message":        resp.Message,
+	})
+}
+
+// AdminMarkPaidReq 后台人工「标记已支付」入参
+// 渠道交易号与核实依据均必填：这条入口绕过了渠道核实，全靠留痕保证事后可追责
+type AdminMarkPaidReq struct {
+	PaymentNo     string  `json:"payment_no" binding:"required"`
+	TransactionID string  `json:"transaction_id" binding:"required"`
+	Amount        float64 `json:"amount" binding:"required"`
+	Remark        string  `json:"remark" binding:"required"`
+}
+
+// MarkAdminOrderPaid 后台人工把指定待支付单标记为已支付
+// 用于「渠道查不到或接口不可用、但线下已核实到账」的死角；服务端会把订单一并流转为已支付，
+// 因此只允许待支付（1）订单使用——已取消订单（6→2）在订单状态机上必然失败，只会造出半截数据，
+// 那种挂账只能退款，入口在支付异常页
+//
+// 接口: POST /api/v1/admin/orders/:id/payment-mark-paid
+//
+// 参数：
+//   - c: gin 上下文，路径 :id 为订单 ID
+func (h *AdminHandler) MarkAdminOrderPaid(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	var req AdminMarkPaidReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError, "支付单号、渠道交易号、收款金额与核实依据均必填")
+		return
+	}
+
+	o, err := h.orderInCommunity(c, id)
+	if err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+	if o.Status != 1 {
+		response.Error(c, errcode.OperationNotAllowed,
+			"仅待支付订单可标记已支付；订单已取消而渠道已收款属资金挂账，请在支付异常页走退款")
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	remark := strings.TrimSpace(req.Remark) + "（操作人 admin:" + strconv.FormatInt(uc.UserID, 10) + "）"
+	if _, err := h.paymentClient.MarkPaymentPaid(c.Request.Context(), &payment.MarkPaymentPaidReq{
+		PaymentNo:     req.PaymentNo,
+		TransactionId: req.TransactionID,
+		Amount:        req.Amount,
+		Remark:        remark,
+	}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id, "payment_no": req.PaymentNo})
+}
+
+// ListAdminPaymentAnomalies 支付异常/对账流水队列
+// 两个入口共用：异常页（handled/order_id 筛选）与订单详情的通知时间线（include_ok=true 看全轨迹）
+// 敏感边界：raw_body 与 headers 只在具备 payment:raw:view 时回传（该权限点刻意不进社区管理员默认上限，
+// 故实际只有超管可见）；社区范围由 scopeCommunityID 下发，超管为 0 表示看全量
+//
+// 接口: GET /api/v1/admin/payments/anomalies
+//
+// 参数：
+//   - c: gin 上下文，query 支持 handled/order_id/page/page_size/include_ok
+func (h *AdminHandler) ListAdminPaymentAnomalies(c *gin.Context) {
+	page, pageSize := parsePageParams(c)
+	handled, _ := strconv.Atoi(c.DefaultQuery("handled", "0"))
+	includeOK := c.Query("include_ok") == "true" || c.Query("include_ok") == "1"
+	var orderID int64
+	if v, err := strconv.ParseInt(c.Query("order_id"), 10, 64); err == nil && v > 0 {
+		orderID = v
+	}
+	req := &payment.ListPaymentAnomaliesReq{
+		Handled:     int32(handled),
+		OrderId:     orderID,
+		Page:        int32(page),
+		PageSize:    int32(pageSize),
+		CommunityId: h.scopeCommunityID(c),
+		WithRaw:     gwMiddleware.HasPermission(c, "payment:raw:view"),
+		IncludeOk:   includeOK,
+	}
+	resp, err := h.paymentClient.ListPaymentAnomalies(c.Request.Context(), req)
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"list":            paymentLogRows(resp.List, req.WithRaw),
+		"total":           resp.Total,
+		"pending":         resp.Pending,
+		"can_view_raw":    req.WithRaw,
+		"community_scope": req.CommunityId,
+	})
+}
+
+// AdminHandlePaymentAnomalyReq 异常销账请求
+type AdminHandlePaymentAnomalyReq struct {
+	Remark string `json:"remark" binding:"required"`
+}
+
+// HandleAdminPaymentAnomaly 支付异常销账（人工在渠道侧核对完成后关闭待办）
+// 参数：
+//   - c: gin 上下文，路径 :id 为流水主键，body 需带核实依据
+func (h *AdminHandler) HandleAdminPaymentAnomaly(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req AdminHandlePaymentAnomalyReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError, "请填写核实依据")
+		return
+	}
+	if _, err := h.paymentClient.MarkPaymentAnomalyHandled(c.Request.Context(), &payment.MarkPaymentAnomalyReq{
+		Id:          id,
+		Remark:      req.Remark,
+		CommunityId: h.scopeCommunityID(c),
+	}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id})
 }
 
 // AdminCancelOrderReq 后台取消订单请求

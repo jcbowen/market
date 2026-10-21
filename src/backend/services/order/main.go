@@ -48,7 +48,7 @@ func main() {
 	rds := bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer()
-	svc := newServer(db, grpcclient.PaymentClient)
+	svc := newServer(db, grpcclient.PaymentClient, cfg)
 	svc.orderService.WithRedis(rds.GetClient())
 	order.RegisterOrderServiceServer(srv, svc)
 	bootstrap.RegisterHealth(srv)
@@ -61,7 +61,7 @@ func main() {
 	// 启动订单定时任务调度器（超时取消 + 自动收货 + 卡单退款重试）
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
-	go service.NewScheduler(db, rds.GetClient(), svc.refundService).Start(
+	go service.NewScheduler(db, rds.GetClient(), svc.refundService, cfg).Start(
 		schedulerCtx,
 		cfg.Business.OrderTimeout,
 		cfg.Business.AutoCompleteDays,

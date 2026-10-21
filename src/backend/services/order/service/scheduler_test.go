@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -118,15 +119,20 @@ func (s *stubProductClient) salesAdjustCalls() []*product.AdjustSalesCountReq {
 // stubPaymentClient 支付服务客户端桩：按订单号维护「渠道已收款」标记
 // 竞态用例用它在回调落地前置位已收款，模拟「渠道支付成功与超时取消同时到达」的真实窗口，
 // 替代原先的 nil 客户端（nil 会让 cancelOrderTx 跳过取消前反查，等于没测这道防线）
+// channelPaid 用于回调丢失场景：本地支付单仍是待支付（GetPayment 报 NotFound），
+// 但渠道侧已收款，只有取消前置的 SyncPaymentFromChannel 能捞回
 type stubPaymentClient struct {
 	payment.PaymentServiceClient
-	mu     sync.Mutex
-	paid   map[int64]bool
-	closed []int64
+	mu          sync.Mutex
+	paid        map[int64]bool
+	channelPaid map[int64]bool
+	synced      []int64
+	syncReasons []string
+	closed      []int64
 }
 
 func newStubPaymentClient() *stubPaymentClient {
-	return &stubPaymentClient{paid: map[int64]bool{}}
+	return &stubPaymentClient{paid: map[int64]bool{}, channelPaid: map[int64]bool{}}
 }
 
 // markPaid 标记订单在渠道侧已收款成功
@@ -134,6 +140,27 @@ func (s *stubPaymentClient) markPaid(orderID int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.paid[orderID] = true
+}
+
+// markChannelPaid 标记「渠道已收款但本地支付单未落成功记录」，即回调丢失/验签失败的真实形态
+func (s *stubPaymentClient) markChannelPaid(orderID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.channelPaid[orderID] = true
+}
+
+// syncCalls 返回 SyncPaymentFromChannel 的入参订单号快照（取消前置确认的调用证据）
+func (s *stubPaymentClient) syncCalls() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int64(nil), s.synced...)
+}
+
+// syncReasonCalls 返回渠道确认的来源标记快照（须为 cancel-guard）
+func (s *stubPaymentClient) syncReasonCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.syncReasons...)
 }
 
 func (s *stubPaymentClient) GetPayment(ctx context.Context, in *payment.GetPaymentReq, opts ...grpc.CallOption) (*payment.PaymentInfo, error) {
@@ -151,6 +178,28 @@ func (s *stubPaymentClient) ClosePayments(ctx context.Context, in *payment.Close
 	defer s.mu.Unlock()
 	s.closed = append(s.closed, in.OrderId)
 	return &common.CommonResponse{}, nil
+}
+
+// SyncPaymentFromChannel 取消前置渠道确认桩：命中「渠道已收款」时模拟真实支付服务的补同步动作
+// （真实实现由 payment 服务经 OrderClient 回写订单状态，测试内 OrderClient 指向同一 OrderService）
+func (s *stubPaymentClient) SyncPaymentFromChannel(ctx context.Context, in *payment.SyncPaymentReq, opts ...grpc.CallOption) (*payment.SyncPaymentResp, error) {
+	s.mu.Lock()
+	recv := s.channelPaid[in.OrderId] || s.paid[in.OrderId]
+	s.synced = append(s.synced, in.OrderId)
+	s.syncReasons = append(s.syncReasons, in.Reason)
+	s.mu.Unlock()
+	if !recv {
+		return &payment.SyncPaymentResp{Paid: false, Message: "渠道无支付成功记录"}, nil
+	}
+	if _, err := grpcclient.OrderClient.UpdateOrderStatus(ctx, &order.UpdateOrderStatusReq{
+		Id:           in.OrderId,
+		Status:       2,
+		OperatorType: "system",
+		Remark:       "支付成功（取消前置渠道确认补同步）",
+	}); err != nil {
+		return nil, err
+	}
+	return &payment.SyncPaymentResp{Paid: true, Changed: true, PaymentNo: "SCHEDTEST-PAY"}, nil
 }
 
 // schedTestEnv 调度器测试环境句柄
@@ -216,10 +265,10 @@ func newSchedulerTestEnv(t *testing.T) *schedTestEnv {
 	grpcclient.PaymentClient = paymentStub
 	// 调度器补同步走 OrderClient 回写订单状态，测试内直接指向同一 OrderService，
 	// 避免依赖运行中的 order-service（否则补同步必然失败）
-	ordersSvc := NewOrderService(dbInst)
+	ordersSvc := NewOrderService(dbInst, nil)
 	grpcclient.OrderClient = &inProcessOrderClient{svc: ordersSvc}
 
-	sched := NewScheduler(dbInst, rdb, nil)
+	sched := NewScheduler(dbInst, rdb, nil, nil)
 	t.Cleanup(func() {
 		grpcclient.ProductClient = origProduct
 		grpcclient.PaymentClient = origPayment
@@ -664,5 +713,70 @@ func TestSchedulerCancelVsPayCallbackRace(t *testing.T) {
 			t.Fatalf("并发轮次未覆盖两种结果：已支付 %d 轮、已取消 %d 轮", paidWins, cancelledWins)
 		}
 		t.Logf("并发对撞 %d 轮：回调胜出 %d 轮，取消胜出 %d 轮", rounds, paidWins, cancelledWins)
+	})
+}
+
+// TestSchedulerCancelGuardConfirmsChannel T8：超时取消前的渠道前置确认（回调丢失不再变成挂账）
+// 场景：渠道已收款但回调丢失/验签失败，本地查不到成功支付单，订单仍停留待支付
+// 断言（开关开启）：取消被放弃（errOrderAlreadyPaid）、订单被补同步为已支付(2)、库存不回补、
+//
+//	来源标记为 cancel-guard（异常页与支付记录据此区分「按钮捞回」与「取消流程拦下」）
+//
+// 断言（开关关闭）：退回改造前的纯本地取消，且完全不问渠道
+func TestSchedulerCancelGuardConfirmsChannel(t *testing.T) {
+	t.Run("开关开启时放弃取消并补同步", func(t *testing.T) {
+		env := newSchedulerTestEnv(t)
+		ctx := context.Background()
+		db := env.db
+		orderID := seedSchedOrder(t, db, "guard-on", 1, schedTimeAgo(2*time.Hour), schedTimeAgo(2*time.Hour))
+		seedSchedItem(t, db, orderID, 44001, 1)
+		env.payment.markChannelPaid(orderID)
+
+		o := claimForCancelTest(t, env, orderID)
+		if err := env.sched.cancelOrderTx(ctx, o, 1); !errors.Is(err, errOrderAlreadyPaid) {
+			t.Fatalf("渠道已收款时取消应被放弃, got %v", err)
+		}
+		if st, _, _ := orderSchedStatus(t, db, orderID); st != 2 {
+			t.Fatalf("订单应被补同步为已支付(2), got %d", st)
+		}
+		if n := countReleases(env.product, orderID); n != 0 {
+			t.Fatalf("已收款订单不得回补库存, ReleaseStock 调用 %d 次", n)
+		}
+		syncs := env.payment.syncCalls()
+		if len(syncs) != 1 || syncs[0] != orderID {
+			t.Fatalf("本地无成功支付单时必须向渠道确认一次, got %v", syncs)
+		}
+		for _, reason := range env.payment.syncReasonCalls() {
+			if reason != confirmRefCancelGuard {
+				t.Errorf("取消前置确认的来源标记应为 %q, got %q", confirmRefCancelGuard, reason)
+			}
+		}
+	})
+
+	t.Run("开关关闭时退回纯本地取消", func(t *testing.T) {
+		env := newSchedulerTestEnv(t)
+		// 显式关闭总开关：取消前置随之失效（配置用 *bool 表达三态，写 false 必须被识别）
+		disabled := false
+		env.sched.cfg = &config.Config{}
+		env.sched.cfg.Business.PaymentReconcile.Enabled = &disabled
+		ctx := context.Background()
+		db := env.db
+		orderID := seedSchedOrder(t, db, "guard-off", 1, schedTimeAgo(2*time.Hour), schedTimeAgo(2*time.Hour))
+		seedSchedItem(t, db, orderID, 44001, 1)
+		env.payment.markChannelPaid(orderID)
+
+		o := claimForCancelTest(t, env, orderID)
+		if err := env.sched.cancelOrderTx(ctx, o, 1); err != nil {
+			t.Fatalf("开关关闭时订单应照常取消, got %v", err)
+		}
+		if st, _, _ := orderSchedStatus(t, db, orderID); st != 6 {
+			t.Fatalf("订单应被取消(6), got %d", st)
+		}
+		if got := env.payment.syncCalls(); len(got) != 0 {
+			t.Fatalf("开关关闭后不应打扰渠道, got %v", got)
+		}
+		if n := countReleases(env.product, orderID); n != 1 {
+			t.Fatalf("取消应恰回补一次库存, ReleaseStock 调用 %d 次", n)
+		}
 	})
 }
