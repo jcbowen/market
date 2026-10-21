@@ -200,6 +200,10 @@ services:
       # （站点设置页会回填该值，保存后以站点设置为准），支付回调地址、附件外链与 HTML 品牌注入按生效域名派生。
       # 本地与自动化测试保持留空——留空时按当前请求域名现推，测试用例据此断言派生值。
       SITE_BASE_URL: ${SITE_BASE_URL:-}
+      # debugger 临时排查开关与白名单（默认空 = 不覆盖配置文件；两行都给才既记日志又开页面，
+      # 只给 ENABLED 不给白名单时页面不注册 fail-closed）。用法见部署文档「临时开启请求日志排查」
+      DEBUGGER_ENABLED: ${DEBUGGER_ENABLED:-}
+      DEBUGGER_ALLOWED_IPS: ${DEBUGGER_ALLOWED_IPS:-}
     depends_on:
       user-service:
         condition: service_healthy

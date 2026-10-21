@@ -41,16 +41,38 @@ func ApplyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("DEBUGGER_ENABLED"); v != "" {
 		cfg.Debugger.Enabled = v == "1" || strings.EqualFold(v, "true")
 	}
+	// DEBUGGER_ALLOWED_IPS 逗号分隔的调试页面访问白名单（IP/CIDR）
+	// 只给 ENABLED 不给白名单时页面路由不会注册（fail-closed），
+	// 故临时排查须两项齐给：DEBUGGER_ENABLED=true + DEBUGGER_ALLOWED_IPS=127.0.0.1
+	if v := os.Getenv("DEBUGGER_ALLOWED_IPS"); v != "" {
+		cfg.Debugger.AllowedIPs = splitCSVList(v)
+	}
 	// TRUSTED_PROXIES 逗号分隔可信代理网段（compose/all-in-one 注入，避免配置文件里写死网段）
 	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {
-		proxies := make([]string, 0, 4)
-		for _, p := range strings.Split(v, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				proxies = append(proxies, p)
-			}
-		}
-		cfg.Security.TrustedProxies = proxies
+		cfg.Security.TrustedProxies = splitCSVList(v)
 	}
+}
+
+// splitCSVList 解析逗号分隔列表（去空白、丢空项），供可信代理网段与调试白名单共用
+// 参数：
+//   - v: 原始环境变量值，如 "127.0.0.1, 10.0.0.0/8"
+//
+// 返回值：
+//   - []string: 拆分后的条目；输入全为空白时返回空切片（调用方按「未配置」处理）
+//
+// 异常：不触发 panic；CIDR 合法性不在此校验（由使用方 gin.SetTrustedProxies 报错）
+// 使用示例：
+//
+//	proxies := splitCSVList(os.Getenv("TRUSTED_PROXIES"))
+func splitCSVList(v string) []string {
+	parts := strings.Split(v, ",")
+	list := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			list = append(list, p)
+		}
+	}
+	return list
 }
 
 // EnvAllowInsecureJWT 显式允许使用默认占位密钥的开关名（仅本地开发用）

@@ -75,22 +75,49 @@ type Config struct {
 		Enabled bool `json:"enabled" yaml:"enabled" default:"false"`
 		// ServiceName 服务标识：多服务共享 debug_logs 表时区分日志来源
 		ServiceName string `json:"service_name" yaml:"service_name" default:"gateway"`
-		// AllowedIPs debugger 前端页面访问白名单（IP/CIDR），空 = 不限制，生产建议显式配置
+		// AllowedIPs debugger 前端页面访问白名单（IP/CIDR），鉴权一律走 gin 的 ClientIP
+		// 空 = 不注册页面路由（fail-closed），需同时配 allow_empty_whitelist: true 才开放
 		AllowedIPs []string `json:"allowed_ips" yaml:"allowed_ips"`
-		// MaxBodySize 单条记录捕获的请求/响应体上限（KB），超出截断
+		// AllowEmptyWhitelist 白名单为空时是否仍开放调试页面，默认 false（只记日志不暴露界面）
+		// preserve:"true" 为与组件侧对齐的预留声明；当前框架加载走 CheckAndSetDefault 并不读该 tag，
+		// 因 default 即为 false，零值填充结果一致，无行为差异
+		AllowEmptyWhitelist bool `json:"allow_empty_whitelist" yaml:"allow_empty_whitelist" default:"false" preserve:"true"`
+		// MaxBodySize 单条记录捕获的请求/响应体上限（KB），超出只记上限内正文并附截断说明
+		// 无「0」语义：写 0 会被框架回填成默认 16
 		MaxBodySize int64 `json:"max_body_size" yaml:"max_body_size" default:"16"`
-		// MaxRecords 表内最大记录条数，超过时清理最旧记录（0 = 不限制）
-		MaxRecords int `json:"max_records" yaml:"max_records" default:"20000"`
-		// RetentionDays 日志保留天数，启动时与每日定时清理过期记录
-		RetentionDays int `json:"retention_days" yaml:"retention_days" default:"7"`
-		// SampleRate 请求采样率 0-1，1 = 全量记录
-		SampleRate float64 `json:"sample_rate" yaml:"sample_rate" default:"1.0"`
-		// UseCDN 前置 CDN/代理时置 true，白名单校验按代理头取真实 IP
+		// MaxRecords 表内最大记录条数（近似上限，按写入次数均摊裁剪）
+		// *int 三态：不配置（nil）= 5000 条；显式 0 = 不限制条数
+		// 之所以用指针：框架在读取配置后会把零值统一回填为 default 标签值，
+		// 普通 int 写 0 无法表达「不限制」，会被静默变成 5000
+		MaxRecords *int `json:"max_records" yaml:"max_records"`
+		// RetentionDays 日志保留天数：不配置（nil）= 7 天；显式 0 = 不做过期清理
+		// 任何取值都不会清空全表（清理条件为 timestamp < now-保留期，保留期非正即拒绝清理）
+		// 清理由组件的周期协程执行，见 CleanupIntervalHours；三态原因同 MaxRecords
+		RetentionDays *int `json:"retention_days" yaml:"retention_days"`
+		// CleanupIntervalHours 过期清理执行间隔（小时），启动时先清一次
+		// 无「0」语义：写 0 会被框架回填成默认 24
+		CleanupIntervalHours int `json:"cleanup_interval_hours" yaml:"cleanup_interval_hours" default:"24"`
+		// SampleRate 请求采样率 0-1，不配置（nil）= 1.0 全量记录；显式 0 = 一条都不记录
+		// 开启态线上建议 0.1；三态原因同 MaxRecords（写 0 若按普通字段会被回填成全量）
+		SampleRate *float64 `json:"sample_rate" yaml:"sample_rate"`
+		// UseCDN 仅影响日志里「记录的 client_ip」怎么取，不参与白名单鉴权（鉴权固定走 ClientIP）
+		// 生产前置 nginx/CDN 时保持 false，改由 security.trusted_proxies / TRUSTED_PROXIES 放行代理网段
 		UseCDN bool `json:"use_cdn" yaml:"use_cdn" default:"false"`
 		// BasePath debugger 前端页面路径
 		BasePath string `json:"base_path" yaml:"base_path" default:"/jcbase/debug"`
-		// SkipPaths 额外跳过的路径前缀（默认追加 /health、/s/、/b/、/uploads）
+		// SkipPaths 额外跳过的路径前缀（默认已含健康检查、静态资源、认证/支付回调与上传路由）
 		SkipPaths []string `json:"skip_paths" yaml:"skip_paths"`
+		// MaskBody 凭据掩码开关：*bool 三态，不配置（nil）= 组件默认开启，显式 false 才记录原文
+		MaskBody *bool `json:"mask_body" yaml:"mask_body"`
+		// HeaderMaskKeys 追加需掩码的请求/响应头名（组件已内置 authorization/cookie/set-cookie 等）
+		HeaderMaskKeys []string `json:"header_mask_keys" yaml:"header_mask_keys"`
+		// BodyMaskKeys 追加需掩码的请求/响应体字段名（组件已内置 password/token/captcha 等）
+		BodyMaskKeys []string `json:"body_mask_keys" yaml:"body_mask_keys"`
+		// MultipartSkipFiles 上传文件部件是否只记元数据：*bool 三态，不配置 = 默认只记元数据
+		MultipartSkipFiles *bool `json:"multipart_skip_files" yaml:"multipart_skip_files"`
+		// MultipartPreserveState 是否在记录时复制 multipart 请求体：*bool 三态，不配置 = 默认开启
+		// 关闭会让后续 c.FormFile 报「multipart handled by MultipartReader」，破坏业务上传
+		MultipartPreserveState *bool `json:"multipart_preserve_state" yaml:"multipart_preserve_state"`
 	} `json:"debugger" yaml:"debugger"`
 
 	// 各微服务独立配置

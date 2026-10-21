@@ -83,15 +83,27 @@ business:
     order_timeout: 1800
     auto_complete_days: 7
 # debugger 请求日志（jcbaseGo 组件）：写共享 debug_logs 表，前端页面 /jcbase/debug；
-# 生产默认关闭，可经环境变量 DEBUGGER_ENABLED=1 开启；allowed_ips 建议按运维出口 IP 配置
+# 生产默认关闭。临时排查三件套：DEBUGGER_ENABLED=1 + DEBUGGER_ALLOWED_IPS=<运维 IP/CIDR>
+# （不给白名单则页面不注册，只记日志），排查完立刻关回：开启态每个采样请求都同步写库，
+# 并有额外内存与 DB 容量成本，故示例值收紧为采样 0.1 / 上限 5000 条 / 保留 3 天
 debugger:
     enabled: false
     service_name: gateway
+    # 建议经 DEBUGGER_ALLOWED_IPS 注入，配置文件不写死运维 IP；留空 = 页面不注册（fail-closed）
     allowed_ips: []
+    allow_empty_whitelist: false
+    # 无 0 语义：写 0 会被框架回填为默认 16
     max_body_size: 16
-    max_records: 20000
-    retention_days: 7
-    sample_rate: 1.0
+    # 0 = 不限制条数（不写 = 默认 5000）
+    max_records: 5000
+    # 0 = 不做过期清理（不写 = 默认 7 天）；任何取值都不会清空全表
+    retention_days: 3
+    # 无 0 语义：写 0 会被框架回填为默认 24
+    cleanup_interval_hours: 24
+    # 0 = 一条都不记录（不写 = 全量）；线上开启态建议 0.1
+    sample_rate: 0.1
+    # 只影响日志里记录的 client_ip 取法，不参与页面鉴权。
+    # 前置 nginx/CDN 时保持 false，改为放行其网段（TRUSTED_PROXIES），否则 ClientIP 会被代理头伪造
     use_cdn: false
     base_path: /jcbase/debug
     skip_paths: []

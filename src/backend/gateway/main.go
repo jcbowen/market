@@ -51,8 +51,10 @@ func main() {
 	r := gin.New()
 	applyTrustedProxies(r, cfg)
 	r.Use(gin.Recovery())
-	// debugger 请求日志紧跟 Recovery（记录最完整链路），未启用时内部直接返回
-	registerDebugger(r, cfg)
+	// debugger 请求日志紧跟 Recovery（记录最完整链路）：位置在限流与 BlockTrace 之前属有意为之，
+	// 被限流/拦截的请求同样要留痕（这类流量正是排查噪音与攻击试探的主要来源），未启用时内部直接返回
+	stopDebugger := registerDebugger(r, cfg)
+	defer stopDebugger()
 	r.Use(gwMiddleware.RequestLoggerMiddleware())
 	r.Use(gwMiddleware.SecurityHeadersMiddleware())
 	r.Use(gwMiddleware.BlockTraceMiddleware())
@@ -155,8 +157,9 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 	r.GET("/health", func(c *gin.Context) {
 		response.Success(c, gin.H{
-			"service": "gateway",
-			"time":    time.Now().Unix(),
+			"service":  "gateway",
+			"time":     time.Now().Unix(),
+			"debugger": debuggerHealthInfo(),
 		})
 	})
 
