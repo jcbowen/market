@@ -44,7 +44,7 @@ type Config struct {
 	} `json:"upload" yaml:"upload"`
 	GeoIP struct {
 		// GeoLite2-City 数据库路径，相对路径以可执行文件所在目录为基准
-		// 文件由根目录 download-geoip.mjs 定期下载更新（不入 git 仓库），
+		// 文件由 cmd/geoip-download 下载工具定期下载更新（不入 git 仓库），
 		// 缺失时 IP 定位接口返回未命中，不影响其他功能
 		DBPath string `json:"db_path" yaml:"db_path" default:"data/geoip/GeoLite2-City.mmdb"`
 	} `json:"geoip" yaml:"geoip"`

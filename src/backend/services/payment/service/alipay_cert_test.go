@@ -264,6 +264,8 @@ func TestParseAlipayCallbackCertMode(t *testing.T) {
 func TestCheckAlipayUploadContent(t *testing.T) {
 	priKey, _ := newTestAlipayKeys(t)
 	certPEM, _ := newTestAlipayCert(t, 30001)
+	// 模拟真实支付宝根证书里的国密（SM2）段：PEM 结构合法但 Go 标准库解不出证书体
+	badBlockPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not-a-der-cert")}))
 
 	cases := []struct {
 		name     string
@@ -278,6 +280,8 @@ func TestCheckAlipayUploadContent(t *testing.T) {
 		{"支付宝公钥证书合法", "alipay_public_cert", certPEM, ""},
 		{"支付宝公钥证书非证书", "alipay_public_cert", "not-a-cert", "支付宝公钥证书"},
 		{"根证书合法", "root_cert", certPEM, ""},
+		{"根证书含不可解析段仍可用", "root_cert", badBlockPEM + certPEM, ""},
+		{"根证书全为不可解析段", "root_cert", badBlockPEM, "支付宝根证书"},
 		{"根证书乱码", "root_cert", "garbage", "支付宝根证书"},
 		{"未知类型拒绝", "unknown_type", "whatever", "不支持的证书类型"},
 	}

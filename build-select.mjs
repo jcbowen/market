@@ -87,9 +87,9 @@ function packageRelease() {
   copyIfExists('start-all.mjs');
   copyIfExists('deploy.mjs');
   copyIfExists('build.mjs');
-  // 依赖自愈工具与 GeoIP 下载脚本被上面三个入口依赖，必须一并入包
+  // 依赖自愈工具被上面三个入口依赖，必须一并入包；
+  // GeoIP 下载器为 Go 二进制，已随 bin/ 产物一并复制，无需单独打包
   copyIfExists('deps-tools.mjs');
-  copyIfExists('download-geoip.mjs');
   if (fs.existsSync(path.join(ROOT_DIR, 'deploy'))) {
     // init.dev.sql 是开发种子数据（超管 admin/admin123、C 端固定验证码 123456），
     // 不随发布包分发：生产环境一旦被手工导入即得到已知超管口令

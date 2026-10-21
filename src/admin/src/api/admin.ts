@@ -306,7 +306,8 @@ export function updatePaymentSetting(data: PaymentSetting) {
 
 /**
  * 上传支付证书文件
- * 文件内容存入数据库，上传后支付配置即时热更新
+ * 文件内容存入数据库，上传后支付配置即时热更新；
+ * 后台「粘贴内容写入」入口复用本函数（前端把文本包成 .pem File 提交，服务端校验口径一致）
  * @param channel 支付渠道：wechat / alipay
  * @param certType 证书类型：private_key（应用私钥）、app_cert（应用公钥证书）、
  *                 alipay_public_cert（支付宝公钥证书）、root_cert（支付宝根证书），

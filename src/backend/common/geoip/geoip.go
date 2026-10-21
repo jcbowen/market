@@ -3,7 +3,7 @@
  *
  * 方案约定：
  *   - 数据库来源 https://geo.wp-statistics.com/#databases（GeoLite2-City，每周二/五更新，
- *     jsDelivr CDN 直链下载，无需鉴权），由根目录 download-geoip.mjs 定期下载更新；
+ *     jsDelivr CDN 直链下载，无需鉴权），由 cmd/geoip-download 下载工具定期下载更新；
  *   - 数据库文件不入 git 仓库（见 .gitignore 的 *.mmdb 规则）；
  *   - 文件被替换后按 mtime 热重载，无需重启网关；
  *   - 数据库缺失或查询未命中时返回 nil，调用方自行降级，不影响其他功能。

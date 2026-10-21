@@ -451,10 +451,14 @@ async function missingNpmReason(dir) {
 }
 
 /**
- * 确保 GeoIP 定位库存在（缺失时调用 download-geoip.mjs 下载）。
+ * 确保 GeoIP 定位库存在（缺失时调用 Go 下载器 cmd/geoip-download 下载）。
  *
  * 定位库属于可选运行数据：缺失只影响 IP 定位，不该阻塞整体启动流程，
  * 因此这里只告警不终止，网关侧对缺失场景本身有兜底。
+ *
+ * 经 `go run` 调用（开发/构建机必有 Go 工具链，后端编译本就依赖它）；
+ * go run 的工作目录必须是 src/backend（go.mod 所在），故 --dest 显式传
+ * 项目根下的绝对路径，与下载器默认 dest 约定（bin/data/geoip/）保持一致。
  *
  * @param {ReturnType<createContext>} ctx 工具上下文
  * @returns {Promise<void>} 始终返回，不结束进程
@@ -467,16 +471,17 @@ export async function ensureGeoipDatabase(ctx) {
 
   if (!ctx.autoFix) {
     console.warn('警告: 缺少 GeoIP 定位库（bin/data/geoip/*.mmdb），已指定 --no-auto-fix，IP 定位功能将降级');
-    console.warn('  可手动执行：node download-geoip.mjs');
+    console.warn('  可手动执行：cd src/backend && go run ./cmd/geoip-download --dest <项目根>/bin/data/geoip/GeoLite2-City.mmdb');
     return;
   }
 
   console.log('==> 缺少 GeoIP 定位库，正在下载...');
-  const r = await runChecked(process.execPath, [path.join(ctx.rootDir, 'download-geoip.mjs')], {
-    cwd: ctx.rootDir,
+  const r = await runChecked('go', ['run', './cmd/geoip-download', '--dest', path.join(dir, 'GeoLite2-City.mmdb')], {
+    cwd: ctx.backendDir,
+    env: ctx.goEnv,
   });
   if (!r.ok) {
-    console.warn('警告: GeoIP 定位库下载失败，IP 定位功能将降级（可稍后手动执行 node download-geoip.mjs）');
+    console.warn('警告: GeoIP 定位库下载失败，IP 定位功能将降级（可稍后手动执行上述 geoip-download 命令）');
     return;
   }
   console.log('    GeoIP 定位库已就绪');

@@ -20,7 +20,7 @@
 #   /app/attachment     附件上传目录（product 落盘 + gateway /uploads 共用）
 #   /app/runtime        运行时配置快照 + 超管凭证文件
 #   /app/logs           业务日志
-#   /app/data/geoip     IP 定位库（可选，只读，缺失时优雅降级）
+#   /app/data/geoip     IP 定位库（可选，缺失时自动下载，失败优雅降级）
 
 set -u
 
@@ -157,8 +157,24 @@ trap shutdown TERM INT
 prepare_dir "$RUNTIME_DIR" 10001
 prepare_dir "$APP_DIR/attachment" 10001
 prepare_dir "$APP_DIR/logs" 10001
+prepare_dir "$APP_DIR/data/geoip" 10001
 prepare_dir "$MYSQL_DATA" "$(id -u mysql)"
 prepare_dir /data "$(id -u redis)"
+
+# ---------- GeoIP 定位库（可选，非致命） ----------
+
+# 首次部署 /app/data/geoip 为空时后台自动下载（下载器对 3 天内文件自动跳过，
+# 每次容器启动调用一次无副作用）；失败不影响启动——gateway 对数据库缺失
+# 本身优雅降级（IP 定位返回空），就绪后按 mtime 热加载，无需重启。
+# --dest 必须显式传容器内绝对路径：下载器默认 dest 相对 cwd 解析为 bin/data/geoip
+# （发布包约定，网关二进制在 bin/ 下），与容器内 /app/data/geoip 的布局不符。
+# 目录可写是下载的前提（docker run 示例已不再 :ro 挂载）；后续更新可由宿主机
+# crontab 直接跑发布包内二进制，或 docker exec 触发。
+if ! compgen -G "$APP_DIR/data/geoip/*.mmdb" >/dev/null; then
+  log "GeoIP 定位库缺失，后台执行 geoip-download（就绪前 IP 定位优雅降级）..."
+  runuser -u appuser -- bash -c "cd $APP_DIR && exec ./geoip-download --dest $APP_DIR/data/geoip/GeoLite2-City.mmdb" \
+    >> "$APP_DIR/logs/geoip-download.log" 2>&1 &
+fi
 
 # 运行时配置：每个进程一份私有副本（关键！）。框架加载配置时会回写文件，
 # 6 个进程共享同一文件会产生回写竞态——后写者覆盖、半写被并发读取导致

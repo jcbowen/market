@@ -9,7 +9,7 @@ import (
 )
 
 // testDBPath 测试用数据库路径：默认 bin/data/geoip/GeoLite2-City.mmdb（相对仓库根）
-// 文件不存在时相关用例自动跳过（数据库由 download-geoip.mjs 下载，不入 git）
+// 文件不存在时相关用例自动跳过（数据库由 cmd/geoip-download 下载，不入 git）
 func testDBPath(t *testing.T) string {
 	t.Helper()
 	const rel = "../../../../bin/data/geoip/GeoLite2-City.mmdb"
@@ -18,7 +18,7 @@ func testDBPath(t *testing.T) string {
 		t.Fatalf("解析路径失败: %v", err)
 	}
 	if _, err := os.Stat(abs); err != nil {
-		t.Skipf("数据库文件不存在（执行 node download-geoip.mjs 下载）: %s", abs)
+		t.Skipf("数据库文件不存在（执行 go run ./cmd/geoip-download 下载）: %s", abs)
 	}
 	return abs
 }

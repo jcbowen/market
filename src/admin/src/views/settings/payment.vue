@@ -105,17 +105,35 @@
             </n-grid-item>
             <n-grid-item :span="2">
               <n-form-item label="商户私钥证书（apiclient_key.pem）">
-                <div class="cert-upload-row">
-                  <n-upload
-                    :show-file-list="false"
-                    accept=".pem,.key,.txt,.crt"
-                    :disabled="!canUpdate"
-                    :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('wechat', 'private_key', options)"
-                  >
-                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['wechat:private_key']">上传证书文件</n-button>
-                  </n-upload>
-                  <n-tag v-if="paymentForm.wechat_cert_uploaded" type="success" size="small">已上传商户私钥</n-tag>
-                  <n-tag v-else type="warning" size="small">未上传</n-tag>
+                <div class="cert-field">
+                  <div class="cert-upload-row">
+                    <n-upload
+                      :show-file-list="false"
+                      accept=".pem,.key,.txt,.crt"
+                      :disabled="!canUpdate"
+                      :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('wechat', 'private_key', options)"
+                    >
+                      <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['wechat:private_key']">上传证书文件</n-button>
+                    </n-upload>
+                    <n-tag v-if="paymentForm.wechat_cert_uploaded" type="success" size="small">已上传商户私钥</n-tag>
+                    <n-tag v-else type="warning" size="small">未上传</n-tag>
+                  </div>
+                  <div class="cert-paste-row">
+                    <n-input
+                      v-model:value="certDraft['wechat:private_key']"
+                      type="textarea"
+                      :rows="2"
+                      :disabled="!canUpdate"
+                      placeholder="或粘贴证书内容（含 BEGIN/END 行），留空表示不修改"
+                    />
+                    <n-button
+                      size="small"
+                      secondary
+                      :disabled="!canUpdate || !certDraft['wechat:private_key'].trim()"
+                      :loading="certUploading['wechat:private_key']"
+                      @click="saveCertDraft('wechat', 'private_key', '商户私钥证书')"
+                    >写入粘贴内容</n-button>
+                  </div>
                 </div>
               </n-form-item>
             </n-grid-item>
@@ -157,11 +175,13 @@
           </n-alert>
 
           <n-alert type="info" style="margin-bottom: 16px;">
-            请将下方异步通知地址配置到支付宝开放平台（应用详情 → 开发设置 → 接口加签与消息校验），
-            并让所选加签方式与开放平台的设置保持一致：
-            <strong>公钥模式</strong>需填写应用私钥与支付宝公钥；
-            <strong>证书模式</strong>需上传应用公钥证书、支付宝公钥证书与支付宝根证书（应用私钥仍单独上传）。
-            方式不匹配会导致签名或验签失败，配置后支付结果才能通知到本系统。
+            开放平台（应用详情 → 开发设置 → 接口加签与消息校验）的加签方式只有「密钥」和「证书」两种，
+            下方选项已按官方文档全称与平台叫法一一对应，所选方式必须与开放平台保持一致：
+            <strong>公钥模式</strong>（平台选「密钥」）需填写应用私钥与支付宝公钥；
+            <strong>公钥证书模式</strong>（平台选「证书」）需录入应用公钥证书、支付宝公钥证书与支付宝根证书（应用私钥仍单独录入）。
+            方式不匹配会导致签名或验签失败。
+            证书与私钥可上传文件，也可直接粘贴内容。
+            另请将下方异步通知地址配置到开放平台，支付结果才能通知到本系统；
             通知地址由「站点设置」的部署域名派生，本页只读。
           </n-alert>
           <div class="url-guide-row">
@@ -183,7 +203,7 @@
                     </n-radio>
                   </n-radio-group>
                   <n-text depth="3" class="form-hint">
-                    须与支付宝开放平台「接口加签方式」的选择一致。两种方式的必填项不同，切换后需补齐对应配置并保存；
+                    括号内为支付宝开放平台控制台的叫法，须与其「接口加签方式」所选一致。两种方式的必填项不同，切换后需补齐对应配置并保存；
                     必填项未齐全时 C 端不会展示支付宝支付。
                   </n-text>
                 </div>
@@ -244,44 +264,80 @@
             </n-grid-item>
             <n-grid-item v-if="!isAlipayCertMode" :span="2">
               <n-text depth="3" class="form-hint">
-                公钥模式只用到这一项公钥；若开放平台选择的是一方证书/证书模式，请把上方加签方式改为「证书模式」并上传三份证书，
+                公钥模式只用到这一项公钥；若开放平台选的是「证书」，请把上方加签方式改为「公钥证书模式」并录入三份证书，
                 把「支付宝公钥证书」内容粘到此处不会生效。
               </n-text>
             </n-grid-item>
             <template v-if="isAlipayCertMode">
               <n-grid-item v-for="cert in ALIPAY_CERT_ITEMS" :key="cert.type" :span="2">
                 <n-form-item :label="cert.label">
-                  <div class="cert-upload-row">
-                    <n-upload
-                      :show-file-list="false"
-                      accept=".pem,.crt,.key,.txt"
-                      :disabled="!canUpdate"
-                      :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', cert.type, options)"
-                    >
-                      <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['alipay:' + cert.type]">
-                        上传{{ cert.label }}
-                      </n-button>
-                    </n-upload>
-                    <n-tag v-if="certUploaded[cert.key]" type="success" size="small">已上传</n-tag>
-                    <n-tag v-else type="warning" size="small">未上传</n-tag>
-                    <n-text depth="3" class="form-hint">{{ cert.hint }}</n-text>
+                  <div class="cert-field">
+                    <div class="cert-upload-row">
+                      <n-upload
+                        :show-file-list="false"
+                        accept=".pem,.crt,.key,.txt"
+                        :disabled="!canUpdate"
+                        :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', cert.type, options)"
+                      >
+                        <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['alipay:' + cert.type]">
+                          上传{{ cert.label }}
+                        </n-button>
+                      </n-upload>
+                      <n-tag v-if="certUploaded[cert.key]" type="success" size="small">已上传</n-tag>
+                      <n-tag v-else type="warning" size="small">未上传</n-tag>
+                      <n-text depth="3" class="form-hint">{{ cert.hint }}</n-text>
+                    </div>
+                    <div class="cert-paste-row">
+                      <n-input
+                        v-model:value="certDraft['alipay:' + cert.type]"
+                        type="textarea"
+                        :rows="2"
+                        :disabled="!canUpdate"
+                        placeholder="或粘贴证书内容（含 BEGIN/END 行），留空表示不修改"
+                      />
+                      <n-button
+                        size="small"
+                        secondary
+                        :disabled="!canUpdate || !certDraft['alipay:' + cert.type].trim()"
+                        :loading="certUploading['alipay:' + cert.type]"
+                        @click="saveCertDraft('alipay', cert.type, cert.label)"
+                      >写入粘贴内容</n-button>
+                    </div>
                   </div>
                 </n-form-item>
               </n-grid-item>
             </template>
             <n-grid-item :span="2">
               <n-form-item :label="isAlipayCertMode ? '应用私钥（与证书同批生成）' : '应用私钥（接口加签私钥）'">
-                <div class="cert-upload-row">
-                  <n-upload
-                    :show-file-list="false"
-                    accept=".pem,.key,.txt,.crt"
-                    :disabled="!canUpdate"
-                    :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', 'private_key', options)"
-                  >
-                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['alipay:private_key']">上传私钥文件</n-button>
-                  </n-upload>
-                  <n-tag v-if="paymentForm.alipay_cert_uploaded" type="success" size="small">已上传应用私钥</n-tag>
-                  <n-tag v-else type="warning" size="small">未上传</n-tag>
+                <div class="cert-field">
+                  <div class="cert-upload-row">
+                    <n-upload
+                      :show-file-list="false"
+                      accept=".pem,.key,.txt,.crt"
+                      :disabled="!canUpdate"
+                      :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('alipay', 'private_key', options)"
+                    >
+                      <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['alipay:private_key']">上传私钥文件</n-button>
+                    </n-upload>
+                    <n-tag v-if="paymentForm.alipay_cert_uploaded" type="success" size="small">已上传应用私钥</n-tag>
+                    <n-tag v-else type="warning" size="small">未上传</n-tag>
+                  </div>
+                  <div class="cert-paste-row">
+                    <n-input
+                      v-model:value="certDraft['alipay:private_key']"
+                      type="textarea"
+                      :rows="2"
+                      :disabled="!canUpdate"
+                      placeholder="或粘贴私钥内容（含 BEGIN/END 行），留空表示不修改"
+                    />
+                    <n-button
+                      size="small"
+                      secondary
+                      :disabled="!canUpdate || !certDraft['alipay:private_key'].trim()"
+                      :loading="certUploading['alipay:private_key']"
+                      @click="saveCertDraft('alipay', 'private_key', '应用私钥')"
+                    >写入粘贴内容</n-button>
+                  </div>
                 </div>
               </n-form-item>
             </n-grid-item>
@@ -378,6 +434,18 @@ const paymentLoading = ref(false)
 const paymentSaving = ref(false)
 /** 证书上传中状态，键为「渠道:证书类型」，使各上传按钮独立展示 loading */
 const certUploading = reactive<Record<string, boolean>>({})
+
+/**
+ * 证书/私钥「粘贴内容」草稿，键为「渠道:证书类型」，与 certUploading 同键
+ * 证书内容读取接口不回传明文，草稿框始终为空，仅作写入入口
+ */
+const certDraft = reactive<Record<string, string>>({
+  'wechat:private_key': '',
+  'alipay:private_key': '',
+  'alipay:app_cert': '',
+  'alipay:alipay_public_cert': '',
+  'alipay:root_cert': '',
+})
 
 interface ChannelCardItem {
   value: string
@@ -486,10 +554,14 @@ const canUpdate = computed(() => authStore.isSuperAdmin || authStore.hasPermissi
 /** 支付宝当前是否指向沙箱网关 */
 const alipayInSandbox = computed(() => paymentForm.alipay.gateway_url.includes('openapi-sandbox.'))
 
-/** 支付宝加签方式选项，值与服务端 config.AlipayMode* 常量一致 */
+/**
+ * 支付宝加签方式选项，值与服务端 config.AlipayMode* 常量一致
+ * 主名取自支付宝官方文档（公钥模式 / 公钥证书模式），括号内为开放平台控制台的实际选项名，
+ * 避免管理员在两处对照时选错方式
+ */
 const ALIPAY_SIGN_MODES = [
-  { value: 'public', label: '公钥模式' },
-  { value: 'cert', label: '证书模式' },
+  { value: 'public', label: '公钥模式（密钥）' },
+  { value: 'cert', label: '公钥证书模式（证书）' },
 ]
 
 /**
@@ -514,7 +586,7 @@ const ALIPAY_CERT_ITEMS = [
     type: 'root_cert',
     key: 'alipay_root_cert_uploaded',
     label: '支付宝根证书',
-    hint: '开放平台「根证书」页签下载，文件名形如 alipayRootCert.crt',
+    hint: '开放平台「根证书」页签下载，文件名形如 alipayRootCert.crt，可含多段证书',
   },
 ] as const
 
@@ -537,7 +609,7 @@ const certUploaded = computed<Record<string, boolean>>(() => ({
 function switchAlipaySignMode(mode: string) {
   paymentForm.alipay.mode = mode
   message.info(mode === 'cert'
-    ? '已切换为证书模式，请上传应用公钥证书、支付宝公钥证书与根证书后保存'
+    ? '已切换为公钥证书模式，请上传或粘贴应用公钥证书、支付宝公钥证书与支付宝根证书后保存'
     : '已切换为公钥模式，请填写支付宝公钥后保存')
 }
 
@@ -630,6 +702,8 @@ function onModalShowChange(next: boolean) {
 
 /**
  * 请求关闭配置弹窗：表单与打开时快照不一致则二次确认，避免误丢改动
+ * 确认后必须按服务端真实值回滚表单：只关弹窗不清改动的话，未保存的编辑（尤其是切换过的加签方式）
+ * 会静默留在共享表单里，之后任意一次即时保存（渠道开关、上移/下移）都会把它一并写库
  */
 function requestCloseModal() {
   if (snapshotOf(modalChannel.value) !== formSnapshot.value) {
@@ -638,8 +712,10 @@ function requestCloseModal() {
       content: '当前渠道配置有未保存的修改，关闭弹窗后修改将丢失。',
       positiveText: '放弃修改并关闭',
       negativeText: '继续编辑',
-      onPositiveClick: () => {
+      onPositiveClick: async () => {
         showConfigModal.value = false
+        // 回滚用的重读失败时不阻断关闭，失败原因已由请求层统一提示
+        await fetchPaymentSetting().catch(() => {})
       },
     })
     return
@@ -771,7 +847,7 @@ function validateAlipayForm(): string {
   if (isAlipayCertMode.value) {
     const missing = ALIPAY_CERT_ITEMS.filter((cert) => !certUploaded.value[cert.key]).map((cert) => cert.label)
     if (missing.length) {
-      return `证书模式还需上传：${missing.join('、')}`
+      return `公钥证书模式还需上传或粘贴：${missing.join('、')}`
     }
   }
   return ''
@@ -850,8 +926,26 @@ async function fetchPaymentSetting() {
 }
 
 /**
+ * 仅回写服务端的就绪/上传状态与乐观锁版本号
+ * 证书写入接口是即时落库的，但表单里往往还有未保存的编辑（刚切换的加签方式、已填未存的 AppID），
+ * 整份重读会把这些覆盖回服务端旧值，表现为「证书上传成功但表单跳回公钥模式」，故此处只刷状态位
+ */
+async function refreshUploadStatus() {
+  const data = (await getPaymentSetting()).data.data
+  paymentForm.wechat_payment_ready = data.wechat_payment_ready
+  paymentForm.alipay_ready = data.alipay_ready
+  paymentForm.alipay_ready_message = data.alipay_ready_message ?? ''
+  paymentForm.wechat_cert_uploaded = data.wechat_cert_uploaded
+  paymentForm.alipay_cert_uploaded = data.alipay_cert_uploaded
+  paymentForm.alipay_app_cert_uploaded = data.alipay_app_cert_uploaded ?? false
+  paymentForm.alipay_public_cert_uploaded = data.alipay_public_cert_uploaded ?? false
+  paymentForm.alipay_root_cert_uploaded = data.alipay_root_cert_uploaded ?? false
+  paymentForm.updated_at = data.updated_at
+}
+
+/**
  * 上传支付证书文件
- * 上传成功后刷新配置以更新证书上传状态；服务端会校验内容可解析性，
+ * 上传成功后刷新证书上传状态；服务端会校验内容可解析性，
  * 校验失败时不写库并返回具体原因（请求层统一提示）
  * @param channel 支付渠道：wechat / alipay
  * @param certType 证书类型：private_key、app_cert、alipay_public_cert、root_cert
@@ -869,12 +963,41 @@ async function handleCertUpload(channel: string, certType: string, options: Uplo
     const res = await uploadPaymentCert(channel, certType, file)
     message.success(res.data.message || '证书上传成功')
     options.onFinish()
-    await loadPaymentSetting()
-  } catch (err) {
+    await refreshUploadStatus()
+  } catch {
     options.onError()
-    throw err
   } finally {
     certUploading[loadingKey] = false
+  }
+}
+
+/**
+ * 以粘贴内容写入支付证书/私钥
+ * 把文本包成 .pem 文件复用上传接口，服务端扩展名白名单、大小上限与内容可解析性校验口径与文件上传完全一致；
+ * 校验失败时服务端不写库（原配置保持不变），具体原因由请求层统一提示，此时保留草稿内容便于修正
+ * @param channel 支付渠道：wechat / alipay
+ * @param certType 证书类型：private_key、app_cert、alipay_public_cert、root_cert
+ * @param label 字段名称，用于提示文案
+ */
+async function saveCertDraft(channel: string, certType: string, label: string) {
+  const key = `${channel}:${certType}`
+  const content = certDraft[key].trim()
+  if (!content) {
+    message.warning(`请先粘贴${label}内容`)
+    return
+  }
+
+  certUploading[key] = true
+  try {
+    const file = new File([content], `${certType}.pem`, { type: 'application/x-pem-file' })
+    const res = await uploadPaymentCert(channel, certType, file)
+    message.success(res.data.message || `${label}已保存`)
+    certDraft[key] = ''
+    await refreshUploadStatus()
+  } catch {
+    // 失败原因已由请求层提示，此处仅保留草稿内容
+  } finally {
+    certUploading[key] = false
   }
 }
 
@@ -1040,6 +1163,33 @@ onMounted(() => {
   gap: 12px;
   width: 100%;
   flex-wrap: wrap;
+}
+
+/* 证书/私钥录入位：上传行 + 粘贴行上下排列 */
+.cert-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.cert-paste-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
+
+  .n-input {
+    flex: 1;
+    /* 窄弹窗下按钮换到下一行，避免输入框被挤到不可用 */
+    min-width: 220px;
+  }
+
+  .n-button {
+    margin-top: 4px;
+    flex-shrink: 0;
+  }
 }
 
 .sign-mode-row {

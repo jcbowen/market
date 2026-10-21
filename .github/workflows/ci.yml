@@ -219,7 +219,7 @@ jobs:
         working-directory: src/backend
         run: go test ./... -count=1
 
-      # 交叉编译 7 个产物（linux/darwin/windows × amd64/arm64 共 6 平台组合），
+      # 交叉编译 8 个产物（linux/darwin/windows × amd64/arm64 共 6 平台组合），
       # 二进制名与 build.mjs SERVICES 保持一致；Windows 产物带 .exe 后缀。
       # 版本号经 -ldflags 注入 common/version.AppVersion（tag 名），供管理后台「关于」页展示
       - name: 交叉编译后端（linux/darwin/windows amd64/arm64）
@@ -228,9 +228,10 @@ jobs:
           for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
             goos="${os_arch%-*}"; arch="${os_arch##*-}"
             ext=""; [ "$goos" = "windows" ] && ext=".exe"
-            for svc in gateway services/user services/product services/order services/cart services/payment cmd/market-admin; do
+            for svc in gateway services/user services/product services/order services/cart services/payment cmd/market-admin cmd/geoip-download; do
               name=$(basename $svc); [ "$name" != "gateway" ] && name="${name}-service"
               [ "$svc" = "cmd/market-admin" ] && name="market-admin"
+              [ "$svc" = "cmd/geoip-download" ] && name="geoip-download"
               CGO_ENABLED=0 GOOS=$goos GOARCH=$arch go build \
                 -ldflags "-X github.com/jcbowen/market/src/backend/common/version.AppVersion=${GITHUB_REF_NAME}" \
                 -o ../../bin/${goos}-${arch}/${name}${ext} ./${svc}/

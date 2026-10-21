@@ -21,7 +21,10 @@
 #     -v /opt/market/data/attachment:/app/attachment \
 #     -v /opt/market/data/runtime:/app/runtime \
 #     -v /opt/market/data/logs:/app/logs \
-#     -v /opt/market/data/geoip:/app/data/geoip:ro \
+#     -v /opt/market/data/geoip:/app/data/geoip \
+#     （geoip 可选：缺失时 entrypoint 自动执行 ./geoip-download 下载（需目录可写，
+#      故不再 :ro 挂载），下载失败仅 IP 定位优雅降级；更新可由宿主机 crontab
+#      跑发布包内二进制或 docker exec 触发）
 #     <registry>/market:1.0.0
 FROM ubuntu:24.04
 
@@ -56,13 +59,16 @@ COPY bin/linux-${TARGETARCH}/cart-service ./cart-service
 COPY bin/linux-${TARGETARCH}/payment-service ./payment-service
 COPY bin/linux-${TARGETARCH}/market-admin ./market-admin
 
+# GeoIP 定位库下载工具（entrypoint 检测 /app/data/geoip 无 mmdb 时调用）
+COPY bin/linux-${TARGETARCH}/geoip-download ./geoip-download
+
 # 前端静态资源与配置模板打包进镜像（发布即完整可跑）
 COPY bin/static ./static
 COPY bin/config.allinone.yaml ./config.yaml
 COPY src/backend/deploy/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh ./gateway ./user-service ./product-service \
-    ./order-service ./cart-service ./payment-service ./market-admin
+    ./order-service ./cart-service ./payment-service ./market-admin ./geoip-download
 
 EXPOSE 18080 3306 6379
 

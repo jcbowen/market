@@ -60,7 +60,8 @@ const PLATFORMS = [
   ['windows', 'arm64'],
 ];
 
-// 服务列表：二进制名
+// 服务列表：二进制名（geoip-download 为 GeoIP 数据库下载工具，非服务，
+// 编译进产物供 allinone 镜像 entrypoint 与服务器 crontab 直接使用）
 const SERVICES = [
   'gateway',
   'user-service',
@@ -69,12 +70,14 @@ const SERVICES = [
   'cart-service',
   'payment-service',
   'market-admin',
+  'geoip-download',
 ];
 
 // 服务二进制名 -> 源码目录
 function srcDirOf(svc) {
   if (svc === 'gateway') return './gateway/';
   if (svc === 'market-admin') return './cmd/market-admin/';
+  if (svc === 'geoip-download') return './cmd/geoip-download/';
   return `./services/${svc.replace(/-service$/, '')}/`;
 }
 

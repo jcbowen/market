@@ -13,7 +13,7 @@ import (
 
 // GeoIPHandler IP 归属地定位接口
 // 基于本地 GeoLite2-City mmdb 数据库（来源 https://geo.wp-statistics.com/#databases，
-// 由 download-geoip.mjs 定期更新，git 不跟踪数据库文件）离线解析出口 IP 的大致经纬度
+// 由 cmd/geoip-download 下载工具定期更新，git 不跟踪数据库文件）离线解析出口 IP 的大致经纬度
 type GeoIPHandler struct {
 	dbPath string
 }
