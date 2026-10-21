@@ -127,6 +127,7 @@ import {
   DELIVERY_TYPE,
   ORDER_SOURCE,
   ORDER_STATUS,
+  canAdminRefund,
   canCancelOrder,
   deliveryTypeText,
   orderSourceTagType,
@@ -277,8 +278,8 @@ const actions = computed(() => {
   if (d.status === ORDER_STATUS.SHIPPING) {
     list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d) })
   }
-  // 已支付/备货中/配送中允许后台代客退款（与后端可退状态一致）
-  if (d.status === ORDER_STATUS.PAID || d.status === ORDER_STATUS.STOCKING || d.status === ORDER_STATUS.SHIPPING) {
+  // 可退状态口径统一由 canAdminRefund 判定（已支付/备货中/配送中，以及到店单的已完成），与后端一致
+  if (canAdminRefund(d)) {
     list.push({ key: 'refund', label: '退款', type: 'error', run: () => openRefund(d.id) })
   }
   return list

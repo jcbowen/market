@@ -186,6 +186,7 @@ import {
   ORDER_SOURCE,
   ORDER_STATUS,
   QUERY_STATUS,
+  canAdminRefund,
   canCancelOrder,
   deliveryTypeText,
   orderSourceFilterOptions,
@@ -464,8 +465,8 @@ const columns: DataTableColumns<Order> = [
           ),
         )
       }
-      // 已支付/备货中/配送中允许后台代客退款（与后端可退状态一致）
-      if (row.status === ORDER_STATUS.PAID || row.status === ORDER_STATUS.STOCKING || row.status === ORDER_STATUS.SHIPPING) {
+      // 可退状态口径统一由 canAdminRefund 判定（已支付/备货中/配送中，以及到店单的已完成），与后端一致
+      if (canAdminRefund(row)) {
         buttons.push(
           h(
             NButton,

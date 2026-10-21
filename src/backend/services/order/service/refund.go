@@ -62,6 +62,34 @@ func ensureOrderCommunity(tx *gorm.DB, orderID, communityId int64) error {
 	return nil
 }
 
+// adminRefundable 判定订单当前是否允许发起后台代客退款
+// 常规可退状态为 已支付(2)/备货中(3)/配送中(4)；此外放行「到店单已完成(5)」：
+// 到店单（delivery_type=3，收银台即买即走）在收款事务内被直接终态化为已完成(5)
+// （见 order.go UpdateOrderStatus 的 case 2 分支），这个 5 是自动终态而非用户确认收货，
+// 若沿用常规门禁会让门店售出的订单永远退不了款、班次退款统计对到店单形同虚设。
+// 自提/配送的已完成单不在此列（用户已确认收货，售后口径另行设计），维持不可退。
+// 参数：
+//   - o: 订单模型（需含 status 与 delivery_type）
+//
+// 返回值：
+//   - bool: true 表示允许发起代客退款
+//
+// 异常：
+//   - 无（纯内存判定，不访问数据库）
+//
+// 使用示例：
+//
+//	if !adminRefundable(&o) {
+//	    return invalidArg("订单状态不允许退款")
+//	}
+func adminRefundable(o *model.Order) bool {
+	if o.Status >= 2 && o.Status <= 4 {
+		return true
+	}
+	// 3 = 到店（收银台即买即走），5 = 已完成（到店单收款即自动完结）
+	return o.DeliveryType == 3 && o.Status == 5
+}
+
 // RefundService 退款业务服务
 type RefundService struct {
 	db            *mysql.Instance
@@ -240,7 +268,7 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 		if err := ensureOrderCommunity(tx, o.ID, req.CommunityId); err != nil {
 			return err
 		}
-		if o.Status != 2 && o.Status != 3 && o.Status != 4 {
+		if !adminRefundable(&o) {
 			return invalidArg("订单状态不允许退款")
 		}
 
@@ -1226,7 +1254,11 @@ func orderMoneyFullyRefundedTx(tx *gorm.DB, orderID int64) (bool, error) {
 }
 
 // lastStatusBeforeRefundTx 查询订单最近一次进入退款中(7)之前的来源状态
-// 来源状态非法（不在 2/3/4 范围）时兜底返回 2 已支付
+// 合法来源状态为 2/3/4，以及到店单的已完成(5)——到店单收款即自动完结，
+// 部分退款完成后应回到 5 而不是被兜底成 2（否则会凭空多出「已支付」停留态，
+// 后台会把它当作待核销/待发货单处理）。from=5 只可能由 adminRefundable 放行的
+// 到店单产生，故此处无需再查 delivery_type 二次确认。
+// 来源状态非法（不在上述范围）时兜底返回 2 已支付
 // 参数：
 //   - tx: 数据库事务（或普通 DB）
 //   - orderID: 订单 ID
@@ -1239,7 +1271,7 @@ func lastStatusBeforeRefundTx(tx *gorm.DB, orderID int64) int32 {
 		Order("id desc").First(&log).Error; err != nil {
 		return 2
 	}
-	if log.FromStatus >= 2 && log.FromStatus <= 4 {
+	if log.FromStatus >= 2 && log.FromStatus <= 5 {
 		return log.FromStatus
 	}
 	return 2

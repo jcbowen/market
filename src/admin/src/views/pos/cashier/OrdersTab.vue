@@ -191,7 +191,7 @@ import { NButton, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { cancelOrder, getOrderDetail, getOrderList, verifyPickup } from '@/api/order'
 import type { Order, OrderDetail } from '@/api/types'
-import { ORDER_STATUS, QUERY_STATUS, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
+import { ORDER_STATUS, QUERY_STATUS, canAdminRefund, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
 import RefundModal from '@/views/order/components/RefundModal.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
@@ -291,17 +291,16 @@ const hasRefundPermission = computed(() => authStore.isSuperAdmin || authStore.h
 
 /** 可取消状态集：仅待支付（已支付订单走代客退款，避免取消/退款按钮并存歧义） */
 const CANCELABLE_STATUSES: number[] = [ORDER_STATUS.PENDING_PAY]
-/** 可退款状态集：已支付未完成/已完成 */
-const REFUNDABLE_STATUSES: number[] = [ORDER_STATUS.PAID, ORDER_STATUS.STOCKING, ORDER_STATUS.SHIPPING, ORDER_STATUS.COMPLETED]
 
 /** 可取消：未发货且有权限 */
 const canCancel = computed(
   () => !!detail.value && hasUpdatePermission.value && CANCELABLE_STATUSES.includes(detail.value.status),
 )
-/** 可退款：已支付未完成/已完成且有权限 */
-const canRefund = computed(
-  () => !!detail.value && hasRefundPermission.value && REFUNDABLE_STATUSES.includes(detail.value.status),
-)
+/**
+ * 可退款：状态口径统一由 canAdminRefund 判定（已支付/备货中/配送中，
+ * 以及到店单的已完成——到店单收款即自动完结，门店售出后仍需能退款），与后端一致
+ */
+const canRefund = computed(() => !!detail.value && hasRefundPermission.value && canAdminRefund(detail.value))
 /** 可核销：自提单待自提（已支付）且有权限 */
 const canVerify = computed(
   () => !!detail.value && hasUpdatePermission.value && detail.value.status === ORDER_STATUS.PAID && detail.value.delivery_type === 1,

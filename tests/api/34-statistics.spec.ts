@@ -1,10 +1,10 @@
 import { test, expect, type Playwright } from '@playwright/test';
-import { newAdminContext, type ApiResponse } from '../helpers/api';
+import { newAdminContext, asList, type ApiResponse, type PageData } from '../helpers/api';
 
 /**
  * 模块 34：数据统计五接口
  * 覆盖：dashboard 仪表盘聚合（字段完备 + 数值非负）；orders 订单统计（各状态之和 = 总数）；
- *       sales 销售统计（客单价 ≈ 支付总额/单数且按分取整，实付 ≤ 原价总额）；
+ *       sales 销售统计（客单价 ≈ 支付总额/单数且按分取整）+ 逐单金额自洽（实付 = 总额 − 优惠 + 配送费）；
  *       rankings 商品销量排行（结构合法 + 降序）；revenue 营收报表（日期升序 + 数值非负）
  * 口径：统计按今日/区间计算，仅验证结构与数值自洽，不锁定具体数值（环境数据持续增长）
  * 附：统计口径与越权防护（2026-10-17 全平台统计页配套，见文末 describe）
@@ -47,6 +47,18 @@ interface RevenueItem {
   date: string;
   order_count: number;
   revenue: number;
+}
+
+/** 后台订单列表行（仅取金额自洽校验所需字段） */
+interface AdminOrder {
+  id: number;
+  order_no: string;
+  community_id: number;
+  total_amount: number;
+  discount_amount: number;
+  manual_discount?: number;
+  delivery_fee?: number;
+  pay_amount: number;
 }
 
 /** 今日与区间起止（跨月安全）；本地墙钟日期（不可用 toISOString——UTC 日期在 0:00-8:00 会落后一天，口径同 59-coupon） */
@@ -116,10 +128,27 @@ test.describe.serial('数据统计五接口', () => {
         Math.abs(s.avg_order_amount * 100 - Math.round(s.avg_order_amount * 100)),
         '客单价应按分取整（最多两位小数）',
       ).toBeLessThan(1e-6);
-      // 优惠/取消口径下实付不应超过原价总额
-      expect(s.pay_amount).toBeLessThanOrEqual(s.total_amount + 0.001);
+      // 注意：这里不能断言 pay_amount ≤ total_amount。
+      // 订单实付口径是「商品总额 − 系统优惠 − 收银台手动优惠 + 配送费」（见 orders.delivery_fee 列），
+      // 配送单的运费只进实付、不进订单总额，因此两列在含配送单时天然可以反向；
+      // 逐单的金额自洽性由下一条用例用订单列表校验，此处只保留汇算结构断言。
     } else {
       expect(s.pay_amount).toBe(0);
+    }
+  });
+
+  test('sales：逐单实付 = 商品总额 − 系统优惠 − 手动优惠 + 配送费', async () => {
+    const resp = await api.get('/api/v1/admin/orders', { params: { page: 1, page_size: 50 } });
+    const body = (await resp.json()) as ApiResponse<PageData<AdminOrder>>;
+    expect(body.code).toBe(0);
+    const rows = asList<AdminOrder>(body.data).filter((o) => o.community_id === adminCommunityId);
+    expect(rows.length, '当前语境社区应至少有一单可校验金额口径').toBeGreaterThan(0);
+    for (const o of rows) {
+      const expected = o.total_amount - o.discount_amount - (o.manual_discount ?? 0) + (o.delivery_fee ?? 0);
+      expect(
+        Math.abs(o.pay_amount - expected),
+        `订单 ${o.order_no} 实付 ${o.pay_amount} 应≈总额 ${o.total_amount} − 优惠 ${o.discount_amount} − 手动优惠 ${o.manual_discount ?? 0} + 配送费 ${o.delivery_fee ?? 0}`,
+      ).toBeLessThanOrEqual(0.011);
     }
   });
 
