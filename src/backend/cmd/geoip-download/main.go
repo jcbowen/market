@@ -161,5 +161,5 @@ func validMMDB(b []byte) bool {
 		tailStart = 0
 	}
 	tail := b[tailStart:]
-	return bytes.Index(tail, metadataMarker) >= 0
+	return bytes.Contains(tail, metadataMarker)
 }

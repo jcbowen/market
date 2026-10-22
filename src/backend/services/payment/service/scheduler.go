@@ -491,7 +491,7 @@ func (s *Scheduler) retryFailures(ctx context.Context) {
 			continue
 		}
 		queried[p.PaymentNo] = true
-		s.reconcileOne(ctx, &p, !(p.Status == 1 && f.TaskType == model.TaskReconcilePending))
+		s.reconcileOne(ctx, &p, p.Status != 1 || f.TaskType != model.TaskReconcilePending)
 		if p.ReconcileCount >= maxReconcile {
 			s.markFailureStatus(ctx, f.ID, model.FailureStatusAbandoned)
 			continue

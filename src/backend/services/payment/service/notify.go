@@ -258,9 +258,10 @@ func (s *PaymentService) ListPaymentAnomalies(ctx context.Context, req *payment.
 		if req.CommunityId > 0 {
 			q = q.Where("community_id = ?", req.CommunityId)
 		}
-		if req.Handled == 1 {
+		switch req.Handled {
+		case 1:
 			q = q.Where("handled = ?", model.NotifyPending)
-		} else if req.Handled == 2 {
+		case 2:
 			q = q.Where("handled = ?", model.NotifyHandled)
 		}
 		if req.OrderId > 0 {
