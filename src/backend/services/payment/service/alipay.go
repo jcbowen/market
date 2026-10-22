@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -169,9 +170,13 @@ func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment
 		"notify_url":  cfg.NotifyURL,
 	}
 	if cfg.ReturnURL != "" {
-		bizParams["return_url"] = cfg.ReturnURL
+		// 回跳地址带支付单号：落地页是免登录结果页，凭支付单号轮询公开状态接口展示结果。
+		// 单号拼在 hash 路由的 query 上（uni-app H5 为 hash 路由），
+		// 支付宝回跳时会在整串末尾追加 &out_trade_no=... 等参数，同样落在 hash query 内，两者取其一即可
+		returnURL := appendQueryParam(cfg.ReturnURL, "no", p.PaymentNo)
+		bizParams["return_url"] = returnURL
 		// quit_url：用户在支付宝收银台中途退出后回跳的商户地址，与支付完成回跳同域
-		biz["quit_url"] = cfg.ReturnURL
+		biz["quit_url"] = returnURL
 	}
 
 	payURL, err := executor.PageExecute("alipay.trade.wap.pay", "GET", bizParams, "", "", nil)
@@ -184,6 +189,26 @@ func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment
 		return "", err
 	}
 	return string(data), nil
+}
+
+// appendQueryParam 在 URL 上追加一个 query 参数（已存在同名参数时不重复追加）
+// 参数：
+//   - raw: 原始 URL，可为空
+//   - key: 参数名
+//   - value: 参数值（内部做 URL 编码）
+//
+// 返回值：
+//   - string: 追加后的 URL，raw 为空时返回空串
+func appendQueryParam(raw, key, value string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	sep := "?"
+	if strings.Contains(raw, "?") {
+		sep = "&"
+	}
+	return raw + sep + url.QueryEscape(key) + "=" + url.QueryEscape(value)
 }
 
 // alipayTimeoutExpress 计算支付宝交易的相对超时时长（biz_content.timeout_express）

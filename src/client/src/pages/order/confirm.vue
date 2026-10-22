@@ -812,6 +812,11 @@ async function onSubmit() {
       onReturnToSite(() => uni.redirectTo({ url: detailUrl }))
       return
     }
+    // 支付宝微信内引导：引导页已通过 redirectTo 接管本页，支付流程由引导页与
+    // 免登录结果页（pages/pay/result）承接，此处不再跳转订单详情
+    if (outcome === 'guided') {
+      return
+    }
     // redirectTo 替换当前确认页：返回键/滑动返回直接回到进入确认页前的页面，
     // 避免再回到确认页看到已结算商品或重复下单
     uni.redirectTo({ url: detailUrl })

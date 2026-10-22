@@ -303,3 +303,13 @@ export interface CreatePaymentResult {
   /** 支付宝调起参数 JSON，当前渠道未开放 */
   alipay_pay_params?: string
 }
+
+/** 支付状态查询结果（公开免登录接口，最小字段集，凭不可枚举的支付单号查询） */
+export interface PaymentStatusResult {
+  payment_no: string
+  /** 支付单状态：1 待支付 2 已支付 4 已退款 5 已关闭 */
+  status: number
+  amount: number
+  order_id: number
+  order_no: string
+}

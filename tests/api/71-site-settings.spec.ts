@@ -45,7 +45,7 @@ interface PaymentSetting {
 
 const WECHAT_PATH = '/api/v1/payments/callback/wechat';
 const ALIPAY_PATH = '/api/v1/payments/callback/alipay';
-const ALIPAY_RETURN_PATH = '/s/#/pages/order/list';
+const ALIPAY_RETURN_PATH = '/s/#/pages/pay/result';
 /** 部署域名用例值：与本机 localhost 明显不同，用于证明派生跟随配置而非请求 host */
 const TEST_DOMAIN = 'https://site-test.example.com';
 

@@ -64,13 +64,21 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 	}
 }
 
-// ListCategories 获取分类列表
+// ListCategories 获取分类列表（includeDisabled=true 时含禁用分类，管理端分类管理页使用）
 func (s *server) ListCategories(ctx stdctx.Context, req *product.ListCategoriesReq) (*product.ListCategoriesResp, error) {
-	list, err := s.categoryService.ListCategories(ctx, req.CommunityId)
+	list, err := s.categoryService.ListCategories(ctx, req.CommunityId, req.GetIncludeDisabled())
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &product.ListCategoriesResp{List: service.BuildCategoryTree(list)}, nil
+}
+
+// BatchSortCategories 分类批量排序（管理端拖拽后整表提交）
+func (s *server) BatchSortCategories(ctx stdctx.Context, req *product.BatchSortCategoriesReq) (*common.CommonResponse, error) {
+	if err := s.categoryService.BatchSortCategories(ctx, req.GetItems(), req.GetCommunityId()); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
 // GetCategory 获取分类详情

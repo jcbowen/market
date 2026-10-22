@@ -27,16 +27,22 @@ func NewCategoryService(db *mysql.Instance) *CategoryService {
 }
 
 // ListCategories 查询社区分类列表
+// 默认仅返回启用分类（C 端公开接口口径）；includeDisabled=true 时返回全部（管理端分类管理页）
+//
 // 参数：
 //   - ctx: 上下文
 //   - communityID: 社区 ID
+//   - includeDisabled: 是否包含禁用分类
 //
 // 返回值：
-//   - []*model.Category: 分类列表
+//   - []*model.Category: 分类列表（按 sort asc, id asc 排序）
 //   - error: 错误信息
-func (s *CategoryService) ListCategories(ctx context.Context, communityID int64) ([]*model.Category, error) {
+func (s *CategoryService) ListCategories(ctx context.Context, communityID int64, includeDisabled bool) ([]*model.Category, error) {
 	var list []*model.Category
-	db := s.db.GetDb().WithContext(ctx).Where("status = ?", 1)
+	db := s.db.GetDb().WithContext(ctx)
+	if !includeDisabled {
+		db = db.Where("status = ?", 1)
+	}
 	if communityID > 0 {
 		db = db.Where("community_id = ?", communityID)
 	}
@@ -107,9 +113,9 @@ func (s *CategoryService) UpdateCategory(ctx context.Context, req *product.Updat
 	c.Name = req.Name
 	c.Icon = req.Icon
 	c.Sort = req.Sort
-	if req.Status != 0 {
-		c.Status = req.Status
-	}
+	// status 由管理端全量提交（编辑表单显式传值），直接赋值以支持启用/禁用双向切换；
+	// 旧逻辑 `if req.Status != 0` 会把 0（禁用）当作未传，导致分类永远无法禁用
+	c.Status = req.Status
 	if err := s.db.GetDb().WithContext(ctx).Save(c).Error; err != nil {
 		return nil, err
 	}
@@ -136,6 +142,42 @@ func (s *CategoryService) DeleteCategory(ctx context.Context, id, communityId in
 		return fmt.Errorf("存在子分类，无法删除")
 	}
 	return s.db.GetDb().WithContext(ctx).Delete(&model.Category{}, id).Error
+}
+
+// BatchSortCategories 分类批量排序（管理端拖拽后整表提交）
+// 事务内逐项校验归属并写入目标 sort，任一项越权即整体失败回滚；
+// 校验走 GetCategory（含 EnsureScope），与单条编辑的权限口径一致
+//
+// 参数：
+//   - ctx: 上下文
+//   - items: 全量有序列表（id + 目标 sort，建议按显示顺序 ×10 留空隙）
+//   - communityId: 操作者社区语境（>0 时逐项校验分类归属）
+//
+// 返回值：
+//   - error: 参数非法/越权/数据库错误
+//
+// 使用示例：
+//
+//	err := svc.BatchSortCategories(ctx, []*product.CategorySortItem{{Id: 3, Sort: 10}, {Id: 1, Sort: 20}}, 456)
+func (s *CategoryService) BatchSortCategories(ctx context.Context, items []*product.CategorySortItem, communityId int64) error {
+	if len(items) == 0 {
+		return fmt.Errorf("请提供排序数据")
+	}
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, item := range items {
+			if item.GetId() <= 0 {
+				return fmt.Errorf("分类 ID 非法")
+			}
+			if _, err := s.GetCategory(ctx, item.GetId(), communityId); err != nil {
+				return err
+			}
+			if err := tx.Model(&model.Category{}).Where("id = ?", item.GetId()).
+				Update("sort", item.GetSort()).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ToCategoryInfo 将分类模型转换为 proto 分类信息

@@ -13,6 +13,8 @@ service ProductService {
   rpc CreateCategory(CreateCategoryReq) returns (CategoryInfo);
   rpc UpdateCategory(UpdateCategoryReq) returns (CategoryInfo);
   rpc DeleteCategory(DeleteCategoryReq) returns (common.CommonResponse);
+  // BatchSortCategories 分类批量排序（管理端拖拽后整表提交，事务内按 items 顺序重写 sort）
+  rpc BatchSortCategories(BatchSortCategoriesReq) returns (common.CommonResponse);
 
   // 商品
   rpc ListProducts(ListProductsReq) returns (ListProductsResp);
@@ -160,6 +162,20 @@ service ProductService {
 // --- 分类 ---
 message ListCategoriesReq {
   int64 community_id = 1;
+  // 是否包含禁用分类：false=仅启用（C 端公开接口默认）；true=全部（管理端分类管理页）
+  bool include_disabled = 2;
+}
+
+// BatchSortCategoriesReq 分类批量排序请求（管理端拖拽排序后整表提交）
+message BatchSortCategoriesReq {
+  int64 community_id = 1; // 操作者社区语境（>0 时逐个校验分类归属，任一越权即整体拒绝）
+  repeated CategorySortItem items = 2; // 全量有序列表，sort 按提交顺序写入
+}
+
+// CategorySortItem 分类排序项
+message CategorySortItem {
+  int64 id = 1;   // 分类 ID
+  int32 sort = 2; // 目标排序值（建议按显示顺序 ×10 留空隙）
 }
 
 message GetCategoryReq {
@@ -215,7 +231,9 @@ message ListProductsReq {
   string sort = 4;
   common.Pagination pagination = 5;
   int32 status = 6; // 商品状态过滤：0 不过滤（默认排除已删除），大于 0 时精确匹配（1 上架）
-  int32 status_filter = 7; // 展示状态过滤（管理端 Tab）：0 不过滤，1=在售中(status=1且stock>0)，2=已售罄(status=1且stock<=0)，3=仓库中(status=0)
+  // 展示状态过滤（管理端 Tab）：0 不过滤，1=出售中(status=1且stock>0)，2=已售罄(status=1且stock<=0)，
+  // 3=仓库中(status=0，含定时上架中)，4=库存紧张(status=1 且 0<stock<=SKU安全库存合计 且 合计>0)
+  int32 status_filter = 7;
 }
 
 message GetProductReq {
@@ -245,6 +263,8 @@ message CreateProductReq {
   int32 min_buy = 11;
   bool show_sales = 14;   // C端是否显示销量
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
+  // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时商品保存为下架+预约，到点由调度器自动上架
+  string on_sale_at = 16;
 }
 
 message UpdateProductReq {
@@ -265,6 +285,9 @@ message UpdateProductReq {
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
   // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区修改（超管传 0 放行）
   int64 community_id = 16;
+  // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时置为下架+预约；
+  // 显式传空串表示取消定时（配合 status 决定立即上架或保持下架）
+  string on_sale_at = 17;
 }
 
 message DeleteProductReq {
@@ -294,12 +317,14 @@ message GetProductStatusStatsReq {
   int64 category_id = 3;
 }
 
-// GetProductStatusStatsResp 商品状态统计响应（各状态互斥，合计=total）
+// GetProductStatusStatsResp 商品状态统计响应
+// total/on_sale/sold_out/warehouse 互斥合计=total；low_stock 为出售中的子集维度，不参与互斥合计
 message GetProductStatusStatsResp {
   int64 total = 1;     // 全部（排除已删除）
-  int64 on_sale = 2;   // 在售中：status=1 且 stock>0
+  int64 on_sale = 2;   // 出售中：status=1 且 stock>0
   int64 sold_out = 3;  // 已售罄：status=1 且 stock<=0
-  int64 warehouse = 4; // 仓库中：status=0
+  int64 warehouse = 4; // 仓库中：status=0（含定时上架中）
+  int64 low_stock = 5; // 库存紧张：出售中且 0<stock<=SKU安全库存合计（SUM>0）
 }
 
 // UpdateProductNameReq 商品名称更新（列表页行内改名轻量接口）
@@ -332,6 +357,7 @@ message ProductInfo {
   double original_price = 19; // 划线价（汇总字段：最低价 SKU 的划线价，0 表示不展示）
   bool show_sales = 20;       // C端是否显示销量
   int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
+  string on_sale_at = 22;     // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
 }
 
 message ProductDetail {

@@ -62,6 +62,9 @@ wechat:
     cert_serial_no: ""
     private_key: ""
     notify_url: http://localhost:18080/api/v1/payments/callback/wechat
+security:
+    trusted_proxies: []
+    trusted_platform: ""
 sms:
     provider: aliyun
     access_key: ""
@@ -74,34 +77,37 @@ business:
     expire_warning_days: 3
     order_timeout: 1800
     auto_complete_days: 7
-# debugger 请求日志（jcbaseGo 组件）：写共享 debug_logs 表，前端页面 /jcbase/debug
-# 本地全量便于排查；凭据掩码默认开启，认证/支付回调/上传路由整条不入库
+    payment_reconcile:
+        enabled: null
+        cancel_guard: null
+        auto_refund_stuck: null
+        pending_max_minutes: 120
+        interval_seconds: 60
+        min_age_seconds: 60
+        throttle_minutes: 5
+        max_reconcile_count: 24
+        batch_size: 100
+        notify_log_retention_days: 30
 debugger:
     enabled: true
     service_name: gateway
-    # 白名单走 gin 的 ClientIP 判定（可信代理由 security.trusted_proxies 决定）
-    # 留空则调试页面不注册（fail-closed），只记日志
-    allowed_ips: ["127.0.0.1", "::1"]
+    allowed_ips:
+        - 127.0.0.1
+        - ::1
     allow_empty_whitelist: false
     max_body_size: 16
-    # 0 = 不限制条数（不写 = 默认 5000）
     max_records: 5000
-    # 0 = 不做过期清理（不写 = 默认 7 天）；任何取值都不会清空全表
     retention_days: 7
-    # 无 0 语义：写 0 会被框架回填为默认 24
     cleanup_interval_hours: 24
-    # 0 = 一条都不记录（不写 = 全量）
-    sample_rate: 1.0
-    # 只影响日志里记录的 client_ip 取法，不参与页面鉴权；生产保持 false 并配 trusted_proxies
+    sample_rate: 1
     use_cdn: false
     base_path: /jcbase/debug
     skip_paths: []
-    # 三态项不写即用组件默认（掩码开启、上传文件只记元数据、复制请求体保证业务可用）
-    # mask_body: true
-    # multipart_skip_files: true
-    # multipart_preserve_state: true
-    # header_mask_keys: []
-    # body_mask_keys: []
+    mask_body: null
+    header_mask_keys: []
+    body_mask_keys: []
+    multipart_skip_files: null
+    multipart_preserve_state: null
 user_service:
     grpc_port: 50051
 product_service:

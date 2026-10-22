@@ -46,6 +46,8 @@ interface RequestOptions {
   data?: Record<string, unknown>
   header?: Record<string, string>
   hideLoading?: boolean
+  /** 静默模式：业务失败时不弹全局 toast（轮询等自动重试场景由调用方自行提示） */
+  silent?: boolean
 }
 
 /**
@@ -247,7 +249,7 @@ function silentRefresh(): Promise<boolean> {
 function requestOnce<T = unknown>(
   options: RequestOptions,
 ): Promise<ApiResponse<T>> {
-  const { url, method = 'GET', data, header = {}, hideLoading = false } = options
+  const { url, method = 'GET', data, header = {}, hideLoading = false, silent = false } = options
   const token = getToken()
   let fullUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`
 
@@ -296,14 +298,14 @@ function requestOnce<T = unknown>(
           return
         }
         if (resp && resp.code !== SUCCESS_CODE) {
-          showError(resp.message || '请求失败')
+          if (!silent) showError(resp.message || '请求失败')
           reject(new Error(resp.message || '请求失败'))
           return
         }
         resolve(resp)
       },
       fail: (err) => {
-        showError(err.errMsg || '网络异常')
+        if (!silent) showError(err.errMsg || '网络异常')
         reject(new Error(err.errMsg || '网络异常'))
       },
       complete: () => {
@@ -356,13 +358,15 @@ export async function request<T = unknown>(
  * @param url 接口地址
  * @param params URL 参数
  * @param header 自定义请求头
+ * @param extra 额外选项（silent 静默失败等）
  */
 export function get<T = unknown>(
   url: string,
   params?: Record<string, unknown>,
   header?: Record<string, string>,
+  extra?: Pick<RequestOptions, 'silent'>,
 ): Promise<ApiResponse<T>> {
-  return request<T>({ url, method: 'GET', data: params, header })
+  return request<T>({ url, method: 'GET', data: params, header, ...extra })
 }
 
 /**

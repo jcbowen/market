@@ -346,6 +346,10 @@ async function onPay() {
       onReturnToSite(loadOrder)
       return
     }
+    // 支付宝微信内引导：引导页已通过 redirectTo 接管本页，后续由结果页承接
+    if (outcome === 'guided') {
+      return
+    }
     loadOrder()
   } catch {
     // request 已统一提示错误

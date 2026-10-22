@@ -18,8 +18,10 @@ import (
 const (
 	wechatPayCallbackPath = "/api/v1/payments/callback/wechat"
 	alipayPayCallbackPath = "/api/v1/payments/callback/alipay"
-	// h5OrderListHashURL 支付宝支付完成回跳落地页（H5 为 hash 路由）
-	h5OrderListHashURL = "/s/#/pages/order/list"
+	// h5PayResultHashURL 支付宝支付完成回跳落地页（H5 为 hash 路由）
+	// 必须是免登录页面：回跳发生在系统浏览器，无登录态；
+	// 结果页凭 return_url 上追加的支付单号轮询公开状态接口展示支付结果
+	h5PayResultHashURL = "/s/#/pages/pay/result"
 )
 
 // SiteSetting 站点设置视图对象
@@ -110,7 +112,7 @@ func (h *AdminHandler) GetSiteSetting(c *gin.Context) {
 	}
 	setting.WechatNotifyURL = base + wechatPayCallbackPath
 	setting.AlipayNotifyURL = base + alipayPayCallbackPath
-	setting.AlipayReturnURL = base + h5OrderListHashURL
+	setting.AlipayReturnURL = base + h5PayResultHashURL
 
 	response.Success(c, setting)
 }

@@ -4,7 +4,7 @@
  */
 
 import { get, post } from './request'
-import type { CreatePaymentResult, Payment, PaymentChannel } from './types'
+import type { CreatePaymentResult, Payment, PaymentChannel, PaymentStatusResult } from './types'
 
 /**
  * 获取当前启用的支付渠道列表
@@ -32,4 +32,14 @@ export function createPayment(orderId: number, channel: PaymentChannel['channel'
  */
 export function getPaymentDetail(orderId: number) {
   return get<Payment>(`/payments/${orderId}`)
+}
+
+/**
+ * 公开查询支付状态（免登录）
+ * 支付宝回跳结果页轮询用：凭不可枚举的支付单号取最小字段集，
+ * 无需登录态，系统浏览器打开时同样可用
+ * @param paymentNo 支付单号
+ */
+export function getPaymentStatusPublic(paymentNo: string) {
+  return get<PaymentStatusResult>('/payments/status', { no: paymentNo }, undefined, { silent: true })
 }

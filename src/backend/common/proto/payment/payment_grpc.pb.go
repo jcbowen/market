@@ -35,6 +35,7 @@ const (
 	PaymentService_ListPaymentAnomalies_FullMethodName      = "/payment.PaymentService/ListPaymentAnomalies"
 	PaymentService_MarkPaymentAnomalyHandled_FullMethodName = "/payment.PaymentService/MarkPaymentAnomalyHandled"
 	PaymentService_MarkPaymentPaid_FullMethodName           = "/payment.PaymentService/MarkPaymentPaid"
+	PaymentService_GetPaymentStatus_FullMethodName          = "/payment.PaymentService/GetPaymentStatus"
 )
 
 // PaymentServiceClient is the client API for PaymentService service.
@@ -66,6 +67,10 @@ type PaymentServiceClient interface {
 	// MarkPaymentPaid 人工把指定待支付单标记为已支付（渠道查询失效但钱确实到账时的最后出路）
 	// 必填渠道交易号与实际收款金额，仅对待支付订单开放，与「同步支付状态」形成分工：后者问渠道，前者凭人工核实
 	MarkPaymentPaid(ctx context.Context, in *MarkPaymentPaidReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// GetPaymentStatus 按支付单号查询支付状态（C 端支付宝回跳结果页免登录轮询用）
+	// 只回状态级最小字段集：payment_no 本身是不可枚举的能力凭据（ZF+UUID），
+	// 不携带用户/商品/地址等隐私信息，网关注册在公开路由组
+	GetPaymentStatus(ctx context.Context, in *GetPaymentStatusReq, opts ...grpc.CallOption) (*GetPaymentStatusResp, error)
 }
 
 type paymentServiceClient struct {
@@ -226,6 +231,16 @@ func (c *paymentServiceClient) MarkPaymentPaid(ctx context.Context, in *MarkPaym
 	return out, nil
 }
 
+func (c *paymentServiceClient) GetPaymentStatus(ctx context.Context, in *GetPaymentStatusReq, opts ...grpc.CallOption) (*GetPaymentStatusResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPaymentStatusResp)
+	err := c.cc.Invoke(ctx, PaymentService_GetPaymentStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaymentServiceServer is the server API for PaymentService service.
 // All implementations must embed UnimplementedPaymentServiceServer
 // for forward compatibility.
@@ -255,6 +270,10 @@ type PaymentServiceServer interface {
 	// MarkPaymentPaid 人工把指定待支付单标记为已支付（渠道查询失效但钱确实到账时的最后出路）
 	// 必填渠道交易号与实际收款金额，仅对待支付订单开放，与「同步支付状态」形成分工：后者问渠道，前者凭人工核实
 	MarkPaymentPaid(context.Context, *MarkPaymentPaidReq) (*common.CommonResponse, error)
+	// GetPaymentStatus 按支付单号查询支付状态（C 端支付宝回跳结果页免登录轮询用）
+	// 只回状态级最小字段集：payment_no 本身是不可枚举的能力凭据（ZF+UUID），
+	// 不携带用户/商品/地址等隐私信息，网关注册在公开路由组
+	GetPaymentStatus(context.Context, *GetPaymentStatusReq) (*GetPaymentStatusResp, error)
 	mustEmbedUnimplementedPaymentServiceServer()
 }
 
@@ -309,6 +328,9 @@ func (UnimplementedPaymentServiceServer) MarkPaymentAnomalyHandled(context.Conte
 }
 func (UnimplementedPaymentServiceServer) MarkPaymentPaid(context.Context, *MarkPaymentPaidReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MarkPaymentPaid not implemented")
+}
+func (UnimplementedPaymentServiceServer) GetPaymentStatus(context.Context, *GetPaymentStatusReq) (*GetPaymentStatusResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPaymentStatus not implemented")
 }
 func (UnimplementedPaymentServiceServer) mustEmbedUnimplementedPaymentServiceServer() {}
 func (UnimplementedPaymentServiceServer) testEmbeddedByValue()                        {}
@@ -601,6 +623,24 @@ func _PaymentService_MarkPaymentPaid_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PaymentService_GetPaymentStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPaymentStatusReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).GetPaymentStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_GetPaymentStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).GetPaymentStatus(ctx, req.(*GetPaymentStatusReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PaymentService_ServiceDesc is the grpc.ServiceDesc for PaymentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -667,6 +707,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "MarkPaymentPaid",
 			Handler:    _PaymentService_MarkPaymentPaid_Handler,
+		},
+		{
+			MethodName: "GetPaymentStatus",
+			Handler:    _PaymentService_GetPaymentStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

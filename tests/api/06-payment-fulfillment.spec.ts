@@ -109,6 +109,53 @@ test.describe('支付单查询与回调安全', () => {
     }
   });
 
+  test('支付状态免登录查询（凭不可枚举支付单号）', async ({ request }) => {
+    // 场景：支付宝回跳结果页在系统浏览器打开（无登录态），凭支付单号轮询公开接口
+    let sku;
+    try {
+      sku = await pickSku(api, undefined, communityId);
+    } catch {
+      test.skip(true, '环境无可用 SKU');
+      return;
+    }
+    // quantity=2 错开同用户重复下单指纹（上一用例已用 quantity=1 下过单）
+    const orderResp = await api.post('/api/v1/orders', {
+      data: { delivery_type: 1, address_id: 0, items: [{ sku_id: sku.id, quantity: 2 }] },
+    });
+    const orderBody = (await orderResp.json()) as ApiResponse<OrderInfo>;
+    expect(orderBody.code, '下单应成功').toBe(0);
+    const orderId = orderBody.data!.id;
+
+    const payResp = await api.post('/api/v1/payments', { data: { order_id: orderId, channel: 'cash' } });
+    const payBody = (await payResp.json()) as ApiResponse<{ payment_no?: string }>;
+    expect(payBody.code, '创建支付单应成功').toBe(0);
+    const payNo = payBody.data?.payment_no ?? '';
+    expect(payNo, '应返回支付单号').not.toBe('');
+
+    // 免登录可查：现金支付创建即成功（status=2），只回最小字段集
+    const pub = await request.get(`/api/v1/payments/status?no=${encodeURIComponent(payNo)}`);
+    const pubBody = (await pub.json()) as ApiResponse<{
+      payment_no: string;
+      status: number;
+      amount: number;
+      order_id: number;
+    }>;
+    expect(pubBody.code).toBe(0);
+    expect(pubBody.data?.status).toBe(2);
+    expect(pubBody.data?.payment_no).toBe(payNo);
+    expect(pubBody.data?.order_id).toBe(orderId);
+
+    // 伪造单号被拒
+    const fake = await request.get('/api/v1/payments/status?no=ZFnot-exist');
+    const fakeBody = (await fake.json()) as ApiResponse;
+    expect(fakeBody.code, '不存在的支付单号应被拒绝').not.toBe(0);
+
+    // 缺参被拒
+    const missing = await request.get('/api/v1/payments/status');
+    const missingBody = (await missing.json()) as ApiResponse;
+    expect(missingBody.code, '缺少支付单号应被拒绝').not.toBe(0);
+  });
+
   test('微信回调：伪造报文被拒绝（签名校验）', async ({ request }) => {
     const resp = await request.post('/api/v1/payments/callback/wechat', {
       data: { nonce: 'fake', ciphertext: 'fake-cipher' },

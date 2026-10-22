@@ -5,7 +5,8 @@
         <n-input v-model:value="form.name" placeholder="请输入商品名称" />
       </n-form-item>
       <n-form-item label="商品分类" required>
-        <n-select v-model:value="form.category_id" :options="categoryOptions" placeholder="请选择分类" />
+        <CategoryPicker v-model="form.category_id" style="width: 100%" />
+        <span class="field-hint">点击选择分类，可在弹窗中直接新建</span>
       </n-form-item>
       <n-form-item label="商品单位">
         <n-input v-model:value="form.unit" placeholder="如：件 / 斤 / 箱" />
@@ -32,6 +33,24 @@
       <n-form-item label="虚拟销量">
         <n-input-number v-model:value="form.virtual_sales" :min="0" :precision="0" />
         <span class="field-hint">展示销量 = 真实销量 + 虚拟销量</span>
+      </n-form-item>
+      <n-form-item label="上架设置">
+        <n-space align="center">
+          <n-radio-group v-model:value="form.sale_mode">
+            <n-radio value="now">立即上架</n-radio>
+            <n-radio value="scheduled">定时上架</n-radio>
+          </n-radio-group>
+          <n-date-picker
+            v-if="form.sale_mode === 'scheduled'"
+            v-model:formatted-value="form.on_sale_time"
+            type="datetime"
+            format="yyyy-MM-dd HH:mm:ss"
+            placeholder="选择上架时间"
+            :is-date-disabled="disablePastDate"
+            clearable
+          />
+        </n-space>
+        <span class="field-hint">定时上架保存后商品进入「仓库中」，到点自动上架；手动点「上架」会取消定时</span>
       </n-form-item>
 
       <!-- 单规格：直接填写价格库存 -->
@@ -216,10 +235,10 @@ import { useMessage } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import ImageListInput from '@/components/ImageListInput.vue'
 import AttachmentPicker from '@/components/AttachmentPicker.vue'
+import CategoryPicker from './components/CategoryPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
-import { getProductDetail, createProduct, updateProduct, getCategoryList } from '@/api/product'
+import { getProductDetail, createProduct, updateProduct } from '@/api/product'
 import type {
-  Category,
   ProductSavePayload,
   SkuSaveItem,
   SpecSaveItem,
@@ -262,7 +281,6 @@ const tabsStore = useTabsStore()
 
 const isEdit = ref(false)
 const saving = ref(false)
-const categoryOptions = ref<Array<{ label: string; value: number }>>([])
 
 const form = reactive({
   name: '',
@@ -275,7 +293,13 @@ const form = reactive({
   sort: 0,
   show_sales: true,
   virtual_sales: 0,
+  // 上架设置：now=立即上架（默认），scheduled=定时上架（on_sale_time 生效）
+  sale_mode: 'now' as 'now' | 'scheduled',
+  on_sale_time: null as string | null,
 })
+
+/** 编辑态加载到的原始上下架状态（status / on_sale_at），用于保存时推断是否需要显式上架 */
+const originSale = ref<{ status: number; onSaleAt: string }>({ status: 1, onSaleAt: '' })
 
 /** 单规格默认 SKU（编辑时回填 id 以更新而非新建） */
 const singleSku = reactive({
@@ -397,19 +421,6 @@ function cartesian<T>(arrays: T[][]): T[][] {
 }
 
 /**
- * 加载分类选项
- */
-async function loadCategories(): Promise<void> {
-  const res = await getCategoryList()
-  if (res.data.code === 0) {
-    categoryOptions.value = (res.data.data || []).map((item: Category) => ({
-      label: item.name,
-      value: item.id,
-    }))
-  }
-}
-
-/**
  * 加载商品详情并回填表单（编辑态）
  */
 async function loadDetail(): Promise<void> {
@@ -422,6 +433,7 @@ async function loadDetail(): Promise<void> {
 
   const detail = res.data.data
   const p = detail.product
+  originSale.value = { status: p.status, onSaleAt: p.on_sale_at ?? '' }
   Object.assign(form, {
     name: p.name,
     category_id: p.category_id,
@@ -433,6 +445,9 @@ async function loadDetail(): Promise<void> {
     sort: p.sort ?? 0,
     show_sales: p.show_sales ?? true,
     virtual_sales: p.virtual_sales ?? 0,
+    // 预约中的商品回显为「定时上架」+ 已选时间；非预约回显「立即上架」
+    sale_mode: p.on_sale_at ? 'scheduled' : 'now',
+    on_sale_time: p.on_sale_at || null,
   })
 
   // 编辑态加载完成后用商品名区分标签页（create 模式不加载详情，不会执行到这里）
@@ -508,6 +523,30 @@ function barcodeError(barcode: string): string {
 }
 
 /**
+ * 定时上架时间禁用规则：禁用今天 00:00 之前的日期（当天具体时刻由提交校验兜底）
+ * @param ts 日期时间戳
+ * @returns true=禁用
+ */
+function disablePastDate(ts: number): boolean {
+  const d = new Date(ts)
+  const todayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  return todayStart.getTime() < new Date().setHours(0, 0, 0, 0)
+}
+
+/**
+ * 计算提交用定时上架时间（"YYYY-MM-DD HH:mm:ss"）
+ * @returns 校验失败返回错误文案，未定时返回空串
+ */
+function onSaleAtError(): string {
+  if (form.sale_mode !== 'scheduled') return ''
+  if (!form.on_sale_time) return '请选择定时上架时间'
+  if (new Date(form.on_sale_time.replace(/-/g, '/')).getTime() <= Date.now()) {
+    return '定时上架时间需晚于当前时间'
+  }
+  return ''
+}
+
+/**
  * 校验并组装保存载荷
  * @returns 组装好的保存载荷，校验失败返回 null
  */
@@ -518,6 +557,11 @@ function buildPayload(): ProductSavePayload | null {
   }
   if (!form.category_id) {
     message.error('请选择商品分类')
+    return null
+  }
+  const onSaleAtErr = onSaleAtError()
+  if (onSaleAtErr) {
+    message.error(onSaleAtErr)
     return null
   }
 
@@ -533,6 +577,16 @@ function buildPayload(): ProductSavePayload | null {
     sort: form.sort,
     show_sales: form.show_sales,
     virtual_sales: form.virtual_sales ?? 0,
+    // 定时上架：非空=预约（后端置下架+预约）；空串=取消定时
+    on_sale_at: form.sale_mode === 'scheduled' ? form.on_sale_time ?? '' : '',
+    // 编辑预约中商品切回「立即上架」：显式传 status=1（取消定时并上架）；
+    // 其余场景不传 status，后端维持原状态（避免编辑下架商品被误上架）
+    ...(isEdit.value &&
+    originSale.value.onSaleAt &&
+    originSale.value.status === 0 &&
+    form.sale_mode === 'now'
+      ? { status: 1 }
+      : {}),
     specs: [],
     sku_items: [],
   }
@@ -693,7 +747,6 @@ async function submit(): Promise<void> {
 }
 
 onMounted(() => {
-  loadCategories()
   loadDetail()
 })
 </script>

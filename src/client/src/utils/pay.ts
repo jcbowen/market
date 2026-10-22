@@ -12,7 +12,8 @@ import { isWeixinBrowser } from '@/utils/platform'
  * 支付编排结果
  * - success: 支付已完成
  * - redirected: 已跳转微信/支付宝支付页面，支付结果需回跳后以订单状态为准
- * - guided: 已弹出支付宝引导蒙层（微信内置浏览器），需用户转系统浏览器完成支付，结果以订单状态为准
+ * - guided: 已跳转站内支付宝引导页（微信内置浏览器），引导页接管后续流程：
+ *   微信内展示分步指引，系统浏览器打开时自动唤起支付宝；结果以订单状态为准
  * - cancelled: 用户主动取消支付
  * - unsupported: 当前渠道未开通，或当前运行端未接入对应支付 SDK
  * - failed: 调起参数缺失、解析失败或拉起失败
@@ -59,20 +60,24 @@ export async function payOrder(orderId: number, channel: PaymentChannel['channel
     return 'success'
   }
   if (channel === 'alipay') {
-    return launchAlipayPay(res.data?.alipay_pay_params || '')
+    return launchAlipayPay(res.data?.alipay_pay_params || '', res.data?.payment_no || '', orderId)
   }
   return launchWechatPay(res.data?.wechat_pay_params || '')
 }
 
 /**
  * 拉起支付宝手机网站支付
- * H5 端直接跳转支付宝收银台 URL；微信内置浏览器无法唤起支付宝且收银台无
- * 「继续浏览器付款」兜底入口，改为弹出引导蒙层提示用户转系统浏览器完成支付；
+ * H5 端跳转支付宝收银台 URL；微信内置浏览器无法唤起支付宝且收银台无
+ * 「继续浏览器付款」兜底入口，改为跳转站内独立引导页（免登录）：
+ * 引导页在微信内展示分步指引，用户「在浏览器打开」时打开的是引导页自身 URL，
+ * 引导页检测到非微信环境后自动唤起支付宝，全程不需要登录态；
  * 微信小程序/公众号等微信生态内无法唤起支付宝，返回 unsupported
  * @param paramsJson 后端返回的支付宝调起参数 JSON 字符串
+ * @param paymentNo 支付单号（引导页/结果页凭据，免登录场景的唯一上下文）
+ * @param orderId 订单 ID（结果页已登录时跳订单详情用）
  * @returns 拉起结果
  */
-export async function launchAlipayPay(paramsJson: string): Promise<PayOutcome> {
+export async function launchAlipayPay(paramsJson: string, paymentNo = '', orderId = 0): Promise<PayOutcome> {
   if (!paramsJson) {
     return 'failed'
   }
@@ -86,9 +91,14 @@ export async function launchAlipayPay(paramsJson: string): Promise<PayOutcome> {
 
   // #ifdef H5
   if (params.alipay_pay_url) {
-    // 微信内置浏览器：直接跳转会被微信拦截卡死，弹引导蒙层由用户转系统浏览器
+    // 微信内置浏览器：直接跳转会被微信拦截卡死，跳独立引导页由用户转系统浏览器
     if (isWeixinBrowser()) {
-      showAlipayGuide(params.alipay_pay_url)
+      const query = [
+        `url=${encodeURIComponent(params.alipay_pay_url)}`,
+        paymentNo ? `no=${encodeURIComponent(paymentNo)}` : '',
+        orderId ? `order_id=${orderId}` : '',
+      ].filter(Boolean).join('&')
+      uni.redirectTo({ url: `/pages/pay/alipay?${query}` })
       return 'guided'
     }
     window.location.href = params.alipay_pay_url
@@ -107,7 +117,7 @@ export async function launchAlipayPay(paramsJson: string): Promise<PayOutcome> {
  * @param text 待复制文本
  * @returns 是否复制成功
  */
-async function copyTextToClipboard(text: string): Promise<boolean> {
+export async function copyTextToClipboard(text: string): Promise<boolean> {
   if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text)
@@ -131,134 +141,6 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
   document.body.removeChild(textarea)
   return ok
-}
-
-/**
- * 在引导蒙层内展示轻量提示（H5）
- * uni.showToast 在 H5 的 z-index 低于蒙层会被遮挡，故在蒙层内自绘 toast
- * @param mask 蒙层根节点
- * @param msg 提示文案，约 2 秒后自动消失
- */
-function showGuideToast(mask: HTMLElement, msg: string): void {
-  const toast = document.createElement('div')
-  toast.textContent = msg
-  toast.setAttribute('style', [
-    'position:absolute',
-    'left:50%',
-    'top:50%',
-    'transform:translate(-50%,-50%)',
-    'background:rgba(0,0,0,.8)',
-    'color:#fff',
-    'padding:10px 16px',
-    'border-radius:8px',
-    'font-size:14px',
-    'white-space:nowrap',
-    'z-index:2',
-  ].join(';'))
-  mask.appendChild(toast)
-  setTimeout(() => toast.remove(), 2000)
-}
-
-/**
- * 弹出支付宝微信内引导蒙层（H5 专用）
- * 微信内置浏览器内无法唤起支付宝，展示「点击右上角 ··· → 在浏览器中打开」
- * 分步指引，并提供「复制支付链接」按钮供用户粘贴到系统浏览器完成支付；
- * 点击蒙层空白处关闭，重复调用不叠加
- * @param payUrl 支付宝收银台跳转 URL（alipay_pay_url）
- */
-function showAlipayGuide(payUrl: string): void {
-  const existed = document.getElementById('alipay-guide-mask')
-  if (existed) {
-    return
-  }
-
-  const mask = document.createElement('div')
-  mask.id = 'alipay-guide-mask'
-  // 不用 inset/gap：微信老 X5 内核（Chromium < 84）不支持，会整体失效
-  mask.setAttribute('style', [
-    'position:fixed',
-    'top:0',
-    'left:0',
-    'right:0',
-    'bottom:0',
-    'background:rgba(0,0,0,.72)',
-    'z-index:99999',
-    'display:flex',
-    'flex-direction:column',
-    'padding:0 16px',
-  ].join(';'))
-
-  // 右上角指引：箭头指向微信「···」菜单位置
-  const tip = document.createElement('div')
-  tip.setAttribute('style', [
-    'display:flex',
-    'justify-content:flex-end',
-    'align-items:flex-end',
-    // env() 老内核不支持时回退前置的 10px
-    'padding-top:10px',
-    'padding-top:calc(env(safe-area-inset-top) + 10px)',
-    'padding-right:36px',
-  ].join(';'))
-  tip.innerHTML = [
-    '<span style="display:inline-block;width:0;height:0;',
-    'border-left:10px solid transparent;',
-    'border-bottom:14px solid #fff;',
-    'transform:rotate(35deg)"></span>',
-    '<span style="color:#fff;font-size:22px;letter-spacing:2px;line-height:1;',
-    'margin-left:6px">···</span>',
-  ].join('')
-
-  // 步骤卡片
-  const card = document.createElement('div')
-  card.setAttribute('style', [
-    'background:#fff',
-    'border-radius:12px',
-    'padding:20px 16px',
-    'margin-top:10px',
-  ].join(';'))
-  card.innerHTML = [
-    '<div style="font-size:15px;color:#333;line-height:2">',
-    '1. 点击右上角 <b>「···」</b><br>2. 选择 <b>「在浏览器中打开」</b> 完成支付',
-    '</div>',
-  ].join('')
-
-  const copyBtn = document.createElement('button')
-  copyBtn.type = 'button'
-  copyBtn.textContent = '复制支付链接，粘贴到浏览器打开'
-  copyBtn.setAttribute('style', [
-    'width:100%',
-    'height:42px',
-    'border:none',
-    'border-radius:21px',
-    'background:#1677ff',
-    'color:#fff',
-    'font-size:15px',
-    'margin-top:12px',
-  ].join(';'))
-  copyBtn.onclick = async () => {
-    const ok = await copyTextToClipboard(payUrl)
-    showGuideToast(mask, ok ? '链接已复制，请粘贴到浏览器打开' : '复制失败，请按上方步骤操作')
-  }
-
-  const foot = document.createElement('div')
-  foot.textContent = '完成支付后回到本页即可查看结果 · 点击空白处关闭'
-  foot.setAttribute('style', [
-    'font-size:12px',
-    'color:#999',
-    'text-align:center',
-    'margin-top:12px',
-  ].join(';'))
-
-  card.appendChild(copyBtn)
-  card.appendChild(foot)
-
-  // 点击卡片内部不关闭，点击蒙层空白处关闭
-  card.onclick = (e) => e.stopPropagation()
-  mask.onclick = () => mask.remove()
-
-  mask.appendChild(tip)
-  mask.appendChild(card)
-  document.body.appendChild(mask)
 }
 // #endif
 
@@ -367,7 +249,7 @@ export function notifyPayOutcome(outcome: PayOutcome, channel?: PaymentChannel['
       })
       return false
     case 'guided':
-      // 引导蒙层已展示完整操作步骤，不再叠加 toast 打断用户
+      // 引导页已接管：分步指引与结果查看均在独立免登录页内完成，不再叠加 toast
       return false
     case 'cancelled':
       uni.showToast({ title: '已取消支付', icon: 'none' })

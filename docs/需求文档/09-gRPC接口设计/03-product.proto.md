@@ -16,6 +16,8 @@ service ProductService {
   rpc CreateCategory(CreateCategoryReq) returns (CategoryInfo);
   rpc UpdateCategory(UpdateCategoryReq) returns (CategoryInfo);
   rpc DeleteCategory(DeleteCategoryReq) returns (common.CommonResponse);
+  // BatchSortCategories 分类批量排序（管理端拖拽后整表提交，事务内按 items 顺序重写 sort）
+  rpc BatchSortCategories(BatchSortCategoriesReq) returns (common.CommonResponse);
 
   // 商品
   rpc ListProducts(ListProductsReq) returns (ListProductsResp);
@@ -161,6 +163,20 @@ service ProductService {
 // --- 分类 ---
 message ListCategoriesReq {
   int64 community_id = 1;
+  // 是否包含禁用分类：false=仅启用（C 端公开接口默认）；true=全部（管理端分类管理页）
+  bool include_disabled = 2;
+}
+
+// BatchSortCategoriesReq 分类批量排序请求（管理端拖拽排序后整表提交）
+message BatchSortCategoriesReq {
+  int64 community_id = 1; // 操作者社区语境（>0 时逐个校验分类归属，任一越权即整体拒绝）
+  repeated CategorySortItem items = 2; // 全量有序列表，sort 按提交顺序写入
+}
+
+// CategorySortItem 分类排序项
+message CategorySortItem {
+  int64 id = 1;   // 分类 ID
+  int32 sort = 2; // 目标排序值（建议按显示顺序 ×10 留空隙）
 }
 
 message GetCategoryReq {
@@ -239,6 +255,8 @@ message CreateProductReq {
   int32 min_buy = 11;
   bool show_sales = 14;   // C端是否显示销量
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
+  // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时商品保存为下架+预约，到点由调度器自动上架
+  string on_sale_at = 16;
 }
 
 message UpdateProductReq {
@@ -257,6 +275,11 @@ message UpdateProductReq {
   repeated SkuItemReq sku_items = 13; // SKU 组合列表（全量提交）
   bool show_sales = 14;     // C端是否显示销量
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
+  // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区修改（超管传 0 放行）
+  int64 community_id = 16;
+  // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时置为下架+预约；
+  // 显式传空串表示取消定时（配合 status 决定立即上架或保持下架）
+  string on_sale_at = 17;
 }
 
 message DeleteProductReq {
@@ -298,6 +321,7 @@ message ProductInfo {
   double original_price = 19; // 划线价（汇总字段：最低价 SKU 的划线价，0 表示不展示）
   bool show_sales = 20;       // C端是否显示销量
   int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
+  string on_sale_at = 22;     // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
 }
 
 message ProductDetail {

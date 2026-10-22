@@ -504,6 +504,34 @@ func (h *PaymentHandler) GetPayment(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// PaymentStatus 查询支付状态（免登录）
+// C 端支付宝回跳结果页轮询用：payment_no 是 ZF+UUID 形态的不可枚举凭据，
+// 仅回传状态级最小字段集（状态/金额/订单号），不含用户与商品隐私信息
+// 接口: GET /api/v1/payments/status?no=<payment_no>
+// 参数：
+//   - c: gin 上下文
+func (h *PaymentHandler) PaymentStatus(c *gin.Context) {
+	paymentNo := strings.TrimSpace(c.Query("no"))
+	if paymentNo == "" {
+		response.Error(c, errcode.ParamError, "缺少支付单号")
+		return
+	}
+	resp, err := h.paymentClient.GetPaymentStatus(c.Request.Context(), &payment.GetPaymentStatusReq{
+		PaymentNo: paymentNo,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"payment_no": resp.PaymentNo,
+		"status":     resp.Status,
+		"amount":     resp.Amount,
+		"order_id":   resp.OrderId,
+		"order_no":   resp.OrderNo,
+	})
+}
+
 // WechatCallback 微信支付回调
 // 读取 raw body 与微信签名头，调用 payment.HandleWechatCallback，返回 XML 成功响应
 // 参数：

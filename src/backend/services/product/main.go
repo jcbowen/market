@@ -43,6 +43,9 @@ func main() {
 	defer schedulerCancel()
 	go service.NewCouponScheduler(db, rds.GetClient()).Start(schedulerCtx)
 
+	// 定时上架调度器：products 预约商品（on_sale_at<=NOW()）到点自动上架（幂等条件更新，见 service/scheduler.go）
+	go service.NewProductSaleScheduler(db, rds.GetClient()).Start(schedulerCtx)
+
 	if err := bootstrap.RunGRPCServer(srv, cfg.ProductService.GrpcPort); err != nil {
 		log.Fatalf("启动失败: %v", err)
 	}

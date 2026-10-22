@@ -1429,12 +1429,13 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 
 // --- 分类管理 ---
 
-// ListCategories 获取分类列表
+// ListCategories 获取分类列表（管理端含禁用分类，供分类管理页展示与再启用）
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListCategories(c *gin.Context) {
 	resp, err := h.productClient.ListCategories(c.Request.Context(), &product.ListCategoriesReq{
-		CommunityId: h.getAdminCommunityID(c),
+		CommunityId:     h.getAdminCommunityID(c),
+		IncludeDisabled: true,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -1512,6 +1513,45 @@ func (h *AdminHandler) UpdateCategory(c *gin.Context) {
 		return
 	}
 	response.Success(c, resp)
+}
+
+// BatchSortCategoriesReq 分类批量排序请求（拖拽后按显示顺序整表提交）
+type BatchSortCategoriesReq struct {
+	// Items 全量有序列表：id + 目标 sort（建议按显示顺序 ×10 留空隙）
+	Items []BatchSortCategoryItem `json:"items" binding:"required,min=1"`
+}
+
+// BatchSortCategoryItem 单个分类排序项
+type BatchSortCategoryItem struct {
+	ID   int64 `json:"id" binding:"required,min=1"`
+	Sort int32 `json:"sort"`
+}
+
+// BatchSortCategories 分类批量排序（管理端拖拽保存）
+// 事务内逐项校验归属，任一越权即整体失败
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) BatchSortCategories(c *gin.Context) {
+	var req BatchSortCategoriesReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	items := make([]*product.CategorySortItem, 0, len(req.Items))
+	for _, it := range req.Items {
+		items = append(items, &product.CategorySortItem{Id: it.ID, Sort: it.Sort})
+	}
+	_, err := h.productClient.BatchSortCategories(c.Request.Context(), &product.BatchSortCategoriesReq{
+		CommunityId: h.scopeCommunityID(c),
+		Items:       items,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, nil)
 }
 
 // DeleteCategory 删除分类
@@ -1626,6 +1666,7 @@ type CreateProductReq struct {
 	Sort         int32             `json:"sort"`
 	ShowSales    *bool             `json:"show_sales"`
 	VirtualSales int32             `json:"virtual_sales"`
+	OnSaleAt     string            `json:"on_sale_at"` // 定时上架时间（空=立即上架）
 	Specs        []*SpecReqItem    `json:"specs"`
 	SkuItems     []*SkuItemReqItem `json:"sku_items"`
 }
@@ -1713,6 +1754,7 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 		Sort:         req.Sort,
 		ShowSales:    req.ShowSales != nil && *req.ShowSales,
 		VirtualSales: req.VirtualSales,
+		OnSaleAt:     req.OnSaleAt,
 		Specs:        toProtoSpecs(req.Specs),
 		SkuItems:     toProtoSkuItems(req.SkuItems),
 	})
@@ -1737,6 +1779,7 @@ type UpdateProductReq struct {
 	IsMultiSpec  bool              `json:"is_multi_spec"`
 	ShowSales    *bool             `json:"show_sales"`
 	VirtualSales int32             `json:"virtual_sales"`
+	OnSaleAt     string            `json:"on_sale_at"` // 定时上架时间（空=取消定时）
 	Specs        []*SpecReqItem    `json:"specs"`
 	SkuItems     []*SkuItemReqItem `json:"sku_items"`
 }
@@ -1772,6 +1815,7 @@ func (h *AdminHandler) UpdateProduct(c *gin.Context) {
 		IsMultiSpec:  req.IsMultiSpec,
 		ShowSales:    req.ShowSales != nil && *req.ShowSales,
 		VirtualSales: req.VirtualSales,
+		OnSaleAt:     req.OnSaleAt,
 		Specs:        toProtoSpecs(req.Specs),
 		SkuItems:     toProtoSkuItems(req.SkuItems),
 	})
@@ -5021,7 +5065,7 @@ func (h *AdminHandler) syncWechatPayAppID(ctx context.Context, resp *payment.Pay
 //   - string: 支付宝异步通知地址
 //   - string: 支付宝支付完成回跳地址
 func payCallbackURLsFor(base string) (string, string, string) {
-	return base + wechatPayCallbackPath, base + alipayPayCallbackPath, base + h5OrderListHashURL
+	return base + wechatPayCallbackPath, base + alipayPayCallbackPath, base + h5PayResultHashURL
 }
 
 // GetPaymentSetting 获取支付配置

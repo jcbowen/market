@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -218,6 +219,28 @@ func (s *PaymentService) GetPayment(ctx context.Context, orderID int64) (*model.
 	var p model.Payment
 	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ? AND status = ?", orderID, 2).Order("id desc").First(&p).Error; err != nil {
 		return nil, err
+	}
+	return &p, nil
+}
+
+// GetPaymentStatusByNo 按支付单号查询支付状态（免登录结果页轮询用）
+// 调用方约束：入参 payment_no 是 ZF+UUID 形态的不可枚举凭据，
+// 网关须把本方法暴露在公开路由组并只回传最小字段集，不得回传用户侧隐私字段
+// 参数：
+//   - ctx: 上下文
+//   - paymentNo: 支付单号
+//
+// 返回值：
+//   - *model.Payment: 支付记录模型（待支付/已支付/已关闭均可见，供结果页区分展示）
+//   - error: 参数为空或记录不存在
+func (s *PaymentService) GetPaymentStatusByNo(ctx context.Context, paymentNo string) (*model.Payment, error) {
+	paymentNo = strings.TrimSpace(paymentNo)
+	if paymentNo == "" {
+		return nil, bizerr.New(codes.InvalidArgument, "支付单号不能为空")
+	}
+	var p model.Payment
+	if err := s.db.GetDb().WithContext(ctx).Where("payment_no = ?", paymentNo).First(&p).Error; err != nil {
+		return nil, bizerr.New(codes.NotFound, "支付单不存在")
 	}
 	return &p, nil
 }

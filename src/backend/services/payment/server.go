@@ -62,6 +62,21 @@ func (s *server) GetPayment(ctx stdctx.Context, req *payment.GetPaymentReq) (*pa
 	return service.ToPaymentInfo(p), nil
 }
 
+// GetPaymentStatus 按支付单号查询支付状态（C 端支付宝回跳结果页免登录轮询用）
+func (s *server) GetPaymentStatus(ctx stdctx.Context, req *payment.GetPaymentStatusReq) (*payment.GetPaymentStatusResp, error) {
+	p, err := s.paymentService.GetPaymentStatusByNo(ctx, req.GetPaymentNo())
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &payment.GetPaymentStatusResp{
+		PaymentNo: p.PaymentNo,
+		Status:    p.Status,
+		Amount:    p.Amount,
+		OrderId:   p.OrderID,
+		OrderNo:   p.OrderNo,
+	}, nil
+}
+
 // BatchGetPayments 按订单批量查询成功支付记录（后台订单列表一次往返取回整页支付方式）
 func (s *server) BatchGetPayments(ctx stdctx.Context, req *payment.BatchGetPaymentsReq) (*payment.BatchGetPaymentsResp, error) {
 	list, err := s.paymentService.BatchGetPayments(ctx, req.OrderIds)

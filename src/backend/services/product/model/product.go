@@ -27,6 +27,7 @@ type Product struct {
 	Status           int32   `gorm:"column:status;type:tinyint;default:1;comment:0下架 1上架 2删除" json:"status"`
 	Sort             int32   `gorm:"column:sort;type:int;default:0;comment:排序，默认0" json:"sort"`
 	SalesCount       int32   `gorm:"column:sales_count;type:int;default:0;comment:累计销量，默认0" json:"sales_count"`
+	OnSaleAt         *string `gorm:"column:on_sale_at;type:datetime;comment:定时上架时间，到点由调度器自动上架(NULL=不定时)" json:"on_sale_at"`
 	CreatedAt        string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	UpdatedAt        string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }

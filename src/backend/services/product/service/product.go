@@ -56,12 +56,14 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{})
 	switch req.StatusFilter {
-	case 1: // 在售中：上架且有库存
+	case 1: // 出售中：上架且有库存
 		db = db.Where("status = 1 AND stock > 0")
 	case 2: // 已售罄：上架但无库存
 		db = db.Where("status = 1 AND stock <= 0")
-	case 3: // 仓库中：下架（无论库存）
+	case 3: // 仓库中：下架（无论库存，含定时上架中）
 		db = db.Where("status = 0")
+	case 4: // 库存紧张：出售中且库存不超过 SKU 安全库存合计（未设安全库存的商品不参与）
+		db = db.Where("status = 1 AND stock > 0 AND " + lowStockCondition)
 	default:
 		if req.Status > 0 {
 			db = db.Where("status = ?", req.Status)
@@ -94,6 +96,13 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 	err := db.Offset(offset).Limit(pageSize).Find(&list).Error
 	return list, int(total), err
 }
+
+// lowStockCondition 库存紧张判定条件（相关子查询，供列表 status_filter=4 与状态统计复用同一口径）：
+// 商品汇总库存不超过启用 SKU 的安全库存合计；所有 SKU 均未设安全库存（合计被过滤为空组）时不判紧张
+const lowStockCondition = "EXISTS (" +
+	"SELECT s.product_id FROM product_skus s " +
+	"WHERE s.product_id = products.id AND s.status = 1 AND s.safety_stock > 0 " +
+	"GROUP BY s.product_id HAVING SUM(s.safety_stock) >= products.stock)"
 
 // isDigits 判断字符串是否全部为数字字符（非空）
 //
@@ -173,12 +182,14 @@ func (s *ProductService) GetProductStatusStats(ctx context.Context, req *product
 		OnSale    int64
 		SoldOut   int64
 		Warehouse int64
+		LowStock  int64
 	}
 	err := db.Session(&gorm.Session{}).
 		Select(`COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN status = 1 AND stock > 0 THEN 1 ELSE 0 END), 0) AS on_sale,
 			COALESCE(SUM(CASE WHEN status = 1 AND stock <= 0 THEN 1 ELSE 0 END), 0) AS sold_out,
-			COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) AS warehouse`).
+			COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) AS warehouse,
+			COALESCE(SUM(CASE WHEN status = 1 AND stock > 0 AND ` + lowStockCondition + ` THEN 1 ELSE 0 END), 0) AS low_stock`).
 		Where("status != ?", 2).
 		Scan(&row).Error
 	if err != nil {
@@ -189,6 +200,7 @@ func (s *ProductService) GetProductStatusStats(ctx context.Context, req *product
 		OnSale:    row.OnSale,
 		SoldOut:   row.SoldOut,
 		Warehouse: row.Warehouse,
+		LowStock:  row.LowStock,
 	}, nil
 }
 
@@ -219,7 +231,11 @@ func (s *ProductService) BatchUpdateProductStatus(ctx context.Context, ids []int
 	if communityId > 0 {
 		db = db.Where("community_id = ?", communityId)
 	}
-	return db.Update("status", status).Error
+	// 批量上架/下架同步清除定时预约，与单条 UpdateProductStatus 口径一致
+	return db.Updates(map[string]interface{}{
+		"status":     status,
+		"on_sale_at": nil,
+	}).Error
 }
 
 // BuildCategoryNames 批量查询商品列表的分类名称
@@ -422,10 +438,27 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 		Status:       1,
 		Sort:         req.Sort,
 	}
+	// 定时上架：非空且为未来时间时保存为下架+预约，到点由调度器自动上架（默认立即上架）
+	if req.OnSaleAt != "" {
+		if err := parseOnSaleAt(req.OnSaleAt); err != nil {
+			return nil, err
+		}
+		p.Status = 0
+		p.OnSaleAt = &req.OnSaleAt
+	}
 
+	// GORM 零值坑：Status 模型 tag 带 default:1，Create 遇零值 0 会跳过该列（落 DB 默认 1）
+	// 并把默认值回填进结构体（p.Status 变回 1）。须在 Create 前捕获期望值，
+	// Create 后显式回写，否则定时上架商品被直接创建为上架（同 show_sales 当年之坑）
+	wantScheduled := p.Status == 0
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(p).Error; err != nil {
 			return err
+		}
+		if wantScheduled {
+			if err := tx.Model(&model.Product{}).Where("id = ?", p.ID).Update("status", int32(0)).Error; err != nil {
+				return err
+			}
 		}
 		if len(req.Images) > 0 {
 			if err := s.saveProductImages(tx, p.ID, req.Images); err != nil {
@@ -436,6 +469,10 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 	})
 	if err != nil {
 		return nil, err
+	}
+	if wantScheduled {
+		// 回写后的真实状态（Create 时被 GORM 回填为 1，此处校正，保证返回值与库内一致）
+		p.Status = 0
 	}
 	return p, nil
 }
@@ -492,6 +529,19 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	// 销量展示配置：admin 保存时全量提交，直接赋值
 	p.ShowSales = req.ShowSales
 	p.VirtualSales = req.VirtualSales
+
+	// 定时上架（编辑页「上架设置」全量提交）：
+	// 非空且为未来时间 → 下架+预约（支持设置/改期）；显式传空串 → 仅清除预约，
+	// 上下架终态由 status 提交值决定（不传时维持原状；预约中商品切「立即上架」由前端显式传 status=1）
+	if req.OnSaleAt != "" {
+		if err := parseOnSaleAt(req.OnSaleAt); err != nil {
+			return nil, err
+		}
+		p.Status = 0
+		p.OnSaleAt = &req.OnSaleAt
+	} else {
+		p.OnSaleAt = nil
+	}
 
 	// images 为空数组时视为"不变更"，保留商品现有图片，避免编辑接口意外清空图片
 	if len(req.Images) > 0 {
@@ -552,7 +602,11 @@ func (s *ProductService) UpdateProductStatus(ctx context.Context, id int64, stat
 	if err := ensureProductInScope(db, id, communityId); err != nil {
 		return err
 	}
-	return db.Model(&model.Product{}).Where("id = ?", id).Update("status", status).Error
+	// 手动上下架同时清除定时预约：手动操作覆盖定时（上架即售、下架即撤预约）
+	return db.Model(&model.Product{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"status":     status,
+		"on_sale_at": nil,
+	}).Error
 }
 
 // ensureProductInScope 确认商品存在且落在操作者社区语境内（更新前先计数，
@@ -739,6 +793,28 @@ func (s *ProductService) saveProductImages(tx *gorm.DB, productID int64, images 
 	return tx.Create(&records).Error
 }
 
+// parseOnSaleAt 解析并校验定时上架时间
+//
+// 参数：
+//   - raw: 前端提交的时间字符串（"2006-01-02 15:04:05"，空串由调用方短路处理）
+//
+// 返回值：
+//   - error: 格式非法或非未来时间时返回参数错误
+//
+// 使用示例：
+//
+//	if err := parseOnSaleAt("2026-11-01 10:00:00"); err != nil { ... }
+func parseOnSaleAt(raw string) error {
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.Local)
+	if err != nil {
+		return bizerr.New(codes.InvalidArgument, "定时上架时间格式错误")
+	}
+	if !t.After(time.Now()) {
+		return bizerr.New(codes.InvalidArgument, "定时上架时间需晚于当前时间")
+	}
+	return nil
+}
+
 // ToProductInfo 将商品模型转换为 proto 商品信息
 // 价格/库存取自商品表汇总字段（由规格保存流程回写维护）
 //
@@ -752,6 +828,10 @@ func (s *ProductService) saveProductImages(tx *gorm.DB, productID int64, images 
 func ToProductInfo(p *model.Product, categoryName string, images []string) *product.ProductInfo {
 	if p == nil {
 		return nil
+	}
+	var onSaleAt string
+	if p.OnSaleAt != nil {
+		onSaleAt = *p.OnSaleAt
 	}
 	return &product.ProductInfo{
 		Id:            p.ID,
@@ -774,6 +854,7 @@ func ToProductInfo(p *model.Product, categoryName string, images []string) *prod
 		OriginalPrice: p.MinOriginalPrice,
 		ShowSales:     p.ShowSales,
 		VirtualSales:  p.VirtualSales,
+		OnSaleAt:      onSaleAt,
 		CategoryName:  categoryName,
 	}
 }

@@ -221,6 +221,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.POST("/payments/callback/wechat", paymentHandler.WechatCallback)
 			// 支付宝回调：payment 服务内先做 RSA2 验签（支付宝公钥），验签失败拒绝处理
 			public.POST("/payments/callback/alipay", paymentHandler.AlipayCallback)
+			// 支付状态查询（免登录）：支付宝回跳结果页轮询用，凭不可枚举的支付单号取最小字段集
+			public.GET("/payments/status", paymentHandler.PaymentStatus)
 			public.GET("/payments/channels", paymentHandler.PaymentChannels)
 		}
 
@@ -321,6 +323,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/categories", gwMiddleware.RequirePermission("product:create"), adminHandler.CreateCategory)
 			authAdmin.PUT("/categories/:id", gwMiddleware.RequirePermission("product:update"), adminHandler.UpdateCategory)
 			authAdmin.DELETE("/categories/:id", gwMiddleware.RequirePermission("product:delete"), adminHandler.DeleteCategory)
+			// 分类批量排序（管理端拖拽保存）；用 POST 避免 PUT /:id 参数组的路由冲突
+			authAdmin.POST("/categories/sort", gwMiddleware.RequirePermission("product:update"), adminHandler.BatchSortCategories)
 
 			authAdmin.GET("/products", gwMiddleware.RequirePermission("product:view"), adminHandler.ListAdminProducts)
 			// 收银台扫码直达：条形码查询随下单链路走 order:create（收银员可能无 product:view）

@@ -66,6 +66,19 @@ export function deleteCategory(id: number) {
   })
 }
 
+/**
+ * 分类批量排序（拖拽后按显示顺序整表提交，后端事务内逐项校验归属）
+ * @param items 全量有序列表：id + 目标 sort（建议按显示顺序 ×10 留空隙）
+ * @returns 更新结果
+ */
+export function batchSortCategories(items: Array<{ id: number; sort: number }>) {
+  return request<ApiResult<null>>({
+    url: '/api/v1/admin/categories/sort',
+    method: 'POST',
+    data: { items },
+  })
+}
+
 // 商品
 
 /**
@@ -84,10 +97,10 @@ export function getProductList(params: PageParams & { keyword?: string; category
 /**
  * 商品状态统计（口径与列表筛选条件一致，供 Tab 计数展示）
  * @param params 筛选参数（与列表共用 keyword/category_id）
- * @returns 各状态计数：total 全部 / on_sale 在售中 / sold_out 已售罄 / warehouse 仓库中
+ * @returns 各状态计数：total 全部 / on_sale 出售中 / sold_out 已售罄 / warehouse 仓库中 / low_stock 库存紧张（出售中的子集维度）
  */
 export function getProductStatusStats(params: { keyword?: string; category_id?: number }) {
-  return request<ApiResult<{ total: number; on_sale: number; sold_out: number; warehouse: number }>>({
+  return request<ApiResult<{ total: number; on_sale: number; sold_out: number; warehouse: number; low_stock: number }>>({
     url: '/api/v1/admin/products/status-stats',
     method: 'GET',
     params,

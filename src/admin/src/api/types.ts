@@ -102,6 +102,8 @@ export interface Category {
   parent_id: number
   sort: number
   status: number
+  /** 分类图标（URL，可空） */
+  icon?: string
 }
 
 /**
@@ -130,6 +132,8 @@ export interface Product {
   show_sales?: boolean
   /** 虚拟销量（展示口径=真实销量+虚拟销量） */
   virtual_sales?: number
+  /** 定时上架时间（空=不定时；status=0 且非空时为预约中） */
+  on_sale_at?: string
 }
 
 /**
@@ -232,6 +236,10 @@ export interface ProductSavePayload {
   show_sales: boolean
   /** 虚拟销量（展示口径=真实销量+虚拟销量） */
   virtual_sales: number
+  /** 定时上架时间 "YYYY-MM-DD HH:mm:ss"（空=立即上架/取消定时） */
+  on_sale_at?: string
+  /** 上下架终态（仅编辑预约中商品切回「立即上架」时传 1：取消定时并上架；其余场景不传，状态维持不变） */
+  status?: number
   specs: SpecSaveItem[]
   sku_items: SkuSaveItem[]
 }

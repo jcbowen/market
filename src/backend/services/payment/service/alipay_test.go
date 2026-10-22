@@ -464,3 +464,31 @@ func TestBuildAlipayExecutorGatewayRouting(t *testing.T) {
 		})
 	}
 }
+
+// TestAppendQueryParam 回跳地址追加支付单号：hash 路由结果页凭单号轮询公开状态接口
+func TestAppendQueryParam(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			"hash 路由无 query 时用 ? 追加",
+			"https://demo.example.com/s/#/pages/pay/result",
+			"https://demo.example.com/s/#/pages/pay/result?no=ZF123",
+		},
+		{
+			"已有 query 时用 & 追加",
+			"https://demo.example.com/s/#/pages/pay/result?from=alipay",
+			"https://demo.example.com/s/#/pages/pay/result?from=alipay&no=ZF123",
+		},
+		{"空串原样返回", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := appendQueryParam(c.raw, "no", "ZF123"); got != c.want {
+				t.Fatalf("appendQueryParam = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

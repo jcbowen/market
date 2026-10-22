@@ -57,6 +57,18 @@
       }
     },
     {
+      "path": "pages/pay/alipay",
+      "style": {
+        "navigationBarTitleText": "支付宝支付"
+      }
+    },
+    {
+      "path": "pages/pay/result",
+      "style": {
+        "navigationBarTitleText": "支付结果"
+      }
+    },
+    {
       "path": "pages/address/list",
       "style": {
         "navigationBarTitleText": "收货地址"

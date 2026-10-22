@@ -23,6 +23,9 @@
         :row-key="rowKey"
       />
     </n-space>
+
+    <!-- 推广弹窗：二维码 + 复制链接 -->
+    <PromoModal v-model:show="promoShow" :product="promoProduct" />
   </n-card>
 </template>
 
@@ -31,15 +34,17 @@
 defineOptions({ name: 'ProductList' })
 import { ref, onMounted, onActivated, h, reactive, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NButton, NInput, NSpace, NTag, createDiscreteApi } from 'naive-ui'
+import { NButton, NInput, NSpace, NTag, NTooltip, createDiscreteApi } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getProductList, getCategoryList, updateProductStatus, deleteProduct, updateProductName, batchUpdateProductStatus, getProductStatusStats } from '@/api/product'
 import type { Product, Category } from '@/api/types'
+import PromoModal from './components/PromoModal.vue'
 
 /**
  * 商品列表页面
  * 展示商品分页数据，支持状态 Tab 筛选（带统计）、搜索、分类筛选、
- * 上下架（单条/批量）、删除、多规格标注、价格区间展示与名称行内改名
+ * 上下架（单条/批量）、定时上架标注、推广二维码、删除、多规格标注、
+ * 价格区间展示与名称行内改名
  */
 const router = useRouter()
 const route = useRoute()
@@ -51,14 +56,16 @@ const list = ref<Product[]>([])
 const loading = ref(false)
 const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
 
-// 状态 Tab 筛选：值与后端 status_filter 口径一致（0 全部 1 在售中 2 已售罄 3 仓库中）
+// 状态 Tab 筛选：值与后端 status_filter 口径一致
+// （0 全部 1 出售中 2 已售罄 3 仓库中 4 库存紧张；low_stock 为出售中的子集维度）
 const statusFilter = ref('0')
-const stats = ref<{ total: number; on_sale: number; sold_out: number; warehouse: number } | null>(null)
+const stats = ref<{ total: number; on_sale: number; sold_out: number; warehouse: number; low_stock: number } | null>(null)
 const statusTabs = computed(() => [
   { name: '0', label: `全部 ${stats.value?.total ?? 0}` },
-  { name: '1', label: `在售中 ${stats.value?.on_sale ?? 0}` },
+  { name: '1', label: `出售中 ${stats.value?.on_sale ?? 0}` },
   { name: '2', label: `已售罄 ${stats.value?.sold_out ?? 0}` },
   { name: '3', label: `仓库中 ${stats.value?.warehouse ?? 0}` },
+  { name: '4', label: `库存紧张 ${stats.value?.low_stock ?? 0}` },
 ])
 
 // 多选与批量上下架：按钮按选中项状态动态显示（存在非该状态的行才显示对应操作）
@@ -194,21 +201,35 @@ const columns: DataTableColumns<Product> = [
   {
     title: '状态',
     key: 'status',
-    width: 90,
+    width: 110,
     render(row) {
       const meta = displayStatusMeta(row)
-      return h(NTag, { type: meta.type }, { default: () => meta.label })
+      const tag = h(NTag, { type: meta.type }, { default: () => meta.label })
+      // 定时上架中：仓库中且带预约时间，蓝色标注并悬浮展示到点时间
+      if (meta.scheduled) {
+        return h(NSpace, { wrap: false, size: 4, align: 'center' }, {
+          default: () => [
+            tag,
+            h(NTooltip, null, {
+              trigger: () => h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '定时上架' }),
+              default: () => `将于 ${row.on_sale_at} 自动上架`,
+            }),
+          ],
+        })
+      }
+      return tag
     },
   },
   {
     title: '操作',
     key: 'actions',
-    width: 220,
+    width: 260,
     render(row) {
       return h(NSpace, null, {
         default: () => [
           h(NButton, { size: 'small', onClick: () => router.push(`/products/detail/${row.id}`) }, { default: () => '编辑' }),
           h(NButton, { size: 'small', onClick: () => toggleStatus(row) }, { default: () => (row.status === 1 ? '下架' : '上架') }),
+          h(NButton, { size: 'small', type: 'primary', ghost: true, onClick: () => openPromo(row) }, { default: () => '推广' }),
           h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' }),
         ],
       })
@@ -216,16 +237,33 @@ const columns: DataTableColumns<Product> = [
   },
 ]
 
+// 推广弹窗状态：当前推广目标商品（仅需 id/name）
+const promoShow = ref(false)
+const promoProduct = ref<Pick<Product, 'id' | 'name'> | null>(null)
+
 /**
- * 商品展示状态（复合口径）：上架且有库存=在售中，上架无库存=已售罄，下架=仓库中
+ * 打开推广弹窗（二维码 + 复制链接）
  * @param row 当前行商品
- * @returns 状态标签文本与 Tag 类型（success/warning/default）
  */
-function displayStatusMeta(row: Product): { label: string; type: 'success' | 'warning' | 'default' } {
+function openPromo(row: Product) {
+  promoProduct.value = { id: row.id, name: row.name }
+  promoShow.value = true
+}
+
+/**
+ * 商品展示状态（复合口径）：上架且有库存=出售中，上架无库存=已售罄，下架=仓库中；
+ * 下架且带 on_sale_at=定时上架中（到点由调度器自动上架）
+ * @param row 当前行商品
+ * @returns 状态标签文本与 Tag 类型（success/warning/default）及是否定时上架中
+ */
+function displayStatusMeta(row: Product): { label: string; type: 'success' | 'warning' | 'default'; scheduled?: boolean } {
   if (row.status === 1) {
     return (row.stock ?? 0) > 0
-      ? { label: '在售中', type: 'success' }
+      ? { label: '出售中', type: 'success' }
       : { label: '已售罄', type: 'warning' }
+  }
+  if (row.on_sale_at) {
+    return { label: '仓库中', type: 'default', scheduled: true }
   }
   return { label: '仓库中', type: 'default' }
 }
@@ -301,20 +339,21 @@ async function remove(row: Product) {
 }
 
 onMounted(() => {
-  // 支持「统计热销排行」等外部入口带 keyword 预筛选
+  // 支持「统计热销排行」等外部入口带 keyword 预筛选；
+  // 首次挂载数据加载统一交给 onActivated（keep-alive 下挂载即触发一次激活），避免双重请求
   const q = route.query.keyword
   if (typeof q === 'string' && q) keyword.value = q
   loadCategories()
-  loadData()
 })
 
-// keep-alive 缓存下再次进入（如统计页跳转）时，应用新的 keyword 参数重新筛选
+// keep-alive 缓存下每次激活都刷新数据：修复「新增/编辑商品返回列表后不显示新数据」的问题
+// （此前仅在 keyword query 变化时刷新，返回列表永远显示缓存旧数据）
 onActivated(() => {
   const q = route.query.keyword
   if (typeof q === 'string' && q && q !== keyword.value) {
     keyword.value = q
     pagination.value.page = 1
-    loadData()
   }
+  loadData()
 })
 </script>
