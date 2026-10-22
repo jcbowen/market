@@ -78,12 +78,78 @@ export function createPosOrder(data: {
       pay_amount: number
       delivery_fee: number
       pickup_code?: string
+      /** 现金=true 创建即收款完成；付款码=false 仅建待支付支付单，待扫码扣款 */
       paid: boolean
+      /** 待支付支付单号（付款码收款两步化的第二步凭据，现金为空） */
+      payment_no?: string
     }>
   >({
     url: '/api/v1/admin/pos/orders',
     method: 'POST',
     data,
+  })
+}
+
+/**
+ * 收银台可用支付方式（按支付配置动态渲染）
+ * 现金恒可用；「付款码支付」（pay_type=5）仅当微信或支付宝任一渠道开启且就绪时返回
+ * @returns 支付方式列表
+ */
+export function listPosPayMethods() {
+  return request<ApiResult<{ list: Array<{ pay_type: number; label: string }> }>>({
+    url: '/api/v1/admin/pos/pay-methods',
+    method: 'GET',
+  })
+}
+
+/**
+ * 收银台付款码扣款（两步化第二步）：对待支付支付单提交顾客付款码向渠道收款
+ * 渠道由付款码前缀自动识别（微信 10-15 / 支付宝 25-30，云闪付暂不支持）
+ * @param orderId 订单 ID
+ * @param data payment_no 待支付支付单号（下单响应返回）；auth_code 顾客付款码（扫码枪读取）
+ * @returns 归一化结果：state=PAID 收款成功 / PAYING 用户支付中（继续轮询）/ FAILED 渠道拒绝（换码重扫）
+ */
+export function payPosOrderCode(orderId: number, data: { payment_no: string; auth_code: string }) {
+  return request<
+    ApiResult<{
+      state: 'PAID' | 'PAYING' | 'FAILED'
+      message: string
+      payment_no: string
+      order_id: number
+      transaction_id: string
+      pay_type: number
+      amount: number
+    }>
+  >({
+    url: `/api/v1/admin/pos/orders/${orderId}/pay-code`,
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 收银台付款码收款结果查询（PAYING 在途轮询用，幂等可反复调）
+ * 向渠道核实该订单是否已收款，已收款则补同步订单与支付单
+ * @param orderId 订单 ID
+ * @param paymentNo 支付单号（可选精确定位）
+ * @returns paid 是否已收款 / channel_state 渠道状态 / message 渠道说明
+ */
+export function getPosOrderPayStatus(orderId: number, paymentNo?: string) {
+  return request<
+    ApiResult<{
+      paid: boolean
+      changed: boolean
+      channel_state?: string
+      transaction_id?: string
+      amount?: number
+      payment_no?: string
+      message?: string
+      order_status?: number
+    }>
+  >({
+    url: `/api/v1/admin/pos/orders/${orderId}/pay-code`,
+    method: 'GET',
+    params: paymentNo ? { payment_no: paymentNo } : undefined,
   })
 }
 

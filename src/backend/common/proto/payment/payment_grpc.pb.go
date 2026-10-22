@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	PaymentService_CreatePayment_FullMethodName             = "/payment.PaymentService/CreatePayment"
+	PaymentService_PayByAuthCode_FullMethodName             = "/payment.PaymentService/PayByAuthCode"
 	PaymentService_GetPayment_FullMethodName                = "/payment.PaymentService/GetPayment"
 	PaymentService_BatchGetPayments_FullMethodName          = "/payment.PaymentService/BatchGetPayments"
 	PaymentService_HandleWechatCallback_FullMethodName      = "/payment.PaymentService/HandleWechatCallback"
@@ -43,6 +44,9 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PaymentServiceClient interface {
 	CreatePayment(ctx context.Context, in *CreatePaymentReq, opts ...grpc.CallOption) (*CreatePaymentResp, error)
+	// PayByAuthCode 付款码扣款（收银台 B扫C）：对已有待支付支付单提交顾客付款码向渠道收款
+	// 两步化的第二步：CreatePayment 只建待支付单（pay_type 5/6），扫码后由本方法完成扣款
+	PayByAuthCode(ctx context.Context, in *PayByAuthCodeReq, opts ...grpc.CallOption) (*PayByAuthCodeResp, error)
 	GetPayment(ctx context.Context, in *GetPaymentReq, opts ...grpc.CallOption) (*PaymentInfo, error)
 	// BatchGetPayments 按订单批量取支付记录：后台订单列表按行显示支付方式，替代逐行 GetPayment 的 N 次往返
 	BatchGetPayments(ctx context.Context, in *BatchGetPaymentsReq, opts ...grpc.CallOption) (*BatchGetPaymentsResp, error)
@@ -85,6 +89,16 @@ func (c *paymentServiceClient) CreatePayment(ctx context.Context, in *CreatePaym
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreatePaymentResp)
 	err := c.cc.Invoke(ctx, PaymentService_CreatePayment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *paymentServiceClient) PayByAuthCode(ctx context.Context, in *PayByAuthCodeReq, opts ...grpc.CallOption) (*PayByAuthCodeResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PayByAuthCodeResp)
+	err := c.cc.Invoke(ctx, PaymentService_PayByAuthCode_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +260,9 @@ func (c *paymentServiceClient) GetPaymentStatus(ctx context.Context, in *GetPaym
 // for forward compatibility.
 type PaymentServiceServer interface {
 	CreatePayment(context.Context, *CreatePaymentReq) (*CreatePaymentResp, error)
+	// PayByAuthCode 付款码扣款（收银台 B扫C）：对已有待支付支付单提交顾客付款码向渠道收款
+	// 两步化的第二步：CreatePayment 只建待支付单（pay_type 5/6），扫码后由本方法完成扣款
+	PayByAuthCode(context.Context, *PayByAuthCodeReq) (*PayByAuthCodeResp, error)
 	GetPayment(context.Context, *GetPaymentReq) (*PaymentInfo, error)
 	// BatchGetPayments 按订单批量取支付记录：后台订单列表按行显示支付方式，替代逐行 GetPayment 的 N 次往返
 	BatchGetPayments(context.Context, *BatchGetPaymentsReq) (*BatchGetPaymentsResp, error)
@@ -286,6 +303,9 @@ type UnimplementedPaymentServiceServer struct{}
 
 func (UnimplementedPaymentServiceServer) CreatePayment(context.Context, *CreatePaymentReq) (*CreatePaymentResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreatePayment not implemented")
+}
+func (UnimplementedPaymentServiceServer) PayByAuthCode(context.Context, *PayByAuthCodeReq) (*PayByAuthCodeResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method PayByAuthCode not implemented")
 }
 func (UnimplementedPaymentServiceServer) GetPayment(context.Context, *GetPaymentReq) (*PaymentInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPayment not implemented")
@@ -367,6 +387,24 @@ func _PaymentService_CreatePayment_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PaymentServiceServer).CreatePayment(ctx, req.(*CreatePaymentReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PaymentService_PayByAuthCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PayByAuthCodeReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).PayByAuthCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_PayByAuthCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).PayByAuthCode(ctx, req.(*PayByAuthCodeReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -651,6 +689,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreatePayment",
 			Handler:    _PaymentService_CreatePayment_Handler,
+		},
+		{
+			MethodName: "PayByAuthCode",
+			Handler:    _PaymentService_PayByAuthCode_Handler,
 		},
 		{
 			MethodName: "GetPayment",

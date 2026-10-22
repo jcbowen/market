@@ -364,6 +364,11 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 			// 收银台代客下单（G）：下单/挂单写操作用 order:create，挂单查看用 order:view
 			authAdmin.POST("/pos/orders", gwMiddleware.RequirePermission("order:create"), adminHandler.CreatePosOrder)
+			// 收银台可用支付方式（付款码按支付配置动态出现）：只读、与下单同权限
+			authAdmin.GET("/pos/pay-methods", gwMiddleware.RequirePermission("order:create"), adminHandler.ListPosPayMethods)
+			// 付款码收款（两步化第二步）与 PAYING 在途轮询：均为收银动作，权限与下单一致（order:create）
+			authAdmin.POST("/pos/orders/:id/pay-code", gwMiddleware.RequirePermission("order:create"), adminHandler.PayPosOrderByCode)
+			authAdmin.GET("/pos/orders/:id/pay-code", gwMiddleware.RequirePermission("order:create"), adminHandler.GetPosOrderPayStatus)
 			authAdmin.POST("/pos/held-orders", gwMiddleware.RequirePermission("order:create"), adminHandler.CreatePosHeldOrder)
 			authAdmin.GET("/pos/held-orders", gwMiddleware.RequirePermission("order:view"), adminHandler.ListPosHeldOrders)
 			authAdmin.DELETE("/pos/held-orders/:id", gwMiddleware.RequirePermission("order:create"), adminHandler.DeletePosHeldOrder)

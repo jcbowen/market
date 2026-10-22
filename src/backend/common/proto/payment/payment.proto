@@ -8,6 +8,9 @@ import "common/common.proto";
 
 service PaymentService {
   rpc CreatePayment(CreatePaymentReq) returns (CreatePaymentResp);
+  // PayByAuthCode 付款码扣款（收银台 B扫C）：对已有待支付支付单提交顾客付款码向渠道收款
+  // 两步化的第二步：CreatePayment 只建待支付单（pay_type 5/6），扫码后由本方法完成扣款
+  rpc PayByAuthCode(PayByAuthCodeReq) returns (PayByAuthCodeResp);
   rpc GetPayment(GetPaymentReq) returns (PaymentInfo);
   // BatchGetPayments 按订单批量取支付记录：后台订单列表按行显示支付方式，替代逐行 GetPayment 的 N 次往返
   rpc BatchGetPayments(BatchGetPaymentsReq) returns (BatchGetPaymentsResp);
@@ -56,7 +59,7 @@ message GetPaymentStatusResp {
 message CreatePaymentReq {
   int64 order_id = 1;
   int64 user_id = 2;
-  int32 pay_type = 3;       // 1微信 2支付宝 3现金
+  int32 pay_type = 3;       // 1微信 2支付宝 3现金 4门店现金 5微信付款码 6支付宝付款码
   double amount = 4;
   string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
   string app_id = 6;        // 微信下单使用的 AppID（JSAPI/H5），由网关按客户端渠道解析后传入；为空回落支付配置默认 AppID
@@ -66,6 +69,9 @@ message CreatePaymentReq {
   // 订单号：同样随订单带入。异常流水需要订单号快照供后台阅读，
   // 而 payment 服务不查 orders 表，只能在创建支付单时把订单事实一起落库
   string order_no = 8;
+  // 顾客付款码：付款码支付（pay_type 5/6）扣款用。两步化流程下 CreatePayment 不填
+  // （只建待支付单不扣款），扫码后由 PayByAuthCode 传入
+  string auth_code = 9;
 }
 
 message CreatePaymentResp {
@@ -74,6 +80,32 @@ message CreatePaymentResp {
   double amount = 3;
   string wechat_pay_params = 4;   // JSON string，仅 pay_type=1 时填充
   string alipay_pay_params = 5;   // JSON string，仅 pay_type=2 时填充；现金支付两者均为空
+}
+
+// PayByAuthCodeReq 付款码扣款入参（收银台 B扫C）
+// 定位待支付单以 payment_no 为准（下单响应已回传，收银台持有）；同订单多笔待支付单时保证精确。
+// order_id 为网关侧经社区隔离校验的订单 ID，服务端强校验与支付单的绑定关系，
+// 防止传错/恶意传其它订单的支付单号造成跨订单收款
+message PayByAuthCodeReq {
+  string payment_no = 1;  // 待支付支付单号（CreatePayment 响应返回）
+  string auth_code = 2;   // 顾客付款码（扫码枪读取：微信 10-15 开头 / 支付宝 25-30 开头）
+  // 收银员操作人：写入支付单确认来源流水备查
+  int64 operator_id = 3;
+  // 订单 ID（URL 路径参数，必传）：与支付单 OrderID 不一致时拒绝扣款
+  int64 order_id = 4;
+}
+
+// PayByAuthCodeResp 付款码扣款结果（归一化）
+// state：PAID 扣款成功（订单已同步已支付）；PAYING 用户支付中（余额输密码等），收银台继续轮询
+// payment-sync；FAILED 扣款失败（渠道拒绝/余额不足等），message 带原因，收银台提示重新扫码
+message PayByAuthCodeResp {
+  string state = 1;          // PAID / PAYING / FAILED
+  string message = 2;        // 失败原因或渠道状态描述，仅 FAILED/PAYING 时有意义
+  string payment_no = 3;
+  int64 order_id = 4;
+  string transaction_id = 5; // 渠道交易号，仅 PAID 时有值
+  int32 pay_type = 6;
+  double amount = 7;
 }
 
 message GetPaymentReq {

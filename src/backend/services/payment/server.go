@@ -53,6 +53,15 @@ func (s *server) CreatePayment(ctx stdctx.Context, req *payment.CreatePaymentReq
 	return resp, nil
 }
 
+// PayByAuthCode 付款码扣款（收银台 B扫C：扫顾客付款码对已有待支付单收款）
+func (s *server) PayByAuthCode(ctx stdctx.Context, req *payment.PayByAuthCodeReq) (*payment.PayByAuthCodeResp, error) {
+	resp, err := s.paymentService.PayByAuthCode(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
+}
+
 // GetPayment 查询支付记录
 func (s *server) GetPayment(ctx stdctx.Context, req *payment.GetPaymentReq) (*payment.PaymentInfo, error) {
 	p, err := s.paymentService.GetPayment(ctx, req.OrderId)

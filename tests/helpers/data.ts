@@ -83,15 +83,16 @@ export function clearTestUserRegistry(): void {
 
 /** 随机手机号池前缀（测试专用号段） */
 const PHONE_PREFIXES = ['139', '150', '176'];
-/** 号码种子：进程内自增，保证单次运行唯一 */
-let phoneSeq = Math.floor(Date.now() / 1000) % 100_000_000;
+/** 号码种子：秒级时间戳基数 + 进程随机偏移，规避同一秒加载的多个 spec 文件取到同号 */
+let phoneSeq = (Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 100_000)) % 100_000_000;
 
 /**
  * 生成唯一的 11 位测试手机号
  * - 函数名: uniquePhone
  * - 参数: 无
  * - 返回: string，如 17679214372（号段 + 8 位自增序号）
- * - 异常: 无；跨进程重启种子基于秒级时间戳，极端情况号码复用已有用户（建号幂等，不影响断言）
+ * - 异常: 无；种子含随机偏移，跨文件/跨进程同号概率可忽略；
+ *   若仍复用已有用户，建号走幂等不影响登录类断言，但依赖「首次注册」的默认值类断言会失败
  * - 使用示例: const phone = uniquePhone();
  */
 export function uniquePhone(): string {

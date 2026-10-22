@@ -94,6 +94,7 @@ func (s *UserService) GetUserByOpenid(ctx context.Context, openid string) (*mode
 // 查找策略：有手机号按手机号查找（手机号登录/绑定场景）；
 // 无手机号按 openid 查找（微信登录场景）——禁止按 phone='' 兜底匹配，
 // 否则第二个微信登录用户会命中首个未绑手机的存量用户并覆盖其 openid，造成账号串号
+// 昵称策略：仅在新用户/历史空昵称时按 defaultNickname 填充，登录链路不覆盖已有昵称
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建用户请求
@@ -119,7 +120,11 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 	u.AlipayUserID = orPtrValue(req.AlipayUserId, u.AlipayUserID)
 	u.Unionid = orPtrValue(req.UnionId, u.Unionid)
 	u.Phone = req.Phone
-	u.Nickname = orValue(req.Nickname, u.Nickname)
+	// 昵称只在为空时写入：登录入参不带真实昵称（微信授权昵称另有 user/profile 更新入口），
+	// 避免每次登录把用户自定义昵称刷回默认值
+	if u.Nickname == "" {
+		u.Nickname = orValue(req.Nickname, defaultNickname(req.Phone))
+	}
 	u.Avatar = orValue(req.Avatar, u.Avatar)
 	u.Gender = req.Gender
 	if req.CommunityId > 0 {
@@ -427,7 +432,7 @@ func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberRe
 	u := &model.User{
 		Openid:      phoneOpenidPrefix(req.Phone),
 		Phone:       req.Phone,
-		Nickname:    orValue(req.Nickname, "会员"+req.Phone[len(req.Phone)-4:]),
+		Nickname:    orValue(req.Nickname, defaultNickname(req.Phone)),
 		Gender:      req.Gender,
 		CommunityID: req.CommunityId,
 		Status:      1,
@@ -608,6 +613,21 @@ func orValue(newVal, oldVal string) string {
 		return newVal
 	}
 	return oldVal
+}
+
+// defaultNickname 生成默认昵称（C 端登录静默注册与后台/收银台注册会员共用口径）
+// 有手机号时取「会员+手机尾号 4 位」，无手机号（微信等渠道登录）取「微信用户」
+//
+// 参数：
+//   - phone: 手机号，可为空
+//
+// 返回：
+//   - string: 默认昵称
+func defaultNickname(phone string) string {
+	if len(phone) >= 4 {
+		return "会员" + phone[len(phone)-4:]
+	}
+	return "微信用户"
 }
 
 // orPtrValue 返回非空字符串指针，优先使用新值

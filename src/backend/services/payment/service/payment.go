@@ -77,7 +77,9 @@ func (s *PaymentService) reloadPayConfig() {
 
 // CreatePayment 创建支付单并生成第三方支付调起参数
 // 现金(4)/货到付款(3)无需第三方调起参数，创建成功后直接同步订单状态为已支付；
-// 收银台全额优惠的 0 元单（pay_type=4 且 amount=0）同样落支付单，保持「订单必有支付记录」的统一口径
+// 收银台全额优惠的 0 元单（pay_type=4 且 amount=0）同样落支付单，保持「订单必有支付记录」的统一口径；
+// 付款码支付(5/6)只创建待支付单（无调起参数、不动订单状态），扣款由收银员扫顾客付款码后
+// 通过 PayByAuthCode 完成（两步化，见 codepay.go），渠道不支持 0 元扣款
 // 幂等策略：订单已有支付成功记录时拒绝创建；已有同方式同金额的待支付单时直接复用该记录
 // 参数：
 //   - ctx: 上下文
@@ -85,17 +87,23 @@ func (s *PaymentService) reloadPayConfig() {
 //
 // 返回值：
 //   - *model.Payment: 支付记录模型
-//   - string: 微信/支付宝调起参数 JSON，现金/货到付款支付返回空字符串
+//   - string: 微信/支付宝调起参数 JSON，现金/货到付款/付款码支付返回空字符串
 //   - error: 错误信息
 func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreatePaymentReq) (*model.Payment, string, error) {
 	if req.OrderId <= 0 || req.Amount < 0 {
 		return nil, "", fmt.Errorf("参数错误")
 	}
-	if req.PayType != 1 && req.PayType != 2 && req.PayType != 3 && req.PayType != 4 {
+	switch req.PayType {
+	case 1, 2, 3, 4, 5, 6:
+	default:
 		return nil, "", fmt.Errorf("不支持的支付方式")
 	}
-	// user_id 允许为 0 的场景：收银台散客单现金收款（无会员账户，第三方渠道仍要求实名用户）
-	if req.UserId <= 0 && req.PayType != 3 && req.PayType != 4 {
+	// 付款码支付依赖渠道真实扣款，渠道不受理 0 元交易；全额优惠单收银台应改用现金方式
+	if (req.PayType == 5 || req.PayType == 6) && req.Amount <= 0 {
+		return nil, "", fmt.Errorf("付款码支付金额必须大于 0")
+	}
+	// user_id 允许为 0 的场景：收银台散客单现金/付款码收款（线下当面收款，无会员账户）
+	if req.UserId <= 0 && req.PayType != 3 && req.PayType != 4 && req.PayType != 5 && req.PayType != 6 {
 		return nil, "", fmt.Errorf("参数错误")
 	}
 
@@ -145,6 +153,12 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		p.Status = 2
 		p.PayTime = &now
 		p.ConfirmSource = model.ConfirmSourceOffline
+	case 5, 6:
+		// 付款码支付：只建待支付单（无调起参数、不动订单状态），
+		// 创建前先校验渠道就绪，把「渠道未配置」拦在下单而不是扫码扣款时
+		if err := s.ensureCodePayChannelReady(ctx, req.PayType); err != nil {
+			return nil, "", err
+		}
 	}
 	if err != nil {
 		return nil, "", err
@@ -178,7 +192,9 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 }
 
 // findReusablePendingPayment 查找可复用的待支付支付单
-// 仅微信/支付宝这类需要第三方调起参数的渠道才复用，避免重复向第三方下单产生多笔可实际扣款的支付单；
+// 仅需第三方渠道处理的支付方式（微信/支付宝在线支付 1/2、付款码 5/6）才复用：
+// 在线支付避免重复向第三方下单产生多笔可实际扣款的支付单；付款码复用保证扣款失败重试时
+// out_trade_no 不变（同一笔渠道交易反复提交，避免同一订单挂多笔待扣款交易）；
 // 现金支付创建时即置为已支付并同步订单状态，不复用异常遗留的待支付现金单，否则会跳过该副作用导致订单停留在待支付
 // 参数：
 //   - ctx: 上下文
@@ -188,7 +204,9 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 //   - *model.Payment: 可复用的待支付单，渠道不支持复用或不存在时返回 nil
 //   - error: 查询异常时返回内部错误（不含"记录不存在"），避免故障被当作无待支付单而重复下单
 func (s *PaymentService) findReusablePendingPayment(ctx context.Context, req *payment.CreatePaymentReq) (*model.Payment, error) {
-	if req.PayType != 1 && req.PayType != 2 {
+	switch req.PayType {
+	case 1, 2, 5, 6:
+	default:
 		return nil, nil
 	}
 
@@ -481,8 +499,10 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 	}
 
 	// 第二阶段：渠道调用移出事务（事务内调外部接口会长时间占用连接，且回滚无法撤回已发出的渠道请求）
+	// 渠道映射：1微信 / 5微信付款码 走微信退款，2支付宝 / 6支付宝付款码 走支付宝退款
+	// （现金类 3/4 已在前面分流至 recordCashRefund，不会落到这里）
 	var refundErr error
-	if p.PayType == 1 {
+	if p.PayType == 1 || p.PayType == 5 {
 		refundErr = s.wechatRefund(ctx, p, refund)
 	} else {
 		refundErr = s.alipayRefund(ctx, p, refund)

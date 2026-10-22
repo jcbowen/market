@@ -148,8 +148,8 @@ func (s *PaymentService) locateSyncTarget(ctx context.Context, orderID int64, pa
 		}
 		return &p, nil
 	}
-	// 现金/货到付款没有渠道可问，排除后即为「可同步」集合
-	if err := query.Where("order_id = ? AND pay_type IN ? AND status = 1", orderID, []int32{1, 2}).
+	// 现金/货到付款没有渠道可问，排除后即为「可同步」集合（付款码 5/6 与同渠道在线支付共用查单）
+	if err := query.Where("order_id = ? AND pay_type IN ? AND status = 1", orderID, []int32{1, 2, 5, 6}).
 		Order("id desc").First(&p).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -193,7 +193,9 @@ func (s *PaymentService) MarkPaymentPaidManually(ctx context.Context, paymentNo,
 		}
 		return bizerr.New(codes.Internal, "支付单查询失败，请稍后重试")
 	}
-	if p.PayType != 1 && p.PayType != 2 {
+	switch p.PayType {
+	case 1, 2, 5, 6:
+	default:
 		return bizerr.New(codes.FailedPrecondition, "现金/货到付款支付单无需人工标记")
 	}
 	if p.Status != 1 {

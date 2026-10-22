@@ -269,6 +269,39 @@
     </n-spin>
   </n-modal>
 
+  <!-- 付款码扫码弹窗：下单建待支付单后弹出，扫码枪录入顾客付款码（回车提交） -->
+  <n-modal
+    :show="showCodePayModal"
+    preset="card"
+    title="付款码收款"
+    style="width: 460px; max-width: 92vw"
+    :mask-closable="false"
+    :close-on-esc="codePayState === 'idle'"
+    @update:show="(v: boolean) => (v ? null : onCodePayModalClose())"
+  >
+    <div class="codepay-wrap">
+      <div class="codepay-amount">￥{{ codePayAmount.toFixed(2) }}</div>
+      <div class="codepay-order muted">{{ codePayOrderNo }}</div>
+      <n-input
+        ref="codePayInputRef"
+        v-model:value="authCode"
+        size="large"
+        placeholder="请扫顾客付款码（微信/支付宝）"
+        :disabled="codePayState !== 'idle'"
+        @keydown.enter="submitAuthCode"
+      />
+      <div class="codepay-tip" :class="{ error: codePayState === 'failed' }">
+        <template v-if="codePayState === 'idle'">光标在输入框内直接扫码即可，渠道按付款码自动识别</template>
+        <template v-else-if="codePayState === 'submitting'">扣款中，请勿重复扫码…</template>
+        <template v-else-if="codePayState === 'polling'">顾客支付中（等待输入密码），自动查询结果…</template>
+        <template v-else-if="codePayState === 'failed'">{{ codePayMessage || '扣款失败，请让顾客重新出示付款码' }}</template>
+      </div>
+      <n-button block quaternary :disabled="codePayState !== 'idle'" @click="onCodePayModalClose">
+        暂不收款（订单保留为待支付）
+      </n-button>
+    </div>
+  </n-modal>
+
   <!-- 结账成功弹窗（含 58mm 热敏小票预览与打印） -->
   <n-modal
     :show="showPaidModal"
@@ -339,13 +372,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { CreateOutline, CubeOutline, SearchOutline } from '@vicons/ionicons5'
 import { pinyin } from 'pinyin-pro'
-import { createPosHeldOrder, createPosOrder, deletePosHeldOrder, getPosHeldOrders } from '@/api/order'
+import { createPosHeldOrder, createPosOrder, deletePosHeldOrder, getPosOrderPayStatus, getPosHeldOrders, listPosPayMethods, payPosOrderCode } from '@/api/order'
 import { getCouponRecords } from '@/api/marketing'
 import { getProductByBarcode, getProductDetail, getProductList } from '@/api/product'
 import { getCommunityProfile } from '@/api/user'
 import type { PosHeldOrder, Product, Sku, User } from '@/api/types'
 import UserPicker from '@/components/UserPicker.vue'
-import { DELIVERY_TYPE } from '@/constants/order'
+import { DELIVERY_TYPE, PAY_TYPE, payTypeText } from '@/constants/order'
 
 /**
  * 商品下单 Tab（收银台核心，点单收银机风格）
@@ -942,10 +975,37 @@ interface PaidReceipt {
 }
 const lastPaid = ref<PaidReceipt | null>(null)
 
-// 支付方式选项（pay_type：4=现金；后续微信/支付宝付款码渠道在此追加，服务端未开放的值会被拒绝）
-const PAY_METHODS = [{ label: '现金', value: 4 }]
-const payType = ref(PAY_METHODS[0]!.value)
-const payMethodLabel = computed(() => PAY_METHODS.find((m) => m.value === payType.value)?.label ?? '现金')
+// 支付方式动态渲染：现金恒可用；付款码选项按支付配置出现——两渠道齐备返回 5「付款码支付」、
+// 仅微信可用返回 5「微信付款码」、仅支付宝可用返回 6「支付宝付款码」（后端 /pos/pay-methods 下发）。
+// 两渠道齐备时为单一入口（pay_type=5 占位下单），实际渠道由扫码时的付款码前缀自动识别
+const PAY_METHODS = ref<Array<{ label: string; value: number }>>([{ label: '现金', value: PAY_TYPE.CASH }])
+const payType = ref<number>(PAY_TYPE.CASH)
+const payMethodLabel = computed(() => PAY_METHODS.value.find((m) => m.value === payType.value)?.label ?? '现金')
+
+/**
+ * 判断是否付款码支付（占位值 5/6 均走「下单建待支付单→扫码扣款」两步化流程）
+ * @param t 支付方式
+ */
+const isCodePay = (t: number) => t === PAY_TYPE.WECHAT_CODE || t === PAY_TYPE.ALIPAY_CODE
+
+/**
+ * 拉取收银台可用支付方式（挂载时调用一次；服务端未开放的值会被下单接口拒绝）
+ */
+async function loadPayMethods() {
+  try {
+    const res = await listPosPayMethods()
+    if (res.data.code !== 0) return
+    const list = (res.data.data.list || []).map((m) => ({ label: m.label, value: m.pay_type }))
+    if (list.length) PAY_METHODS.value = list
+  } catch {
+    // 拉取失败降级保留现金，服务端渠道校验兜底
+  }
+}
+
+// 支付方式列表变化时，若当前选中项已不存在（如配置刚关闭付款码），回落到现金
+watch(PAY_METHODS, (list) => {
+  if (!list.some((m) => m.value === payType.value)) payType.value = PAY_TYPE.CASH
+})
 
 /**
  * 渠道文案（小票展示）
@@ -958,7 +1018,38 @@ function channelLabelOf(type: number): string {
 }
 
 /**
- * 结账：代客下单（source=收银台）+ 按所选支付方式当场结清（当前仅现金）
+ * 组装结账小票快照（必须 resetWorkspace 前调用，购物车清空后取不到值）
+ * @param orderNo 订单号
+ * @param payAmount 实收金额
+ * @param pickupCode 取货码（自提单）
+ * @param payLabel 支付方式文案
+ */
+function buildReceipt(orderNo: string, payAmount: number, pickupCode: string | undefined, payLabel: string) {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  lastPaid.value = {
+    order_no: orderNo,
+    pay_amount: payAmount,
+    pickup_code: pickupCode || undefined,
+    channel_label: channelLabelOf(deliveryType.value),
+    pay_label: payLabel,
+    member_label: member.value ? member.value.nickname || member.value.phone || `会员#${member.value.id}` : '散客',
+    items: cart.value.map((r) => ({
+      name: r.product_name,
+      spec: r.spec_name,
+      qty: r.quantity,
+      subtotal: Math.round(r.price * r.quantity * 100) / 100,
+    })),
+    total_amount: Math.round(totalAmount.value * 100) / 100,
+    coupon_discount: Math.round(couponDiscount.value * 100) / 100,
+    manual_discount: Math.round(manualDiscount.value * 100) / 100,
+    time: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
+  }
+}
+
+/**
+ * 结账：代客下单（source=收银台），按所选支付方式分两路：
+ * 现金——下单即收款完成，出小票；付款码——只建待支付支付单（不收款），弹扫码窗扫顾客付款码扣款
  * 改价/抹零/整单改价折算为 manual_discount 提交，券优惠由服务端按券规则结算
  */
 function onCheckout() {
@@ -968,12 +1059,28 @@ function onCheckout() {
     message.warning('配送订单请填写完整的联系人、电话与地址')
     return
   }
-  // 折算到分位，避免浮点尾差
   const discount = Math.round(manualDiscount.value * 100) / 100
-  const couponOff = Math.round(couponDiscount.value * 100) / 100
   const parts = [`商品￥${totalAmount.value.toFixed(2)}`]
-  if (couponOff > 0) parts.push(`券优惠￥${couponOff.toFixed(2)}`)
+  if (couponDiscount.value > 0) parts.push(`券优惠￥${couponDiscount.value.toFixed(2)}`)
   if (discount > 0) parts.push(`优惠￥${discount.toFixed(2)}`)
+
+  // 付款码两步化：确认后先下单建待支付单，再弹扫码窗（渠道由付款码前缀自动识别）
+  if (isCodePay(payType.value)) {
+    // 渠道不受理 0 元扣款：前置拦截，避免产生无法收款的订单（服务端命中时也会自动取消并报错兜底）
+    if (payableAmount.value <= 0) {
+      message.warning('付款码支付不支持 0 元订单，请改用现金收款')
+      return
+    }
+    dialog.warning({
+      title: '付款码收款',
+      content: `将创建订单 ￥${payableAmount.value.toFixed(2)}（${parts.join('，')}），随后扫码扣款，是否继续？`,
+      positiveText: '创建订单并扫码',
+      negativeText: '取消',
+      onPositiveClick: () => createOrderAndOpenCodePay(discount),
+    })
+    return
+  }
+
   dialog.warning({
     title: `${payMethodLabel.value}结账`,
     content: `确认已收${payMethodLabel.value} ￥${payableAmount.value.toFixed(2)}（${parts.join('，')}），为${member.value ? `会员 ${member.value.nickname || member.value.phone}` : '散客'}结账？`,
@@ -1000,26 +1107,7 @@ function onCheckout() {
         })
         if (res.data.code === 0) {
           // 组装小票快照（resetWorkspace 会清空购物车，必须先取值）
-          const now = new Date()
-          const pad = (n: number) => String(n).padStart(2, '0')
-          lastPaid.value = {
-            order_no: res.data.data.order_no,
-            pay_amount: res.data.data.pay_amount,
-            pickup_code: res.data.data.pickup_code || undefined,
-            channel_label: channelLabelOf(deliveryType.value),
-            pay_label: payMethodLabel.value,
-            member_label: member.value ? member.value.nickname || member.value.phone || `会员#${member.value.id}` : '散客',
-            items: cart.value.map((r) => ({
-              name: r.product_name,
-              spec: r.spec_name,
-              qty: r.quantity,
-              subtotal: Math.round(r.price * r.quantity * 100) / 100,
-            })),
-            total_amount: Math.round(totalAmount.value * 100) / 100,
-            coupon_discount: couponOff,
-            manual_discount: discount,
-            time: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
-          }
+          buildReceipt(res.data.data.order_no, res.data.data.pay_amount, res.data.data.pickup_code, payMethodLabel.value)
           showPaidModal.value = true
           resetWorkspace()
         }
@@ -1030,6 +1118,175 @@ function onCheckout() {
       }
     },
   })
+}
+
+// --- 付款码收款（两步化的第二步）---
+const showCodePayModal = ref(false)
+/** 扫码状态机：idle 可扫码 / submitting 扣款中 / polling 用户支付中轮询 / failed 待重扫 */
+const codePayState = ref<'idle' | 'submitting' | 'polling' | 'failed'>('idle')
+const codePayOrderNo = ref('')
+const codePayOrderId = ref(0)
+const codePayPaymentNo = ref('')
+const codePayAmount = ref(0)
+const codePayMessage = ref('')
+/** 下单响应缓存的取货码（自提单收款成功后回填小票） */
+const codePayPickupCode = ref('')
+const authCode = ref('')
+const codePayInputRef = ref<{ focus: () => void } | null>(null)
+/** 轮询定时器句柄（弹窗关闭/收款成功时清理） */
+let codePayTimer: ReturnType<typeof setTimeout> | null = null
+/** 轮询起始时间（超过 3 分钟仍 PAYING 提示走订单列表处理，不让收银台干等） */
+let codePayPollStart = 0
+
+/**
+ * 创建待支付订单并打开扫码窗（现金结账不经过此路径）
+ * @param discount 整单手动优惠（结账确认时已折算到分位）
+ */
+async function createOrderAndOpenCodePay(discount: number) {
+  checkingOut.value = true
+  try {
+    const res = await createPosOrder({
+      user_id: member.value?.id ?? 0,
+      delivery_type: deliveryType.value,
+      contact_name: contact.value.name.trim() || member.value?.nickname || '',
+      contact_phone: contact.value.phone.trim() || member.value?.phone || '',
+      contact_address: contact.value.address.trim(),
+      remark: remark.value.trim() || undefined,
+      coupon_id: couponId.value ?? 0,
+      pay_type: payType.value,
+      manual_discount: discount > 0 ? discount : undefined,
+      items: cart.value.map((r) => ({
+        sku_id: r.sku_id,
+        quantity: r.quantity,
+        price: r.price_modified ? r.price : undefined,
+      })),
+    })
+    if (res.data.code !== 0) return
+    codePayOrderId.value = res.data.data.id
+    codePayOrderNo.value = res.data.data.order_no
+    codePayPaymentNo.value = res.data.data.payment_no || ''
+    codePayAmount.value = res.data.data.pay_amount
+    codePayPickupCode.value = res.data.data.pickup_code || ''
+    codePayMessage.value = ''
+    authCode.value = ''
+    codePayState.value = 'idle'
+    showCodePayModal.value = true
+    // 等弹窗渲染后聚焦输入框，扫码枪即扫即得
+    setTimeout(() => codePayInputRef.value?.focus(), 100)
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    checkingOut.value = false
+  }
+}
+
+/**
+ * 提交付款码扣款（输入框回车触发）：PAID 出小票收工；
+ * PAYING 转轮询；FAILED 停留弹窗清码重扫；网络异常回 idle 可重试
+ */
+async function submitAuthCode() {
+  const code = authCode.value.trim()
+  if (!code || codePayState.value === 'submitting' || codePayState.value === 'polling') return
+  if (codePayAmount.value <= 0) {
+    codePayState.value = 'failed'
+    codePayMessage.value = '付款码支付不支持 0 元订单，请改用现金收款'
+    return
+  }
+  codePayState.value = 'submitting'
+  codePayMessage.value = ''
+  let finished = false
+  try {
+    const res = await payPosOrderCode(codePayOrderId.value, { payment_no: codePayPaymentNo.value, auth_code: code })
+    if (res.data.code !== 0) {
+      codePayState.value = 'failed'
+      return
+    }
+    const data = res.data.data
+    if (data.state === 'PAID') {
+      finished = true
+      await finishCodePay(payTypeText(data.pay_type))
+      return
+    }
+    if (data.state === 'PAYING') {
+      codePayState.value = 'polling'
+      codePayPollStart = Date.now()
+      scheduleCodePayPoll()
+      return
+    }
+    // 渠道确定性拒绝：清码重扫（同一支付单重试，out_trade_no 不变）
+    codePayState.value = 'failed'
+    codePayMessage.value = data.message || '扣款失败，请重新扫码'
+  } catch {
+    // 网络/服务异常：资金状态未知，回到可扫码状态由收银员重试（渠道幂等 + 对账兜底）
+    codePayState.value = 'idle'
+  } finally {
+    authCode.value = ''
+    // 未收工（失败重扫/可重试）时保持输入框聚焦，连续作业不点鼠标
+    if (!finished && showCodePayModal.value) {
+      setTimeout(() => codePayInputRef.value?.focus(), 50)
+    }
+  }
+}
+
+/**
+ * PAYING 在途轮询：向渠道核实是否已收款，已收款补收工；持续在途则 2 秒后再查；
+ * 超过 3 分钟仍未定则停止轮询提示改走订单列表，避免收银台无限等
+ */
+function scheduleCodePayPoll() {
+  if (codePayTimer) clearTimeout(codePayTimer)
+  codePayTimer = setTimeout(async () => {
+    if (!showCodePayModal.value || codePayState.value !== 'polling') return
+    try {
+      const res = await getPosOrderPayStatus(codePayOrderId.value, codePayPaymentNo.value)
+      if (res.data.code === 0 && res.data.data.paid) {
+        // 轮询路径拿不到实际扣款渠道，小票按「付款码支付」展示
+        await finishCodePay('付款码支付')
+        return
+      }
+    } catch {
+      // 单次轮询失败忽略，下一轮继续
+    }
+    if (Date.now() - codePayPollStart > 3 * 60 * 1000) {
+      codePayState.value = 'failed'
+      codePayMessage.value = '顾客长时间未完成支付，请到「订单查询」处理该笔订单'
+      return
+    }
+    scheduleCodePayPoll()
+  }, 2000)
+}
+
+/**
+ * 付款码收款成功收尾：关扫码窗 → 出小票 → 清工作区
+ * @param payLabel 支付方式文案（扣款响应按实际渠道回传）
+ */
+async function finishCodePay(payLabel: string) {
+  if (codePayTimer) {
+    clearTimeout(codePayTimer)
+    codePayTimer = null
+  }
+  showCodePayModal.value = false
+  codePayState.value = 'idle'
+  message.success('收款成功')
+  buildReceipt(codePayOrderNo.value, codePayAmount.value, codePayPickupCode.value, payLabel)
+  showPaidModal.value = true
+  resetWorkspace()
+}
+
+/**
+ * 关闭扫码窗（收银员主动放弃/ESC）：工作区保留，订单停留在待支付，
+ * 可在「订单查询」里重新收款或按超时取消；清理轮询定时器
+ */
+function onCodePayModalClose() {
+  if (codePayState.value === 'submitting' || codePayState.value === 'polling') {
+    message.warning('正在收款中，请等待结果或稍后再试')
+    return
+  }
+  if (codePayTimer) {
+    clearTimeout(codePayTimer)
+    codePayTimer = null
+  }
+  showCodePayModal.value = false
+  message.info(`订单 ${codePayOrderNo.value} 已创建未收款，可在「订单查询」继续收款`)
 }
 
 /**
@@ -1070,6 +1327,7 @@ onMounted(() => {
   void searchProducts()
   void refreshHeld()
   void loadChannelConfig()
+  void loadPayMethods()
 })
 </script>
 
@@ -1475,6 +1733,34 @@ onMounted(() => {
     color: #bbb;
   }
 }
+// 付款码扫码弹窗：金额突出展示 + 状态提示（失败红色），扫码枪连续作业友好
+.codepay-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+
+  .codepay-amount {
+    font-size: 34px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .codepay-order {
+    font-size: 12px;
+  }
+
+  .codepay-tip {
+    font-size: 13px;
+    color: #999;
+
+    &.error {
+      color: #d03050;
+      font-weight: 600;
+    }
+  }
+}
+
 .paid-wrap {
   display: flex;
   flex-direction: column;

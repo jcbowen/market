@@ -221,7 +221,8 @@ func defaultCloseAlipayOrder(ctx context.Context, s *PaymentService, paymentNo s
 //
 // 参数：
 //   - ctx: 上下文
-//   - p: 支付记录（pay_type 为 1微信 / 2支付宝）
+//   - p: 支付记录（pay_type 为 1微信 / 2支付宝 / 5微信付款码 / 6支付宝付款码，
+//     付款码单与同渠道在线支付走同一套查单接口）
 //
 // 返回值：
 //   - *channelPayResult: 归一化结果
@@ -235,9 +236,9 @@ func (s *PaymentService) queryChannelOrder(ctx context.Context, p *model.Payment
 	}
 	s.getPayConfigCached(ctx)
 	switch p.PayType {
-	case 1:
+	case 1, 5:
 		return queryWechatOrder(ctx, s, p.PaymentNo)
-	case 2:
+	case 2, 6:
 		return queryAlipayOrder(ctx, s, p.PaymentNo)
 	default:
 		return nil, fmt.Errorf("支付方式 %d 无渠道查询能力", p.PayType)
@@ -245,6 +246,8 @@ func (s *PaymentService) queryChannelOrder(ctx context.Context, p *model.Payment
 }
 
 // closeChannelOrder 关闭渠道侧未支付交易
+// 微信付款码单（pay_type=5）走撤销而非关单：付款码交易在 USERPAYING 状态下
+// 关单接口会被拒绝，只有撤销才能终止在途扣款（撤销对已支付交易失败且不退款，退款走 ProcessRefund）
 // 参数：
 //   - ctx: 上下文
 //   - p: 支付记录
@@ -259,11 +262,39 @@ func (s *PaymentService) closeChannelOrder(ctx context.Context, p *model.Payment
 	switch p.PayType {
 	case 1:
 		return closeWechatOrder(ctx, s, p.PaymentNo)
-	case 2:
+	case 2, 6:
 		return closeAlipayOrder(ctx, s, p.PaymentNo)
+	case 5:
+		return closeWechatCodeOrder(ctx, s, p.PaymentNo)
 	default:
 		return fmt.Errorf("支付方式 %d 无渠道关单能力", p.PayType)
 	}
+}
+
+// closeWechatCodeOrder 撤销微信付款码交易（V3 reverse，包级变量便于单测替换）
+// 参数：
+//   - ctx: 上下文
+//   - s: 支付服务
+//   - paymentNo: 商户订单号（本系统支付单号）
+//
+// 返回值：
+//   - error: 渠道调用或配置错误
+var closeWechatCodeOrder = defaultCloseWechatCodeOrder
+
+// defaultCloseWechatCodeOrder 撤销微信付款码交易（V3 /v3/pay/transactions/out-trade-no/{}/reverse）
+// 参数：
+//   - ctx: 上下文
+//   - s: 支付服务
+//   - paymentNo: 商户订单号（本系统支付单号）
+//
+// 返回值：
+//   - error: 渠道调用或配置错误
+func defaultCloseWechatCodeOrder(ctx context.Context, s *PaymentService, paymentNo string) error {
+	client := s.getWechatPayClient()
+	if client == nil {
+		return fmt.Errorf("微信支付未配置或配置不完整")
+	}
+	return client.ReverseOrder(ctx, paymentNo)
 }
 
 // isWechatOrderNotExist 判断微信查询错误是否为「订单不存在」

@@ -597,6 +597,10 @@ func payTypeTextOf(payType int32) string {
 		return "货到付款"
 	case 4:
 		return "现金"
+	case 5:
+		return "微信付款码"
+	case 6:
+		return "支付宝付款码"
 	default:
 		return ""
 	}

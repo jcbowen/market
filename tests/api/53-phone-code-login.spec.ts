@@ -10,7 +10,8 @@ import { uniquePhone } from '../helpers/data';
  *   - 登录缺手机号被拒绝（10001）
  *   - POST /auth/login/phone：后端开发态不校验验证码（gateway/handler/auth.go PhoneLogin
  *     只做 isValidPhone 格式校验，code 字段兼容保留），按此口径断言登录成功
- *   - 新手机号自动注册返回 user；重复登录 user.id 一致
+ *   - 新手机号自动注册返回 user，并按后台同口径补默认昵称「会员+尾号4位」；重复登录 user.id 一致
+ *   - 用户自定义昵称不被后续登录覆盖（登录链路仅在昵称为空时填默认值）
  *   - 登录 token 可访问需认证接口
  * 说明：微信登录（真实 code2Session）在排除项清单，此处不覆盖
  */
@@ -85,6 +86,7 @@ test.describe.serial('手机号验证码登录链路', () => {
     expect(body.data?.expires_in).toBeGreaterThan(0);
     expect(body.data?.user?.id).toBeGreaterThan(0);
     expect(body.data?.user?.phone).toBe(PHONE);
+    expect(body.data?.user?.nickname, '自动注册应补默认昵称').toBe(`会员${PHONE.slice(-4)}`);
   });
 
   test('6. 重复登录 user.id 一致', async ({ request }) => {
@@ -103,5 +105,21 @@ test.describe.serial('手机号验证码登录链路', () => {
     });
     const body = (await resp.json()) as ApiResponse;
     expect(body.code, `需认证接口应可访问: ${body.message}`).toBe(0);
+  });
+
+  test('8. 自定义昵称不被重复登录覆盖', async ({ request }) => {
+    const login = await phoneLogin(request, PHONE);
+    expect(login.code).toBe(0);
+    const authHeaders = { Authorization: `Bearer ${login.data!.access_token}` };
+
+    const updated = (await (
+      await request.put('/api/v1/user/profile', { data: { nickname: '张阿姨' }, headers: authHeaders })
+    ).json()) as ApiResponse<{ nickname?: string }>;
+    expect(updated.code, `修改昵称失败: ${updated.message}`).toBe(0);
+    expect(updated.data?.nickname).toBe('张阿姨');
+
+    const again = await phoneLogin(request, PHONE);
+    expect(again.code).toBe(0);
+    expect(again.data?.user?.nickname, '登录链路不应覆盖用户自定义昵称').toBe('张阿姨');
   });
 });

@@ -34,7 +34,7 @@ export const ORDER_SOURCE = {
   POS: 2,
 } as const
 
-/** 支付方式：1微信 2支付宝 3货到付款 4现金 5/6 付款码预留（与后端 orderPayTypeText 对齐） */
+/** 支付方式：1微信 2支付宝 3货到付款 4现金 5微信付款码 6支付宝付款码（与后端 orderPayTypeText 对齐） */
 export const PAY_TYPE = {
   WECHAT: 1,
   ALIPAY: 2,
@@ -55,13 +55,13 @@ export function payTypeText(payType: number): string {
     2: '支付宝',
     3: '货到付款',
     4: '现金',
-    5: '微信付款码(预留)',
-    6: '支付宝付款码(预留)',
+    5: '微信付款码',
+    6: '支付宝付款码',
   }
   return map[payType] || `支付方式${payType}`
 }
 
-/** 交班统计支付方式展示顺序（现金优先；5/6 为付款码预留位，未在清单中的支付方式排在末尾） */
+/** 交班统计支付方式展示顺序（现金优先；付款码次之，未在清单中的支付方式排在末尾） */
 export const SHIFT_PAY_TYPES: number[] = [4, 1, 2, 5, 6]
 
 /**

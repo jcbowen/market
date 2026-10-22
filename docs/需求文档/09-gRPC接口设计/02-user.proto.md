@@ -704,6 +704,7 @@ message CheckFulfillerResp {
 - `CreateRole`：`community_id` 必填且须 `>0`，角色一律社区私有；传 0 由服务端拒绝（历史「全局角色」不再可新建）。
 - `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/backfill，重复记录不报错。
 - `SetUserStatus` / `CreateMember`：会员拉黑/恢复与按手机号幂等注册（收银台与后台均可用）。`CreateMember` 以手机号为唯一键：未注册时新建会员并归属当前社区语境；已注册时不报错，复用既有会员并把 `user_communities` 关联到当前社区，`source` 标记关联来源（`admin` 后台添加 / `pos` 收银台，缺省 `admin`）。响应 `CreateMemberResp` 返回 `user`（注册或复用的会员信息）与 `is_new`（是否本次新注册）。
+- `CreateOrUpdateUser`（C 端登录链路共用：手机号登录 / 微信登录）：昵称只在为空时写入——新建会员按统一口径补默认值（有手机号为「会员+尾号 4 位」，无手机号为「微信用户」，与 `CreateMember` 一致），已有昵称不会被重复登录覆盖，用户改名走 `UpdateUserProfile`。
 - `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。履约人员 = 本社区任职中且绑定会员的员工（`CreateAdminReq.user_id` / `UpdateAdminReq.user_id` 配置，随任职增减自动生效），不再有独立的会员侧标记。
 
 ### 客户端渠道管理（2026-10-18 新增 RPC）

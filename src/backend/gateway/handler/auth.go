@@ -95,6 +95,7 @@ type loginUser struct {
 // WechatLogin 微信小程序登录
 // 凭证取自渠道管理的 mp 渠道配置，Code2Session 换取 openid，
 // 创建或更新用户、落渠道身份后签发 token
+// 昵称不随登录传入，由用户服务在首次建号时生成默认值（避免覆盖用户自定义昵称）
 //
 // 参数：
 //   - c: gin 上下文
@@ -128,11 +129,9 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 	}
 
 	u, err := h.userClient.CreateOrUpdateUser(ctx, &user.CreateUserReq{
-		Openid:   session.OpenID,
-		UnionId:  session.UnionID,
-		Nickname: "微信用户",
-		Avatar:   "",
-		Gender:   0,
+		Openid:  session.OpenID,
+		UnionId: session.UnionID,
+		Gender:  0,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

@@ -104,7 +104,7 @@ func (s *Scheduler) reconcilePending(ctx context.Context) {
 
 	var rows []model.Payment
 	if err := s.payment.db.GetDb().WithContext(ctx).
-		Where("status = 1 AND pay_type IN ? AND created_at < ? AND created_at >= ?", []int32{1, 2}, createdBefore, createdAfter).
+		Where("status = 1 AND pay_type IN ? AND created_at < ? AND created_at >= ?", []int32{1, 2, 5, 6}, createdBefore, createdAfter).
 		Where("reconcile_count < ?", config.ReconcileInt(r.MaxReconcileCount, 24)).
 		Where("(last_reconciled_at IS NULL OR last_reconciled_at < ?)", throttleBefore).
 		Order("created_at asc").
@@ -139,7 +139,7 @@ func (s *Scheduler) detectStuck(ctx context.Context) {
 
 	var rows []model.Payment
 	if err := s.payment.db.GetDb().WithContext(ctx).
-		Where("status = 5 AND transaction_id = '' AND pay_type IN ? AND updated_at >= ?", []int32{1, 2}, updatedAfter).
+		Where("status = 5 AND transaction_id = '' AND pay_type IN ? AND updated_at >= ?", []int32{1, 2, 5, 6}, updatedAfter).
 		Where("reconcile_count < ?", config.ReconcileInt(r.MaxReconcileCount, 24)).
 		Where("(last_reconciled_at IS NULL OR last_reconciled_at < ?)", throttleBefore).
 		Order("updated_at asc").
@@ -630,8 +630,9 @@ func reconcileConfirmRef(paymentNo string) string {
 }
 
 // withinReconcileWindow 判断支付单是否仍在渠道时效内，超出后回查没有意义
-// 微信下单默认 2 小时失效；支付宝受下单时的 timeout_express（对齐订单超时）约束，
-// 因此按「配置上限与订单超时取小」判定，避免对已失效交易反复发问
+// 微信在线支付下单默认 2 小时失效；支付宝（含付款码）受下单时的 timeout_express（对齐订单超时）约束；
+// 微信付款码单同样随订单超时取消而终止（超时关单走撤销），因此 2/5/6 都按
+// 「配置上限与订单超时取小」判定，避免对已失效交易反复发问
 //
 // 参数：
 //   - cfg: 全局配置
@@ -642,7 +643,7 @@ func reconcileConfirmRef(paymentNo string) string {
 func withinReconcileWindow(cfg *config.Config, p *model.Payment) bool {
 	r := cfg.Business.PaymentReconcile
 	window := time.Duration(config.ReconcileInt(r.PendingMaxMinutes, 120)) * time.Minute
-	if p.PayType == 2 {
+	if p.PayType == 2 || p.PayType == 5 || p.PayType == 6 {
 		if orderTimeout := config.ReconcileInt(cfg.Business.OrderTimeout, 1800); time.Duration(orderTimeout)*time.Second < window {
 			window = time.Duration(orderTimeout) * time.Second
 		}
