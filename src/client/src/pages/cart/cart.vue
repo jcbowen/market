@@ -642,7 +642,9 @@ function settleCommunity(communityId: number, selectedItems: CartItem[]) {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 100rpx;
+  /* iPhone 全面屏（viewport-fit=cover）下内置 tabBar 实际高 50px + 安全区，
+     只让出 100rpx 会导致结算栏下沿被 tabBar 盖住，需叠加安全区高度 */
+  bottom: calc(100rpx + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   padding: 16rpx 30rpx;

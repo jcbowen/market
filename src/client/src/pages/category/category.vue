@@ -945,7 +945,9 @@ function onSettlement() {
   top: 0;
   left: 0;
   right: 0;
-  bottom: 100rpx;
+  /* iPhone 全面屏（viewport-fit=cover）下内置 tabBar 实际高 50px + 安全区，
+     只让出 100rpx 会导致底部购物车条压住 tabBar 图标，需叠加安全区高度 */
+  bottom: calc(100rpx + env(safe-area-inset-bottom));
   /* 高于根层级 uni-tabbar（z-index 998），避免 SKU 弹窗被困在本层叠上下文内被 tabBar 遮挡 */
   z-index: 999;
   background-color: #f5f5f5;
