@@ -263,6 +263,42 @@ func (s *PaymentService) GetPaymentStatusByNo(ctx context.Context, paymentNo str
 	return &p, nil
 }
 
+// GetAlipayPayUrl 凭支付单号重新生成支付宝手机网站支付收银台链接（H5 支付引导页免登录换取用）
+// 引导页 URL 只携带不可枚举的支付单号，在系统浏览器打开后凭单号实时换取新签名的收银台链接，
+// 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题；
+// 实时重新签名也顺带解决引导页打开时旧链接 timestamp 已过期的问题
+// 调用方约束：与 GetPaymentStatusByNo 相同，payment_no 是不可枚举凭据，网关暴露在公开路由组；
+// 仅对待支付的支付宝单返回链接，其它状态返回 nil 链接，引导页据此跳结果页展示状态
+// 参数：
+//   - ctx: 上下文
+//   - paymentNo: 支付单号
+//
+// 返回值：
+//   - *model.Payment: 支付记录模型（任何状态均可见，供引导页分流）
+//   - string: 支付宝收银台链接，仅待支付且 pay_type=2 时有值
+//   - error: 参数为空或记录不存在或重新签名失败
+func (s *PaymentService) GetAlipayPayUrl(ctx context.Context, paymentNo string) (*model.Payment, string, error) {
+	p, err := s.GetPaymentStatusByNo(ctx, paymentNo)
+	if err != nil {
+		return nil, "", err
+	}
+	// 仅待支付的支付宝单可换取新链接；现金/付款码单或已终态单不给链接
+	if p.Status != 1 || p.PayType != 2 {
+		return p, "", nil
+	}
+	params, err := s.buildAlipayParams(ctx, p)
+	if err != nil {
+		return nil, "", err
+	}
+	var parsed struct {
+		AlipayPayURL string `json:"alipay_pay_url"`
+	}
+	if err := json.Unmarshal([]byte(params), &parsed); err != nil {
+		return nil, "", bizerr.New(codes.Internal, "解析支付宝调起参数失败")
+	}
+	return p, parsed.AlipayPayURL, nil
+}
+
 // BatchGetPaymentsMaxOrderIDs 单次批量查询的订单 ID 上限（后台列表每页最多 50，留足余量并封顶超大 IN）
 const BatchGetPaymentsMaxOrderIDs = 200
 

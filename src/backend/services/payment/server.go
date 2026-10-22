@@ -86,6 +86,21 @@ func (s *server) GetPaymentStatus(ctx stdctx.Context, req *payment.GetPaymentSta
 	}, nil
 }
 
+// GetAlipayPayUrl 凭支付单号换取支付宝收银台链接（H5 支付引导页免登录换取用）
+// 仅待支付的支付宝单返回链接，其它状态只回支付单状态供引导页跳结果页
+func (s *server) GetAlipayPayUrl(ctx stdctx.Context, req *payment.GetAlipayPayUrlReq) (*payment.GetAlipayPayUrlResp, error) {
+	p, payURL, err := s.paymentService.GetAlipayPayUrl(ctx, req.GetPaymentNo())
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &payment.GetAlipayPayUrlResp{
+		PaymentNo:    p.PaymentNo,
+		Status:       p.Status,
+		OrderId:      p.OrderID,
+		AlipayPayUrl: payURL,
+	}, nil
+}
+
 // BatchGetPayments 按订单批量查询成功支付记录（后台订单列表一次往返取回整页支付方式）
 func (s *server) BatchGetPayments(ctx stdctx.Context, req *payment.BatchGetPaymentsReq) (*payment.BatchGetPaymentsResp, error) {
 	list, err := s.paymentService.BatchGetPayments(ctx, req.OrderIds)

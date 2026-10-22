@@ -223,6 +223,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.POST("/payments/callback/alipay", paymentHandler.AlipayCallback)
 			// 支付状态查询（免登录）：支付宝回跳结果页轮询用，凭不可枚举的支付单号取最小字段集
 			public.GET("/payments/status", paymentHandler.PaymentStatus)
+			// 支付宝收银台链接换取（免登录）：H5 支付引导页凭支付单号实时换取新签名链接
+			public.GET("/payments/alipay/url", paymentHandler.AlipayPayUrl)
 			public.GET("/payments/channels", paymentHandler.PaymentChannels)
 		}
 

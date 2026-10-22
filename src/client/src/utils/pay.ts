@@ -93,8 +93,10 @@ export async function launchAlipayPay(paramsJson: string, paymentNo = '', orderI
   if (params.alipay_pay_url) {
     // 微信内置浏览器：直接跳转会被微信拦截卡死，跳独立引导页由用户转系统浏览器
     if (isWeixinBrowser()) {
+      // 引导页只携带支付单号（非微信打开后凭单号调公开接口实时换取支付链接），
+      // 不传支付链接本身：链接含 # 等保留字符，经 uni-app H5 路由 query 传递
+      // 会被框架编解码破坏（实测 ? 会被改写为 =，与编码层数无关），导致支付宝报 missing-method
       const query = [
-        `url=${encodeURIComponent(params.alipay_pay_url)}`,
         paymentNo ? `no=${encodeURIComponent(paymentNo)}` : '',
         orderId ? `order_id=${orderId}` : '',
       ].filter(Boolean).join('&')

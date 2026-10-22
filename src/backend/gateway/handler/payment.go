@@ -532,6 +532,35 @@ func (h *PaymentHandler) PaymentStatus(c *gin.Context) {
 	})
 }
 
+// AlipayPayUrl 凭支付单号换取支付宝收银台链接（免登录）
+// H5 支付引导页用：引导页 URL 只携带不可枚举的支付单号，打开后凭单号实时换取
+// 新签名的收银台链接，规避支付链接（含 # 等保留字符）经 uni-app H5 路由
+// query 传递时被框架编解码破坏的问题（实测 ? 会被改写为 =，与编码层数无关）；
+// 仅待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
+// 接口: GET /api/v1/payments/alipay/url?no=<payment_no>
+// 参数：
+//   - c: gin 上下文
+func (h *PaymentHandler) AlipayPayUrl(c *gin.Context) {
+	paymentNo := strings.TrimSpace(c.Query("no"))
+	if paymentNo == "" {
+		response.Error(c, errcode.ParamError, "缺少支付单号")
+		return
+	}
+	resp, err := h.paymentClient.GetAlipayPayUrl(c.Request.Context(), &payment.GetAlipayPayUrlReq{
+		PaymentNo: paymentNo,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"payment_no":     resp.PaymentNo,
+		"status":         resp.Status,
+		"order_id":       resp.OrderId,
+		"alipay_pay_url": resp.AlipayPayUrl,
+	})
+}
+
 // WechatCallback 微信支付回调
 // 读取 raw body 与微信签名头，调用 payment.HandleWechatCallback，返回 XML 成功响应
 // 参数：

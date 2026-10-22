@@ -39,6 +39,12 @@ service PaymentService {
   // 只回状态级最小字段集：payment_no 本身是不可枚举的能力凭据（ZF+UUID），
   // 不携带用户/商品/地址等隐私信息，网关注册在公开路由组
   rpc GetPaymentStatus(GetPaymentStatusReq) returns (GetPaymentStatusResp);
+  // GetAlipayPayUrl 凭支付单号重新生成支付宝手机网站支付收银台链接（H5 支付引导页免登录换取用）
+  // 引导页 URL 只携带不可枚举的支付单号，在系统浏览器打开后凭单号实时换取新签名的收银台链接，
+  // 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题
+  // （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
+  // 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
+  rpc GetAlipayPayUrl(GetAlipayPayUrlReq) returns (GetAlipayPayUrlResp);
 }
 
 // GetPaymentStatusReq 按支付单号查询支付状态
@@ -54,6 +60,21 @@ message GetPaymentStatusResp {
   double amount = 3;
   int64 order_id = 4;
   string order_no = 5;
+}
+
+// GetAlipayPayUrlReq 凭支付单号换取支付宝收银台链接
+message GetAlipayPayUrlReq {
+  string payment_no = 1;
+}
+
+// GetAlipayPayUrlResp 支付宝收银台链接换取结果
+// 仅待支付（status=1）且 pay_type=2 时 alipay_pay_url 有值；其它状态只回 status 供引导页分流
+message GetAlipayPayUrlResp {
+  string payment_no = 1;
+  // 支付单状态：1 待支付 2 已支付 3 支付失败 4 已退款 5 已关闭
+  int32 status = 2;
+  int64 order_id = 3;
+  string alipay_pay_url = 4;
 }
 
 message CreatePaymentReq {

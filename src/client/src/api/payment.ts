@@ -43,3 +43,19 @@ export function getPaymentDetail(orderId: number) {
 export function getPaymentStatusPublic(paymentNo: string) {
   return get<PaymentStatusResult>('/payments/status', { no: paymentNo }, undefined, { silent: true })
 }
+
+/**
+ * 凭支付单号换取支付宝收银台链接（免登录）
+ * 支付引导页用：引导页 URL 只携带支付单号，打开后实时换取新签名的收银台链接，
+ * 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题；
+ * 仅待支付的支付宝单返回链接，其它状态只回支付单状态
+ * @param paymentNo 支付单号
+ */
+export function getAlipayPayUrlPublic(paymentNo: string) {
+  return get<{ payment_no: string; status: number; order_id: number; alipay_pay_url: string }>(
+    '/payments/alipay/url',
+    { no: paymentNo },
+    undefined,
+    { silent: true },
+  )
+}

@@ -37,6 +37,7 @@ const (
 	PaymentService_MarkPaymentAnomalyHandled_FullMethodName = "/payment.PaymentService/MarkPaymentAnomalyHandled"
 	PaymentService_MarkPaymentPaid_FullMethodName           = "/payment.PaymentService/MarkPaymentPaid"
 	PaymentService_GetPaymentStatus_FullMethodName          = "/payment.PaymentService/GetPaymentStatus"
+	PaymentService_GetAlipayPayUrl_FullMethodName           = "/payment.PaymentService/GetAlipayPayUrl"
 )
 
 // PaymentServiceClient is the client API for PaymentService service.
@@ -75,6 +76,12 @@ type PaymentServiceClient interface {
 	// 只回状态级最小字段集：payment_no 本身是不可枚举的能力凭据（ZF+UUID），
 	// 不携带用户/商品/地址等隐私信息，网关注册在公开路由组
 	GetPaymentStatus(ctx context.Context, in *GetPaymentStatusReq, opts ...grpc.CallOption) (*GetPaymentStatusResp, error)
+	// GetAlipayPayUrl 凭支付单号重新生成支付宝手机网站支付收银台链接（H5 支付引导页免登录换取用）
+	// 引导页 URL 只携带不可枚举的支付单号，在系统浏览器打开后凭单号实时换取新签名的收银台链接，
+	// 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题
+	// （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
+	// 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
+	GetAlipayPayUrl(ctx context.Context, in *GetAlipayPayUrlReq, opts ...grpc.CallOption) (*GetAlipayPayUrlResp, error)
 }
 
 type paymentServiceClient struct {
@@ -255,6 +262,16 @@ func (c *paymentServiceClient) GetPaymentStatus(ctx context.Context, in *GetPaym
 	return out, nil
 }
 
+func (c *paymentServiceClient) GetAlipayPayUrl(ctx context.Context, in *GetAlipayPayUrlReq, opts ...grpc.CallOption) (*GetAlipayPayUrlResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAlipayPayUrlResp)
+	err := c.cc.Invoke(ctx, PaymentService_GetAlipayPayUrl_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaymentServiceServer is the server API for PaymentService service.
 // All implementations must embed UnimplementedPaymentServiceServer
 // for forward compatibility.
@@ -291,6 +308,12 @@ type PaymentServiceServer interface {
 	// 只回状态级最小字段集：payment_no 本身是不可枚举的能力凭据（ZF+UUID），
 	// 不携带用户/商品/地址等隐私信息，网关注册在公开路由组
 	GetPaymentStatus(context.Context, *GetPaymentStatusReq) (*GetPaymentStatusResp, error)
+	// GetAlipayPayUrl 凭支付单号重新生成支付宝手机网站支付收银台链接（H5 支付引导页免登录换取用）
+	// 引导页 URL 只携带不可枚举的支付单号，在系统浏览器打开后凭单号实时换取新签名的收银台链接，
+	// 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题
+	// （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
+	// 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
+	GetAlipayPayUrl(context.Context, *GetAlipayPayUrlReq) (*GetAlipayPayUrlResp, error)
 	mustEmbedUnimplementedPaymentServiceServer()
 }
 
@@ -351,6 +374,9 @@ func (UnimplementedPaymentServiceServer) MarkPaymentPaid(context.Context, *MarkP
 }
 func (UnimplementedPaymentServiceServer) GetPaymentStatus(context.Context, *GetPaymentStatusReq) (*GetPaymentStatusResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPaymentStatus not implemented")
+}
+func (UnimplementedPaymentServiceServer) GetAlipayPayUrl(context.Context, *GetAlipayPayUrlReq) (*GetAlipayPayUrlResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAlipayPayUrl not implemented")
 }
 func (UnimplementedPaymentServiceServer) mustEmbedUnimplementedPaymentServiceServer() {}
 func (UnimplementedPaymentServiceServer) testEmbeddedByValue()                        {}
@@ -679,6 +705,24 @@ func _PaymentService_GetPaymentStatus_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PaymentService_GetAlipayPayUrl_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAlipayPayUrlReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).GetAlipayPayUrl(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_GetAlipayPayUrl_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).GetAlipayPayUrl(ctx, req.(*GetAlipayPayUrlReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PaymentService_ServiceDesc is the grpc.ServiceDesc for PaymentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -753,6 +797,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPaymentStatus",
 			Handler:    _PaymentService_GetPaymentStatus_Handler,
+		},
+		{
+			MethodName: "GetAlipayPayUrl",
+			Handler:    _PaymentService_GetAlipayPayUrl_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
