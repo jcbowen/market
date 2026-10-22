@@ -175,19 +175,15 @@
           </n-alert>
 
           <n-alert type="info" style="margin-bottom: 16px;">
-            开放平台（应用详情 → 开发设置 → 接口加签与消息校验）的加签方式只有「密钥」和「证书」两种，
+            开放平台（应用详情 → 开发设置 → 接口加签方式）的加签方式只有「密钥」和「证书」两种，
             下方选项已按官方文档全称与平台叫法一一对应，所选方式必须与开放平台保持一致：
             <strong>公钥模式</strong>（平台选「密钥」）需填写应用私钥与支付宝公钥；
             <strong>公钥证书模式</strong>（平台选「证书」）需录入应用公钥证书、支付宝公钥证书与支付宝根证书（应用私钥仍单独录入）。
             方式不匹配会导致签名或验签失败。
             证书与私钥可上传文件，也可直接粘贴内容。
-            另请将下方异步通知地址配置到开放平台，支付结果才能通知到本系统；
-            通知地址由「站点设置」的部署域名派生，本页只读。
+            异步通知地址无需在开放平台配置：本系统每次下单都随请求携带 notify_url，
+            该地址由「站点设置」的部署域名派生，只需保证部署域名公网可达。
           </n-alert>
-          <div class="url-guide-row">
-            <n-text code>{{ paymentForm.suggested_urls.alipay_notify_url }}</n-text>
-            <n-button size="small" type="primary" secondary @click="copyURL(paymentForm.suggested_urls.alipay_notify_url)">复制</n-button>
-          </div>
 
           <n-grid cols="1 m:2" :x-gap="16" responsive="screen" style="margin-top: 8px;">
             <n-grid-item :span="2">
@@ -209,14 +205,9 @@
                 </div>
               </n-form-item>
             </n-grid-item>
-            <n-grid-item>
+            <n-grid-item :span="2">
               <n-form-item label="支付宝 AppID">
                 <n-input v-model:value="paymentForm.alipay.app_id" :disabled="!canUpdate" placeholder="开放平台应用 AppID" />
-              </n-form-item>
-            </n-grid-item>
-            <n-grid-item>
-              <n-form-item label="异步通知 URL">
-                <n-text code>{{ paymentForm.alipay.notify_url || '未派生' }}</n-text>
               </n-form-item>
             </n-grid-item>
             <n-grid-item :span="2">
@@ -618,7 +609,8 @@ function switchAlipaySignMode(mode: string) {
  * - ready：服务端判定就绪（当前加签方式必填项齐全且密钥自检通过）
  * - invalid：必填项都已填写但自检未通过（如私钥粘错、把应用公钥当成支付宝公钥填、证书传错位置）
  * - incomplete：仍有必填项未填写
- * @param filledByMode 当前模式下的「必填项是否都已填写」判断
+ * notify_url 不在页面展示（由站点域名派生、下单时随请求携带），但服务端仍将其列为必填，
+ * 故此处保留判定：未派生时必须归入 incomplete，否则会误报为「必填项均已填写但自检未通过」
  */
 const alipayStatus = computed<{ level: 'ready' | 'invalid' | 'incomplete'; reason: string }>(() => {
   if (paymentForm.alipay_ready) return { level: 'ready', reason: '' }
