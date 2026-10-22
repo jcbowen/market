@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/jcbowen/jcbaseGo/component/security"
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 
 	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
@@ -362,7 +365,7 @@ func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCall
 		ok, err = alipaysdk.RsaCheckV1(params, cfg.AlipayPublicKey, false)
 	}
 	if err != nil || !ok {
-		// 只记参数 key 列表不记值（sign/金额等值不入日志），
+		// 只记参数 key 列表不记值（sign/金额等值不入标准日志），
 		// 用于区分「通知缺字段」（如公钥模式应用的通知不带 alipay_cert_sn）与「值不匹配」
 		keys := make([]string, 0, len(params))
 		for k := range params {
@@ -370,6 +373,7 @@ func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCall
 		}
 		sort.Strings(keys)
 		log.Printf("支付宝回调验签失败: %v 通知参数字段=%v", err, keys)
+		s.recordAlipayVerifyEvidence(params, cfg, err)
 		return nil, fmt.Errorf("支付宝回调验签失败")
 	}
 
@@ -406,4 +410,91 @@ func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCall
 		TransactionID: transactionID,
 		Amount:        amount,
 	}, nil
+}
+
+// alipayVerifyQuotaKey 验签取证进程记录的封顶键
+// 取全局固定值而非支付单号/IP：伪造回调会带随机单号与分散 IP，
+// 按单号或 IP 封顶等于不封顶，固定键把该类型记录总量钉在每分钟 QuotaPerMinute 条
+const alipayVerifyQuotaKey = "payment_verify_alipay"
+
+// fp12 取字符串 sha256 十六进制的前 12 位，用于比对「两侧看到的是否同一份内容」
+// 只留前 12 位：取证只需要「相同/不同」的判据，完整摘要会让调试页与流水原文一样可被拿去做离线碰撞比对
+// 参数：
+//   - value: 待取指纹的字符串，空串同样有确定值
+//
+// 返回值：
+//   - string: 12 位十六进制指纹
+func fp12(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// recordAlipayVerifyEvidence 把一次验签失败的取证要素记入 debugger 进程级日志
+// 与网关「支付宝回调」记录（失败时含全量通知原文与 sign）按 out_trade_no 对齐，两条一比即可定性：
+//   - notify_cert_sn 与 local_cert_sn 不等 / 通知侧为空 → 支付宝不是用我们这张证书签的通知（加签载体不一致）；
+//   - content_fp 与用网关原文复算的串不等 → 字段在解析或拼接环节丢失（商户侧问题）；
+//   - 两者都对得上、sign_fp 却验不过 → 验签公钥与签名私钥不同源（证书该更新了）。
+//
+// 只落指纹不落原文：原文已由网关记录覆盖，重复落一份只是放大隐私面。
+// debugger 未启用（实例为 nil）或命中封顶时静默跳过，标准日志仍照常输出 key 列表。
+// 参数：
+//   - params: 通知参数（未经改写的原始 form 参数）
+//   - cfg: 当前支付宝配置（决定取证书公钥还是配置公钥）
+//   - verifyErr: SDK 返回的验签错误，nil 表示「无异常但签名与原文不匹配」
+func (s *PaymentService) recordAlipayVerifyEvidence(params map[string]string, cfg config.AlipayConfig, verifyErr error) {
+	rec := debuglog.StartQuoted("支付宝回调验签", "payment_verify_alipay", alipayVerifyQuotaKey)
+	if rec == nil {
+		return
+	}
+
+	// 待验签串按 SDK 同规则复算（剔除 sign/sign_type 后按 key 升序拼接非空值），
+	// 长度与指纹即可判断商户侧拼出的串与支付宝签名时用的串是否同一份
+	contentParams := make(map[string]string, len(params))
+	for k, v := range params {
+		contentParams[k] = v
+	}
+	delete(contentParams, "sign")
+	delete(contentParams, "sign_type")
+	content := alipaysdk.GetSignContentForNotify(contentParams)
+
+	signature := params["sign"]
+	reason := "签名与待验签串不匹配"
+	if verifyErr != nil {
+		reason = verifyErr.Error()
+	}
+	fields := map[string]interface{}{
+		"out_trade_no":   params["out_trade_no"],
+		"notify_id":      params["notify_id"],
+		"verify_error":   reason,
+		"param_count":    len(params),
+		"content_length": len(content),
+		"content_fp":     fp12(content),
+		"sign_length":    len(signature),
+		"sign_fp":        fp12(signature),
+	}
+
+	if cfg.IsCertMode() {
+		// 证书模式：验签公钥取自支付宝公钥证书，序列号命中关系直接给出，
+		// 不必让排查人再去两处抄 SN 手工比对
+		fields["alipay_mode"] = config.AlipayModeCert
+		fields["notify_cert_sn"] = strings.TrimSpace(params["alipay_cert_sn"])
+		localSN, err := alipaysdk.CertSN(cfg.AlipayPublicCert)
+		if err != nil {
+			fields["local_cert_sn"] = "不可解析: " + err.Error()
+		} else {
+			fields["local_cert_sn"] = localSN
+			fields["cert_sn_matched"] = localSN == strings.TrimSpace(params["alipay_cert_sn"])
+		}
+		if pubKey, err := alipaysdk.CertPublicKey(cfg.AlipayPublicCert); err != nil {
+			fields["verify_key_fp"] = "不可解析: " + err.Error()
+		} else {
+			fields["verify_key_fp"] = fp12(pubKey)
+		}
+	} else {
+		fields["alipay_mode"] = config.AlipayModePublic
+		fields["verify_key_fp"] = fp12(cfg.AlipayPublicKey)
+	}
+
+	rec.Error("支付宝回调验签失败", fields)
+	_ = rec.EndProcess(debuglog.StatusFailed)
 }

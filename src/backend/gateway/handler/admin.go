@@ -2661,13 +2661,14 @@ func (h *AdminHandler) SyncAdminOrderPayment(c *gin.Context) {
 		return
 	}
 
-	// 社区隔离 + 读出订单（同步本身要求订单仍处待支付族，取消单只能走退款）
+	// 社区隔离 + 读出订单：待支付族走「核实并补同步」；已取消单走「渠道核实挂账」——
+	// 只查渠道 + 产出人工退款待办，不改任何资金状态（订单状态机不允许 6→2）
 	o, err := h.orderInCommunity(c, id)
 	if err != nil {
 		response.Error(c, errcode.NoPermission, err.Error())
 		return
 	}
-	if o.Status != 1 && o.Status != 100 {
+	if o.Status != 1 && o.Status != 100 && o.Status != 6 {
 		response.Error(c, errcode.OperationNotAllowed, "订单当前状态无需同步支付状态")
 		return
 	}

@@ -227,10 +227,11 @@ func newCallbackTestDebugger(t *testing.T) *debugger.Debugger {
 }
 
 // TestAlipayCallbackRecordsProcessLog 支付宝回调受理情况记入 debugger 进程级日志
-// 覆盖（排查口径，详见需求文档 07-基础设施/03）：
-//   - 成功回调落 completed 记录，摘要含 out_trade_no 等白名单字段；
-//   - sign 等非白名单参数绝不入调试库（SkipPaths 之外的第二道防线在记录侧同样生效）；
-//   - 受理失败落 failed 记录并带 error 字段（界面错误徽标可筛选）；
+// 覆盖（排查口径，详见需求文档 07-基础设施/03 与 07）：
+//   - 成功回调落 completed 记录，摘要只含 out_trade_no 等白名单字段；
+//   - 失败回调落 failed 记录并带全量通知原文（含 sign、alipay_cert_sn）与报文元信息，
+//     这是验签类故障唯一可离线复算的取证入口；
+//   - 受理失败带 error 字段（界面错误徽标可筛选）；
 //   - 未登记实例（debugger 未启用/降级）时不 panic、无记录。
 //
 // 封顶行为见 common/debuglog 包测试（滑窗包级共享，不在此重复）
@@ -274,13 +275,13 @@ func TestAlipayCallbackRecordsProcessLog(t *testing.T) {
 		}
 	})
 
-	t.Run("受理失败落 failed 并带 error", func(t *testing.T) {
+	t.Run("受理失败落 failed 且带全量原文与 sign", func(t *testing.T) {
 		dbg := newCallbackTestDebugger(t)
 		debuglog.SetInstance(dbg)
 		t.Cleanup(func() { debuglog.SetInstance(nil) })
 
 		stub := &stubAlipayCallbackClient{err: errors.New("验签失败")}
-		body := "out_trade_no=PAY901&total_amount=1.00&sign=x"
+		body := "out_trade_no=PAY901&total_amount=1.00&sign=x&alipay_cert_sn=abc123&buyer_logon_id=138****1234"
 		if got := doAlipayCallback(t, stub, "application/x-www-form-urlencoded", body); got != "failure" {
 			t.Fatalf("响应 = %q, 期望 failure", got)
 		}
@@ -296,6 +297,41 @@ func TestAlipayCallbackRecordsProcessLog(t *testing.T) {
 		fields := entry.LoggerLogs[0].Fields
 		if fields["error"] != "验签失败" || fields["out_trade_no"] != "PAY901" {
 			t.Errorf("失败摘要字段错误: %+v", fields)
+		}
+		// 取证口径：失败必须能离线复算待验签串，故 sign 与证书序列号原样入库
+		if fields["sign"] != "x" || fields["alipay_cert_sn"] != "abc123" {
+			t.Errorf("失败记录应保留 sign 与 alipay_cert_sn 原文: %+v", fields)
+		}
+		if fields["content_type"] != "application/x-www-form-urlencoded" || fields["param_count"] != 5 {
+			t.Errorf("报文元信息缺失: %+v", fields)
+		}
+		if bytes, _ := fields["body_bytes"].(int); bytes != len(body) {
+			t.Errorf("body_bytes 应为 %d，实际 %+v", len(body), fields["body_bytes"])
+		}
+	})
+
+	t.Run("请求体超限只落元信息并带 parse_error", func(t *testing.T) {
+		dbg := newCallbackTestDebugger(t)
+		debuglog.SetInstance(dbg)
+		t.Cleanup(func() { debuglog.SetInstance(nil) })
+
+		stub := &stubAlipayCallbackClient{}
+		// 超限判定在读体阶段触发，此时没有任何已解析参数可记
+		body := "out_trade_no=PAY903&sign=" + strings.Repeat("A", alipayNotifyBodyLimit)
+		if got := doAlipayCallback(t, stub, "application/x-www-form-urlencoded", body); got != "failure" {
+			t.Fatalf("响应 = %q, 期望 failure", got)
+		}
+
+		entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
+		if err != nil || total != 1 {
+			t.Fatalf("应落 1 条进程记录，实际 total=%d err=%v", total, err)
+		}
+		fields := entries[0].LoggerLogs[0].Fields
+		if fields["parse_error"] == nil || fields["param_count"] != 0 {
+			t.Errorf("超限场景应带 parse_error 且无已解析参数: %+v", fields)
+		}
+		if fields["body_bytes"] != alipayNotifyBodyLimit+1 {
+			t.Errorf("body_bytes 应为读到的 %d 字节，实际 %+v", alipayNotifyBodyLimit+1, fields["body_bytes"])
 		}
 	})
 

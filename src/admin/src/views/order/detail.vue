@@ -266,6 +266,7 @@ const refundVisible = ref(false)
 const refundOrderId = ref<number | null>(null)
 const markPaidVisible = ref(false)
 const syncingPayment = ref(false)
+const verifyingStuck = ref(false)
 
 /**
  * 用户字段点击：上抛 view-user 事件，由页面层打开会员订单弹窗
@@ -389,6 +390,19 @@ const isWaitingOnlinePayment = computed(() => {
   return d.pay_type === PAY_TYPE.WECHAT || d.pay_type === PAY_TYPE.ALIPAY
 })
 
+/**
+ * 已取消的渠道支付单：挂账检测扫描只覆盖关闭后 120 分钟内的单，
+ * 超窗后靠此入口人工核实渠道是否已收款（已收款则到商户平台按交易号退款）
+ */
+const isCancelledChannelPayment = computed(() => {
+  const d = detail.value
+  if (!d || d.status !== ORDER_STATUS.CANCELLED) {
+    return false
+  }
+  const t = d.pay_type
+  return t === PAY_TYPE.WECHAT || t === PAY_TYPE.ALIPAY || t === PAY_TYPE.WECHAT_CODE || t === PAY_TYPE.ALIPAY_CODE
+})
+
 // --- 通知报文原文按需展开（原文只在有 payment:raw:view 权限时下发，实际仅超管） ---
 const rawOpenIds = ref(new Set<number>())
 
@@ -410,7 +424,7 @@ function toggleRaw(id: number) {
 type OrderAction = {
   key: string
   label: string
-  type: 'default' | 'primary' | 'success' | 'error'
+  type: 'default' | 'primary' | 'success' | 'warning' | 'error'
   loading?: boolean
   run: () => void
 }
@@ -430,6 +444,10 @@ const actions = computed<OrderAction[]>(() => {
   if (isWaitingOnlinePayment.value) {
     list.push({ key: 'sync', label: '同步支付状态', type: 'default', loading: syncingPayment.value, run: () => syncPayment(d) })
     list.push({ key: 'mark-paid', label: '标记已支付', type: 'default', run: () => (markPaidVisible.value = true) })
+  }
+  // 已取消的渠道支付单：挂账核实——渠道已收款则产出退款待办，未收款则消除疑虑
+  if (isCancelledChannelPayment.value) {
+    list.push({ key: 'verify-stuck', label: '渠道核实挂账', type: 'warning', loading: verifyingStuck.value, run: () => verifyStuckPayment(d) })
   }
   if (d.status === ORDER_STATUS.PAID && d.delivery_type === DELIVERY_TYPE.DELIVERY) {
     list.push({ key: 'ship', label: '发货', type: 'primary', run: () => openShip(d.id) })
@@ -492,6 +510,34 @@ async function syncPayment(d: OrderDetail) {
     // 错误提示由请求拦截器统一弹出
   } finally {
     syncingPayment.value = false
+  }
+}
+
+/**
+ * 渠道核实挂账：对已取消订单向渠道核实是否已收款
+ * 已收款 → 后台异常页产出人工退款待办（含渠道交易号），提示到商户平台退款；
+ * 未收款 → 提示核实结论消除疑虑。本入口只读渠道 + 写流水，不改任何资金状态
+ * @param d 订单详情
+ */
+async function verifyStuckPayment(d: OrderDetail) {
+  verifyingStuck.value = true
+  try {
+    const res = await syncOrderPayment(d.id)
+    const r = res.data.data
+    if (r.paid) {
+      message.warning(
+        `渠道已收款（交易号 ${r.transaction_id}，金额 ${r.amount}）而订单已取消，属资金挂账：` +
+          `请到商户平台按交易号人工退款，退款完成后在异常页销账`,
+      )
+    } else if (r.channel_state === 'ERROR') {
+      message.error(`渠道查询失败：${r.message || '未能确认收款状态'}`)
+    } else {
+      message.info(r.message || `渠道确认未收款（${r.channel_state}），无资金挂账`)
+    }
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    verifyingStuck.value = false
   }
 }
 

@@ -403,8 +403,14 @@ test.describe.serial('支付回调可靠性后台链路', () => {
   test('渠道链路与环境配置同口径：未配置则无可核实对象，已配置则核实/标记全链路可用', async () => {
     const order = await createPickupOrder(4);
     try {
+      // 渠道按环境实际可用性选择：channelAvailable 只保证「wechat 或 alipay 任一就绪」，
+      // 硬编码 wechat 会在「仅配置了 alipay」的环境里误走创建被拒分支
+      const channels = (await (await buyerApi.get('/api/v1/payments/channels')).json()) as ApiResponse<{
+        channels: { channel: string }[];
+      }>;
+      const useChannel = (channels.data?.channels ?? []).some((c) => c.channel === 'wechat') ? 'wechat' : 'alipay';
       const created = (await (
-        await buyerApi.post('/api/v1/payments', { data: { order_id: order.id, channel: 'wechat' } })
+        await buyerApi.post('/api/v1/payments', { data: { order_id: order.id, channel: useChannel } })
       ).json()) as ApiResponse<{ payment_no: string }>;
 
       if (!channelAvailable) {
@@ -474,6 +480,42 @@ test.describe.serial('支付回调可靠性后台链路', () => {
     } finally {
       const after = await adminOrderDetail(order.id);
       if (after.status === 1) await cancelOrder(order.id);
+    }
+  });
+
+  test('T19 已取消订单的渠道核实挂账：只产待办不改资金状态', async () => {
+    // 背景：挂账扫描只覆盖关闭后 120 分钟内的单，超窗后靠订单详情页「渠道核实挂账」人工核实；
+    // 已取消订单走 status=5 支付单的渠道核实语义——渠道已收款 → 异常页待办，未收款 → 消除疑虑，
+    // 无论哪种都不允许改动资金状态（订单状态机不允许 6→2）
+    const order = await createPickupOrder(5);
+    try {
+      let paymentCreated = false;
+      if (channelAvailable) {
+        const created = (await (
+          await buyerApi.post('/api/v1/payments', { data: { order_id: order.id, channel: 'alipay' } })
+        ).json()) as ApiResponse<{ payment_no: string }>;
+        paymentCreated = created.code === 0;
+      }
+      await cancelOrder(order.id);
+      const detail = await adminOrderDetail(order.id);
+      expect(detail.status, '订单应已取消').toBe(6);
+
+      const sync = (await (
+        await adminApi.post(`/api/v1/admin/orders/${order.id}/payment-sync`, { data: {} })
+      ).json()) as ApiResponse<SyncResult>;
+      expect(sync.code, '已取消订单应允许挂账核实').toBe(0);
+      const r = sync.data!;
+      expect(r.changed, '挂账核实不得改动资金状态').toBe(false);
+      expect(r.paid, '未支付交易的挂账核实不得判已收款').toBe(false);
+      if (paymentCreated) {
+        expect(r.payment_no.length, '应回退定位到已关闭的渠道支付单').toBeGreaterThan(0);
+        // 真实渠道下未支付交易的查询结果是无此交易/已关闭；渠道配置异常时为 ERROR（不得误判已收款）
+        expect(['NOT_EXIST', 'CLOSED', 'ERROR'], `渠道状态异常: ${r.channel_state}`).toContain(r.channel_state);
+      } else {
+        expect(r.channel_state, '无渠道支付单时无可核实对象').toBe('NO_PAYMENT');
+      }
+    } finally {
+      // 订单已取消，无遗留待支付单需清理
     }
   });
 });

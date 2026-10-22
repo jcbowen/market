@@ -274,7 +274,7 @@ func (s *Scheduler) scanStuck(ctx context.Context, stat *reconcileStat) {
 
 	var rows []model.Payment
 	if err := s.payment.db.GetDb().WithContext(ctx).
-		Where("status = 5 AND transaction_id = '' AND pay_type IN ? AND updated_at >= ?", []int32{1, 2, 5, 6}, updatedAfter).
+		Where("status = ? AND transaction_id = '' AND pay_type IN ? AND updated_at >= ?", model.PaymentStatusClosed, []int32{1, 2, 5, 6}, updatedAfter).
 		Where("reconcile_count < ?", config.ReconcileInt(r.MaxReconcileCount, 24)).
 		Where("(last_reconciled_at IS NULL OR last_reconciled_at < ?)", throttleBefore).
 		Order("updated_at asc").
@@ -499,7 +499,7 @@ func (s *Scheduler) closePaymentLocally(ctx context.Context, p *model.Payment, r
 	now := time.Now().Format(timeLayout)
 	res := s.payment.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
 		Where("payment_no = ? AND status = 1", p.PaymentNo).
-		Updates(map[string]interface{}{"status": int32(5), "updated_at": now})
+		Updates(map[string]interface{}{"status": model.PaymentStatusClosed, "updated_at": now})
 	if res.Error != nil {
 		log.Printf("[payment-scheduler] 关闭支付单失败 payment_no=%s: %v", p.PaymentNo, res.Error)
 		return

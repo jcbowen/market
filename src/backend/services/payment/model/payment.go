@@ -49,6 +49,20 @@ func (Payment) TableName() string {
 	return "payments"
 }
 
+// 支付单状态（Payment.Status）
+const (
+	// PaymentStatusPending 待支付
+	PaymentStatusPending int32 = 1
+	// PaymentStatusSuccess 支付成功
+	PaymentStatusSuccess int32 = 2
+	// PaymentStatusFailed 支付失败
+	PaymentStatusFailed int32 = 3
+	// PaymentStatusRefunded 已退款
+	PaymentStatusRefunded int32 = 4
+	// PaymentStatusClosed 已关闭（订单取消/超时后关闭，迟到回调由终态兜底忽略）
+	PaymentStatusClosed int32 = 5
+)
+
 // 支付确认来源（Payment.ConfirmSource）
 // 仅作旁证，不参与状态流转校验：confirm_source != 1 的成功支付单即「回调丢失后被系统捞回」的计数来源
 const (

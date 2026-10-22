@@ -642,24 +642,29 @@ const alipayNotifyBodyLimit = 64 << 10
 // 再交由 payment 服务做 RSA2 验签与状态流转，
 // 按支付宝规范返回纯文本 success/failure：仅业务受理成功返回 success，
 // 其余（验签失败/参数缺失/DB 异常）返回 failure 触发支付宝按通知策略重发。
-// 受理情况经 recordAlipayCallback 记入 debugger 进程级日志（摘要字段，sign 不落库）
+// 受理情况经 recordAlipayCallback 记入 debugger 进程级日志：成功只落摘要，
+// 失败落全量通知参数（含 sign），详见 alipayNotifyEvidence
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
 	start := time.Now()
 	clientIP := c.ClientIP()
+	contentType := c.GetHeader("Content-Type")
 
 	// 多读 1 字节用于判定是否超限，避免整包读入超大报文
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, alipayNotifyBodyLimit+1))
 	if err != nil || len(body) > alipayNotifyBodyLimit {
-		recordAlipayCallback(clientIP, start, nil, "failure", fmt.Sprintf("请求体读取失败或超限: %v len=%d", err, len(body)))
+		reason := fmt.Sprintf("请求体读取失败或超限: %v len=%d", err, len(body))
+		recordAlipayCallback(clientIP, start, alipayNotifyEvidence(nil, contentType, len(body), reason), "failure", reason)
 		log.Printf("支付宝回调读取请求体失败或超限: %v len=%d", err, len(body))
 		c.String(http.StatusOK, "failure")
 		return
 	}
+
 	values, err := url.ParseQuery(string(body))
 	if err != nil {
-		recordAlipayCallback(clientIP, start, nil, "failure", fmt.Sprintf("通知参数解析失败: %v", err))
+		reason := fmt.Sprintf("通知参数解析失败: %v", err)
+		recordAlipayCallback(clientIP, start, alipayNotifyEvidence(nil, contentType, len(body), reason), "failure", reason)
 		log.Printf("支付宝回调解析通知参数失败: %v", err)
 		c.String(http.StatusOK, "failure")
 		return
@@ -673,7 +678,7 @@ func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
 
 	_, err = h.paymentClient.HandleAlipayCallback(c.Request.Context(), &payment.AlipayCallbackReq{Params: params})
 	if err != nil {
-		recordAlipayCallback(clientIP, start, alipayNotifyFields(params), "failure", err.Error())
+		recordAlipayCallback(clientIP, start, alipayNotifyEvidence(params, contentType, len(body), ""), "failure", err.Error())
 		log.Printf("支付宝回调处理失败: %v", err)
 		c.String(http.StatusOK, "failure")
 		return
@@ -682,10 +687,9 @@ func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
 	c.String(http.StatusOK, "success")
 }
 
-// alipayNotifyFields 从通知参数中提取排查所需摘要字段（白名单）
-// sign 是签名值而非密钥，但无排查价值（验签失败时看签名内容也无从下手）；
-// buyer_logon_id 等买家账号字段属隐私，均不进调试记录。
-// 验签结论、原始报文以 payment 服务的 payment_notify_logs 为权威流水
+// alipayNotifyFields 从通知参数中提取成功回调的排查摘要字段（白名单）
+// 成功回调无需取证（同一事实已落 payments 表），买家账号等隐私字段不落调试库；
+// 验签结论与原始报文以 payment 服务的 payment_notify_logs 为权威流水
 // 参数：
 //   - params: url 解析后的通知参数
 //
@@ -701,6 +705,34 @@ func alipayNotifyFields(params map[string]string) map[string]interface{} {
 	return fields
 }
 
+// alipayNotifyEvidence 组装失败回调的取证字段：全量通知参数（含 sign）+ 报文元信息
+// 与成功摘要刻意不同：验签类故障只有拿到原文和签名值才可能复盘——
+// 待验签串由「除 sign/sign_type 外的全部参数按 key 升序拼接」生成，少一个字段就判不出
+// 到底是支付宝没发（如证书序列号缺失）还是我们解析丢了。
+// 落 sign 原文不构成新的伪造面：签名把 out_trade_no、total_amount 一并签死，
+// 改动任一字段即验不过，重放真实通知也只会命中同一笔已支付单的幂等分支。
+// 参数：
+//   - params: url 解析后的通知参数，解析失败时传 nil（此时只有报文元信息可记）
+//   - contentType: 请求 Content-Type（支付宝部分通知不带标准 form 头，是排查线索）
+//   - bodyLen: 请求体字节数
+//   - parseErr: 解析/读取失败原因，空串表示参数已正常解析
+//
+// 返回值：
+//   - map[string]interface{}: 取证字段，通知参数平铺为顶层键
+func alipayNotifyEvidence(params map[string]string, contentType string, bodyLen int, parseErr string) map[string]interface{} {
+	fields := make(map[string]interface{}, len(params)+4)
+	for key, value := range params {
+		fields[key] = value
+	}
+	fields["content_type"] = contentType
+	fields["body_bytes"] = bodyLen
+	fields["param_count"] = len(params)
+	if parseErr != "" {
+		fields["parse_error"] = parseErr
+	}
+	return fields
+}
+
 // recordAlipayCallback 把一次支付宝回调的受理情况记入 debugger 进程级日志
 // 回调路径整条跳过 HTTP 请求日志（SkipPaths 第二道防线），排查盲区由本函数补齐：
 // 记录到达网关后的解析、受理结果与耗时，失败以错误级标记便于界面筛选。
@@ -709,7 +741,8 @@ func alipayNotifyFields(params map[string]string) map[string]interface{} {
 // 参数：
 //   - clientIP: 客户端 IP（兼作封顶键）
 //   - start: 处理开始时间（算耗时）
-//   - fields: 通知参数摘要（alipayNotifyFields 结果），nil 表示解析失败场景
+//   - fields: 记录字段，成功为 alipayNotifyFields 摘要、失败为 alipayNotifyEvidence 取证原文；
+//     nil 仅用于极端兜底（尚未拿到任何参数）
 //   - result: success / failure
 //   - errMsg: 失败原因，成功时传空串
 func recordAlipayCallback(clientIP string, start time.Time, fields map[string]interface{}, result, errMsg string) {

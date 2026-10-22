@@ -330,7 +330,7 @@ message MarkPaymentPaidReq {
 - 订单没有待同步的渠道支付单（从未发起支付，或只有现金/货到付款单）时返回 `NO_PAYMENT`，`paid=false`、零状态改动，因此该入口可安全重复点击，也不会凭空判定收款。
 - `MarkPaymentPaid` 服务端校验链：入参非空 → 支付单存在（`codes.NotFound`）→ 非现金/货到付款（`FailedPrecondition`）→ 状态为待支付 → 填写金额与应付金额分位一致（不一致提示改用退款）。`remark` 由网关追加操作人后再落库。
 - `ListPaymentAnomaliesReq.handled` 是**筛选选择器**（0全部 1仅待处理 2仅已处理），与行数据 `PaymentAnomalyInfo.handled` 的落库值（0待处理 1已处理）口径不同，转换在服务层完成；`community_id=0` 表示不限（超管），验签失败等解析不出支付单的流水 `community_id` 为 0，故只对超管可见。
-- `with_raw` 由网关按权限点 `payment:raw:view` 决定（该权限点刻意不进社区管理员默认权限上限），服务层不判权限；`raw_body`/`headers` 仅失败与挂账场景入库，成功回调不落原文，`headers` 中签名与证书序列号入库前掩码。
+- `with_raw` 由网关按权限点 `payment:raw:view` 决定（该权限点刻意不进社区管理员默认权限上限），服务层不判权限；`raw_body`/`headers` 仅失败与挂账场景入库，成功回调不落原文，`headers` 中签名与证书序列号入库前掩码。另注意支付宝的 `raw_body` 是**含 `sign` 原文**的通知参数（2026-10-23 放开掩码）：验签类故障只有拿到签名值才能离线复算待验签串，而买家账号等字段本就原文入库，凭据出口统一由该权限点守住（详见 07-基础设施/04-第三方支付对接.md「验签失败取证」）。
 - 网关错误映射约定：payment 服务需让运营看到具体原因的业务拒绝一律用 `bizerr.New(codes.InvalidArgument/NotFound/FailedPrecondition, msg)`，`TranslateGRPCError` 才对映射码透传原始文案；裸 `fmt.Errorf` 会落到 Internal/Unknown，前端只显示「服务器内部错误」。
 
 ### 客户端渠道相关字段（2026-10-18 新增）

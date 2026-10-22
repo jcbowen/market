@@ -72,6 +72,12 @@ func (s *PaymentService) SyncPaymentFromChannel(ctx context.Context, orderID int
 		outcome.Message = "支付单已确认支付，无需同步"
 		return outcome, nil
 	}
+	// 已关闭（订单取消/超时后关闭）：走挂账核实语义——渠道已收款则产出人工退款待办，
+	// 未收款则记核实流水消除疑虑；与对账调度器 reconcileOne(closed=true) 同口径，
+	// 只读渠道 + 写流水，不改任何资金状态（订单已取消，状态机不允许再流转，钱的事走商户平台人工退款）
+	if p.Status == 5 {
+		return s.verifyClosedPaymentFromChannel(ctx, p)
+	}
 	if p.Status != 1 {
 		outcome.ChannelState = ChannelStateClosed
 		outcome.Message = fmt.Sprintf("支付单状态 %d（非待支付），本次不改动", p.Status)
@@ -151,12 +157,71 @@ func (s *PaymentService) locateSyncTarget(ctx context.Context, orderID int64, pa
 	// 现金/货到付款没有渠道可问，排除后即为「可同步」集合（付款码 5/6 与同渠道在线支付共用查单）
 	if err := query.Where("order_id = ? AND pay_type IN ? AND status = 1", orderID, []int32{1, 2, 5, 6}).
 		Order("id desc").First(&p).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
-		return nil, err
+		// 无待支付单时回退最近一笔已关闭单：已取消订单的「渠道核实挂账」入口靠它定位
+		// （订单已取消、支付单 status=5，此时核实的是「渠道是否已收款」，产出待办而非补同步）
+		if err := query.Where("order_id = ? AND pay_type IN ? AND status = ?", orderID, []int32{1, 2, 5, 6}, model.PaymentStatusClosed).
+			Order("id desc").First(&p).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
 	}
 	return &p, nil
+}
+
+// verifyClosedPaymentFromChannel 核实已关闭支付单的渠道收款结果（人工挂账检测入口）
+// 与对账调度器 reconcileOne(closed=true) 同口径：渠道已收款 → recordStuckPayment 产出
+// 人工退款待办（kind=3/result=9，含渠道交易号与金额，同一支付单已有待处理记录时去重）；
+// 渠道明确未收款/无此交易/已关闭 → 记核实流水消除疑虑；渠道仍在途 → 留痕建议稍后再核。
+// 只读渠道 + 写流水，不改任何资金状态——订单已取消后状态机不允许再流转，
+// 钱的事只能走商户平台人工退款
+// 参数：
+//   - ctx: 上下文
+//   - p: 已关闭（status=5）的支付单
+//
+// 返回值：
+//   - *syncOutcome: 核实结论（paid=true 表示渠道已收款、需人工退款）
+//   - error: 仅数据库故障
+func (s *PaymentService) verifyClosedPaymentFromChannel(ctx context.Context, p *model.Payment) (*syncOutcome, error) {
+	outcome := &syncOutcome{ChannelState: "", TransactionID: p.TransactionID, Amount: p.Amount, PaymentNo: p.PaymentNo}
+	res, queryErr := s.queryChannelOrder(ctx, p)
+	if queryErr != nil || res == nil {
+		outcome.ChannelState = ChannelStateError
+		outcome.Message = "渠道查询失败，未能确认收款状态"
+		if queryErr != nil {
+			outcome.Message = fmt.Sprintf("渠道查询失败：%s", queryErr.Error())
+		}
+		entry := notifyEntryFrom(p, model.NotifyKindManualSync, model.NotifyResultError)
+		entry.ErrorMsg = outcome.Message
+		s.recordNotifyLog(ctx, entry)
+		return outcome, nil
+	}
+	outcome.ChannelState = res.State
+	outcome.Amount = res.Amount
+	switch res.State {
+	case ChannelStatePaid:
+		outcome.Paid = true
+		outcome.TransactionID = res.TransactionID
+		// 挂账事实入库（内置同单去重），异常页产出人工退款待办
+		s.recordStuckPayment(ctx, p, res)
+		outcome.Message = "渠道已收款而支付单已关闭（资金挂账），请到商户平台按渠道交易号人工退款"
+	case ChannelStateNotExist, ChannelStateClosed:
+		outcome.Message = fmt.Sprintf("渠道确认未收款（%s），无资金挂账", res.Raw)
+		entry := notifyEntryFrom(p, model.NotifyKindManualSync, model.NotifyResultNotPaid)
+		entry.ErrorMsg = outcome.Message
+		s.recordNotifyLog(ctx, entry)
+	default:
+		// 渠道仍在途（WAIT_BUYER_PAY 等）：支付单已关闭而渠道未到终态，留痕待观察
+		outcome.Message = fmt.Sprintf("渠道交易仍在途（%s），建议稍后再次核实", res.Raw)
+		entry := notifyEntryFrom(p, model.NotifyKindManualSync, model.NotifyResultNotPaid)
+		entry.ErrorMsg = outcome.Message
+		s.recordNotifyLog(ctx, entry)
+	}
+	return outcome, nil
 }
 
 // MarkPaymentPaidManually 人工标记指定支付单为已支付

@@ -423,13 +423,13 @@ func (s *PaymentService) HandleAlipayCallback(ctx context.Context, req *payment.
 		entry.Channel = 2
 		entry.PaymentNo = paymentNo
 		entry.ErrorMsg = err.Error()
-		entry.RawBody = truncateRunes(maskAlipayNotifyParams(req.Params), notifyRawBodyMaxLen)
+		entry.RawBody = alipayNotifyRawBody(req.Params)
 		s.recordNotifyLog(ctx, entry)
 		return err
 	}
 	params.NotifyKind = model.NotifyKindCallback
 	params.Channel = 2
-	params.RawBody = maskAlipayNotifyParams(req.Params)
+	params.RawBody = alipayNotifyRawBody(req.Params)
 	return s.handlePaySuccess(ctx, params)
 }
 
@@ -635,7 +635,7 @@ func (s *PaymentService) ClosePayments(ctx context.Context, req *payment.ClosePa
 	now := time.Now().Format("2006-01-02 15:04:05")
 	res := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
 		Where("order_id = ? AND status = 1", req.OrderId).
-		Updates(map[string]interface{}{"status": int32(5), "updated_at": now})
+		Updates(map[string]interface{}{"status": model.PaymentStatusClosed, "updated_at": now})
 	if res.Error != nil {
 		return res.Error
 	}

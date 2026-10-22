@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jcbowen/jcbaseGo/component/debugger"
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 
 	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
@@ -25,6 +27,7 @@ import (
  *   - checkAlipayKeys / AlipayConfigStatus  证书模式自检与就绪原因
  *   - buildAlipayExecutor  证书模式下执行器可构建、证书缺失时不构建
  *   - parseAlipayCallback  证书模式通知验签走证书公钥，序列号不匹配即拒绝
+ *   - recordAlipayVerifyEvidence  验签失败的 debugger 取证记录（序列号判据、待验签串与 sign 指纹）
  *   - checkAlipayUploadContent  上传即校验，传错文件不入库
  *   - checkNotifyURL  通知地址格式服务端兜底
  *
@@ -327,4 +330,148 @@ func TestCheckNotifyURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+/**
+ * TestParseAlipayCallbackRecordsVerifyEvidence 验签失败的 debugger 取证记录
+ *
+ * 覆盖：
+ *   - 记录内容与判据：alipay_mode、通知侧 alipay_cert_sn、本地证书序列号与是否命中、
+ *     待验签串长度与指纹、sign 长度与指纹、参数条数与失败原因；
+ *   - 待验签串指纹与测试内独立实现的拼接规则一致，证明复算未丢字段；
+ *   - debugger 未登记（实例为 nil）时验签失败只走标准日志，不 panic。
+ *
+ * 与网关的「支付宝回调」记录（失败时含全量通知原文）用 out_trade_no 对齐即完成取证闭环。
+ */
+func TestParseAlipayCallbackRecordsVerifyEvidence(t *testing.T) {
+	priKey, _ := newTestAlipayKeys(t)
+	carrier := certAlipayConfig(t, priKey)
+	alipayCert, alipayPri := newTestAlipayCert(t, 20261)
+	localSN, err := alipaysdk.CertSN(alipayCert)
+	if err != nil {
+		t.Fatalf("计算测试证书序列号失败: %v", err)
+	}
+
+	s := &PaymentService{cfg: &config.Config{}}
+	s.payCfg = &model.PayConfig{
+		AlipayMode:       config.AlipayModeCert,
+		AlipayAppID:      testAlipayAppID,
+		AlipayPrivateKey: priKey,
+		AlipayPublicCert: alipayCert,
+		AlipayRootCert:   carrier.AlipayRootCert,
+	}
+
+	// 证书模式漏传 alipay_cert_sn：真实故障场景，此时 debugger 尚未登记，须只走标准日志不 panic
+	debuglog.SetInstance(nil)
+	t.Cleanup(func() { debuglog.SetInstance(nil) })
+	noSN := successNotifyFields(testAlipayAppID)
+	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, noSN)); err == nil {
+		t.Fatalf("缺少 alipay_cert_sn 的通知应拒绝")
+	}
+
+	dbg := newPaymentTestDebugger(t)
+	debuglog.SetInstance(dbg)
+
+	got := signedNotify(t, alipayPri, noSN)
+	if _, err := s.parseAlipayCallback(got); err == nil {
+		t.Fatalf("缺少 alipay_cert_sn 的通知应拒绝")
+	}
+
+	entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
+	if err != nil || total != 1 {
+		t.Fatalf("应落 1 条验签取证记录，实际 total=%d err=%v", total, err)
+	}
+	entry := entries[0]
+	if entry.ProcessName != "支付宝回调验签" || entry.ProcessType != "payment_verify_alipay" {
+		t.Errorf("进程标识错误: %+v", entry)
+	}
+	if entry.Status != "failed" || !entry.HasError {
+		t.Errorf("验签失败应为 failed 且带错误徽标，实际 status=%q hasErr=%v", entry.Status, entry.HasError)
+	}
+
+	fields := entry.LoggerLogs[0].Fields
+	if fields["out_trade_no"] != got["out_trade_no"] || fields["alipay_mode"] != config.AlipayModeCert {
+		t.Errorf("取证记录缺少单号或加签模式: %+v", fields)
+	}
+	// 判据主体：通知侧序列号为空、本地证书序列号与是否命中直接给出
+	if fields["notify_cert_sn"] != "" || fields["local_cert_sn"] != localSN || fields["cert_sn_matched"] != false {
+		t.Errorf("序列号判据错误: 期望 notify_cert_sn 空 / local_cert_sn=%s / matched=false，实际 %+v", localSN, fields)
+	}
+	if fields["content_fp"] != fp12(notifySignContent(got)) {
+		t.Errorf("待验签串指纹与独立实现的拼接结果不符: %+v", fields)
+	}
+	if fields["sign_fp"] != fp12(got["sign"]) || fields["sign_length"] != len(got["sign"]) {
+		t.Errorf("sign 指纹/长度错误: %+v", fields)
+	}
+	if fields["param_count"] != len(got) {
+		t.Errorf("参数条数应为 %d，实际 %+v", len(got), fields["param_count"])
+	}
+	if reason, _ := fields["verify_error"].(string); reason == "" {
+		t.Errorf("取证记录应带失败原因: %+v", fields)
+	}
+
+	// 序列号不匹配的故障形态要与「缺字段」区分开：通知侧带 SN 但与本地不等
+	const wrongNotifySN = "0123456789abcdef0123456789abcdef"
+	wrongSN := successNotifyFields(testAlipayAppID)
+	wrongSN["alipay_cert_sn"] = wrongNotifySN
+	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, wrongSN)); err == nil {
+		t.Fatalf("序列号不匹配的通知应拒绝")
+	}
+
+	entries, total, _ = dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
+	if total != 2 {
+		t.Fatalf("应落 2 条取证记录，实际 total=%d", total)
+	}
+	matched := false
+	for _, e := range entries {
+		for _, l := range e.LoggerLogs {
+			if l.Fields["notify_cert_sn"] != wrongNotifySN {
+				continue
+			}
+			matched = true
+			if l.Fields["cert_sn_matched"] != false || l.Fields["local_cert_sn"] != localSN {
+				t.Errorf("序列号不等应记为 matched=false 并保留本地序列号: %+v", l.Fields)
+			}
+		}
+	}
+	if !matched {
+		t.Fatalf("未找到序列号不匹配的取证记录: %+v", entries)
+	}
+}
+
+/**
+ * newPaymentTestDebugger 内存存储的调试器实例（不连 MySQL），供进程级记录断言使用
+ *
+ * Level 必须显式置 Info：组件 Config.Level 默认 warn，会把 Info 级记录全部丢弃；
+ * 与 gateway handler 包的同名助手保持一致（跨包测试无法复用，故各自持有）
+ *
+ * 参数：
+ *   - t: 测试对象
+ *
+ * 返回值：
+ *   - *debugger.Debugger: 可直接登记给 debuglog 的实例
+ *
+ * 异常：
+ *   - 存储或实例创建失败时 t.Fatalf
+ *
+ * 使用示例：
+ *   - dbg := newPaymentTestDebugger(t); debuglog.SetInstance(dbg)
+ */
+func newPaymentTestDebugger(t *testing.T) *debugger.Debugger {
+	t.Helper()
+	storage, err := debugger.NewMemoryStorage(200)
+	if err != nil {
+		t.Fatalf("创建内存存储失败: %v", err)
+	}
+	dbg, err := debugger.New(&debugger.Config{
+		Enabled:     true,
+		ServiceName: "payment-test",
+		MaxRecords:  200,
+		Level:       debugger.LevelInfo,
+		Storage:     storage,
+	})
+	if err != nil {
+		t.Fatalf("创建调试器实例失败: %v", err)
+	}
+	return dbg
 }
