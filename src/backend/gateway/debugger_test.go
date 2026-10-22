@@ -9,6 +9,7 @@ import (
 
 	"github.com/jcbowen/jcbaseGo"
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 )
 
 /**
@@ -122,6 +123,10 @@ func TestDebuggerDisabled(t *testing.T) {
 	if len(r.Routes()) != 0 {
 		t.Errorf("未启用时不应注册任何路由，实际 %d 条", len(r.Routes()))
 	}
+	// 未启用不得登记进程级记录实例：回调/调度器等记录点须保持静默
+	if debuglog.Instance() != nil {
+		t.Error("未启用时不应登记 debuglog 实例")
+	}
 }
 
 // TestDebuggerDegradedWhenMySQLUnreachable MySQL 不可达属降级：不 panic、不注册页面、状态可见
@@ -143,6 +148,10 @@ func TestDebuggerDegradedWhenMySQLUnreachable(t *testing.T) {
 		if strings.Contains(route.Path, "/jcbase/debug") {
 			t.Errorf("降级后不应暴露调试页面路由: %s", route.Path)
 		}
+	}
+	// 降级同样不得登记实例：否则进程记录会向不可达的存储写数据
+	if debuglog.Instance() != nil {
+		t.Error("MySQL 不可达降级时不应登记 debuglog 实例")
 	}
 }
 

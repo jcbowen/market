@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
@@ -61,6 +62,13 @@ func main() {
 	// 启动订单定时任务调度器（超时取消 + 自动收货 + 卡单退款重试）
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
+
+	// debugger 进程级日志：与 gateway 共享 debug_logs 表（ServiceName 由 entrypoint
+	// 按进程名覆写配置副本为 order-service），供调度器等异步进程记录摘要
+	dbg, stopDebugger := bootstrap.RegisterProcessDebugger(cfg)
+	defer stopDebugger()
+	debuglog.SetInstance(dbg)
+
 	go service.NewScheduler(db, rds.GetClient(), svc.refundService, cfg).Start(
 		schedulerCtx,
 		cfg.Business.OrderTimeout,

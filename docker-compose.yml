@@ -118,6 +118,13 @@ services:
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # debugger 进程级日志（与 gateway 共享 debug_logs 表，供订单调度器等异步进程记录摘要）：
+      # 开关随部署环境注入（DEBUGGER_ENABLED，与 gateway 同源，留空=沿用配置文件的 enabled: false）；
+      # service_name 按进程名硬编码——compose 下各服务共用一份配置模板（值均为 gateway），
+      # 不覆写则进程记录全部顶着 gateway 标识，无法区分来源
+      # （allinone 部署由 entrypoint sed 覆写配置副本，无需此变量）
+      DEBUGGER_ENABLED: ${DEBUGGER_ENABLED:-}
+      DEBUGGER_SERVICE_NAME: order-service
     depends_on:
       mysql:
         condition: service_healthy
@@ -168,6 +175,13 @@ services:
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # debugger 进程级日志（与 gateway 共享 debug_logs 表，供对账调度器等异步进程记录摘要）：
+      # 开关随部署环境注入（DEBUGGER_ENABLED，与 gateway 同源，留空=沿用配置文件的 enabled: false）；
+      # service_name 按进程名硬编码——compose 下各服务共用一份配置模板（值均为 gateway），
+      # 不覆写则进程记录全部顶着 gateway 标识，无法区分来源
+      # （allinone 部署由 entrypoint sed 覆写配置副本，无需此变量）
+      DEBUGGER_ENABLED: ${DEBUGGER_ENABLED:-}
+      DEBUGGER_SERVICE_NAME: payment-service
     depends_on:
       mysql:
         condition: service_healthy

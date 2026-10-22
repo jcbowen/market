@@ -11,8 +11,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 
+	"github.com/jcbowen/jcbaseGo/component/debugger"
 	jcMiddleware "github.com/jcbowen/jcbaseGo/middleware"
 
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 )
@@ -195,4 +197,109 @@ func TestAlipayCallbackBehindSetGPCMiddleware(t *testing.T) {
 			t.Fatalf("无 Content-Type 经中间件链时参数丢失: %+v", stub.params)
 		}
 	})
+}
+
+// TestAlipayCallbackRecordsProcessLog 回调受理情况记入 debugger 进程级日志
+// 覆盖（排查口径，详见需求文档 07-基础设施/03）：
+//   - 成功回调落 completed 记录，摘要含 out_trade_no 等白名单字段；
+//   - sign 等非白名单参数绝不入调试库（SkipPaths 之外的第二道防线在记录侧同样生效）；
+//   - 受理失败落 failed 记录并带 error 字段（界面错误徽标可筛选）；
+//   - 未登记实例（debugger 未启用/降级）时不 panic、无记录。
+//
+// 封顶行为见 common/debuglog 包测试（滑窗包级共享，不在此重复）
+func TestAlipayCallbackRecordsProcessLog(t *testing.T) {
+	// 内存存储的调试器实例：不连 MySQL，Level 显式 Info（组件默认 warn 会吞 Info 摘要）
+	newInstance := func(t *testing.T) *debugger.Debugger {
+		t.Helper()
+		storage, err := debugger.NewMemoryStorage(200)
+		if err != nil {
+			t.Fatalf("创建内存存储失败: %v", err)
+		}
+		dbg, err := debugger.New(&debugger.Config{
+			Enabled:     true,
+			ServiceName: "gateway-test",
+			MaxRecords:  200,
+			Level:       debugger.LevelInfo,
+			Storage:     storage,
+		})
+		if err != nil {
+			t.Fatalf("创建调试器实例失败: %v", err)
+		}
+		return dbg
+	}
+
+	t.Run("成功回调落 completed 且不含 sign", func(t *testing.T) {
+		dbg := newInstance(t)
+		debuglog.SetInstance(dbg)
+		t.Cleanup(func() { debuglog.SetInstance(nil) })
+
+		stub := &stubAlipayCallbackClient{}
+		body := "app_id=2021000000000000&out_trade_no=PAY900&trade_status=TRADE_SUCCESS&total_amount=9.90&notify_id=NID900&sign=SHOULD_NOT_RECORD&buyer_logon_id=138****1234"
+		if got := doAlipayCallback(t, stub, "application/x-www-form-urlencoded", body); got != "success" {
+			t.Fatalf("响应 = %q, 期望 success", got)
+		}
+
+		entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
+		if err != nil || total != 1 {
+			t.Fatalf("应落 1 条进程记录，实际 total=%d err=%v", total, err)
+		}
+		entry := entries[0]
+		if entry.ProcessName != "支付宝回调" || entry.ProcessType != "payment_callback_alipay" {
+			t.Errorf("进程标识错误: %+v", entry)
+		}
+		if entry.Status != "completed" {
+			t.Errorf("状态应为 completed，实际 %q", entry.Status)
+		}
+		if len(entry.LoggerLogs) != 1 || entry.LoggerLogs[0].Message != "支付宝回调受理完成" {
+			t.Fatalf("日志内容错误: %+v", entry.LoggerLogs)
+		}
+		fields := entry.LoggerLogs[0].Fields
+		if fields["out_trade_no"] != "PAY900" || fields["trade_status"] != "TRADE_SUCCESS" ||
+			fields["total_amount"] != "9.90" || fields["result"] != "success" {
+			t.Errorf("摘要字段缺失: %+v", fields)
+		}
+		// 凭据与买家账号不入库：sign/buyer_logon_id/app_id 均不在白名单
+		for _, key := range []string{"sign", "buyer_logon_id", "app_id", "sign_type"} {
+			if _, ok := fields[key]; ok {
+				t.Errorf("非白名单字段 %q 不应入调试库: %+v", key, fields)
+			}
+		}
+	})
+
+	t.Run("受理失败落 failed 并带 error", func(t *testing.T) {
+		dbg := newInstance(t)
+		debuglog.SetInstance(dbg)
+		t.Cleanup(func() { debuglog.SetInstance(nil) })
+
+		stub := &stubAlipayCallbackClient{err: errors.New("验签失败")}
+		body := "out_trade_no=PAY901&total_amount=1.00&sign=x"
+		if got := doAlipayCallback(t, stub, "application/x-www-form-urlencoded", body); got != "failure" {
+			t.Fatalf("响应 = %q, 期望 failure", got)
+		}
+
+		entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
+		if err != nil || total != 1 {
+			t.Fatalf("应落 1 条进程记录，实际 total=%d err=%v", total, err)
+		}
+		entry := entries[0]
+		if entry.Status != "failed" || !entry.HasError {
+			t.Errorf("失败记录应为 failed 且 HasError，实际 status=%q hasErr=%v", entry.Status, entry.HasError)
+		}
+		fields := entry.LoggerLogs[0].Fields
+		if fields["error"] != "验签失败" || fields["out_trade_no"] != "PAY901" {
+			t.Errorf("失败摘要字段错误: %+v", fields)
+		}
+	})
+
+	t.Run("未登记实例时不 panic 无记录", func(t *testing.T) {
+		debuglog.SetInstance(nil)
+		t.Cleanup(func() { debuglog.SetInstance(nil) })
+
+		stub := &stubAlipayCallbackClient{}
+		if got := doAlipayCallback(t, stub, "application/x-www-form-urlencoded", "out_trade_no=PAY902"); got != "success" {
+			t.Fatalf("响应 = %q, 期望 success（记录缺失不影响受理）", got)
+		}
+	})
+	// 注：同 IP 每分钟封顶行为由 common/debuglog 包的 TestQuotaPerMinuteCap 覆盖
+	// （封顶滑窗为包级共享，handler 层多用例会相互消耗配额，故不在此重复验证）
 }

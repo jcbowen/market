@@ -780,3 +780,40 @@ func TestSchedulerCancelGuardConfirmsChannel(t *testing.T) {
 		}
 	})
 }
+
+// TestShouldRecordOrder 空转轮次不落库的判定矩阵
+// 组件 StartProcess 创建即落库，判定必须在跑完子任务后做（见 runOnce 注释）：
+// 无任何动作与失败的轮次只打标准日志，防止 1 分钟一轮挤占 debug_logs 全表上限
+func TestShouldRecordOrder(t *testing.T) {
+	cases := []struct {
+		name string
+		stat orderStat
+		want bool
+	}{
+		{"全零空转不记录", orderStat{}, false},
+		{"兜底恢复即记录", orderStat{recovered: 2}, true},
+		{"超时取消即记录", orderStat{cancelled: 1}, true},
+		{"配送单自动完成即记录", orderStat{completed: 1}, true},
+		{"自提单自动完成即记录", orderStat{pickup: 1}, true},
+		{"卡单退款重试成功即记录", orderStat{refundOK: 1}, true},
+		{"超时退款自动审批即记录", orderStat{approved: 1}, true},
+		{"失败即记录", orderStat{failed: 1}, true},
+	}
+	for _, c := range cases {
+		if got := shouldRecordOrder(c.stat); got != c.want {
+			t.Errorf("%s: shouldRecordOrder(%+v) = %v, 期望 %v", c.name, c.stat, got, c.want)
+		}
+	}
+}
+
+// TestOrderStatMerge 子任务统计汇总不丢计数
+func TestOrderStatMerge(t *testing.T) {
+	var total orderStat
+	total.merge(orderStat{cancelled: 1, completed: 2})
+	total.merge(orderStat{pickup: 1, refundOK: 1, failed: 1})
+	total.merge(orderStat{approved: 1, recovered: 3})
+	want := orderStat{recovered: 3, cancelled: 1, completed: 2, pickup: 1, refundOK: 1, approved: 1, failed: 1}
+	if total != want {
+		t.Errorf("merge 结果 = %+v, 期望 %+v", total, want)
+	}
+}

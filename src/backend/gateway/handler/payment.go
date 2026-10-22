@@ -3,17 +3,20 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
 	"github.com/jcbowen/market/src/backend/common/channel"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -563,11 +566,16 @@ func (h *PaymentHandler) AlipayPayUrl(c *gin.Context) {
 
 // WechatCallback 微信支付回调
 // 读取 raw body 与微信签名头，调用 payment.HandleWechatCallback，返回 XML 成功响应
+// 受理情况经 recordWechatCallback 记入 debugger 进程级日志（请求体为渠道密文，只记元数据）
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) WechatCallback(c *gin.Context) {
+	start := time.Now()
+	clientIP := c.ClientIP()
+
 	body, err := c.GetRawData()
 	if err != nil {
+		recordWechatCallback(clientIP, start, len(body), "failure", fmt.Sprintf("读取请求体失败: %v", err))
 		response.Error(c, errcode.ParamError)
 		return
 	}
@@ -584,10 +592,43 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 		Headers: headers,
 	})
 	if err != nil {
+		recordWechatCallback(clientIP, start, len(body), "failure", err.Error())
 		c.String(http.StatusOK, "<xml><return_code><![CDATA[FAIL]]></return_code></xml>")
 		return
 	}
+	recordWechatCallback(clientIP, start, len(body), "success", "")
 	c.String(http.StatusOK, "<xml><return_code><![CDATA[SUCCESS]]></return_code></xml>")
+}
+
+// recordWechatCallback 把一次微信回调的受理情况记入 debugger 进程级日志
+// 微信 V3 通知体为渠道密文（resource.ciphertext），解析无排查价值，故只记
+// 体量/结果/错误/IP/耗时；验签与解密结论以 payment 服务的 payment_notify_logs 为权威流水。
+// 按客户端 IP 频率封顶（debuglog.StartQuoted），防伪造回调刷量挤占 debug_logs
+// 参数：
+//   - clientIP: 客户端 IP（兼作封顶键）
+//   - start: 处理开始时间（算耗时）
+//   - bodySize: 请求体字节数
+//   - result: success / failure
+//   - errMsg: 失败原因，成功时传空串
+func recordWechatCallback(clientIP string, start time.Time, bodySize int, result, errMsg string) {
+	rec := debuglog.StartQuoted("微信回调", "payment_callback_wechat", clientIP)
+	if rec == nil {
+		return
+	}
+	fields := map[string]interface{}{
+		"body_size":   bodySize,
+		"result":      result,
+		"duration_ms": time.Since(start).Milliseconds(),
+		"client_ip":   clientIP,
+	}
+	if result == "success" {
+		rec.Info("微信回调受理完成", fields)
+		_ = rec.EndProcess(debuglog.StatusCompleted)
+		return
+	}
+	fields["error"] = errMsg
+	rec.Error("微信回调受理失败", fields)
+	_ = rec.EndProcess(debuglog.StatusFailed)
 }
 
 // alipayNotifyBodyLimit 支付宝异步通知请求体体积上限。
@@ -600,19 +641,25 @@ const alipayNotifyBodyLimit = 64 << 10
 // 交给 c.Request.ParseForm 会得到空参数、导致永远返回 failure 引发无限重发），
 // 再交由 payment 服务做 RSA2 验签与状态流转，
 // 按支付宝规范返回纯文本 success/failure：仅业务受理成功返回 success，
-// 其余（验签失败/参数缺失/DB 异常）返回 failure 触发支付宝按通知策略重发
+// 其余（验签失败/参数缺失/DB 异常）返回 failure 触发支付宝按通知策略重发。
+// 受理情况经 recordAlipayCallback 记入 debugger 进程级日志（摘要字段，sign 不落库）
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
+	start := time.Now()
+	clientIP := c.ClientIP()
+
 	// 多读 1 字节用于判定是否超限，避免整包读入超大报文
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, alipayNotifyBodyLimit+1))
 	if err != nil || len(body) > alipayNotifyBodyLimit {
+		recordAlipayCallback(clientIP, start, nil, "failure", fmt.Sprintf("请求体读取失败或超限: %v len=%d", err, len(body)))
 		log.Printf("支付宝回调读取请求体失败或超限: %v len=%d", err, len(body))
 		c.String(http.StatusOK, "failure")
 		return
 	}
 	values, err := url.ParseQuery(string(body))
 	if err != nil {
+		recordAlipayCallback(clientIP, start, nil, "failure", fmt.Sprintf("通知参数解析失败: %v", err))
 		log.Printf("支付宝回调解析通知参数失败: %v", err)
 		c.String(http.StatusOK, "failure")
 		return
@@ -626,9 +673,62 @@ func (h *PaymentHandler) AlipayCallback(c *gin.Context) {
 
 	_, err = h.paymentClient.HandleAlipayCallback(c.Request.Context(), &payment.AlipayCallbackReq{Params: params})
 	if err != nil {
+		recordAlipayCallback(clientIP, start, alipayNotifyFields(params), "failure", err.Error())
 		log.Printf("支付宝回调处理失败: %v", err)
 		c.String(http.StatusOK, "failure")
 		return
 	}
+	recordAlipayCallback(clientIP, start, alipayNotifyFields(params), "success", "")
 	c.String(http.StatusOK, "success")
+}
+
+// alipayNotifyFields 从通知参数中提取排查所需摘要字段（白名单）
+// sign 是签名值而非密钥，但无排查价值（验签失败时看签名内容也无从下手）；
+// buyer_logon_id 等买家账号字段属隐私，均不进调试记录。
+// 验签结论、原始报文以 payment 服务的 payment_notify_logs 为权威流水
+// 参数：
+//   - params: url 解析后的通知参数
+//
+// 返回值：
+//   - map[string]interface{}: 摘要字段，缺失的键不放入
+func alipayNotifyFields(params map[string]string) map[string]interface{} {
+	fields := make(map[string]interface{}, 4)
+	for _, key := range []string{"out_trade_no", "trade_status", "total_amount", "notify_id"} {
+		if v := strings.TrimSpace(params[key]); v != "" {
+			fields[key] = v
+		}
+	}
+	return fields
+}
+
+// recordAlipayCallback 把一次支付宝回调的受理情况记入 debugger 进程级日志
+// 回调路径整条跳过 HTTP 请求日志（SkipPaths 第二道防线），排查盲区由本函数补齐：
+// 记录到达网关后的解析、受理结果与耗时，失败以错误级标记便于界面筛选。
+// 按客户端 IP 频率封顶（debuglog.StartQuoted）：支付宝重发策略下单笔最多 25 次，
+// 远低于封顶；伪造回调则被限制在每分钟 QuotaPerMinute 条，保护 debug_logs 全表上限
+// 参数：
+//   - clientIP: 客户端 IP（兼作封顶键）
+//   - start: 处理开始时间（算耗时）
+//   - fields: 通知参数摘要（alipayNotifyFields 结果），nil 表示解析失败场景
+//   - result: success / failure
+//   - errMsg: 失败原因，成功时传空串
+func recordAlipayCallback(clientIP string, start time.Time, fields map[string]interface{}, result, errMsg string) {
+	rec := debuglog.StartQuoted("支付宝回调", "payment_callback_alipay", clientIP)
+	if rec == nil {
+		return
+	}
+	if fields == nil {
+		fields = map[string]interface{}{}
+	}
+	fields["result"] = result
+	fields["duration_ms"] = time.Since(start).Milliseconds()
+	fields["client_ip"] = clientIP
+	if result == "success" {
+		rec.Info("支付宝回调受理完成", fields)
+		_ = rec.EndProcess(debuglog.StatusCompleted)
+		return
+	}
+	fields["error"] = errMsg
+	rec.Error("支付宝回调受理失败", fields)
+	_ = rec.EndProcess(debuglog.StatusFailed)
 }

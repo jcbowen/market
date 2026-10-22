@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
@@ -38,6 +39,12 @@ func main() {
 	rds := bootstrap.InitRedis(cfg)
 
 	paymentService := service.NewPaymentService(db, cfg)
+
+	// debugger 进程级日志：与 gateway 共享 debug_logs 表（ServiceName 由 entrypoint
+	// 按进程名覆写配置副本为 payment-service），供对账调度器等异步进程记录摘要
+	dbg, stopDebugger := bootstrap.RegisterProcessDebugger(cfg)
+	defer stopDebugger()
+	debuglog.SetInstance(dbg)
 
 	// 支付对账调度器：回查待支付单（回调丢失捞回）+ 挂账检出 + 流水清理
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())

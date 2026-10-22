@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -43,6 +44,51 @@ var errOrderStateConflict = errors.New("订单状态已变更，跳过本轮调�
 
 // stuckRecoverAfter 处理中状态停留超过该时长视为进程异常中断，兜底恢复原状态
 const stuckRecoverAfter = 10 * time.Minute
+
+// orderStat 单轮订单调度统计：debugger 进程记录的落库判定与摘要字段的唯一依据
+type orderStat struct {
+	recovered int // 兜底恢复的处理中订单数
+	cancelled int // 超时未支付自动取消
+	completed int // 配送单发货超时自动完成
+	pickup    int // 自提单支付超时自动完成
+	refundOK  int // 卡单退款重试成功
+	approved  int // 超时退款自动审批
+	failed    int // 本轮失败（含扫描/抢占/事务/重试/审批出错）
+}
+
+// hasAction 本轮是否发生了实质动作或失败
+// 各任务本身只在「有单可处理」时动作，故任一计数非零即非空转；
+// 空转轮次不落库，防止 1 分钟一轮的记录挤占 debug_logs 全表上限
+// 返回值：
+//   - bool: true 表示有实质动作
+func (s orderStat) hasAction() bool {
+	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.failed > 0
+}
+
+// merge 把另一份统计并入本轮（子任务结果汇总）
+// 参数：
+//   - other: 子任务统计
+func (s *orderStat) merge(other orderStat) {
+	s.recovered += other.recovered
+	s.cancelled += other.cancelled
+	s.completed += other.completed
+	s.pickup += other.pickup
+	s.refundOK += other.refundOK
+	s.approved += other.approved
+	s.failed += other.failed
+}
+
+// shouldRecordOrder 判定本轮订单调度是否值得写入 debugger 进程记录
+// 组件 StartProcess 创建即落库，故必须在跑完子任务后判定：
+// 无任何动作与失败的轮次只打标准日志，不落调试库
+// 参数：
+//   - stat: 本轮统计
+//
+// 返回值：
+//   - bool: true 表示应记录
+func shouldRecordOrder(stat orderStat) bool {
+	return stat.hasAction()
+}
 
 // Scheduler 订单定时任务调度器
 // 负责超时未支付订单自动取消、发货后超时自动完成、卡单退款自动重试
@@ -107,14 +153,50 @@ func (s *Scheduler) Start(ctx context.Context, orderTimeout int, autoCompleteDay
 }
 
 // runOnce 单次执行两类的定时任务
+// 进程级记录口径（debugger）：先跑完子任务再判定是否记录——组件 StartProcess
+// 创建即落库，1 分钟一轮全量记录会把 debug_logs 全表上限的 HTTP 请求记录
+// 迅速挤掉，故空转轮次（无任何动作与失败）只打标准日志。
+// 有动作的轮次落一条摘要记录（含各任务计数），含失败的轮次以错误级标记
+// 参数：
+//   - ctx: 上下文
+//   - orderTimeout: 订单超时未支付时间（秒）
+//   - autoCompleteDays: 发货后自动完成天数
 func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteDays int) {
+	start := time.Now()
+
+	var stat orderStat
 	// 兜底恢复：进程异常中断导致回滚未执行的订单，先恢复原状态再进入本轮调度
-	s.recoverStuckOrders(ctx)
-	s.cancelTimeoutOrders(ctx, orderTimeout)
-	s.autoCompleteOrders(ctx, autoCompleteDays)
-	s.autoCompletePickupOrders(ctx, autoCompleteDays)
-	s.retryStuckRefunds(ctx)
-	s.autoApproveStaleRefunds(ctx)
+	stat.merge(s.recoverStuckOrders(ctx))
+	stat.merge(s.cancelTimeoutOrders(ctx, orderTimeout))
+	stat.merge(s.autoCompleteOrders(ctx, autoCompleteDays))
+	stat.merge(s.autoCompletePickupOrders(ctx, autoCompleteDays))
+	stat.merge(s.retryStuckRefunds(ctx))
+	stat.merge(s.autoApproveStaleRefunds(ctx))
+
+	if !shouldRecordOrder(stat) {
+		return
+	}
+	rec := debuglog.Start("订单调度", "order_scheduler")
+	if rec == nil {
+		return
+	}
+	fields := map[string]interface{}{
+		"recovered":   stat.recovered,
+		"cancelled":   stat.cancelled,
+		"completed":   stat.completed,
+		"pickup":      stat.pickup,
+		"refund_ok":   stat.refundOK,
+		"approved":    stat.approved,
+		"failed":      stat.failed,
+		"duration_ms": time.Since(start).Milliseconds(),
+	}
+	if stat.failed > 0 {
+		rec.Error("本轮订单调度存在失败", fields)
+		_ = rec.EndProcess(debuglog.StatusFailed)
+		return
+	}
+	rec.Info("本轮订单调度摘要", fields)
+	_ = rec.EndProcess(debuglog.StatusCompleted)
 }
 
 // retryStuckRefunds 自动重试卡在"退款中"(status=4) 超过阈值的退款单
@@ -122,14 +204,18 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 // 重试以退款单自身的 payment_no 重新发起渠道退款，成功后走统一收尾逻辑。
 // 参数：
 //   - ctx: 上下文
-func (s *Scheduler) retryStuckRefunds(ctx context.Context) {
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) retryStuckRefunds(ctx context.Context) orderStat {
+	var stat orderStat
 	if s.refundService == nil {
-		return
+		return stat
 	}
 	lockKey := "scheduler:order:refund:retry:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -140,23 +226,31 @@ func (s *Scheduler) retryStuckRefunds(ctx context.Context) {
 		Where("status = ? AND updated_at < ?", 4, deadline).
 		Order("id asc").Limit(20).Find(&refunds).Error; err != nil {
 		log.Printf("[order-scheduler] 查询卡单退款失败: %v", err)
-		return
+		stat.failed++
+		return stat
 	}
 	for _, r := range refunds {
 		err := s.refundService.RetryRefund(ctx, &order.RetryRefundReq{Id: r.ID})
 		if err != nil {
 			log.Printf("[order-scheduler] 自动重试退款单 %d 失败: %v", r.ID, err)
+			stat.failed++
 			continue
 		}
 		log.Printf("[order-scheduler] 退款单 %d 卡单重试成功，已置为已退款", r.ID)
+		stat.refundOK++
 	}
+	return stat
 }
 
 // recoverStuckOrders 兜底扫描：将停留在处理中状态超过阈值的订单批量恢复为原状态
 // 覆盖进程被 kill 导致 claimOrders 后回滚逻辑未执行的场景
 // 参数：
 //   - ctx: 上下文
-func (s *Scheduler) recoverStuckOrders(ctx context.Context) {
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) recoverStuckOrders(ctx context.Context) orderStat {
+	var stat orderStat
 	deadline := time.Now().Add(-stuckRecoverAfter).Format("2006-01-02 15:04:05")
 	pairs := []struct{ processing, from int32 }{
 		{processingStatusCancel, 1},
@@ -171,12 +265,15 @@ func (s *Scheduler) recoverStuckOrders(ctx context.Context) {
 		)
 		if res.Error != nil {
 			log.Printf("[order-scheduler] 兜底恢复处理中订单 (status %d -> %d) 失败: %v", p.processing, p.from, res.Error)
+			stat.failed++
 			continue
 		}
+		stat.recovered += int(res.RowsAffected)
 		if res.RowsAffected > 0 {
 			log.Printf("[order-scheduler] 兜底恢复 %d 个停留超时的处理中订单 (status %d -> %d)", res.RowsAffected, p.processing, p.from)
 		}
 	}
+	return stat
 }
 
 // cancelTimeoutOrders 取消超时未支付订单
@@ -184,21 +281,25 @@ func (s *Scheduler) recoverStuckOrders(ctx context.Context) {
 // 参数：
 //   - ctx: 上下文
 //   - orderTimeout: 超时时间（秒）
-func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) orderStat {
+	var stat orderStat
 	lockKey := "scheduler:order:timeout:cancel:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	// 1. 优先处理历史失败记录
-	s.retryFailures(ctx, "timeout_cancel", 0)
+	stat.merge(s.retryFailures(ctx, "timeout_cancel", 0))
 
 	// 2. 原子抢占一批待取消订单（status=1 → 100 处理中）
 	orders := s.claimOrders(ctx, 1, processingStatusCancel, "created_at < ?", time.Now().Add(-time.Duration(orderTimeout)*time.Second).Format("2006-01-02 15:04:05"))
 	if len(orders) == 0 {
-		return
+		return stat
 	}
 
 	// 3. 处理抢占到的订单；失败时回滚原状态，避免订单永久卡在处理中
@@ -217,6 +318,7 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 			log.Printf("[order-scheduler] 自动取消订单 %d 失败: %v", o.ID, err)
 			s.rollbackStatus(ctx, o.ID, processingStatusCancel, 1)
 			s.recordFailure(ctx, o.ID, "timeout_cancel", err.Error())
+			stat.failed++
 			continue
 		}
 		// 取消成功后关闭待支付支付单，防迟到回调误置已支付
@@ -225,7 +327,9 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) {
 		// 此刻若支付已成功则订单属于"已收款被取消"，需人工对账并发起退款
 		s.auditPaidAfterCancel(ctx, o.ID)
 		log.Printf("[order-scheduler] 订单 %d 超时未支付，已自动取消", o.ID)
+		stat.cancelled++
 	}
+	return stat
 }
 
 // auditPaidAfterCancel 取消成功后的兜底复核（极窄竞态窗口的检测哨）
@@ -251,22 +355,26 @@ func (s *Scheduler) auditPaidAfterCancel(ctx context.Context, orderID int64) {
 // 参数：
 //   - ctx: 上下文
 //   - autoCompleteDays: 自动完成天数
-func (s *Scheduler) autoCompleteOrders(ctx context.Context, autoCompleteDays int) {
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) autoCompleteOrders(ctx context.Context, autoCompleteDays int) orderStat {
+	var stat orderStat
 	lockKey := "scheduler:order:auto:complete:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	// 1. 优先处理历史失败记录
-	s.retryFailures(ctx, "auto_complete", autoCompleteDays)
+	stat.merge(s.retryFailures(ctx, "auto_complete", autoCompleteDays))
 
 	// 2. 原子抢占一批待自动完成订单（status=4 → 101 处理中）
 	deadline := time.Now().AddDate(0, 0, -autoCompleteDays).Format("2006-01-02 15:04:05")
 	orders := s.claimOrders(ctx, 4, processingStatusComplete, "deliver_time IS NOT NULL AND deliver_time < ?", deadline)
 	if len(orders) == 0 {
-		return
+		return stat
 	}
 
 	// 3. 处理抢占到的订单；失败时回滚原状态，避免订单永久卡在处理中
@@ -276,10 +384,13 @@ func (s *Scheduler) autoCompleteOrders(ctx context.Context, autoCompleteDays int
 			log.Printf("[order-scheduler] 自动完成订单 %d 失败: %v", o.ID, err)
 			s.rollbackStatus(ctx, o.ID, processingStatusComplete, 4)
 			s.recordFailure(ctx, o.ID, "auto_complete", err.Error())
+			stat.failed++
 			continue
 		}
 		log.Printf("[order-scheduler] 订单 %d 发货超过 %d 天未确认收货，已自动完成", o.ID, autoCompleteDays)
+		stat.completed++
 	}
+	return stat
 }
 
 // claimOrders 原子抢占订单
@@ -532,7 +643,11 @@ func (s *Scheduler) rollbackStatus(ctx context.Context, orderID int64, processin
 //   - ctx: 上下文
 //   - taskType: 任务类型
 //   - autoCompleteDays: 发货后自动完成天数，仅 auto_complete 类型使用
-func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoCompleteDays int) {
+//
+// 返回值：
+//   - orderStat: 本轮统计（按 taskType 归集到对应动作计数，落库判定依据）
+func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoCompleteDays int) orderStat {
+	var stat orderStat
 	var failures []*model.SchedulerFailure
 	if err := s.db.GetDb().WithContext(ctx).
 		Where("task_type = ? AND status = ? AND retry_count < ?", taskType, 1, 5).
@@ -540,7 +655,8 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 		Limit(100).
 		Find(&failures).Error; err != nil {
 		log.Printf("[order-scheduler] 查询 %s 失败记录出错: %v", taskType, err)
-		return
+		stat.failed++
+		return stat
 	}
 
 	for _, f := range failures {
@@ -618,14 +734,21 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 			}
 			s.incrementFailureRetry(ctx, f.ID, err.Error())
 			log.Printf("[order-scheduler] 重试 %s 订单 %d 仍失败: %v", taskType, f.OrderID, err)
+			stat.failed++
 			continue
 		}
 		s.markFailureStatus(ctx, f.ID, 2)
 		if taskType == "timeout_cancel" {
 			s.auditPaidAfterCancel(ctx, f.OrderID)
+			stat.cancelled++
+		} else if taskType == "auto_complete" {
+			stat.completed++
+		} else {
+			stat.pickup++
 		}
 		log.Printf("[order-scheduler] 重试 %s 订单 %d 成功", taskType, f.OrderID)
 	}
+	return stat
 }
 
 // autoCompletePickupOrders 自提单超时自动完成
@@ -636,16 +759,20 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 // 参数：
 //   - ctx: 上下文
 //   - autoCompleteDays: 超时天数（与配送单共用配置）
-func (s *Scheduler) autoCompletePickupOrders(ctx context.Context, autoCompleteDays int) {
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) autoCompletePickupOrders(ctx context.Context, autoCompleteDays int) orderStat {
+	var stat orderStat
 	lockKey := "scheduler:order:pickup:complete:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	// 1. 优先处理历史失败记录
-	s.retryFailures(ctx, "pickup_complete", autoCompleteDays)
+	stat.merge(s.retryFailures(ctx, "pickup_complete", autoCompleteDays))
 
 	// 2. 按原状态分别原子抢占（自提单原状态可能为 2 已支付 / 3 备货中，
 	//    拆分处理中状态使 recoverStuckOrders 兜底恢复时可还原真实原状态）
@@ -662,11 +789,14 @@ func (s *Scheduler) autoCompletePickupOrders(ctx context.Context, autoCompleteDa
 				log.Printf("[order-scheduler] 自提单 %d 自动完成失败: %v", o.ID, err)
 				s.rollbackStatus(ctx, o.ID, p.processing, p.from)
 				s.recordFailure(ctx, o.ID, "pickup_complete", err.Error())
+				stat.failed++
 				continue
 			}
 			log.Printf("[order-scheduler] 自提单 %d 支付超过 %d 天未核销，已自动完成", o.ID, autoCompleteDays)
+			stat.pickup++
 		}
 	}
+	return stat
 }
 
 // autoApproveStaleRefunds 退款超时自动审批
@@ -674,14 +804,18 @@ func (s *Scheduler) autoCompletePickupOrders(ctx context.Context, autoCompleteDa
 // 超过 72h 未处理的退款申请自动同意并发起退款，保障消费者权益。
 // 参数：
 //   - ctx: 上下文
-func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) {
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) orderStat {
+	var stat orderStat
 	if s.refundService == nil {
-		return
+		return stat
 	}
 	lockKey := "scheduler:order:refund:auto:approve:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -692,7 +826,8 @@ func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) {
 		Where("status = 1 AND created_at < ?", deadline).
 		Order("id asc").Limit(20).Find(&refunds).Error; err != nil {
 		log.Printf("[order-scheduler] 查询超时退款申请失败: %v", err)
-		return
+		stat.failed++
+		return stat
 	}
 
 	for _, r := range refunds {
@@ -702,10 +837,13 @@ func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) {
 		})
 		if err != nil {
 			log.Printf("[order-scheduler] 自动审批退款单 %d 失败: %v", r.ID, err)
+			stat.failed++
 			continue
 		}
 		log.Printf("[order-scheduler] 退款单 %d 超过 %dh 未处理，已自动同意", r.ID, staleHours)
+		stat.approved++
 	}
+	return stat
 }
 
 // recordFailure 记录处理失败的订单

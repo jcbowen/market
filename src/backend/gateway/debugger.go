@@ -10,6 +10,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/debugger"
 
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 )
 
@@ -161,12 +162,14 @@ func retentionText(v *int) string {
 // 前端页面挂在 cfg.Debugger.BasePath（按 AllowedIPs 白名单防护，鉴权走 gin 的 ClientIP）。
 // 属辅助能力：未启用或 MySQL 不可达时仅降级跳过，不影响网关主链路启动。
 // 空白名单时组件不注册页面路由（fail-closed），请求日志照常记录。
+// 同时把实例登记到 debuglog 默认实例：支付回调摘要、下单后异步任务等进程级记录
+// 与请求日志共用该实例（共享同一张表，ServiceName 均为 gateway）。
 // 参数：
 //   - r: gin 引擎（须在 Recovery 之后调用，保证记录完整请求链）
 //   - cfg: 全局配置
 //
 // 返回值：
-//   - func(): 释放函数，停止清理协程并关闭本次自建的 MySQL 连接；可安全重复调用
+//   - func(): 释放函数，停止清理协程、注销 debuglog 默认实例并关闭本次自建的 MySQL 连接；可安全重复调用
 //
 // 异常：不触发 panic；初始化失败仅记录日志并返回空的释放函数
 // 使用示例：
@@ -174,6 +177,8 @@ func retentionText(v *int) string {
 //	stopDebugger := registerDebugger(r, cfg)
 //	defer stopDebugger()
 func registerDebugger(r *gin.Engine, cfg *config.Config) (stop func()) {
+	// 入口先注销，防止重复注册（测试或多引擎场景）时旧实例残留
+	debuglog.SetInstance(nil)
 	if !cfg.Debugger.Enabled {
 		setDebuggerStatus("disabled", "", "", "")
 		return func() {}
@@ -228,6 +233,9 @@ func registerDebugger(r *gin.Engine, cfg *config.Config) (stop func()) {
 		BodyMaskKeys:           cfg.Debugger.BodyMaskKeys,
 		MultipartSkipFiles:     cfg.Debugger.MultipartSkipFiles,
 		MultipartPreserveState: cfg.Debugger.MultipartPreserveState,
+		// 进程级记录（回调摘要/异步任务）用 Info 级，组件 Config.Level 默认为 warn
+		// （default:"3"），不显式开到 LevelInfo 的话 Info 摘要会被 shouldLog 全部丢弃
+		Level: debugger.LevelInfo,
 	})
 	if err != nil {
 		_ = storage.Close()
@@ -244,6 +252,8 @@ func registerDebugger(r *gin.Engine, cfg *config.Config) (stop func()) {
 		UseCDN:   cfg.Debugger.UseCDN,
 		Title:    "Gateway 请求调试器",
 	})
+	// 进程级记录（回调摘要/异步任务）与请求日志共用本实例，此后 debuglog.Start 才可能返回非 nil
+	debuglog.SetInstance(dbg)
 
 	// 过期清理由组件协程承担：启动先清一次，之后按 cleanup_interval_hours 周期执行。
 	// retention_days 显式 0（保留期换算为负）时不调用本方法，绝不等价于清空全表
@@ -253,6 +263,7 @@ func registerDebugger(r *gin.Engine, cfg *config.Config) (stop func()) {
 	}
 	release = func() {
 		stopCleanup()
+		debuglog.SetInstance(nil)
 		_ = storage.Close()
 		_ = sqlDB.Close()
 	}

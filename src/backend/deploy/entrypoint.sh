@@ -228,8 +228,9 @@ export JWT_SECRET
 SERVICES_LIST="user-service product-service order-service cart-service payment-service gateway market-admin"
 for svc in $SERVICES_LIST; do
   cp -f "$CONFIG_TEMPLATE" "$RUNTIME_DIR/config.$svc.yaml"
-  # debugger.service_name（debug_logs 日志来源标识）当前仅 gateway 进程读取，
-  # 但模板为 7 个进程共用一份——非 gateway 副本统一覆写为本进程名，
+  # debugger.service_name（debug_logs 日志来源标识）：gateway 读它注册请求日志与调试页面，
+  # payment/order 读它初始化进程级记录实例（与 gateway 共享 debug_logs 表）；
+  # 模板为 7 个进程共用一份——非 gateway 副本统一覆写为本进程名，
   # 避免所有副本都顶着 gateway 的标识；源配置无此行时 sed 不命中（回落结构体默认值），无害
   if [ "$svc" != "gateway" ]; then
     sed -i "s/^\([[:space:]]*service_name:\).*/\1 $svc/" "$RUNTIME_DIR/config.$svc.yaml"

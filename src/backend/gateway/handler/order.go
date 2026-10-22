@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/cart"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
@@ -194,18 +195,39 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// 服务端兜底清理购物车：下单成功后异步删除已购 SKU，防止客户端崩溃/网络中断导致残留
+	// 服务端兜底清理购物车：下单成功后异步删除已购 SKU，防止客户端崩溃/网络中断导致残留。
+	// 清理结果记入 debugger 进程级日志（异步任务无请求日志，失败时是排查购物车残留的主路径）
 	if h.cartClient != nil {
 		go func(userID int64, items []*order.OrderItem) {
 			bgCtx := context.Background()
+			rec := debuglog.Start("下单后清理购物车", "cart_cleanup")
+			failedSkus := make([]int64, 0, len(items))
 			for _, item := range items {
 				if _, err := h.cartClient.RemoveItem(bgCtx, &cart.RemoveItemReq{
 					Id:     item.SkuId,
 					UserId: userID,
 				}); err != nil {
+					failedSkus = append(failedSkus, item.SkuId)
 					log.Printf("下单后清理购物车失败（user=%d sku=%d）: %v", userID, item.SkuId, err)
 				}
 			}
+			if rec == nil {
+				return
+			}
+			if len(failedSkus) > 0 {
+				rec.Error("部分 SKU 清理失败", map[string]interface{}{
+					"user_id":     userID,
+					"sku_count":   len(items),
+					"failed_skus": failedSkus,
+				})
+				_ = rec.EndProcess(debuglog.StatusFailed)
+				return
+			}
+			rec.Info("购物车清理完成", map[string]interface{}{
+				"user_id":   userID,
+				"sku_count": len(items),
+			})
+			_ = rec.EndProcess(debuglog.StatusCompleted)
 		}(uc.UserID, req.Items)
 	}
 

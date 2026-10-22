@@ -1351,3 +1351,68 @@ func reloadPaymentByNo(t *testing.T, s *PaymentService, paymentNo string) *model
 	}
 	return &p
 }
+
+// TestReconcileOutcomeCount 单笔结论计入本轮统计的口径
+// 落库判定（shouldRecordReconcile）依赖各计数，计数错位会导致：
+//   - 有动作的轮次被误判空转（捞回/挂账不落库，排查断层）；
+//   - 空转轮次被误判有动作（每分钟一条记录挤占 debug_logs 全表上限）
+func TestReconcileOutcomeCount(t *testing.T) {
+	cases := []struct {
+		outcome reconcileOutcome
+		check   func(s *reconcileStat) bool // 返回 true 表示该计数已 +1
+	}{
+		{outcomeSkipped, func(s *reconcileStat) bool {
+			return s.rescued == 0 && s.stuck == 0 && s.closed == 0 && s.observed == 0 && s.failed == 0
+		}},
+		{outcomeObserved, func(s *reconcileStat) bool { return s.observed == 1 }},
+		{outcomeRescued, func(s *reconcileStat) bool { return s.rescued == 1 }},
+		{outcomeStuck, func(s *reconcileStat) bool { return s.stuck == 1 }},
+		{outcomeClosed, func(s *reconcileStat) bool { return s.closed == 1 }},
+		{outcomeFailed, func(s *reconcileStat) bool { return s.failed == 1 }},
+	}
+	for _, c := range cases {
+		var stat reconcileStat
+		c.outcome.count(&stat)
+		if !c.check(&stat) {
+			t.Errorf("结论 %s 计入错误: %+v", c.outcome, stat)
+		}
+	}
+}
+
+// TestShouldRecordReconcile 空转轮次不落库的判定矩阵
+// 组件 StartProcess 创建即落库，判定必须在跑完子任务后做（见 runOnce 注释）
+func TestShouldRecordReconcile(t *testing.T) {
+	cases := []struct {
+		name    string
+		stat    reconcileStat
+		cleaned int64
+		want    bool
+	}{
+		{"全零空转不记录", reconcileStat{}, 0, false},
+		{"仅节流推进不记录", reconcileStat{observed: 50}, 0, false},
+		{"捞回一笔即记录", reconcileStat{rescued: 1}, 0, true},
+		{"挂账检出即记录", reconcileStat{stuck: 1}, 0, true},
+		{"本地关单即记录", reconcileStat{closed: 1}, 0, true},
+		{"失败即记录", reconcileStat{failed: 1}, 0, true},
+		{"panic 即记录", reconcileStat{panics: 1}, 0, true},
+		{"清理到流水即记录", reconcileStat{}, 12, true},
+		{"清理出错即记录", reconcileStat{}, -1, true},
+	}
+	for _, c := range cases {
+		if got := shouldRecordReconcile(c.stat, c.cleaned); got != c.want {
+			t.Errorf("%s: shouldRecordReconcile(%+v, %d) = %v, 期望 %v", c.name, c.stat, c.cleaned, got, c.want)
+		}
+	}
+}
+
+// TestReconcileStatMerge 子任务统计汇总不丢计数
+func TestReconcileStatMerge(t *testing.T) {
+	var total reconcileStat
+	total.merge(reconcileStat{rescued: 1, observed: 3})
+	total.merge(reconcileStat{stuck: 2, failed: 1, panics: 1})
+	total.merge(reconcileStat{closed: 1})
+	want := reconcileStat{rescued: 1, stuck: 2, closed: 1, observed: 3, failed: 1, panics: 1}
+	if total != want {
+		t.Errorf("merge 结果 = %+v, 期望 %+v", total, want)
+	}
+}

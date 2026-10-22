@@ -24,7 +24,9 @@ func IsProduction() bool {
 // ApplyEnvOverrides 用环境变量覆盖配置文件中的部署相关项
 // 敏感凭据不入 git 仓库：MySQL/Redis 密码与 JWT 密钥支持经环境变量注入，
 // 未设置时沿用配置文件值（本地开发零配置可用）；
-// 可信代理网段属部署拓扑（同机反代 vs 直连），同样由环境变量给，避免配置文件写死网段
+// 可信代理网段属部署拓扑（同机反代 vs 直连），同样由环境变量给，避免配置文件写死网段；
+// debugger 的开关/页面白名单/来源标识同理：compose 多服务共用一份配置模板，
+// 须按进程给值才能区分 debug_logs 的日志来源
 // 参数：
 //   - cfg: 已加载的全局配置（原地修改）
 func ApplyEnvOverrides(cfg *Config) {
@@ -46,6 +48,13 @@ func ApplyEnvOverrides(cfg *Config) {
 	// 故临时排查须两项齐给：DEBUGGER_ENABLED=true + DEBUGGER_ALLOWED_IPS=127.0.0.1
 	if v := os.Getenv("DEBUGGER_ALLOWED_IPS"); v != "" {
 		cfg.Debugger.AllowedIPs = splitCSVList(v)
+	}
+	// DEBUGGER_SERVICE_NAME debug_logs 日志来源标识：compose 部署下各服务共用一份
+	// 配置模板（service_name 均为 gateway），进程级记录（支付/订单调度器摘要）须按
+	// 进程名覆写才能区分来源；留空 = 沿用配置文件值。
+	// allinone 部署由 entrypoint 覆写配置副本，不需要此变量
+	if v := os.Getenv("DEBUGGER_SERVICE_NAME"); v != "" {
+		cfg.Debugger.ServiceName = strings.TrimSpace(v)
 	}
 	// TRUSTED_PROXIES 逗号分隔可信代理网段（compose/all-in-one 注入，避免配置文件里写死网段）
 	if v := os.Getenv("TRUSTED_PROXIES"); v != "" {

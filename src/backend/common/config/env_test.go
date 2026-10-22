@@ -13,6 +13,7 @@ import (
  * 覆盖：
  *   - DEBUGGER_ALLOWED_IPS 覆盖配置文件白名单，解析风格与 TRUSTED_PROXIES 一致
  *   - DEBUGGER_ENABLED 优先于配置文件值，未设置时不改写
+ *   - DEBUGGER_SERVICE_NAME 覆盖 debug_logs 来源标识（去空白），未设置时不改写
  *   - 逗号列表解析：去空白、丢空项
  */
 
@@ -58,6 +59,27 @@ func TestApplyEnvOverridesDebuggerEnabledWinsOverFile(t *testing.T) {
 	ApplyEnvOverrides(cfg)
 	if !cfg.Debugger.Enabled {
 		t.Error("DEBUGGER_ENABLED 为空时不应改写配置文件值")
+	}
+}
+
+// TestApplyEnvOverridesDebuggerServiceName DEBUGGER_SERVICE_NAME 覆盖 debug_logs 来源标识
+func TestApplyEnvOverridesDebuggerServiceName(t *testing.T) {
+	cfg := &Config{}
+	cfg.Debugger.ServiceName = "gateway"
+
+	// 覆盖并去空白（compose 按进程名注入 payment-service/order-service）
+	t.Setenv("DEBUGGER_SERVICE_NAME", " payment-service ")
+	ApplyEnvOverrides(cfg)
+	if cfg.Debugger.ServiceName != "payment-service" {
+		t.Errorf("DEBUGGER_SERVICE_NAME 应覆盖来源标识（去空白），实际 %q", cfg.Debugger.ServiceName)
+	}
+
+	// 空值等同未设置，保持配置文件值
+	cfg.Debugger.ServiceName = "gateway"
+	t.Setenv("DEBUGGER_SERVICE_NAME", "")
+	ApplyEnvOverrides(cfg)
+	if cfg.Debugger.ServiceName != "gateway" {
+		t.Errorf("DEBUGGER_SERVICE_NAME 为空时不应改写配置文件值，实际 %q", cfg.Debugger.ServiceName)
 	}
 }
 

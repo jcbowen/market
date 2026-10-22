@@ -112,8 +112,9 @@ business:
 # 并有额外内存与 DB 容量成本，故示例值收紧为采样 0.1 / 上限 5000 条 / 保留 3 天
 debugger:
     enabled: false
-    # 服务标识（debug_logs 日志来源）：当前仅 gateway 进程读取该字段；
-    # entrypoint 分发副本时会把非 gateway 副本覆写为各自进程名，此处值仅 gateway 副本生效
+    # 服务标识（debug_logs 日志来源）：gateway（请求日志+调试页面）与 payment/order
+    # （进程级记录，共享同一张表）均读取该字段；entrypoint 分发副本时会把非 gateway
+    # 副本覆写为各自进程名，此处值仅 gateway 副本生效
     service_name: gateway
     # 建议经 DEBUGGER_ALLOWED_IPS 注入，配置文件不写死运维 IP；留空 = 页面不注册（fail-closed）
     allowed_ips: []

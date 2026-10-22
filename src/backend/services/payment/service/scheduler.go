@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
 
@@ -26,6 +27,89 @@ import (
 type Scheduler struct {
 	payment     *PaymentService
 	redisClient *redis.Client
+}
+
+// reconcileOutcome 单笔支付单对账的结论（用于本轮统计与 debugger 摘要）
+type reconcileOutcome string
+
+const (
+	// outcomeSkipped 不在渠道时效窗口内，未问渠道
+	outcomeSkipped reconcileOutcome = "skipped"
+	// outcomeObserved 已问渠道、结论无需本地变更（在途/渠道已关/首轮无此交易留痕）
+	outcomeObserved reconcileOutcome = "observed"
+	// outcomeRescued 回调丢失已捞回（补同步成功）
+	outcomeRescued reconcileOutcome = "rescued"
+	// outcomeStuck 挂账检出（已关闭但渠道已收款，产出人工退款待办）
+	outcomeStuck reconcileOutcome = "stuck"
+	// outcomeClosed 渠道确认不会收款，本地支付单关闭
+	outcomeClosed reconcileOutcome = "closed"
+	// outcomeFailed 渠道查询或补同步失败（下轮重试）
+	outcomeFailed reconcileOutcome = "failed"
+)
+
+// reconcileStat 单轮对账统计：debugger 进程记录的落库判定与摘要字段的唯一依据
+// panics 统计子任务 panic 次数（recoverTask 恢复后计入），使异常轮次不满足空转条件
+type reconcileStat struct {
+	rescued  int
+	stuck    int
+	closed   int
+	observed int
+	failed   int
+	panics   int
+}
+
+// count 把单笔结论计入本轮统计
+// 参数：
+//   - stat: 本轮统计（指针写入）
+func (o reconcileOutcome) count(stat *reconcileStat) {
+	switch o {
+	case outcomeRescued:
+		stat.rescued++
+	case outcomeStuck:
+		stat.stuck++
+	case outcomeClosed:
+		stat.closed++
+	case outcomeFailed:
+		stat.failed++
+	case outcomeSkipped:
+		// 窗口外未问渠道，不计入
+	default:
+		stat.observed++
+	}
+}
+
+// hasAction 本轮是否发生了「改变本地状态或需要人工关注」的事件
+// 纯节流推进（observed）不算动作：60s 一轮若只要有待支付单就落库，
+// 会把 debug_logs 全表上限的 HTTP 请求记录迅速挤掉，故空转轮次不落库
+// 返回值：
+//   - bool: true 表示有实质动作
+func (s reconcileStat) hasAction() bool {
+	return s.rescued+s.stuck+s.closed+s.failed > 0
+}
+
+// merge 把另一份统计并入本轮（子任务结果汇总）
+// 参数：
+//   - other: 子任务统计
+func (s *reconcileStat) merge(other reconcileStat) {
+	s.rescued += other.rescued
+	s.stuck += other.stuck
+	s.closed += other.closed
+	s.observed += other.observed
+	s.failed += other.failed
+	s.panics += other.panics
+}
+
+// shouldRecordReconcile 判定本轮对账是否值得写入 debugger 进程记录
+// 组件 StartProcess 创建即落库，故必须在跑完子任务后判定：
+// 纯节流推进、无清理、无 panic 的轮次只打标准日志，不落调试库
+// 参数：
+//   - stat: 本轮统计
+//   - cleaned: 流水清理删除行数；-1 表示清理执行出错
+//
+// 返回值：
+//   - bool: true 表示应记录
+func shouldRecordReconcile(stat reconcileStat, cleaned int64) bool {
+	return stat.hasAction() || stat.panics > 0 || cleaned != 0
 }
 
 // NewScheduler 创建支付对账调度器
@@ -70,15 +154,47 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 // runOnce 单轮调度：先重试历史失败，再跑两条扫描，最后做每日清理
+// 进程级记录口径（debugger）：先跑完子任务再判定是否记录——组件 StartProcess
+// 创建即落库，60s 一轮全量记录会把 debug_logs 全表上限的 HTTP 请求记录迅速挤掉，
+// 故空转轮次（无本地状态变更、无失败、无清理、无 panic）只打标准日志。
+// 有动作的轮次落一条摘要记录（含各结论计数），失败/异常轮次以错误级标记
 // 参数：
 //   - ctx: 上下文
 func (s *Scheduler) runOnce(ctx context.Context) {
+	start := time.Now()
+
+	var stat reconcileStat
 	if s.payment.cfg.ReconcileEnabled() {
-		s.retryFailures(ctx)
-		s.reconcilePending(ctx)
-		s.detectStuck(ctx)
+		stat.merge(s.retryFailures(ctx))
+		stat.merge(s.reconcilePending(ctx))
+		stat.merge(s.detectStuck(ctx))
 	}
-	s.cleanupNotifyLogs(ctx)
+	cleaned := s.cleanupNotifyLogs(ctx)
+	if !shouldRecordReconcile(stat, cleaned) {
+		return
+	}
+
+	rec := debuglog.Start("支付对账调度", "payment_reconcile")
+	if rec == nil {
+		return
+	}
+	fields := map[string]interface{}{
+		"rescued":      stat.rescued,
+		"stuck":        stat.stuck,
+		"closed":       stat.closed,
+		"observed":     stat.observed,
+		"failed":       stat.failed,
+		"panics":       stat.panics,
+		"cleaned_logs": cleaned,
+		"duration_ms":  time.Since(start).Milliseconds(),
+	}
+	if stat.failed > 0 || stat.panics > 0 || cleaned < 0 {
+		rec.Error("本轮对账存在失败", fields)
+		_ = rec.EndProcess(debuglog.StatusFailed)
+		return
+	}
+	rec.Info("本轮对账摘要", fields)
+	_ = rec.EndProcess(debuglog.StatusCompleted)
 }
 
 // reconcilePending 回查待支付单（P0-A）
@@ -86,13 +202,17 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 // 保证正常回调有足够时间先行完成，异常单又不会每分钟打扰渠道一次
 // 参数：
 //   - ctx: 上下文
-func (s *Scheduler) reconcilePending(ctx context.Context) {
-	defer s.recoverTask("reconcilePending")
+//
+// 返回值：
+//   - reconcileStat: 本轮统计（落库判定依据）
+func (s *Scheduler) reconcilePending(ctx context.Context) reconcileStat {
+	var stat reconcileStat
+	defer s.recoverTask("reconcilePending", &stat)
 
 	lockKey := "scheduler:payment:reconcile:pending:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -111,11 +231,13 @@ func (s *Scheduler) reconcilePending(ctx context.Context) {
 		Limit(config.ReconcileInt(r.BatchSize, 100)).
 		Find(&rows).Error; err != nil {
 		log.Printf("[payment-scheduler] 扫描待支付单失败: %v", err)
-		return
+		stat.failed++ // 扫描失败计入本轮失败，使异常轮次落入 debugger 记录
+		return stat
 	}
 	for i := range rows {
-		s.reconcileOne(ctx, &rows[i], false)
+		s.reconcileOne(ctx, &rows[i], false).count(&stat)
 	}
+	return stat
 }
 
 // detectStuck 检出资金挂账（P0-C）
@@ -123,13 +245,17 @@ func (s *Scheduler) reconcilePending(ctx context.Context) {
 // 订单早已取消、库存与优惠券已回补，系统无法自行挽回，只能产出人工退款待办
 // 参数：
 //   - ctx: 上下文
-func (s *Scheduler) detectStuck(ctx context.Context) {
-	defer s.recoverTask("detectStuck")
+//
+// 返回值：
+//   - reconcileStat: 本轮统计（落库判定依据）
+func (s *Scheduler) detectStuck(ctx context.Context) reconcileStat {
+	var stat reconcileStat
+	defer s.recoverTask("detectStuck", &stat)
 
 	lockKey := "scheduler:payment:reconcile:stuck:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -146,15 +272,17 @@ func (s *Scheduler) detectStuck(ctx context.Context) {
 		Limit(config.ReconcileInt(r.BatchSize, 100)).
 		Find(&rows).Error; err != nil {
 		log.Printf("[payment-scheduler] 扫描已关闭支付单失败: %v", err)
-		return
+		stat.failed++ // 扫描失败计入本轮失败，使异常轮次落入 debugger 记录
+		return stat
 	}
 	for i := range rows {
 		// 渠道已明确回答过「没收到钱」的关闭单，事实不会改变，不再重复打扰渠道
 		if s.payment.hasNoPaymentConfirmed(ctx, rows[i].PaymentNo) {
 			continue
 		}
-		s.reconcileOne(ctx, &rows[i], true)
+		s.reconcileOne(ctx, &rows[i], true).count(&stat)
 	}
+	return stat
 }
 
 // reconcileOne 对单笔支付单发起渠道核实并落地结论
@@ -162,16 +290,19 @@ func (s *Scheduler) detectStuck(ctx context.Context) {
 //   - ctx: 上下文
 //   - p: 支付单
 //   - closed: 该单是否已关闭（true 时只会产出挂账流水，不会尝试改状态）
-func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed bool) {
+//
+// 返回值：
+//   - reconcileOutcome: 单笔结论，计入本轮统计（见 reconcileStat）
+func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed bool) reconcileOutcome {
 	if !withinReconcileWindow(s.payment.cfg, p) {
-		return
+		return outcomeSkipped
 	}
 	res, err := s.payment.queryChannelOrder(ctx, p)
 	if err != nil || res == nil {
 		// 渠道不可达：计入回查次数但不动状态，下轮再来
 		s.markReconciled(ctx, p)
 		s.payment.recordFailure(ctx, p, reconcileTaskType(closed), fmt.Sprintf("渠道查询失败: %v", err))
-		return
+		return outcomeFailed
 	}
 
 	switch res.State {
@@ -179,7 +310,7 @@ func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed b
 		if closed {
 			s.markReconciled(ctx, p)
 			s.payment.recordStuckPayment(ctx, p, res)
-			return
+			return outcomeStuck
 		}
 		err := s.payment.handlePaySuccess(ctx, &payCallbackParams{
 			PaymentNo:     p.PaymentNo,
@@ -195,33 +326,33 @@ func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed b
 		if err != nil {
 			log.Printf("[payment-scheduler] 补同步失败 payment_no=%s: %v", p.PaymentNo, err)
 			s.payment.recordFailure(ctx, p, reconcileTaskType(closed), err.Error())
-			return
+			return outcomeFailed
 		}
 		log.Printf("[payment-scheduler] 回调丢失已捞回 payment_no=%s 渠道状态=%s", p.PaymentNo, res.Raw)
-		return
+		return outcomeRescued
 
 	case ChannelStateNotExist:
 		s.markReconciled(ctx, p)
 		// 两轮确认：首轮只留痕，避免渠道瞬时数据延迟把一笔在途支付判死
 		if closed {
 			s.payment.recordReconcileLog(ctx, p, model.NotifyResultNotExist, "渠道无此交易")
-			return
+			return outcomeObserved
 		}
 		if s.payment.hasReconcileNotExist(ctx, p.PaymentNo) {
 			s.closePaymentLocally(ctx, p, "渠道连续两轮无此交易，关闭本地支付单")
-			return
+			return outcomeClosed
 		}
 		s.payment.recordReconcileLog(ctx, p, model.NotifyResultNotExist, "渠道无此交易（首轮，等待二次确认）")
-		return
+		return outcomeObserved
 
 	case ChannelStateClosed:
 		s.markReconciled(ctx, p)
 		if !closed {
 			s.closePaymentLocally(ctx, p, "渠道交易已关闭，本地支付单同步关闭")
-		} else {
-			s.payment.recordReconcileLog(ctx, p, model.NotifyResultClosed, "渠道交易已关闭")
+			return outcomeClosed
 		}
-		return
+		s.payment.recordReconcileLog(ctx, p, model.NotifyResultClosed, "渠道交易已关闭")
+		return outcomeObserved
 
 	default:
 		// 在途：只推进节流指针，等待用户完成支付或回调到达
@@ -230,6 +361,7 @@ func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed b
 		if !closed && s.payment.reconcileExhausted(ctx, p) {
 			s.payment.recordGiveUp(ctx, p)
 		}
+		return outcomeObserved
 	}
 }
 
@@ -435,13 +567,17 @@ func (s *PaymentService) recordFailure(ctx context.Context, p *model.Payment, ta
 // 且同单多条待重试行会在同一轮里各查一次渠道、把 5 次重试预算提前吃光
 // 参数：
 //   - ctx: 上下文
-func (s *Scheduler) retryFailures(ctx context.Context) {
-	defer s.recoverTask("retryFailures")
+//
+// 返回值：
+//   - reconcileStat: 本轮统计（落库判定依据）
+func (s *Scheduler) retryFailures(ctx context.Context) reconcileStat {
+	var stat reconcileStat
+	defer s.recoverTask("retryFailures", &stat)
 
 	lockKey := "scheduler:payment:reconcile:retry:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return
+		return stat
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -465,7 +601,8 @@ func (s *Scheduler) retryFailures(ctx context.Context) {
 		Limit(config.ReconcileInt(r.BatchSize, 100)).
 		Find(&failures).Error; err != nil {
 		log.Printf("[payment-scheduler] 查询对账失败记录出错: %v", err)
-		return
+		stat.failed++
+		return stat
 	}
 
 	// 同一支付单本轮只打扰渠道一次（跨锁竞态可能留下 pending/stuck 两条待重试行）
@@ -491,13 +628,14 @@ func (s *Scheduler) retryFailures(ctx context.Context) {
 			continue
 		}
 		queried[p.PaymentNo] = true
-		s.reconcileOne(ctx, &p, p.Status != 1 || f.TaskType != model.TaskReconcilePending)
+		s.reconcileOne(ctx, &p, p.Status != 1 || f.TaskType != model.TaskReconcilePending).count(&stat)
 		if p.ReconcileCount >= maxReconcile {
 			s.markFailureStatus(ctx, f.ID, model.FailureStatusAbandoned)
 			continue
 		}
 		s.incrementFailureRetry(ctx, f.ID)
 	}
+	return stat
 }
 
 // markFailureStatus 更新对账失败记录状态
@@ -535,11 +673,14 @@ func (s *Scheduler) incrementFailureRetry(ctx context.Context, id int64) {
 // 用「锁键带日期 + 不释放」实现集群级每日一次，无需额外的游标表
 // 参数：
 //   - ctx: 上下文
-func (s *Scheduler) cleanupNotifyLogs(ctx context.Context) {
+//
+// 返回值：
+//   - int64: 删除行数；0 = 锁未获取或无需删除；-1 = 执行出错（计入失败记录）
+func (s *Scheduler) cleanupNotifyLogs(ctx context.Context) int64 {
 	retentionDays := config.ReconcileInt(s.payment.cfg.Business.PaymentReconcile.NotifyLogRetentionDays, 30)
 	lockKey := fmt.Sprintf("scheduler:payment:notify:cleanup:%s", time.Now().Format("2006-01-02"))
 	if s.acquireLock(ctx, lockKey, 25*time.Hour) == "" {
-		return
+		return 0
 	}
 	deadline := time.Now().AddDate(0, 0, -retentionDays).Format(timeLayout)
 	res := s.payment.db.GetDb().WithContext(ctx).
@@ -547,18 +688,23 @@ func (s *Scheduler) cleanupNotifyLogs(ctx context.Context) {
 		Delete(&model.NotifyLog{})
 	if res.Error != nil {
 		log.Printf("[payment-scheduler] 清理通知流水失败: %v", res.Error)
-		return
+		return -1
 	}
 	if res.RowsAffected > 0 {
 		log.Printf("[payment-scheduler] 已清理 %d 条超过 %d 天的通知流水", res.RowsAffected, retentionDays)
 	}
+	return res.RowsAffected
 }
 
 // recoverTask 任务级 panic 兜底：对账属于旁路能力，任何一笔的异常都不应终止整个调度协程
+// panic 计入 stat.panics，使异常轮次不满足空转条件（shouldRecordReconcile），
+// 从而在 debugger 进程记录中可见——否则 panic 被静默恢复后无任何痕迹
 // 参数：
 //   - name: 任务名，用于日志定位
-func (s *Scheduler) recoverTask(name string) {
+//   - stat: 本轮统计（panic 计数写入）
+func (s *Scheduler) recoverTask(name string, stat *reconcileStat) {
 	if r := recover(); r != nil {
+		stat.panics++
 		log.Printf("[payment-scheduler] 任务 %s 异常已恢复: %v", name, r)
 	}
 }
