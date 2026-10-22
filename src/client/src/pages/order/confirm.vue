@@ -72,7 +72,7 @@
       </view>
     </view>
 
-    <!-- 优惠券、支付方式与备注 -->
+    <!-- 优惠券、费用明细与备注 -->
     <view class="extra-card">
       <!-- 商品总额：让"总额 + 配送费 - 满减 - 券 = 合计"口径可对账 -->
       <view class="extra-item">
@@ -97,28 +97,6 @@
         </view>
       </view>
       <!-- 自提无配送环节，不展示配送费行，避免"免运费"造成误解 -->
-      <!-- 支付方式：直接列出渠道单选，默认选中第一个（无需弹层选择） -->
-      <view class="extra-item">
-        <text>支付方式</text>
-        <view v-if="channels.length" class="channel-list">
-          <view
-            v-for="channel in channels"
-            :key="channel.channel"
-            class="channel-option"
-            @click="selectedChannel = channel"
-          >
-            <view
-              class="channel-radio"
-              :class="{ checked: selectedChannel?.channel === channel.channel }"
-            />
-            <text
-              class="channel-option-text"
-              :class="{ active: selectedChannel?.channel === channel.channel }"
-            >{{ channel.name }}</text>
-          </view>
-        </view>
-        <text v-else class="channel-empty">暂无可用支付方式</text>
-      </view>
       <view class="extra-item">
         <text>备注</text>
         <u-input
@@ -127,6 +105,34 @@
           border="none"
           input-align="right"
         />
+      </view>
+    </view>
+
+    <!-- 支付方式：独立卡片置底（抖音收银台风格），每渠道一行（品牌图标+名称+右侧单选圆圈），
+         默认选中第一个渠道（无需弹层选择） -->
+    <view class="payment-card">
+      <view class="payment-title">
+        <text class="payment-title-text">支付方式</text>
+      </view>
+      <view
+        v-for="channel in channels"
+        :key="channel.channel"
+        class="payment-option"
+        @click="selectedChannel = channel"
+      >
+        <u-icon
+          :name="channelIcon(channel.channel)"
+          :color="channelIconColor(channel.channel)"
+          size="24"
+        />
+        <text class="payment-option-name">{{ channel.name }}</text>
+        <view
+          class="payment-radio"
+          :class="{ checked: selectedChannel?.channel === channel.channel }"
+        />
+      </view>
+      <view v-if="!channels.length" class="payment-empty">
+        <text>暂无可用支付方式</text>
       </view>
     </view>
 
@@ -361,6 +367,37 @@ const belowMinAmount = computed(() => {
 
 const channels = ref<PaymentChannel[]>([])
 const selectedChannel = ref<PaymentChannel | null>(null)
+
+/** 渠道品牌图标映射（uview-plus 图标名），未识别渠道回退人民币图标 */
+const channelIconMap: Record<string, string> = {
+  wechat: 'weixin-fill',
+  alipay: 'zhifubao-circle-fill',
+  cash: 'rmb-circle-fill',
+}
+
+/**
+ * 渠道图标名
+ * @param channel 渠道标识（wechat/alipay/cash）
+ * @returns uview-plus 图标名，未识别渠道回退 rmb-circle-fill
+ */
+function channelIcon(channel: string): string {
+  return channelIconMap[channel] || 'rmb-circle-fill'
+}
+
+/**
+ * 渠道图标品牌色
+ * @param channel 渠道标识（wechat/alipay/cash）
+ * @returns 颜色值，未识别渠道用深灰
+ */
+function channelIconColor(channel: string): string {
+  switch (channel) {
+    case 'wechat': return '#07c160'
+    case 'alipay': return '#1677ff'
+    case 'cash': return '#ff9800'
+    default: return '#666666'
+  }
+}
+
 const selectedCoupon = ref<UserCoupon | null>(null)
 const fullReductions = ref<FullReduction[]>([])
 const couponPopupVisible = ref(false)
@@ -1019,25 +1056,44 @@ async function onSubmit() {
   color: #333333;
 }
 
-/* 支付方式内联单选：右侧横向排列渠道，圆点样式与配送方式一致 */
-.channel-list {
-  flex: 1;
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 24rpx;
-  margin-left: 12rpx;
+/* 支付方式卡片：独立置底（抖音收银台风格），每渠道一行（品牌图标+名称+右侧圆圈） */
+.payment-card {
+  margin-top: 20rpx;
+  padding: 0 30rpx 10rpx;
+  background-color: #ffffff;
 }
 
-.channel-option {
+.payment-title {
+  padding: 24rpx 0 8rpx;
+}
+
+.payment-title-text {
+  font-size: 28rpx;
+  color: #333333;
+}
+
+.payment-option {
   display: flex;
   align-items: center;
-  gap: 10rpx;
+  gap: 16rpx;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
 }
 
-.channel-radio {
-  width: 32rpx;
-  height: 32rpx;
+.payment-option:last-child {
+  border-bottom: none;
+}
+
+.payment-option-name {
+  flex: 1;
+  font-size: 28rpx;
+  color: #333333;
+}
+
+/* 单选圆点：与配送方式一致，未选中为灰色空心圆，选中为绿色实心 */
+.payment-radio {
+  width: 36rpx;
+  height: 36rpx;
   box-sizing: border-box;
   border: 2rpx solid #cccccc;
   border-radius: 50%;
@@ -1045,25 +1101,13 @@ async function onSubmit() {
   transition: all 0.2s;
 }
 
-.channel-radio.checked {
-  border: 9rpx solid #07c160;
-}
-
-.channel-option-text {
-  font-size: 26rpx;
-  color: #333333;
-}
-
-.channel-option-text.active {
-  color: #07c160;
-  font-weight: bold;
+.payment-radio.checked {
+  border: 10rpx solid #07c160;
 }
 
 /* 无可用渠道时的占位提示 */
-.channel-empty {
-  flex: 1;
-  text-align: right;
-  margin-right: 12rpx;
+.payment-empty {
+  padding: 20rpx 0 24rpx;
   font-size: 26rpx;
   color: #999999;
 }
