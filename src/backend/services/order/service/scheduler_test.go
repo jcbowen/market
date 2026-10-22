@@ -798,6 +798,7 @@ func TestShouldRecordOrder(t *testing.T) {
 		{"卡单退款重试成功即记录", orderStat{refundOK: 1}, true},
 		{"超时退款自动审批即记录", orderStat{approved: 1}, true},
 		{"失败即记录", orderStat{failed: 1}, true},
+		{"panic 即记录", orderStat{panics: 1}, true},
 	}
 	for _, c := range cases {
 		if got := shouldRecordOrder(c.stat); got != c.want {
@@ -811,8 +812,8 @@ func TestOrderStatMerge(t *testing.T) {
 	var total orderStat
 	total.merge(orderStat{cancelled: 1, completed: 2})
 	total.merge(orderStat{pickup: 1, refundOK: 1, failed: 1})
-	total.merge(orderStat{approved: 1, recovered: 3})
-	want := orderStat{recovered: 3, cancelled: 1, completed: 2, pickup: 1, refundOK: 1, approved: 1, failed: 1}
+	total.merge(orderStat{approved: 1, recovered: 3, panics: 1})
+	want := orderStat{recovered: 3, cancelled: 1, completed: 2, pickup: 1, refundOK: 1, approved: 1, failed: 1, panics: 1}
 	if total != want {
 		t.Errorf("merge 结果 = %+v, 期望 %+v", total, want)
 	}

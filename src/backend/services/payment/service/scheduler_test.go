@@ -1416,3 +1416,35 @@ func TestReconcileStatMerge(t *testing.T) {
 		t.Errorf("merge 结果 = %+v, 期望 %+v", total, want)
 	}
 }
+
+// TestRunReconcileTaskPropagatesStat 子任务统计一定回传给调用方
+// panic 分支必须覆盖：结果若是匿名返回值，panic 越过本体 return 后结果槽归零，
+// panics 与 panic 前已完成的动作计数调用方都读不到，异常轮次会被当成空转不落库
+func TestRunReconcileTaskPropagatesStat(t *testing.T) {
+	t.Run("正常返回计数透传", func(t *testing.T) {
+		stat := runReconcileTask("normalTask", func(stat *reconcileStat) {
+			stat.rescued++
+			stat.observed += 3
+		})
+		if stat.rescued != 1 || stat.observed != 3 || stat.panics != 0 {
+			t.Errorf("正常统计丢失: %+v", stat)
+		}
+	})
+
+	t.Run("panic 计数与已写入计数都回传", func(t *testing.T) {
+		stat := runReconcileTask("panicTask", func(stat *reconcileStat) {
+			stat.closed++ // panic 前已落地的动作
+			panic(errors.New("模拟任务内异常"))
+		})
+		if stat.panics != 1 {
+			t.Errorf("panic 应计入 stat.panics，实际 %+v", stat)
+		}
+		if stat.closed != 1 {
+			t.Errorf("panic 前的动作计数不应丢失，实际 %+v", stat)
+		}
+		// 回传后必须满足落库判定，否则异常轮次在 debugger 里彻底无痕
+		if !shouldRecordReconcile(stat, 0) {
+			t.Errorf("panic 轮次应判定为需落库，实际统计 %+v", stat)
+		}
+	})
+}

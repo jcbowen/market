@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -199,7 +200,33 @@ func TestAlipayCallbackBehindSetGPCMiddleware(t *testing.T) {
 	})
 }
 
-// TestAlipayCallbackRecordsProcessLog 回调受理情况记入 debugger 进程级日志
+// newCallbackTestDebugger 内存存储的调试器实例（不连 MySQL）
+// Level 必须显式 Info：组件 Config.Level 默认 warn 会把 Info 级摘要全部丢弃
+// 参数：
+//   - t: 测试对象
+//
+// 返回值：
+//   - *debugger.Debugger: 可直接登记给 debuglog 的实例
+func newCallbackTestDebugger(t *testing.T) *debugger.Debugger {
+	t.Helper()
+	storage, err := debugger.NewMemoryStorage(200)
+	if err != nil {
+		t.Fatalf("创建内存存储失败: %v", err)
+	}
+	dbg, err := debugger.New(&debugger.Config{
+		Enabled:     true,
+		ServiceName: "gateway-test",
+		MaxRecords:  200,
+		Level:       debugger.LevelInfo,
+		Storage:     storage,
+	})
+	if err != nil {
+		t.Fatalf("创建调试器实例失败: %v", err)
+	}
+	return dbg
+}
+
+// TestAlipayCallbackRecordsProcessLog 支付宝回调受理情况记入 debugger 进程级日志
 // 覆盖（排查口径，详见需求文档 07-基础设施/03）：
 //   - 成功回调落 completed 记录，摘要含 out_trade_no 等白名单字段；
 //   - sign 等非白名单参数绝不入调试库（SkipPaths 之外的第二道防线在记录侧同样生效）；
@@ -208,28 +235,9 @@ func TestAlipayCallbackBehindSetGPCMiddleware(t *testing.T) {
 //
 // 封顶行为见 common/debuglog 包测试（滑窗包级共享，不在此重复）
 func TestAlipayCallbackRecordsProcessLog(t *testing.T) {
-	// 内存存储的调试器实例：不连 MySQL，Level 显式 Info（组件默认 warn 会吞 Info 摘要）
-	newInstance := func(t *testing.T) *debugger.Debugger {
-		t.Helper()
-		storage, err := debugger.NewMemoryStorage(200)
-		if err != nil {
-			t.Fatalf("创建内存存储失败: %v", err)
-		}
-		dbg, err := debugger.New(&debugger.Config{
-			Enabled:     true,
-			ServiceName: "gateway-test",
-			MaxRecords:  200,
-			Level:       debugger.LevelInfo,
-			Storage:     storage,
-		})
-		if err != nil {
-			t.Fatalf("创建调试器实例失败: %v", err)
-		}
-		return dbg
-	}
 
 	t.Run("成功回调落 completed 且不含 sign", func(t *testing.T) {
-		dbg := newInstance(t)
+		dbg := newCallbackTestDebugger(t)
 		debuglog.SetInstance(dbg)
 		t.Cleanup(func() { debuglog.SetInstance(nil) })
 
@@ -267,7 +275,7 @@ func TestAlipayCallbackRecordsProcessLog(t *testing.T) {
 	})
 
 	t.Run("受理失败落 failed 并带 error", func(t *testing.T) {
-		dbg := newInstance(t)
+		dbg := newCallbackTestDebugger(t)
 		debuglog.SetInstance(dbg)
 		t.Cleanup(func() { debuglog.SetInstance(nil) })
 
@@ -302,4 +310,132 @@ func TestAlipayCallbackRecordsProcessLog(t *testing.T) {
 	})
 	// 注：同 IP 每分钟封顶行为由 common/debuglog 包的 TestQuotaPerMinuteCap 覆盖
 	// （封顶滑窗为包级共享，handler 层多用例会相互消耗配额，故不在此重复验证）
+}
+
+// stubWechatCallbackClient 微信回调 gRPC 桩：记录收到的密文正文并可控返回错误
+// 嵌入接口后仅覆写 HandleWechatCallback，避免实现全部方法
+type stubWechatCallbackClient struct {
+	payment.PaymentServiceClient
+	called bool
+	body   []byte
+	err    error
+}
+
+// HandleWechatCallback 记录入参并按预设返回
+func (s *stubWechatCallbackClient) HandleWechatCallback(ctx context.Context, in *payment.WechatCallbackReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	s.called = true
+	s.body = in.GetBody()
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &common.CommonResponse{}, nil
+}
+
+// doWechatCallback 投递一次微信回调
+// 参数：
+//   - t: 测试对象
+//   - stub: 回调 gRPC 桩
+//   - body: 原始请求体（V3 为渠道密文）
+//
+// 返回值：
+//   - string: 网关返回给微信的 XML 响应体
+func doWechatCallback(t *testing.T, stub *stubWechatCallbackClient, body string) string {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/payment/callback/wechat", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h := &PaymentHandler{paymentClient: stub}
+	h.WechatCallback(c)
+	return recorder.Body.String()
+}
+
+// TestWechatCallbackRecordsProcessLog 微信回调受理情况记入 debugger 进程级日志
+// 微信 V3 通知体是渠道密文，记录侧只允许元数据（体量/结果/耗时/IP），
+// 密文正文即便被解析无价值也不得进调试库；本机无商户配置、真实渠道不可用，
+// 故这条链路只能靠此处静态断言锁定（详见需求文档 07-基础设施/04 的排查路径）
+func TestWechatCallbackRecordsProcessLog(t *testing.T) {
+	const ciphertext = "BASE64_LIKE_RESOURCE_CIPHERTEXT_SHOULD_NOT_RECORD"
+
+	t.Run("受理成功只落元数据、不含密文", func(t *testing.T) {
+		dbg := newCallbackTestDebugger(t)
+		debuglog.SetInstance(dbg)
+		t.Cleanup(func() { debuglog.SetInstance(nil) })
+
+		if got := doWechatCallback(t, &stubWechatCallbackClient{}, ciphertext); !strings.Contains(got, "SUCCESS") {
+			t.Fatalf("响应 = %q, 期望含 SUCCESS", got)
+		}
+
+		entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
+		if err != nil || total != 1 {
+			t.Fatalf("应落 1 条进程记录，实际 total=%d err=%v", total, err)
+		}
+		entry := entries[0]
+		if entry.ProcessName != "微信回调" || entry.ProcessType != "payment_callback_wechat" {
+			t.Errorf("进程标识错误: name=%q type=%q", entry.ProcessName, entry.ProcessType)
+		}
+		if entry.Status != "completed" || entry.HasError {
+			t.Errorf("受理成功应为 completed 且无错误，实际 status=%q hasErr=%v", entry.Status, entry.HasError)
+		}
+		fields := entry.LoggerLogs[0].Fields
+		if fields["result"] != "success" || fields["body_size"] != len(ciphertext) {
+			t.Errorf("元数据字段错误: %+v", fields)
+		}
+		// 只允许白名单元数据：新增字段须显式评审（密文/凭据一律不得入库）。
+		// 组件会给每条日志自动附带 level/message/timestamp 与进程三件套，属固定字段
+		componentFields := map[string]bool{
+			"level": true, "message": true, "timestamp": true,
+			"process_id": true, "process_name": true, "process_type": true,
+		}
+		for key := range fields {
+			switch key {
+			case "body_size", "result", "duration_ms", "client_ip":
+			default:
+				if !componentFields[key] {
+					t.Errorf("非白名单字段 %q 不应出现在微信回调记录里: %+v", key, fields)
+				}
+			}
+		}
+		for _, e := range entry.LoggerLogs {
+			for _, blob := range []string{fmt.Sprint(e.Fields), e.Message} {
+				if strings.Contains(blob, ciphertext) {
+					t.Errorf("密文正文泄入调试记录: %s", blob)
+				}
+			}
+		}
+	})
+
+	t.Run("受理失败落 failed 并带 error", func(t *testing.T) {
+		dbg := newCallbackTestDebugger(t)
+		debuglog.SetInstance(dbg)
+		t.Cleanup(func() { debuglog.SetInstance(nil) })
+
+		stub := &stubWechatCallbackClient{err: errors.New("微信回调解密失败")}
+		if got := doWechatCallback(t, stub, ciphertext); !strings.Contains(got, "FAIL") {
+			t.Fatalf("响应 = %q, 期望含 FAIL", got)
+		}
+
+		entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
+		if err != nil || total != 1 {
+			t.Fatalf("应落 1 条进程记录，实际 total=%d err=%v", total, err)
+		}
+		entry := entries[0]
+		if entry.Status != "failed" || !entry.HasError {
+			t.Errorf("失败记录应为 failed 且 HasError，实际 status=%q hasErr=%v", entry.Status, entry.HasError)
+		}
+		if entry.LoggerLogs[0].Fields["error"] != "微信回调解密失败" {
+			t.Errorf("失败原因未记录: %+v", entry.LoggerLogs[0].Fields)
+		}
+	})
+
+	t.Run("未登记实例时不 panic 无记录", func(t *testing.T) {
+		debuglog.SetInstance(nil)
+		t.Cleanup(func() { debuglog.SetInstance(nil) })
+
+		if got := doWechatCallback(t, &stubWechatCallbackClient{}, ciphertext); !strings.Contains(got, "SUCCESS") {
+			t.Fatalf("响应 = %q, 期望含 SUCCESS（记录缺失不影响受理）", got)
+		}
+	})
 }

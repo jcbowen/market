@@ -197,22 +197,27 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 	_ = rec.EndProcess(debuglog.StatusCompleted)
 }
 
-// reconcilePending 回查待支付单（P0-A）
-// 扫描条件与单条处理都受「起扫年龄 / 渠道时效 / 节流间隔 / 累计上限」四道约束，
-// 保证正常回调有足够时间先行完成，异常单又不会每分钟打扰渠道一次
+// reconcilePending 回查待支付单（P0-A），带任务级 panic 兜底
 // 参数：
 //   - ctx: 上下文
 //
 // 返回值：
 //   - reconcileStat: 本轮统计（落库判定依据）
 func (s *Scheduler) reconcilePending(ctx context.Context) reconcileStat {
-	var stat reconcileStat
-	defer s.recoverTask("reconcilePending", &stat)
+	return runReconcileTask("reconcilePending", func(stat *reconcileStat) { s.scanPending(ctx, stat) })
+}
 
+// scanPending 回查待支付单的任务本体
+// 扫描条件与单条处理都受「起扫年龄 / 渠道时效 / 节流间隔 / 累计上限」四道约束，
+// 保证正常回调有足够时间先行完成，异常单又不会每分钟打扰渠道一次
+// 参数：
+//   - ctx: 上下文
+//   - stat: 本轮统计（写入指针，由 runReconcileTask 回传）
+func (s *Scheduler) scanPending(ctx context.Context, stat *reconcileStat) {
 	lockKey := "scheduler:payment:reconcile:pending:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return stat
+		return
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -232,30 +237,34 @@ func (s *Scheduler) reconcilePending(ctx context.Context) reconcileStat {
 		Find(&rows).Error; err != nil {
 		log.Printf("[payment-scheduler] 扫描待支付单失败: %v", err)
 		stat.failed++ // 扫描失败计入本轮失败，使异常轮次落入 debugger 记录
-		return stat
+		return
 	}
 	for i := range rows {
-		s.reconcileOne(ctx, &rows[i], false).count(&stat)
+		s.reconcileOne(ctx, &rows[i], false).count(stat)
 	}
-	return stat
 }
 
-// detectStuck 检出资金挂账（P0-C）
-// 已关闭（status=5）且从未拿到渠道交易号的支付单，若渠道侧其实收了钱，
-// 订单早已取消、库存与优惠券已回补，系统无法自行挽回，只能产出人工退款待办
+// detectStuck 检出资金挂账（P0-C），带任务级 panic 兜底
 // 参数：
 //   - ctx: 上下文
 //
 // 返回值：
 //   - reconcileStat: 本轮统计（落库判定依据）
 func (s *Scheduler) detectStuck(ctx context.Context) reconcileStat {
-	var stat reconcileStat
-	defer s.recoverTask("detectStuck", &stat)
+	return runReconcileTask("detectStuck", func(stat *reconcileStat) { s.scanStuck(ctx, stat) })
+}
 
+// scanStuck 挂账检出的任务本体
+// 已关闭（status=5）且从未拿到渠道交易号的支付单，若渠道侧其实收了钱，
+// 订单早已取消、库存与优惠券已回补，系统无法自行挽回，只能产出人工退款待办
+// 参数：
+//   - ctx: 上下文
+//   - stat: 本轮统计（写入指针，由 runReconcileTask 回传）
+func (s *Scheduler) scanStuck(ctx context.Context, stat *reconcileStat) {
 	lockKey := "scheduler:payment:reconcile:stuck:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return stat
+		return
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -273,16 +282,15 @@ func (s *Scheduler) detectStuck(ctx context.Context) reconcileStat {
 		Find(&rows).Error; err != nil {
 		log.Printf("[payment-scheduler] 扫描已关闭支付单失败: %v", err)
 		stat.failed++ // 扫描失败计入本轮失败，使异常轮次落入 debugger 记录
-		return stat
+		return
 	}
 	for i := range rows {
 		// 渠道已明确回答过「没收到钱」的关闭单，事实不会改变，不再重复打扰渠道
 		if s.payment.hasNoPaymentConfirmed(ctx, rows[i].PaymentNo) {
 			continue
 		}
-		s.reconcileOne(ctx, &rows[i], true).count(&stat)
+		s.reconcileOne(ctx, &rows[i], true).count(stat)
 	}
-	return stat
 }
 
 // reconcileOne 对单笔支付单发起渠道核实并落地结论
@@ -559,7 +567,17 @@ func (s *PaymentService) recordFailure(ctx context.Context, p *model.Payment, ta
 	}
 }
 
-// retryFailures 重试历史对账失败记录
+// retryFailures 重试历史对账失败记录，带任务级 panic 兜底
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - reconcileStat: 本轮统计（落库判定依据）
+func (s *Scheduler) retryFailures(ctx context.Context) reconcileStat {
+	return runReconcileTask("retryFailures", func(stat *reconcileStat) { s.retryFailuresOnce(ctx, stat) })
+}
+
+// retryFailuresOnce 历史失败重试的任务本体
 // 处理前提：失败记录对应的支付单仍处于该任务关注的状态；已被其他路径收敛则标记为已处理
 //
 // 重试路径与两条扫描共用「分布式锁 + 节流间隔 + 累计上限」三道约束：
@@ -567,17 +585,12 @@ func (s *PaymentService) recordFailure(ctx context.Context, p *model.Payment, ta
 // 且同单多条待重试行会在同一轮里各查一次渠道、把 5 次重试预算提前吃光
 // 参数：
 //   - ctx: 上下文
-//
-// 返回值：
-//   - reconcileStat: 本轮统计（落库判定依据）
-func (s *Scheduler) retryFailures(ctx context.Context) reconcileStat {
-	var stat reconcileStat
-	defer s.recoverTask("retryFailures", &stat)
-
+//   - stat: 本轮统计（写入指针，由 runReconcileTask 回传）
+func (s *Scheduler) retryFailuresOnce(ctx context.Context, stat *reconcileStat) {
 	lockKey := "scheduler:payment:reconcile:retry:lock"
 	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
 	if lockValue == "" {
-		return stat
+		return
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
@@ -602,7 +615,7 @@ func (s *Scheduler) retryFailures(ctx context.Context) reconcileStat {
 		Find(&failures).Error; err != nil {
 		log.Printf("[payment-scheduler] 查询对账失败记录出错: %v", err)
 		stat.failed++
-		return stat
+		return
 	}
 
 	// 同一支付单本轮只打扰渠道一次（跨锁竞态可能留下 pending/stuck 两条待重试行）
@@ -628,14 +641,13 @@ func (s *Scheduler) retryFailures(ctx context.Context) reconcileStat {
 			continue
 		}
 		queried[p.PaymentNo] = true
-		s.reconcileOne(ctx, &p, p.Status != 1 || f.TaskType != model.TaskReconcilePending).count(&stat)
+		s.reconcileOne(ctx, &p, p.Status != 1 || f.TaskType != model.TaskReconcilePending).count(stat)
 		if p.ReconcileCount >= maxReconcile {
 			s.markFailureStatus(ctx, f.ID, model.FailureStatusAbandoned)
 			continue
 		}
 		s.incrementFailureRetry(ctx, f.ID)
 	}
-	return stat
 }
 
 // markFailureStatus 更新对账失败记录状态
@@ -696,17 +708,33 @@ func (s *Scheduler) cleanupNotifyLogs(ctx context.Context) int64 {
 	return res.RowsAffected
 }
 
-// recoverTask 任务级 panic 兜底：对账属于旁路能力，任何一笔的异常都不应终止整个调度协程
+// runReconcileTask 执行一个对账子任务：任务级 panic 兜底，并保证计数一定回传给调用方
+// 对账属于旁路能力，任何一笔的异常都不应终止整个调度协程；
 // panic 计入 stat.panics，使异常轮次不满足空转条件（shouldRecordReconcile），
 // 从而在 debugger 进程记录中可见——否则 panic 被静默恢复后无任何痕迹
+//
+// 结果必须是命名返回值：panic 越过子任务本体的 return 之后，匿名结果槽是零值，
+// defer 里对局部变量的写入调用方读不到（panic 计数与 panic 前已完成的动作计数会一起归零）；
+// 命名返回值就是结果槽本身，经 fn 的指针写入对调用方可见
 // 参数：
 //   - name: 任务名，用于日志定位
-//   - stat: 本轮统计（panic 计数写入）
-func (s *Scheduler) recoverTask(name string, stat *reconcileStat) {
-	if r := recover(); r != nil {
-		stat.panics++
-		log.Printf("[payment-scheduler] 任务 %s 异常已恢复: %v", name, r)
-	}
+//   - fn: 子任务本体，把本轮统计写入收到的指针
+//
+// 返回值：
+//   - reconcileStat: 本轮统计；panic 时保留 panic 前已写入的计数并追加 panics
+//
+// 使用示例：
+//
+//	stat := runReconcileTask("detectStuck", func(stat *reconcileStat) { s.scanStuck(ctx, stat) })
+func runReconcileTask(name string, fn func(stat *reconcileStat)) (stat reconcileStat) {
+	defer func() {
+		if r := recover(); r != nil {
+			stat.panics++
+			log.Printf("[payment-scheduler] 任务 %s 异常已恢复: %v", name, r)
+		}
+	}()
+	fn(&stat)
+	return stat
 }
 
 // acquireLock 获取 Redis 分布式锁

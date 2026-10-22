@@ -54,6 +54,7 @@ type orderStat struct {
 	refundOK  int // 卡单退款重试成功
 	approved  int // 超时退款自动审批
 	failed    int // 本轮失败（含扫描/抢占/事务/重试/审批出错）
+	panics    int // 本轮被 runOnce 恢复的 panic 次数（正常为 0 或 1）
 }
 
 // hasAction 本轮是否发生了实质动作或失败
@@ -62,7 +63,7 @@ type orderStat struct {
 // 返回值：
 //   - bool: true 表示有实质动作
 func (s orderStat) hasAction() bool {
-	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.failed > 0
+	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.failed+s.panics > 0
 }
 
 // merge 把另一份统计并入本轮（子任务结果汇总）
@@ -76,6 +77,7 @@ func (s *orderStat) merge(other orderStat) {
 	s.refundOK += other.refundOK
 	s.approved += other.approved
 	s.failed += other.failed
+	s.panics += other.panics
 }
 
 // shouldRecordOrder 判定本轮订单调度是否值得写入 debugger 进程记录
@@ -157,6 +159,10 @@ func (s *Scheduler) Start(ctx context.Context, orderTimeout int, autoCompleteDay
 // 创建即落库，1 分钟一轮全量记录会把 debug_logs 全表上限的 HTTP 请求记录
 // 迅速挤掉，故空转轮次（无任何动作与失败）只打标准日志。
 // 有动作的轮次落一条摘要记录（含各任务计数），含失败的轮次以错误级标记
+//
+// 落库统一放在 defer 里：正常跑完与 panic 提前展开都只记一次，且异常轮次一定留痕。
+// 订单调度此前没有任何 panic 兜底，一笔异常会终止整个调度协程并让后续轮次静默消失；
+// 现由本层恢复——本轮剩余子任务跳过（下一轮重来），协程继续存活
 // 参数：
 //   - ctx: 上下文
 //   - orderTimeout: 订单超时未支付时间（秒）
@@ -165,6 +171,14 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 	start := time.Now()
 
 	var stat orderStat
+	defer func() {
+		if r := recover(); r != nil {
+			stat.panics++
+			log.Printf("[order-scheduler] 本轮调度异常已恢复: %v", r)
+		}
+		s.recordRound(start, stat)
+	}()
+
 	// 兜底恢复：进程异常中断导致回滚未执行的订单，先恢复原状态再进入本轮调度
 	stat.merge(s.recoverStuckOrders(ctx))
 	stat.merge(s.cancelTimeoutOrders(ctx, orderTimeout))
@@ -172,7 +186,13 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 	stat.merge(s.autoCompletePickupOrders(ctx, autoCompleteDays))
 	stat.merge(s.retryStuckRefunds(ctx))
 	stat.merge(s.autoApproveStaleRefunds(ctx))
+}
 
+// recordRound 把本轮统计落一条 debugger 进程记录；空转轮次只打标准日志不落库
+// 参数：
+//   - start: 本轮开始时间（算耗时）
+//   - stat: 本轮统计
+func (s *Scheduler) recordRound(start time.Time, stat orderStat) {
 	if !shouldRecordOrder(stat) {
 		return
 	}
@@ -188,9 +208,10 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 		"refund_ok":   stat.refundOK,
 		"approved":    stat.approved,
 		"failed":      stat.failed,
+		"panics":      stat.panics,
 		"duration_ms": time.Since(start).Milliseconds(),
 	}
-	if stat.failed > 0 {
+	if stat.failed > 0 || stat.panics > 0 {
 		rec.Error("本轮订单调度存在失败", fields)
 		_ = rec.EndProcess(debuglog.StatusFailed)
 		return
@@ -738,12 +759,14 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 			continue
 		}
 		s.markFailureStatus(ctx, f.ID, 2)
-		if taskType == "timeout_cancel" {
+		// 成功计数按任务类型归集，与上面的 switch 同一套取值
+		switch taskType {
+		case "timeout_cancel":
 			s.auditPaidAfterCancel(ctx, f.OrderID)
 			stat.cancelled++
-		} else if taskType == "auto_complete" {
+		case "auto_complete":
 			stat.completed++
-		} else {
+		default: // pickup_complete
 			stat.pickup++
 		}
 		log.Printf("[order-scheduler] 重试 %s 订单 %d 成功", taskType, f.OrderID)

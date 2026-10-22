@@ -2,6 +2,7 @@
   "name": "market-admin",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "社区商超后台管理",
   "scripts": {
     "dev": "vite",

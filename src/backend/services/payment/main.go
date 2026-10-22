@@ -41,8 +41,9 @@ func main() {
 	paymentService := service.NewPaymentService(db, cfg)
 
 	// debugger 进程级日志：与 gateway 共享 debug_logs 表（ServiceName 由 entrypoint
-	// 按进程名覆写配置副本为 payment-service），供对账调度器等异步进程记录摘要
-	dbg, stopDebugger := bootstrap.RegisterProcessDebugger(cfg)
+	// 按进程名覆写配置副本为 payment-service），供对账调度器等异步进程记录摘要；
+	// 连接池复用主链路的 db，不另开一份
+	dbg, stopDebugger := bootstrap.RegisterProcessDebugger(cfg, db)
 	defer stopDebugger()
 	debuglog.SetInstance(dbg)
 

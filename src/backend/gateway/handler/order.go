@@ -195,43 +195,52 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// 服务端兜底清理购物车：下单成功后异步删除已购 SKU，防止客户端崩溃/网络中断导致残留。
-	// 清理结果记入 debugger 进程级日志（异步任务无请求日志，失败时是排查购物车残留的主路径）
+	// 服务端兜底清理购物车：下单成功后异步删除已购 SKU，防止客户端崩溃/网络中断导致残留
 	if h.cartClient != nil {
-		go func(userID int64, items []*order.OrderItem) {
-			bgCtx := context.Background()
-			rec := debuglog.Start("下单后清理购物车", "cart_cleanup")
-			failedSkus := make([]int64, 0, len(items))
-			for _, item := range items {
-				if _, err := h.cartClient.RemoveItem(bgCtx, &cart.RemoveItemReq{
-					Id:     item.SkuId,
-					UserId: userID,
-				}); err != nil {
-					failedSkus = append(failedSkus, item.SkuId)
-					log.Printf("下单后清理购物车失败（user=%d sku=%d）: %v", userID, item.SkuId, err)
-				}
-			}
-			if rec == nil {
-				return
-			}
-			if len(failedSkus) > 0 {
-				rec.Error("部分 SKU 清理失败", map[string]interface{}{
-					"user_id":     userID,
-					"sku_count":   len(items),
-					"failed_skus": failedSkus,
-				})
-				_ = rec.EndProcess(debuglog.StatusFailed)
-				return
-			}
-			rec.Info("购物车清理完成", map[string]interface{}{
-				"user_id":   userID,
-				"sku_count": len(items),
-			})
-			_ = rec.EndProcess(debuglog.StatusCompleted)
-		}(uc.UserID, req.Items)
+		go h.cleanupCartAfterOrder(uc.UserID, req.Items)
 	}
 
 	response.Success(c, resp)
+}
+
+// cleanupCartAfterOrder 下单成功后异步删除已购 SKU 的服务端兜底清理
+// debugger 记录口径：全部成功不落库——组件 StartProcess 创建即落库，每单一条会
+// 迅速挤占 debug_logs 全表上限、把 HTTP 请求记录冲掉（与调度器「空转不落库」同口径）；
+// 仅部分失败时记一条 error 级摘要（异步任务没有请求日志，这条记录是排查残留的主路径）
+// 参数：
+//   - userID: 下单用户 ID
+//   - items: 订单条目，逐项按 SKU ID 删除购物车行
+//
+// 返回值：无（失败只记录，不影响已成功的下单响应）
+//
+// 使用示例：
+//
+//	go h.cleanupCartAfterOrder(uc.UserID, req.Items)
+func (h *OrderHandler) cleanupCartAfterOrder(userID int64, items []*order.OrderItem) {
+	bgCtx := context.Background()
+	failedSkus := make([]int64, 0, len(items))
+	for _, item := range items {
+		if _, err := h.cartClient.RemoveItem(bgCtx, &cart.RemoveItemReq{
+			Id:     item.SkuId,
+			UserId: userID,
+		}); err != nil {
+			failedSkus = append(failedSkus, item.SkuId)
+			log.Printf("下单后清理购物车失败（user=%d sku=%d）: %v", userID, item.SkuId, err)
+		}
+	}
+	if len(failedSkus) == 0 {
+		return
+	}
+	rec := debuglog.Start("下单后清理购物车", "cart_cleanup")
+	if rec == nil {
+		return
+	}
+	rec.Error("部分 SKU 清理失败", map[string]interface{}{
+		"user_id":     userID,
+		"sku_count":   len(items),
+		"failed_skus": failedSkus,
+	})
+	_ = rec.EndProcess(debuglog.StatusFailed)
 }
 
 // ListOrders 获取当前用户订单列表
