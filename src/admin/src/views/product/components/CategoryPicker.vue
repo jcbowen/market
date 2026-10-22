@@ -11,7 +11,7 @@
       </template>
     </n-input>
 
-    <n-modal v-model:show="showModal" preset="card" title="选择商品分类" class="category-picker__modal">
+    <n-modal v-model:show="showModal" preset="card" title="选择商品分类" style="width: 360px; max-width: 90vw">
       <n-spin :show="loading">
         <n-empty v-if="!loading && list.length === 0" description="暂无分类，先新建一个吧" />
         <div v-else class="category-picker__list">
