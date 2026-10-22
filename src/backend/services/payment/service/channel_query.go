@@ -122,18 +122,23 @@ func defaultQueryAlipayOrder(ctx context.Context, s *PaymentService, paymentNo s
 		},
 	})
 	if apiErr != nil {
+		// V3 对不存在的交易返回 4xx，错误码在响应体里：识别 NOT_EXIST 得到
+		// 「用户没付过钱」的确定结论（可安全关单/留痕），与网络失败严格区分
+		if body := alipayV3ApiErrBody(apiErr); body != nil {
+			if sub := alipayRespString(body, "sub_code"); strings.Contains(strings.ToUpper(sub), "TRADE_NOT_EXIST") {
+				return &channelPayResult{State: ChannelStateNotExist, Raw: sub}, nil
+			}
+		}
 		return &channelPayResult{State: ChannelStateError, Raw: apiErr.Error()}, fmt.Errorf("支付宝查询失败: %s", apiErr.Error())
 	}
-	code := alipayRespString(resp, "code")
-	if !alipaysdk.IsBizSuccess(code) {
-		subCode := alipayRespString(resp, "sub_code")
+	// 经 alipayV3BizError 判定而非 IsBizSuccess(resp["code"])：
+	// V3 正常响应体无 code 字段，直接判 code 会把 TRADE_SUCCESS 误判为查询失败（捞回机制失效）
+	if failed, code, subCode, subMsg := alipayV3BizError(resp); failed {
 		if strings.Contains(strings.ToUpper(subCode), "TRADE_NOT_EXIST") {
 			return &channelPayResult{State: ChannelStateNotExist, Raw: subCode}, nil
 		}
-		return &channelPayResult{
-			State: ChannelStateError,
-			Raw:   fmt.Sprintf("code=%s sub_code=%s sub_msg=%s", code, subCode, alipayRespString(resp, "sub_msg")),
-		}, fmt.Errorf("支付宝查询业务失败: code=%s sub_code=%s", code, subCode)
+		raw := fmt.Sprintf("code=%s sub_code=%s sub_msg=%s", code, subCode, subMsg)
+		return &channelPayResult{State: ChannelStateError, Raw: raw}, fmt.Errorf("支付宝查询业务失败: %s", raw)
 	}
 	tradeStatus := alipayRespString(resp, "trade_status")
 	res := &channelPayResult{
@@ -208,10 +213,9 @@ func defaultCloseAlipayOrder(ctx context.Context, s *PaymentService, paymentNo s
 	if apiErr != nil {
 		return fmt.Errorf("支付宝关单失败: %s", apiErr.Error())
 	}
-	code := alipayRespString(resp, "code")
-	if !alipaysdk.IsBizSuccess(code) {
-		return fmt.Errorf("支付宝关单业务失败: code=%s sub_code=%s sub_msg=%s",
-			code, alipayRespString(resp, "sub_code"), alipayRespString(resp, "sub_msg"))
+	// 经 alipayV3BizError 判定：V3 正常响应体无 code 字段，判 code 会把关单成功误判为失败
+	if failed, code, subCode, subMsg := alipayV3BizError(resp); failed {
+		return fmt.Errorf("支付宝关单业务失败: code=%s sub_code=%s sub_msg=%s", code, subCode, subMsg)
 	}
 	return nil
 }

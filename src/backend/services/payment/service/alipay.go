@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -234,9 +235,10 @@ func (s *PaymentService) alipayTimeoutExpress() string {
 // alipayRefund 调用支付宝退款接口（V3 /v3/alipay/trade/refund）
 // out_request_no 传退款单号，支付宝侧保证同退款请求号多次请求只退一次，天然幂等；
 // 同步返回即退款受理结果，fund_change=N 表示该请求未实际改变资金（重复请求），同样视为成功
-// 走通用 Execute 而非 typed Refund：SDK 的成功响应模型不含 code 字段，且 SDK 对齐 PHP 行为
-// 在 HTTP 2xx 时不判业务码；退款是资金写操作，必须自行确认 code=10000，
-// 否则网关以 200 返回错误码时会被误记「已退款」并回补库存
+// 走通用 Execute 而非 typed Refund：SDK 对齐 PHP 行为在 HTTP 2xx 时不判业务码；
+// 退款是资金写操作，必须自行确认业务结果——经 alipayV3BizError 判定
+// （V3 正常响应体无 code 字段，直接视为成功；网关异常以 200 返回错误体时取 code 拒绝），
+// 否则正常退款会被误记「退款失败」并反复重试
 // 参数：
 //   - ctx: 上下文
 //   - p: 原支付记录
@@ -260,10 +262,8 @@ func (s *PaymentService) alipayRefund(ctx context.Context, p *model.Payment, ref
 	if apiErr != nil {
 		return fmt.Errorf("支付宝退款失败: %s", apiErr.Error())
 	}
-	code := alipayRespString(resp, "code")
-	if !alipaysdk.IsBizSuccess(code) {
-		return fmt.Errorf("支付宝退款业务失败: code=%s sub_code=%s sub_msg=%s",
-			code, alipayRespString(resp, "sub_code"), alipayRespString(resp, "sub_msg"))
+	if failed, code, subCode, subMsg := alipayV3BizError(resp); failed {
+		return fmt.Errorf("支付宝退款业务失败: code=%s sub_code=%s sub_msg=%s", code, subCode, subMsg)
 	}
 	refund.TransactionID = alipayRespString(resp, "trade_no")
 	return nil
@@ -286,6 +286,50 @@ func alipayRespString(resp map[string]interface{}, key string) string {
 		return ""
 	}
 	return str
+}
+
+// alipayV3BizError 判定支付宝 V3 2xx 响应体是否为业务失败
+// V3 正常业务响应体不含 code 字段（业务结果直接平铺，如 trade_status），
+// 仅网关异常场景可能以 HTTP 200 返回带 code 的错误体；SDK 对齐 PHP 行为
+// 在 2xx 时不判 code，由调用方自行判定。此前各调用点用 IsBizSuccess(resp["code"])
+// 判定，正常响应因 code 缺失恒被判为业务失败——主动查单查到 TRADE_SUCCESS 仍按
+// 「渠道查询失败」静默跳过（对账捞回机制失效）、退款成功被记失败，
+// 2026-10-22 线上故障即由此导致
+// 参数：
+//   - resp: Execute 返回的响应体
+//
+// 返回值：
+//   - bool: 业务失败返回 true；正常业务响应（无 code 字段）或 code=10000 返回 false
+//   - string: code，响应体携带时返回
+//   - string: sub_code
+//   - string: sub_msg
+func alipayV3BizError(resp map[string]interface{}) (bool, string, string, string) {
+	code := alipayRespString(resp, "code")
+	if code == "" {
+		return false, "", "", ""
+	}
+	if alipaysdk.IsBizSuccess(code) {
+		return false, code, "", ""
+	}
+	return true, code, alipayRespString(resp, "sub_code"), alipayRespString(resp, "sub_msg")
+}
+
+// alipayV3ApiErrBody 解析 V3 非 2xx 异常的响应体（错误码与业务结果都在 body 中，
+// 如 ACQ.TRADE_NOT_EXIST），供调用方区分「渠道明确回答」与「网络/服务异常」
+// 参数：
+//   - apiErr: Execute 返回的异常
+//
+// 返回值：
+//   - map[string]interface{}: 响应体反序列化结果，body 为空或非法 JSON 时返回 nil
+func alipayV3ApiErrBody(apiErr *alipaysdk.ApiException) map[string]interface{} {
+	if apiErr == nil || apiErr.ResponseBody == "" {
+		return nil
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(apiErr.ResponseBody), &obj); err != nil {
+		return nil
+	}
+	return obj
 }
 
 // parseAlipayCallback 解析支付宝支付回调参数并完成 RSA2 验签
@@ -318,7 +362,14 @@ func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCall
 		ok, err = alipaysdk.RsaCheckV1(params, cfg.AlipayPublicKey, false)
 	}
 	if err != nil || !ok {
-		log.Printf("支付宝回调验签失败: %v", err)
+		// 只记参数 key 列表不记值（sign/金额等值不入日志），
+		// 用于区分「通知缺字段」（如公钥模式应用的通知不带 alipay_cert_sn）与「值不匹配」
+		keys := make([]string, 0, len(params))
+		for k := range params {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		log.Printf("支付宝回调验签失败: %v 通知参数字段=%v", err, keys)
 		return nil, fmt.Errorf("支付宝回调验签失败")
 	}
 

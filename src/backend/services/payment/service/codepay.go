@@ -301,15 +301,23 @@ func defaultAlipayAuthCodePay(ctx context.Context, s *PaymentService, p *model.P
 		},
 	})
 	if apiErr != nil {
+		// V3 业务拒绝（如撞上前一笔已完成支付）以 4xx 返回，错误码在响应体里：
+		// ACQ.TRADE_HAS_SUCCESS 是「渠道已收款」的确定结论，回查确认真实资金状态；
+		// 其余异常维持原语义（状态未知，可重试）
+		if body := alipayV3ApiErrBody(apiErr); body != nil {
+			if strings.Contains(strings.ToUpper(alipayRespString(body, "sub_code")), "ACQ.TRADE_HAS_SUCCESS") {
+				return s.resolveCodePayByQuery(ctx, p)
+			}
+		}
 		return nil, apiErr
 	}
-	code := alipayRespString(resp, "code")
-	if !alipaysdk.IsBizSuccess(code) {
+	// 经 alipayV3BizError 判定：V3 正常响应体无 code 字段，判 code 会把支付成功误判为失败
+	if failed, _, subCode, subMsg := alipayV3BizError(resp); failed {
 		// 重试撞上前一笔已完成支付（ACQ.TRADE_HAS_SUCCESS）：回查确认真实资金状态
-		if strings.Contains(strings.ToUpper(alipayRespString(resp, "sub_code")), "ACQ.TRADE_HAS_SUCCESS") {
+		if strings.Contains(strings.ToUpper(subCode), "ACQ.TRADE_HAS_SUCCESS") {
 			return s.resolveCodePayByQuery(ctx, p)
 		}
-		return &codePayResult{State: ChannelStateClosed, Message: alipayRespString(resp, "sub_msg")}, nil
+		return &codePayResult{State: ChannelStateClosed, Message: subMsg}, nil
 	}
 	switch normalizeAlipayTradeStatus(alipayRespString(resp, "trade_status")) {
 	case ChannelStatePaid:

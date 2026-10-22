@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
@@ -491,4 +492,69 @@ func TestAppendQueryParam(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAlipayV3BizError V3 2xx 响应体业务结果判定
+// 核心回归点：V3 正常响应体不含 code 字段，必须视为业务成功；
+// 仅当响应体携带 code 且非 10000 时才判失败（网关异常以 200 返回错误体的场景）。
+// 此前用 IsBizSuccess(resp["code"]) 判定，正常响应恒判失败，
+// 导致对账查单查到 TRADE_SUCCESS 仍被静默跳过、退款成功被记失败
+func TestAlipayV3BizError(t *testing.T) {
+	cases := []struct {
+		name       string
+		resp       map[string]interface{}
+		wantFailed bool
+		wantCode   string
+		wantSub    string
+	}{
+		{"V3 正常响应无 code 字段按成功", map[string]interface{}{"trade_status": "TRADE_SUCCESS", "total_amount": "0.01"}, false, "", ""},
+		{"网关异常以 200 返回错误体", map[string]interface{}{"code": "40004", "sub_code": "ACQ.TRADE_NOT_EXIST", "sub_msg": "交易不存在"}, true, "40004", "ACQ.TRADE_NOT_EXIST"},
+		{"code 为 10000 视为成功", map[string]interface{}{"code": "10000"}, false, "10000", ""},
+		{"空响应体按成功", map[string]interface{}{}, false, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			failed, code, subCode, _ := alipayV3BizError(c.resp)
+			if failed != c.wantFailed {
+				t.Fatalf("failed = %v, want %v", failed, c.wantFailed)
+			}
+			if code != c.wantCode {
+				t.Fatalf("code = %q, want %q", code, c.wantCode)
+			}
+			if subCode != c.wantSub {
+				t.Fatalf("sub_code = %q, want %q", subCode, c.wantSub)
+			}
+		})
+	}
+}
+
+// TestAlipayV3ApiErrBody V3 非 2xx 异常响应体解析
+// 覆盖：错误码在 body 中的标准形态、空 body、非法 JSON 均安全返回
+func TestAlipayV3ApiErrBody(t *testing.T) {
+	t.Run("4xx 错误体可解析出 sub_code", func(t *testing.T) {
+		apiErr := alipaysdk.NewApiException(400, "bad request", nil,
+			`{"code":"ACQ.TRADE_NOT_EXIST","sub_code":"ACQ.TRADE_NOT_EXIST","sub_msg":"交易不存在"}`)
+		body := alipayV3ApiErrBody(apiErr)
+		if body == nil {
+			t.Fatal("body = nil, want 解析结果")
+		}
+		if got := alipayRespString(body, "sub_code"); got != "ACQ.TRADE_NOT_EXIST" {
+			t.Fatalf("sub_code = %q, want ACQ.TRADE_NOT_EXIST", got)
+		}
+	})
+	t.Run("空 body 返回 nil", func(t *testing.T) {
+		if body := alipayV3ApiErrBody(alipaysdk.NewApiException(500, "oops", nil, "")); body != nil {
+			t.Fatalf("body = %v, want nil", body)
+		}
+	})
+	t.Run("非法 JSON 返回 nil", func(t *testing.T) {
+		if body := alipayV3ApiErrBody(alipaysdk.NewApiException(500, "oops", nil, "not-json")); body != nil {
+			t.Fatalf("body = %v, want nil", body)
+		}
+	})
+	t.Run("nil 异常返回 nil", func(t *testing.T) {
+		if body := alipayV3ApiErrBody(nil); body != nil {
+			t.Fatalf("body = %v, want nil", body)
+		}
+	})
 }
