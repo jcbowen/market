@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
@@ -396,6 +397,9 @@ func (s *Scheduler) markReconciled(ctx context.Context, p *model.Payment) {
 
 // recordFailure 记录对账处理失败的支付单，交由下一轮 retryFailures 重试
 // 只记真正需要额外重试的情形（补同步过程中 DB/RPC 出错），渠道未支付不算失败
+//
+// 同一支付单同一任务只保留一条待重试行：uk_failures_pending 命中时改为刷新失败原因，
+// 渠道持续不可达时不会按轮次堆出几十条等价记录
 // 参数：
 //   - ctx: 上下文
 //   - p: 支付单
@@ -403,35 +407,69 @@ func (s *Scheduler) markReconciled(ctx context.Context, p *model.Payment) {
 //   - errMsg: 失败原因
 func (s *PaymentService) recordFailure(ctx context.Context, p *model.Payment, taskType, errMsg string) {
 	now := time.Now().Format(timeLayout)
+	slot := model.FailurePendingSlot
 	failure := &model.SchedulerFailure{
-		PaymentNo: p.PaymentNo,
-		OrderID:   p.OrderID,
-		TaskType:  taskType,
-		Status:    model.FailureStatusPending,
-		ErrorMsg:  truncateRunes(errMsg, notifyErrorMsgMaxLen),
-		CreatedAt: now,
-		UpdatedAt: now,
+		PaymentNo:   p.PaymentNo,
+		OrderID:     p.OrderID,
+		TaskType:    taskType,
+		Status:      model.FailureStatusPending,
+		PendingSlot: &slot,
+		ErrorMsg:    truncateRunes(errMsg, notifyErrorMsgMaxLen),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
-	if err := s.db.GetDb().WithContext(ctx).Create(failure).Error; err != nil {
+	err := s.db.GetDb().WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "payment_no"}, {Name: "task_type"}, {Name: "pending_slot"}},
+		DoUpdates: clause.AssignmentColumns([]string{"error_msg", "updated_at"}),
+	}).Create(failure).Error
+	if err != nil {
 		log.Printf("[payment-scheduler] 记录失败支付单 %s 出错: %v", p.PaymentNo, err)
 	}
 }
 
 // retryFailures 重试历史对账失败记录
 // 处理前提：失败记录对应的支付单仍处于该任务关注的状态；已被其他路径收敛则标记为已处理
+//
+// 重试路径与两条扫描共用「分布式锁 + 节流间隔 + 累计上限」三道约束：
+// 少了任何一道，渠道故障时它会退化成「每分钟绕过节流直打渠道」，
+// 且同单多条待重试行会在同一轮里各查一次渠道、把 5 次重试预算提前吃光
 // 参数：
 //   - ctx: 上下文
 func (s *Scheduler) retryFailures(ctx context.Context) {
+	defer s.recoverTask("retryFailures")
+
+	lockKey := "scheduler:payment:reconcile:retry:lock"
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
+		return
+	}
+	defer s.releaseLock(ctx, lockKey, lockValue)
+
 	r := s.payment.cfg.Business.PaymentReconcile
+	maxReconcile := int32(config.ReconcileInt(r.MaxReconcileCount, 24))
+	throttleBefore := time.Now().Add(-time.Duration(config.ReconcileInt(r.ThrottleMinutes, 5)) * time.Minute).Format(timeLayout)
+
+	// LEFT JOIN 保留「支付单已被删除」的孤儿记录，交由循环内标记放弃，避免永久滞留待重试态。
+	// 累计上限不写在扫描条件里：写进去这些行会永远是「待重试」，白白占住批次额度，
+	// 改为读到后在调用渠道之前就置放弃
 	var failures []model.SchedulerFailure
 	if err := s.payment.db.GetDb().WithContext(ctx).
-		Where("status = ? AND retry_count < ?", model.FailureStatusPending, model.MaxFailureRetry).
-		Order("id asc").
+		Table("payment_scheduler_failures").
+		Select("payment_scheduler_failures.*").
+		Joins("LEFT JOIN payments ON payments.payment_no = payment_scheduler_failures.payment_no").
+		Where("payment_scheduler_failures.status = ? AND payment_scheduler_failures.retry_count < ?",
+			model.FailureStatusPending, model.MaxFailureRetry).
+		Where("payments.id IS NULL OR payments.last_reconciled_at IS NULL OR payments.last_reconciled_at < ?",
+			throttleBefore).
+		Order("payment_scheduler_failures.id asc").
 		Limit(config.ReconcileInt(r.BatchSize, 100)).
 		Find(&failures).Error; err != nil {
 		log.Printf("[payment-scheduler] 查询对账失败记录出错: %v", err)
 		return
 	}
+
+	// 同一支付单本轮只打扰渠道一次（跨锁竞态可能留下 pending/stuck 两条待重试行）
+	queried := make(map[string]bool, len(failures))
 	for i := range failures {
 		f := &failures[i]
 		var p model.Payment
@@ -444,12 +482,17 @@ func (s *Scheduler) retryFailures(ctx context.Context) {
 			s.markFailureStatus(ctx, f.ID, model.FailureStatusDone)
 			continue
 		}
-		if p.Status == 1 && f.TaskType == model.TaskReconcilePending {
-			s.reconcileOne(ctx, &p, false)
-		} else {
-			s.reconcileOne(ctx, &p, true)
+		// 回查上限按支付单口径判定：扫描已放弃的单不再重试，也不再打扰渠道
+		if p.ReconcileCount >= maxReconcile {
+			s.markFailureStatus(ctx, f.ID, model.FailureStatusAbandoned)
+			continue
 		}
-		if p.ReconcileCount >= int32(config.ReconcileInt(r.MaxReconcileCount, 24)) {
+		if queried[p.PaymentNo] {
+			continue
+		}
+		queried[p.PaymentNo] = true
+		s.reconcileOne(ctx, &p, !(p.Status == 1 && f.TaskType == model.TaskReconcilePending))
+		if p.ReconcileCount >= maxReconcile {
 			s.markFailureStatus(ctx, f.ID, model.FailureStatusAbandoned)
 			continue
 		}
@@ -458,6 +501,7 @@ func (s *Scheduler) retryFailures(ctx context.Context) {
 }
 
 // markFailureStatus 更新对账失败记录状态
+// 转终态时必须清空 pending_slot，否则唯一索引会挡住该单后续的新失败
 // 参数：
 //   - ctx: 上下文
 //   - id: 记录 ID
@@ -465,7 +509,11 @@ func (s *Scheduler) retryFailures(ctx context.Context) {
 func (s *Scheduler) markFailureStatus(ctx context.Context, id int64, status int32) {
 	if err := s.payment.db.GetDb().WithContext(ctx).Model(&model.SchedulerFailure{}).
 		Where("id = ?", id).
-		Updates(map[string]interface{}{"status": status, "updated_at": time.Now().Format(timeLayout)}).Error; err != nil {
+		Updates(map[string]interface{}{
+			"status":       status,
+			"pending_slot": nil,
+			"updated_at":   time.Now().Format(timeLayout),
+		}).Error; err != nil {
 		log.Printf("[payment-scheduler] 更新对账失败记录 %d 状态出错: %v", id, err)
 	}
 }

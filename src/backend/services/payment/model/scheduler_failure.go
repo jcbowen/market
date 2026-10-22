@@ -12,15 +12,20 @@ import (
 //go:generate go tool gormgen -struct SchedulerFailure
 type SchedulerFailure struct {
 	base.MysqlBaseModel
-	ID         int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	PaymentNo  string `gorm:"column:payment_no;type:varchar(50);not null;default:'';index;comment:支付单号" json:"payment_no"`
-	OrderID    int64  `gorm:"column:order_id;type:bigint;not null;default:0;index;comment:订单 ID" json:"order_id"`
-	TaskType   string `gorm:"column:task_type;type:varchar(24);not null;comment:任务类型 reconcile_pending/reconcile_stuck/channel_close" json:"task_type"`
-	Status     int32  `gorm:"column:status;type:tinyint;default:1;comment:1待重试 2已处理 3放弃" json:"status"`
-	ErrorMsg   string `gorm:"column:error_msg;type:varchar(500);comment:失败原因" json:"error_msg"`
-	RetryCount int32  `gorm:"column:retry_count;type:int;default:0;comment:已重试次数，默认 0" json:"retry_count"`
-	CreatedAt  string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt  string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	ID        int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	PaymentNo string `gorm:"column:payment_no;type:varchar(50);not null;default:'';uniqueIndex:uk_failures_pending,priority:1;comment:支付单号" json:"payment_no"`
+	OrderID   int64  `gorm:"column:order_id;type:bigint;not null;default:0;index;comment:订单 ID" json:"order_id"`
+	TaskType  string `gorm:"column:task_type;type:varchar(24);not null;uniqueIndex:uk_failures_pending,priority:2;comment:任务类型 reconcile_pending/reconcile_stuck/channel_close" json:"task_type"`
+	Status    int32  `gorm:"column:status;type:tinyint;default:1;comment:1待重试 2已处理 3放弃" json:"status"`
+	// PendingSlot 待重试占位标记：待重试(1)固定写 FailurePendingSlot，转终态(2/3)时置 NULL。
+	// MySQL 没有部分唯一索引，唯一索引里含 NULL 的行彼此不冲突，
+	// 于是 (payment_no, task_type, pending_slot) 上的唯一索引恰好只约束
+	// 「同一支付单同一任务最多一条待重试行」，历史行仍可无限留存
+	PendingSlot *string `gorm:"column:pending_slot;type:varchar(16);uniqueIndex:uk_failures_pending,priority:3;comment:待重试占位标记，终态置空" json:"pending_slot"`
+	ErrorMsg    string  `gorm:"column:error_msg;type:varchar(500);comment:失败原因" json:"error_msg"`
+	RetryCount  int32   `gorm:"column:retry_count;type:int;default:0;comment:已重试次数，默认 0" json:"retry_count"`
+	CreatedAt   string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt   string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回支付对账失败记录表名
@@ -43,6 +48,9 @@ const (
 
 // MaxFailureRetry 失败记录最大重试次数，与 order 侧调度器保持一致
 const MaxFailureRetry = 5
+
+// FailurePendingSlot 待重试行的占位值，配合 uk_failures_pending 去重；终态必须置空
+const FailurePendingSlot = "pending"
 
 // 失败记录状态（SchedulerFailure.Status）
 const (

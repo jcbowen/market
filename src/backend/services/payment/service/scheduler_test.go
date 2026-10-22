@@ -966,9 +966,53 @@ func TestClosePaymentsDisabledKeepsLegacyBehaviour(t *testing.T) {
 	}
 }
 
+// countFailures 统计某支付单的对账失败记录条数
+// 参数：
+//   - t: 测试对象
+//   - s: 被测服务
+//   - paymentNo: 支付单号
+//   - pendingOnly: true 只统计仍待重试的行
+//
+// 返回值：
+//   - int64: 条数
+func countFailures(t *testing.T, s *PaymentService, paymentNo string, pendingOnly bool) int64 {
+	t.Helper()
+	q := s.db.GetDb().Model(&model.SchedulerFailure{}).Where("payment_no = ?", paymentNo)
+	if pendingOnly {
+		q = q.Where("status = ?", model.FailureStatusPending)
+	}
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		t.Fatalf("统计对账失败记录失败: %v", err)
+	}
+	return count
+}
+
+// seedFailureRow 直插一条对账失败记录（用于构造跨锁竞态遗留的同单多行）
+// 参数：
+//   - t: 测试对象
+//   - s: 被测服务
+//   - paymentNo: 支付单号
+//   - orderID: 订单 ID（清理依据，须落在 testOrderIDBase 之上）
+//   - taskType: 任务类型
+func seedFailureRow(t *testing.T, s *PaymentService, paymentNo string, orderID int64, taskType string) {
+	t.Helper()
+	now := time.Now().Format(timeLayout)
+	res := s.db.GetDb().Exec(
+		`INSERT INTO payment_scheduler_failures
+			(payment_no, order_id, task_type, status, pending_slot, error_msg, retry_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'pending', '测试预置', 0, ?, ?)`,
+		paymentNo, orderID, taskType, model.FailureStatusPending, now, now)
+	if res.Error != nil {
+		t.Fatalf("插入对账失败记录 %s 失败: %v", paymentNo, res.Error)
+	}
+}
+
 // TestSchedulerQueryFailureKeepsPaymentOpen 渠道查询失败不得据此判定资金状态
 // 前置：待支付单，假渠道返回错误（网络/配置故障）
-// 断言：状态仍为 1、计数推进、登记待重试的失败记录（下一轮 retryFailures 会再试）
+// 断言：状态仍为 1、计数推进、登记 1 条待重试记录；
+//
+//	节流窗口内 retryFailures 绝不绕开节流直查渠道，把节流指针拨回窗口之外后才重试
 func TestSchedulerQueryFailureKeepsPaymentOpen(t *testing.T) {
 	env := newSchedEnv(t)
 	ctx := context.Background()
@@ -988,11 +1032,121 @@ func TestSchedulerQueryFailureKeepsPaymentOpen(t *testing.T) {
 	if count := countNotifyLogs(t, env.s, no, model.NotifyKindReconcile, 0); count != 0 {
 		t.Errorf("查询失败由失败记录表承接，不应重复写对账流水, got %d 条", count)
 	}
+	if count := countFailures(t, env.s, no, true); count != 1 {
+		t.Fatalf("应登记 1 条待重试记录, got %d", count)
+	}
+
+	// 刚查过就重试等于把 throttle_minutes 作废，渠道故障时会退化成每分钟打一次
+	env.sched.retryFailures(ctx)
+	if got := env.fc.queryCount(no); got != 1 {
+		t.Errorf("节流窗口内不得重试该单, got %d 次查询", got)
+	}
+
+	resetThrottle(t, env.s, no)
 	env.sched.retryFailures(ctx)
 	if got := env.fc.queryCount(no); got != 2 {
-		t.Errorf("失败记录应在下一轮被重试, got %d 次查询", got)
+		t.Errorf("节流窗口过后失败记录应被重试, got %d 次查询", got)
 	}
 }
+
+// TestSchedulerRetryFailuresDedupesRecords 渠道持续不可达时重试队列不得按轮次自我复制
+// 前置：待支付单，假渠道恒返回错误，跑三轮「扫描 + 重试」，每轮把节流指针拨回窗口之外
+// 断言：每轮渠道只被调用 1 次（扫描占掉本轮额度，重试须受同一节流约束而非翻倍打扰），
+//
+//	待重试行恒为 1 条（重复失败只刷新原因），累计回查次数等于轮数
+func TestSchedulerRetryFailuresDedupesRecords(t *testing.T) {
+	env := newSchedEnv(t)
+	ctx := context.Background()
+	no := "ZFTEST-DEDUP"
+	p := seedSchedPayment(t, env.s, schedSeed{No: no, OrderID: schedOrderIDBase + 23, Amount: 30.00})
+	env.fc.fail(no, errors.New("渠道持续不可达"))
+
+	for round := 1; round <= 3; round++ {
+		// 模拟时间推进：把上次回查时刻拨回节流窗口之外，本轮才允许再打渠道
+		resetThrottle(t, env.s, no)
+		env.sched.reconcilePending(ctx)
+		env.sched.retryFailures(ctx)
+
+		if got := env.fc.queryCount(no); got != round {
+			// 扫描与重试共用同一节流指针，同一轮里不能让渠道被打两次
+			t.Errorf("第 %d 轮渠道调用应为 %d 次, got %d", round, round, got)
+		}
+		if count := countFailures(t, env.s, no, true); count != 1 {
+			t.Errorf("第 %d 轮待重试行应只有 1 条（重复失败改为刷新原因）, got %d", round, count)
+		}
+	}
+
+	got := reloadPayment(t, env.s, p.ID)
+	if got.ReconcileCount != 3 {
+		t.Errorf("每轮只推进一次回查计数，三轮应为 3, got %d", got.ReconcileCount)
+	}
+	if got.Status != 1 {
+		t.Errorf("渠道不可达绝不能改状态, got %d", got.Status)
+	}
+}
+
+// TestSchedulerRetryFailuresQueriesPaymentOncePerRound 同单多行待重试记录本轮只查渠道一次
+// 前置：同一支付单遗留 pending 与 stuck 两条待重试行（跨锁竞态），节流窗口已过
+// 断言：渠道只被调用 1 次，被跳过的兄弟行不累加 retry_count（不算一次尝试）
+func TestSchedulerRetryFailuresQueriesPaymentOncePerRound(t *testing.T) {
+	env := newSchedEnv(t)
+	ctx := context.Background()
+	no := "ZFTEST-ONCEROUND"
+	orderID := int64(schedOrderIDBase + 24)
+	seedSchedPayment(t, env.s, schedSeed{No: no, OrderID: orderID, Amount: 40.00})
+	env.fc.fail(no, errors.New("渠道超时"))
+	seedFailureRow(t, env.s, no, orderID, model.TaskReconcilePending)
+	seedFailureRow(t, env.s, no, orderID, model.TaskReconcileStuck)
+
+	env.sched.retryFailures(ctx)
+
+	if got := env.fc.queryCount(no); got != 1 {
+		t.Errorf("同一支付单本轮应只打扰渠道一次, got %d 次", got)
+	}
+	var rows []model.SchedulerFailure
+	if err := env.s.db.GetDb().Where("payment_no = ?", no).Order("id asc").Find(&rows).Error; err != nil {
+		t.Fatalf("读取失败记录失败: %v", err)
+	}
+	if len(rows) != 2 || rows[0].RetryCount != 1 || rows[1].RetryCount != 0 {
+		t.Errorf("只有实际尝试的那行应累加重试次数, got %+v", rows)
+	}
+}
+
+// TestSchedulerRetryFailuresAbandonsExhausted 回查上限内的失败记录不再打扰渠道即置放弃
+// 前置：待支付单已用满 24 次回查且仍留有待重试行
+// 断言：零渠道调用、该行转放弃（不能永远滞留待重试白占批次额度）
+func TestSchedulerRetryFailuresAbandonsExhausted(t *testing.T) {
+	env := newSchedEnv(t)
+	ctx := context.Background()
+	no := "ZFTEST-EXHAUSTED-RETRY"
+	orderID := int64(schedOrderIDBase + 25)
+	seedSchedPayment(t, env.s, schedSeed{No: no, OrderID: orderID, Amount: 45.00, ReconcileCount: 24})
+	seedFailureRow(t, env.s, no, orderID, model.TaskReconcilePending)
+	env.fc.fail(no, errors.New("渠道仍不可达"))
+
+	env.sched.retryFailures(ctx)
+
+	if got := env.fc.queryCount(no); got != 0 {
+		t.Errorf("用满上限的单不得再打扰渠道, got %d 次", got)
+	}
+	if count := countFailures(t, env.s, no, true); count != 0 {
+		t.Errorf("用满上限的待重试行应转放弃, got %d 条仍在重试态", count)
+	}
+	var row model.SchedulerFailure
+	if err := env.s.db.GetDb().Where("payment_no = ?", no).First(&row).Error; err != nil {
+		t.Fatalf("读取失败记录失败: %v", err)
+	}
+	if row.Status != model.FailureStatusAbandoned {
+		t.Errorf("放弃状态应为 %d, got %d", model.FailureStatusAbandoned, row.Status)
+	}
+	if row.PendingSlot != nil {
+		t.Errorf("转终态必须清空 pending_slot 以便后续新失败重新登记, got %q", *row.PendingSlot)
+	}
+}
+
+// 说明：唯一索引 uk_failures_pending 的去重能力由 TestSchedulerRetryFailuresDedupesRecords
+// 间接钉住（三轮重复失败仍只有 1 条待重试行）；转终态清空占位后允许再次登记，
+// 由 TestSchedulerRetryFailuresAbandonsExhausted 的 pending_slot 断言把关。
 
 // TestWithinReconcileWindow 回查时间窗（纯函数）：微信按配置上限，支付宝受订单超时约束
 func TestWithinReconcileWindow(t *testing.T) {
