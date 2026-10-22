@@ -1,5 +1,12 @@
 <template>
-  <n-modal :show="show" preset="card" title="订单详情" class="order-detail-modal" @update:show="onUpdateShow">
+  <n-modal
+    :show="show"
+    preset="card"
+    title="订单详情"
+    class="order-detail-modal"
+    style="width: min(880px, calc(100vw - 48px)); max-height: calc(100vh - 48px)"
+    @update:show="onUpdateShow"
+  >
     <n-spin :show="loading">
       <n-empty v-if="!detail && !loading" description="订单不存在" />
       <n-space v-else-if="detail" vertical :size="16">
@@ -424,10 +431,6 @@ const actions = computed<OrderAction[]>(() => {
     list.push({ key: 'sync', label: '同步支付状态', type: 'default', loading: syncingPayment.value, run: () => syncPayment(d) })
     list.push({ key: 'mark-paid', label: '标记已支付', type: 'default', run: () => (markPaidVisible.value = true) })
   }
-  // 取消订单：待支付恒可取消；货到付款单未发货（已支付/备货中）也可直接取消（与后端口径一致）
-  if (canCancelOrder(d)) {
-    list.push({ key: 'cancel', label: '取消订单', type: 'error', run: () => openCancel(d.id) })
-  }
   if (d.status === ORDER_STATUS.PAID && d.delivery_type === DELIVERY_TYPE.DELIVERY) {
     list.push({ key: 'ship', label: '发货', type: 'primary', run: () => openShip(d.id) })
   }
@@ -614,10 +617,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.order-detail-modal {
-  width: min(880px, calc(100vw - 48px));
-}
-
 .amount-strong {
   color: #d03050;
   font-weight: 600;
@@ -640,5 +639,16 @@ onUnmounted(() => {
   word-break: break-all;
   background: #f7f7f9;
   border-radius: 4px;
+}
+</style>
+
+<style>
+/* 弹窗经 teleport 挂到 body 外层，scoped 样式（data-v 属性链）作用不到 n-modal 渲染的卡片，
+   故内容区滚动用全局样式实现；宽度/限高以内联 style 保证生效（scoped 规则会失效）。
+   n-card 默认 width:100% + flex 纵向布局，限高后内容区内部滚动，头部保持可见 */
+.order-detail-modal > .n-card__content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>
