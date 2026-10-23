@@ -77,8 +77,30 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 		return nil, status.Errorf(codes.NotFound, "SKU 不存在")
 	}
 
-	productInfo, err := s.productClient.GetProduct(ctx, &product.GetProductReq{Id: skuInfo.ProductId, CommunityId: skuInfo.CommunityId})
+	// 社区隔离强校验（P0-4）：加购社区必须与 SKU 归属社区一致。
+	// 此前的取用链路（GetSkuById 不带社区 + GetProduct 传 skuInfo.CommunityId 自证）
+	// 对任意 community_id 恒通过，导致可跨社区取用价格/库存/优惠。
+	// 未带社区时回落 SKU 自身归属，避免落下 community_id=0 的脏数据
+	if req.CommunityId <= 0 {
+		req.CommunityId = skuInfo.CommunityId
+	} else if skuInfo.CommunityId != req.CommunityId {
+		return nil, status.Errorf(codes.PermissionDenied, "该商品不属于当前社区")
+	}
+
+	// 可售收口（P1-4）：加购即交易入口，非上架态（下架/定时上架未到点）不允许加购。
+	// 判定由商品服务统一执行（require_sellable），此处只声明意图；
+	// 展示侧 invalidReasonOf 的「商品已下架」判定与此同口径
+	productInfo, err := s.productClient.GetProduct(ctx, &product.GetProductReq{
+		Id:              skuInfo.ProductId,
+		CommunityId:     skuInfo.CommunityId,
+		RequireSellable: true,
+	})
 	if err != nil {
+		// 商品服务的业务拒绝（可售校拦截 FailedPrecondition、商品不存在 NotFound）
+		// 原样透出：包成 Internal 会把「已下架」显示成系统错误，误导用户
+		if code := status.Code(err); code == codes.FailedPrecondition || code == codes.NotFound {
+			return nil, err
+		}
 		return nil, status.Errorf(codes.Internal, "查询商品失败: %v", err)
 	}
 	if productInfo.Product == nil || productInfo.Product.Id == 0 {

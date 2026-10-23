@@ -44,8 +44,8 @@ test.describe('健康检查与公开接口', () => {
   test('商品详情：不存在的商品返回业务错误而非 500', async ({ request }) => {
     const resp = await request.get('/api/v1/products/999999999');
     const body = (await resp.json()) as { code: number };
-    // 服务未崩（HTTP 非 5xx）且业务码非 0
-    expect(resp.status()).toBeLessThan(500);
+    // 网关业务错误恒 HTTP 200 + 非零业务码（GRPCError 统一映射）
+    expect(resp.status()).toBe(200);
     expect(body.code).not.toBe(0);
   });
 

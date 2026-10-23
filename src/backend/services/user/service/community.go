@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"google.golang.org/grpc/codes"
+
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -88,7 +91,7 @@ func (s *CommunityService) GetCommunity(ctx context.Context, id int64) (*model.C
 	var c model.Community
 	err := s.db.GetDb().WithContext(ctx).First(&c, id).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("社区不存在")
+		return nil, bizerr.New(codes.NotFound, "社区不存在")
 	}
 	return &c, err
 }
@@ -217,7 +220,7 @@ func (s *CommunityService) CreateCommunity(ctx context.Context, req *user.Create
 //   - error: 错误信息
 func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.UpdateCommunityInfoReq) (*model.Community, error) {
 	if req.Name == "" {
-		return nil, fmt.Errorf("社区名称不能为空")
+		return nil, bizerr.New(codes.InvalidArgument, "社区名称不能为空")
 	}
 	c, err := s.GetCommunity(ctx, req.Id)
 	if err != nil {

@@ -76,6 +76,14 @@
             text="申请退款"
             @click.stop="onRefund(order.id)"
           />
+          <u-button
+            v-if="canDelete(order)"
+            plain
+            type="info"
+            size="small"
+            text="删除订单"
+            @click.stop="onDelete(order.id)"
+          />
         </view>
       </view>
       <u-loadmore :status="loadStatus" />
@@ -92,12 +100,12 @@
 import { ref } from 'vue'
 import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getOrders, confirmReceive } from '@/api/order'
+import { getOrders, confirmReceive, deleteOrder } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/utils/pay'
 import { goOrderDetail, goLogin } from '@/utils/navigate'
-import { canReceive, receiveButtonText, canCancel, canRefund, isStoreOrder } from '@/utils/order'
+import { canReceive, receiveButtonText, canCancel, canRefund, canDelete, isStoreOrder } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
@@ -312,6 +320,29 @@ function onReceive(order: Order) {
 function onRefund(id: number) {
   refundOrderId.value = id
   refundVisible.value = true
+}
+
+/**
+ * 删除订单：二次确认后软删除（仅终态单展示入口）
+ * 删除后从列表移除并回到第 1 页刷新；「我的」页角标在返回该页时经 onShow 自动刷新
+ * @param id 订单 ID
+ */
+function onDelete(id: number) {
+  uni.showModal({
+    title: '删除订单',
+    content: '删除后将从订单列表中移除，且不可恢复，确定删除吗？',
+    confirmColor: '#ee0a24',
+    success: async (res) => {
+      if (!res.confirm) return
+      try {
+        await deleteOrder(id)
+        uni.showToast({ title: '删除成功', icon: 'success' })
+        resetAndReload()
+      } catch {
+        // request 已统一提示错误
+      }
+    },
+  })
 }
 
 /**

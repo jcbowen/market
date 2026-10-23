@@ -352,11 +352,18 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 	}
 
 	// 发起即执行：直接发起渠道退款
-	if err := s.processChannelRefund(ctx, refund); err != nil {
+	completed, err := s.processChannelRefund(ctx, refund)
+	if err != nil {
 		// 渠道失败：退款单保留在退款中，审批日志留痕，由「重试退款」兜底；
 		// 对外返回业务语义错误（FailedPrecondition 透传文案），不吞成服务器内部错误
 		_ = s.createRefundLog(ctx, refund.ID, "create", "admin", req.OperatorId, "渠道退款调用失败: "+err.Error())
 		return refund, bizerr.New(codes.FailedPrecondition, "渠道退款调用失败，售后单已保留在退款中，可在售后管理页重试")
+	}
+	if !completed {
+		// P0-2：渠道已受理未到终态（受理常态 PROCESSING）——退款单保持退款中(4)，
+		// 不回补库存不改订单状态；终态由 payment 侧查单任务收敛、order 调度器同步收尾
+		_ = s.createRefundLog(ctx, refund.ID, "create", "admin", req.OperatorId, "渠道已受理退款，等待退款结果同步")
+		return refund, nil
 	}
 
 	if err := s.completeRefundSuccess(ctx, refund, refund.Items, "admin", req.OperatorId); err != nil {
@@ -963,8 +970,14 @@ func (s *RefundService) ApproveRefund(ctx context.Context, req *order.ApproveRef
 	}
 
 	// 安全收紧：支付单号一律以退款单服务端记录为准，忽略请求传入值，防止把退款打到非本单支付流水
-	if err := s.processChannelRefund(ctx, &refund); err != nil {
+	completed, err := s.processChannelRefund(ctx, &refund)
+	if err != nil {
 		return err
+	}
+	if !completed {
+		// P0-2：渠道已受理未到终态——退款单保持退款中(4)，待 payment 侧查单收敛后由调度器同步收尾
+		_ = s.createRefundLog(ctx, refund.ID, "approve", operatorType, req.OperatorId, "渠道已受理退款，等待退款结果同步")
+		return nil
 	}
 
 	return s.completeRefundSuccess(ctx, &refund, refundItems, operatorType, req.OperatorId)
@@ -1002,10 +1015,16 @@ func (s *RefundService) RetryRefund(ctx context.Context, req *order.RetryRefundR
 		operatorType = "system"
 	}
 
-	if err := s.processChannelRefund(ctx, &refund); err != nil {
+	completed, err := s.processChannelRefund(ctx, &refund)
+	if err != nil {
 		// 记录失败日志，保留审计线索
 		_ = s.createRefundLog(ctx, refund.ID, "retry", operatorType, req.OperatorId, "重试失败: "+err.Error())
 		return err
+	}
+	if !completed {
+		// P0-2：渠道已受理未到终态——保持退款中(4)，由调度器在查单收敛后同步收尾
+		_ = s.createRefundLog(ctx, refund.ID, "retry", operatorType, req.OperatorId, "渠道已受理退款，等待退款结果同步")
+		return nil
 	}
 
 	if err := s.completeRefundSuccess(ctx, &refund, refundItems, operatorType, req.OperatorId); err != nil {
@@ -1021,19 +1040,52 @@ func (s *RefundService) RetryRefund(ctx context.Context, req *order.RetryRefundR
 //
 // 返回值：
 //   - error: 错误信息
-func (s *RefundService) processChannelRefund(ctx context.Context, refund *model.Refund) error {
+func (s *RefundService) processChannelRefund(ctx context.Context, refund *model.Refund) (bool, error) {
 	if s.paymentClient == nil {
-		return nil
+		// 无支付客户端（桩测试环境）：维持原「直接放行、调用方按成功收尾」语义
+		return true, nil
 	}
-	if _, err := s.paymentClient.ProcessRefund(ctx, &payment.ProcessRefundReq{
+	resp, err := s.paymentClient.ProcessRefund(ctx, &payment.ProcessRefundReq{
 		OrderId:   refund.OrderID,
 		RefundNo:  refund.RefundNo,
 		Amount:    refund.Amount,
 		PaymentNo: refund.PaymentNo,
-	}); err != nil {
-		return fmt.Errorf("调用支付退款失败: %w", err)
+	})
+	if err != nil {
+		return false, fmt.Errorf("调用支付退款失败: %w", err)
 	}
-	return nil
+	// P0-2：completed=false 表示渠道已受理未到终态（微信 PROCESSING 常态），
+	// 调用方不得走成功收尾，终态由 payment 侧查单任务收敛后经调度器同步
+	return resp.GetCompleted(), nil
+}
+
+// queryRefundFlowStatus 查询 payment 侧退款流水状态（读库不触渠道，P0-2）
+// 供调度器对卡单退款做收敛决策：2=成功（直接收尾）3/0=失败或无流水（重新发起）1=渠道受理中（继续等待）
+//
+// 参数：
+//   - ctx: 上下文
+//   - refund: 退款单（须携带 PaymentNo/OrderID/RefundNo）
+//
+// 返回值：
+//   - int32: payment 侧流水状态（语义同 QueryRefundResultResp.Status）
+//   - error: RPC 失败时返回错误（调用方跳过本轮）
+func (s *RefundService) queryRefundFlowStatus(ctx context.Context, refund *model.Refund) (int32, error) {
+	if s.paymentClient == nil {
+		// 桩测试环境无支付客户端：按「可重新发起」口径放行
+		return 3, nil
+	}
+	if refund.PaymentNo == "" {
+		// 无关联支付流水（历史数据/现金兜底口径）：按可重新发起处理
+		return 3, nil
+	}
+	resp, err := s.paymentClient.QueryRefundResult(ctx, &payment.QueryRefundResultReq{
+		OrderId:  refund.OrderID,
+		RefundNo: refund.RefundNo,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("查询退款流水状态失败: %w", err)
+	}
+	return resp.GetStatus(), nil
 }
 
 // completeRefundSuccess 退款成功的统一收尾：置已退款、按明细回补库存、更新订单去向并写状态日志。
@@ -1054,7 +1106,7 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 			return err
 		}
 		if refundCompleted.Status != 4 {
-			return fmt.Errorf("退款单状态异常")
+			return bizerr.New(codes.FailedPrecondition, "退款单状态异常")
 		}
 
 		now := time.Now().Format("2006-01-02 15:04:05")
@@ -1068,7 +1120,7 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("退款单状态已变更")
+			return bizerr.New(codes.FailedPrecondition, "退款单状态已变更，请刷新后重试")
 		}
 
 		var o model.Order
@@ -1112,11 +1164,22 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 			}
 		}
 
+		// 条件更新防并发覆盖：订单行在本事务内是无锁 First 读取的，整行 Save 会把
+		// 并发操作（同一订单另一笔退款完成、后台改状态）的写入整体盖掉。
+		// 仅当订单仍停留退款中(7)时生效；未命中说明状态已被并发流转，中止事务——
+		// 退款单保持退款中(4) 交由重试/调度兜底，也不会写下一条 from=7 的假状态日志
+		res = tx.Model(&model.Order{}).Where("id = ? AND status = ?", o.ID, int32(7)).Updates(map[string]interface{}{
+			"status":     nextStatus,
+			"updated_at": now,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
+		}
 		o.Status = nextStatus
 		o.UpdatedAt = now
-		if err := tx.Save(&o).Error; err != nil {
-			return err
-		}
 		return createStatusLogTx(tx, o.ID, 7, nextStatus, operatorType, operatorID, remark)
 	})
 	if err == nil {
@@ -1212,11 +1275,21 @@ func (s *RefundService) RejectRefund(ctx context.Context, req *order.RejectRefun
 			return err
 		}
 		nextStatus := lastStatusBeforeRefundTx(tx, o.ID)
+		// 条件更新防并发覆盖：订单行为无锁 First 读取，整行 Save 会盖掉并发写入
+		// （同一订单另一笔退款完成已把订单推往 8/退款前状态）。仅停留退款中(7)时可回退，
+		// 未命中即状态已被并发流转，中止事务（退款单的拒绝更新一并回滚，不留半完成状态）
+		res = tx.Model(&model.Order{}).Where("id = ? AND status = ?", o.ID, int32(7)).Updates(map[string]interface{}{
+			"status":     nextStatus,
+			"updated_at": now,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
+		}
 		o.Status = nextStatus
 		o.UpdatedAt = now
-		if err := tx.Save(&o).Error; err != nil {
-			return err
-		}
 		// 审批日志：拒绝
 		if err := tx.Create(&model.RefundLog{
 			RefundID:     refund.ID,

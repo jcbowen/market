@@ -95,7 +95,9 @@
             </n-grid-item>
             <n-grid-item>
               <n-form-item label="API V3 密钥">
-                <n-input v-model:value="paymentForm.wechat.api_v3_key" type="password" :disabled="!canUpdate" placeholder="微信支付 V3 API 密钥" />
+                <n-input v-model:value="paymentForm.wechat.api_v3_key" type="password" :disabled="!canUpdate" placeholder="微信支付 V3 API 密钥（留空保留已配置值）" />
+                <n-tag v-if="paymentForm.wechat_api_v3_configured" type="success" size="small">已配置</n-tag>
+                <n-tag v-else type="warning" size="small">未配置</n-tag>
               </n-form-item>
             </n-grid-item>
             <n-grid-item>
@@ -483,6 +485,7 @@ const paymentForm = reactive({
   wechat_payment_ready: false,
   alipay_ready: false,
   alipay_ready_message: '',
+  wechat_api_v3_configured: false,
   wechat_cert_uploaded: false,
   alipay_cert_uploaded: false,
   alipay_app_cert_uploaded: false,
@@ -906,6 +909,7 @@ async function fetchPaymentSetting() {
   paymentForm.wechat_payment_ready = data.wechat_payment_ready
   paymentForm.alipay_ready = data.alipay_ready
   paymentForm.alipay_ready_message = data.alipay_ready_message ?? ''
+  paymentForm.wechat_api_v3_configured = data.wechat_api_v3_configured ?? false
   paymentForm.wechat_cert_uploaded = data.wechat_cert_uploaded
   paymentForm.alipay_cert_uploaded = data.alipay_cert_uploaded
   paymentForm.alipay_app_cert_uploaded = data.alipay_app_cert_uploaded ?? false
@@ -927,6 +931,7 @@ async function refreshUploadStatus() {
   paymentForm.wechat_payment_ready = data.wechat_payment_ready
   paymentForm.alipay_ready = data.alipay_ready
   paymentForm.alipay_ready_message = data.alipay_ready_message ?? ''
+  paymentForm.wechat_api_v3_configured = data.wechat_api_v3_configured ?? false
   paymentForm.wechat_cert_uploaded = data.wechat_cert_uploaded
   paymentForm.alipay_cert_uploaded = data.alipay_cert_uploaded
   paymentForm.alipay_app_cert_uploaded = data.alipay_app_cert_uploaded ?? false

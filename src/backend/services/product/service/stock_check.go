@@ -70,7 +70,7 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 			return bizerr.New(codes.PermissionDenied, "无权操作其他社区的盘点单")
 		}
 		if check.Status != 1 {
-			return fmt.Errorf("盘点单状态不允许提交")
+			return bizerr.New(codes.FailedPrecondition, "盘点单状态不允许提交")
 		}
 
 		totalItems := len(req.Items)

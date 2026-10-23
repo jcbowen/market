@@ -40,6 +40,8 @@ type AdminHandler struct {
 	cfg           *config.Config
 	// guard 登录失败锁定（D1）：按账号计数，防分布式慢速猜密码
 	guard *loginGuard
+	// refreshGuard refresh 令牌黑名单（P1-5）：轮转吊销旧令牌，停用/登出即时生效
+	refreshGuard *refreshGuard
 }
 
 // NewAdminHandler 创建管理员接口处理器
@@ -62,6 +64,7 @@ func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient,
 		paymentClient: paymentClient,
 		cfg:           cfg,
 		guard:         newLoginGuard(cfg),
+		refreshGuard:  newRefreshGuard(cfg),
 	}
 }
 
@@ -179,12 +182,21 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// AdminLogout 后台登出：清除 refresh_token 的 httpOnly cookie
-// 前端本地 access_token 由 JS 自行删除，JS 删不掉的 cookie 必须由后端下发过期值清除
+// AdminLogout 后台登出：清除 refresh_token 的 httpOnly cookie 并吊销该令牌
+// 前端本地 access_token 由 JS 自行删除，JS 删不掉的 cookie 必须由后端下发过期值清除；
+// 吊销黑名单（P1-5）让服务端也不再认这枚 refresh 令牌——否则登出只是前端表演，
+// 令牌在剩余有效期内仍可刷新出新 access_token
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) AdminLogout(c *gin.Context) {
 	clearRefreshTokenCookie(c)
+	// 吊销当前 refresh 令牌：解析失败（过期/伪造）时无需处理，令牌本就不可用
+	if token := firstNonEmptyRefreshToken(c, ""); token != "" {
+		if claims, err := h.jwtManager.ParseToken(token); err == nil &&
+			claims.Type == jwt.TokenTypeAdmin && claims.TokenUse == jwt.TokenUseRefresh {
+			h.refreshGuard.revoke(c.Request.Context(), claims.ID, time.Until(claims.ExpiresAt.Time))
+		}
+	}
 	response.Success(c, gin.H{})
 }
 
@@ -299,11 +311,25 @@ func (h *AdminHandler) getAdminPermissionsForCommunity(ctx context.Context, admi
 //
 // 返回值：
 //   - int64: 社区 ID
+// getAdminCommunityID 解析当前请求的数据归属社区（管理端查询的统一作用域）
+// 优先级：X-Community-Id 请求头（实时校验归属后才采用）→ JWT 默认社区快照
+// 实时校验（P1-10）：JWT 快照的 CommunityIDs 绘于登录时，任职被撤销/追加后需重登才刷新，
+// 不能再作为归属判定依据——与 RequireCommunityAccess 中间件同源（复用请求内记忆化的
+// GetAdminContext 结果，不增加 RPC）；解析失败时回退默认社区，真正的越权拒绝
+// 由 RequireCommunityAccess/RequirePermission 中间件负责
+//
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - int64: 数据归属社区 ID
 func (h *AdminHandler) getAdminCommunityID(c *gin.Context) int64 {
 	uc := appcontext.GetUserContext(c)
-	if header := c.GetHeader("X-Community-Id"); header != "" {
+	if header := c.GetHeader(gwMiddleware.HeaderCommunityID); header != "" {
 		if id, err := strconv.ParseInt(header, 10, 64); err == nil && id > 0 {
-			if uc.Role == "super_admin" || containsInt64(uc.CommunityIDs, id) {
+			// 实时口径：超管或该社区仍有任职（Bound）才采用请求头社区；
+			// 已失去任职的社区（快照里可能还在）不得作为数据作用域
+			if gwMiddleware.AdminCommunityAccessible(c) {
 				return id
 			}
 		}
@@ -1388,6 +1414,15 @@ func (e errorString) Error() string { return string(e) }
 
 // RefreshToken 刷新管理员 access_token
 // 令牌来源：httpOnly cookie（新版前端）优先，表单/请求体兜底（旧前端缓存、POS 端）
+//
+// P1-5 三道加固（此前只凭旧 claims 续发，停用管理员在令牌有效期内永远在线）：
+//  1. 黑名单校验：轮转后旧 jti 立即失效，重放的旧令牌直接拒（Redis 故障时放行降级）；
+//  2. 账号实时校验：按 claims.UserID 查库，账号已删除或 status≠1（停用）即拒，
+//     不必等 7 天 refresh 令牌自然过期；
+//  3. 轮转：签发新 refresh 令牌并吊销旧的——被盗令牌在合法用户刷新一次后即失效。
+//     cookie 模式（新版前端）新令牌随 httpOnly cookie 下发；旧前端/POS 从响应体取，
+//     两种模式都会拿到新值，不存在「吊销了却还在用旧值」的断档。
+//
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) RefreshToken(c *gin.Context) {
@@ -1405,10 +1440,32 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
 	claims, err := h.jwtManager.ParseToken(token)
 	// 强校验 token 用途：仅 refresh token 可刷新，access token 不得用于换取新令牌
 	if err != nil || claims.Type != jwt.TokenTypeAdmin || claims.TokenUse != jwt.TokenUseRefresh {
 		response.Error(c, errcode.InvalidToken)
+		return
+	}
+	// 黑名单校验（P1-5）：轮转吊销过的旧令牌不得再用
+	if h.refreshGuard.revoked(ctx, claims.ID) {
+		response.Error(c, errcode.InvalidToken)
+		return
+	}
+	// 账号实时校验（P1-5）：停用/删除的管理员立即失去续期能力
+	admin, err := h.userClient.GetAdminById(ctx, &user.GetAdminByIdReq{Id: claims.UserID})
+	if err != nil {
+		if status.Code(err) != codes.NotFound {
+			log.Printf("[WARN] refresh 查询管理员失败 admin_id=%d: %v", claims.UserID, err)
+			response.Error(c, errcode.InternalServerError)
+			return
+		}
+		// 账号已删除：按令牌无效处理，不透露账号是否存在
+		response.Error(c, errcode.InvalidToken)
+		return
+	}
+	if admin.Status != 1 {
+		response.Error(c, errcode.AccountDisabled)
 		return
 	}
 
@@ -1419,12 +1476,30 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
+	// 轮转：新 refresh 令牌随本次刷新一起签发，旧令牌进黑名单
+	newRefresh, refreshExpire, err := h.jwtManager.GenerateRefreshToken(claims.UserID, jwt.TokenTypeAdmin)
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	h.refreshGuard.revoke(ctx, claims.ID, time.Until(claims.ExpiresAt.Time))
+
 	now := time.Now()
-	response.Success(c, gin.H{
+	resp := gin.H{
 		"access_token": accessToken,
 		"expires_in":   int64(accessExpire.Sub(now).Seconds()),
 		"expires_at":   accessExpire.Unix(),
-	})
+	}
+	if wantsRefreshCookie(c) {
+		setRefreshTokenCookie(c, newRefresh, int64(refreshExpire.Sub(now).Seconds()))
+	} else {
+		// 旧前端/POS 从响应体取 refresh_token：轮转后必须回传新值，
+		// 否则客户端继续持有已吊销的旧令牌，下次刷新即失败
+		resp["refresh_token"] = newRefresh
+		resp["refresh_expires_in"] = int64(refreshExpire.Sub(now).Seconds())
+		resp["refresh_expires_at"] = refreshExpire.Unix()
+	}
+	response.Success(c, resp)
 }
 
 // --- 分类管理 ---
@@ -2741,7 +2816,10 @@ func (h *AdminHandler) MarkAdminOrderPaid(c *gin.Context) {
 
 	uc := appcontext.GetUserContext(c)
 	remark := strings.TrimSpace(req.Remark) + "（操作人 admin:" + strconv.FormatInt(uc.UserID, 10) + "）"
+	// OrderId 传路径订单：服务层据此校验支付单归属（P1-2），
+	// 网关的社区隔离只覆盖路径订单，管不住 body 里抄错的支付单号
 	if _, err := h.paymentClient.MarkPaymentPaid(c.Request.Context(), &payment.MarkPaymentPaidReq{
+		OrderId:       id,
 		PaymentNo:     req.PaymentNo,
 		TransactionId: req.TransactionID,
 		Amount:        req.Amount,
@@ -4962,6 +5040,8 @@ type PaymentSetting struct {
 	AlipayClientChannels []string `json:"alipay_client_channels"`
 	// AlipayReadyMessage 支付宝配置自检失败原因，空表示自检通过（就绪=字段齐全且自检通过）；仅出参
 	AlipayReadyMessage string `json:"alipay_ready_message"`
+	// WechatApiV3Configured V3 密钥是否已配置：密钥明文不回传，前端据此展示「已配置」；仅出参
+	WechatApiV3Configured bool `json:"wechat_api_v3_configured"`
 	// 支付宝证书模式三证书上传状态：证书内容不回传，前端仅据此展示「已上传」并可重新上传；仅出参
 	AlipayAppCertUploaded    bool `json:"alipay_app_cert_uploaded"`
 	AlipayPublicCertUploaded bool `json:"alipay_public_cert_uploaded"`
@@ -5112,15 +5192,16 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 		resp.WechatPrivateKey != "" &&
 		resp.WechatNotifyUrl != ""
 
-	// 私钥与 AppSecret 不回传明文：私钥通过 cert_uploaded 标志、AppSecret 通过渠道管理侧
-	// 的 configured 标志告知前端状态；保存时空值由 payment 侧保留原值，不会误清空
+	// 私钥/V3 密钥/AppSecret 不回传明文：私钥通过 cert_uploaded 标志、V3 密钥通过
+	// wechat_api_v3_configured 标志、AppSecret 通过渠道管理侧的 configured 标志告知前端状态；
+	// 保存时空值由 payment 侧保留原值，不会误清空
 	setting := PaymentSetting{
 		EnabledChannels: resp.EnabledChannels,
 		Wechat: config.WechatConfig{
 			AppID:        wechatAppID,
 			AppSecret:    "",
 			MchID:        resp.WechatMchId,
-			APIV3Key:     resp.WechatApiV3Key,
+			APIV3Key:     "",
 			CertSerialNo: resp.WechatCertSerialNo,
 			// 回调地址由部署域名派生，前端只读展示
 			NotifyURL: wechatNotify,
@@ -5136,6 +5217,7 @@ func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
 		WechatPaymentReady:       wechatReady,
 		AlipayReady:              resp.AlipayReady,
 		AlipayReadyMessage:       resp.AlipayReadyMessage,
+		WechatApiV3Configured:    resp.WechatApiV3Key != "",
 		WechatCertUploaded:       resp.WechatCertUploaded,
 		AlipayCertUploaded:       resp.AlipayCertUploaded,
 		AlipayAppCertUploaded:    resp.AlipayAppCertUploaded,

@@ -57,7 +57,9 @@ func (s *OrderService) WithRedis(client *redis.Client) *OrderService {
 
 // loadOrderItemCatalog 批量预取明细涉及的 SKU 与商品档案
 // 下单/试算原本逐行调用 GetSkuById + GetProduct（N 行 2N 次往返），改走两次批量 RPC 后
-// 整单固定 2 次往返；返回值以 ID 为键，重复 SKU 的多行共用同一份档案
+// 整单固定 2 次往返；返回值以 ID 为键，重复 SKU 的多行共用同一份档案。
+// 商品档案带可售收口（require_sellable）：任一明细商品非上架态即整体报错（P1-4），
+// 未到点的定时上架商品与已下架商品都无法下单。
 //
 // 参数：
 //   - ctx: 上下文
@@ -83,7 +85,12 @@ func (s *OrderService) loadOrderItemCatalog(ctx context.Context, skuIDs []int64)
 		productIDs = append(productIDs, sku.ProductId)
 	}
 
-	productResp, err := grpcclient.ProductClient.BatchGetProducts(ctx, &product.BatchGetProductsReq{Ids: productIDs})
+	productResp, err := grpcclient.ProductClient.BatchGetProducts(ctx, &product.BatchGetProductsReq{
+		Ids: productIDs,
+		// 可售收口（P1-4）：任一明细商品非上架态（下架/定时上架未到点）即拒单，
+		// 判定统一在商品服务（require_sellable），此处只声明意图
+		RequireSellable: true,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("批量获取商品失败: %w", err)
 	}
@@ -501,10 +508,13 @@ func isDuplicateOrderNoErr(err error) bool {
 func (s *OrderService) GetOrder(ctx context.Context, id, userID int64) (*model.Order, []*model.OrderItem, []*model.OrderStatusLog, []*model.Refund, error) {
 	var o model.Order
 	if err := s.db.GetDb().WithContext(ctx).First(&o, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, nil, nil, bizerr.New(codes.NotFound, "订单不存在")
+		}
 		return nil, nil, nil, nil, err
 	}
 	if userID > 0 && o.UserID != userID {
-		return nil, nil, nil, nil, fmt.Errorf("无权限查看该订单")
+		return nil, nil, nil, nil, bizerr.New(codes.PermissionDenied, "无权限查看该订单")
 	}
 
 	var items []*model.OrderItem
@@ -570,7 +580,8 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Order{})
 	if req.UserId > 0 {
-		db = db.Where("user_id = ?", req.UserId)
+		// C 端用户路径：排除用户已软删除的订单（后台管理端路径 UserId=0，不受影响）
+		db = db.Where("user_id = ? AND user_deleted = ?", req.UserId, int32(0))
 	}
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
@@ -630,8 +641,10 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 }
 
 // GetUserOrderStatusCounts 用户订单状态角标统计（C 端「我的-我的订单」红标）
-// 口径与 C 端订单列表 Tab 一致：待支付=1；待发货=2/3；待收货=4；退款/售后=7/8
-// 单条 GROUP BY 查询覆盖全部状态，不区分订单来源（与列表展示口径一致）
+// 口径与 C 端订单列表 Tab 一致：待支付=1；待发货=2/3；待收货=4；
+// 退款/售后角标（2026-10-23 调整）只统计存在待审核售后单(refunds.status=1)的订单——
+// 商家同意/拒绝后即不再亮角标；不再按订单状态 7/8 统计：8 已退款是终态会永远亮角标，
+// 7 中已同意、渠道打款在途的售后也不属于"待商家处理"（进度可到订单列表退款中标签查看）
 // 参数：
 //   - ctx: 上下文
 //   - req: 请求（user_id 必传）
@@ -653,7 +666,9 @@ func (s *OrderService) GetUserOrderStatusCounts(ctx context.Context, req *order.
 	err := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
 		Select("status, COUNT(*) AS total").
 		Where("user_id = ?", req.UserId).
-		Where("status IN ?", []int32{1, 2, 3, 4, 7, 8}).
+		// 排除用户已软删除的订单，角标与列表口径一致
+		Where("user_deleted = ?", int32(0)).
+		Where("status IN ?", []int32{1, 2, 3, 4}).
 		Group("status").
 		Find(&rows).Error
 	if err != nil {
@@ -668,10 +683,23 @@ func (s *OrderService) GetUserOrderStatusCounts(ctx context.Context, req *order.
 			resp.PendingShip += row.Total
 		case 4:
 			resp.PendingReceive += row.Total
-		case 7, 8:
-			resp.AfterSale += row.Total
 		}
 	}
+
+	// after_sale 专项统计：订单维度去重（同一订单可有多笔待审核售后单只计 1）
+	// 限定 orders.status=7 与退款单状态机一致（待审核售后单仅存于退款中的订单）
+	var afterSale int64
+	err = s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+		Joins("JOIN orders ON orders.id = refunds.order_id").
+		Where("orders.user_id = ? AND orders.status = ? AND refunds.status = ?", req.UserId, int32(7), int32(1)).
+		// 用户已软删除的订单不参与角标统计（该口径理论上少命中：有进行中售后时不允许删除）
+		Where("orders.user_deleted = ?", int32(0)).
+		Distinct("refunds.order_id").
+		Count(&afterSale).Error
+	if err != nil {
+		return nil, err
+	}
+	resp.AfterSale = int32(afterSale)
 	return resp, nil
 }
 
@@ -752,12 +780,20 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		return err
 	}
 	if pre.UserID != req.UserId {
-		return fmt.Errorf("无权限取消该订单")
+		return bizerr.New(codes.PermissionDenied, "无权限取消该订单")
 	}
 	// 门店订单（收银台代客 source=2）C 端只读：取消走后台处理，
 	// 防止门店已收款的现金单被 C 端按"货到付款"口径直接取消（无退款流水造成资损）
 	if pre.Source == 2 {
 		return bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
+	}
+	// 取消前置渠道确认（P0-1）：与后台取消、超时调度器同口径——
+	// 本地无成功支付单不代表用户没付，回调可能丢失或验签失败；而订单一旦进 6，
+	// 状态机禁 6→2，库存与优惠券已回补，资金挂账只能人工处理，故取消前必须问渠道。
+	// 仅待支付单（status∈{1,100}）需要确认：已支付/备货中取消属退款流程，与到账无关
+	if s.isPendingPaymentOrder(ctx, pre.ID) &&
+		confirmPaidWithChannel(ctx, pre.ID, s.cfg) {
+		return bizerr.New(codes.FailedPrecondition, "订单支付处理中，已同步为已支付，请稍后刷新查看")
 	}
 	allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, pre.ID))
 
@@ -767,10 +803,10 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 			return err
 		}
 		if o.UserID != req.UserId {
-			return fmt.Errorf("无权限取消该订单")
+			return bizerr.New(codes.PermissionDenied, "无权限取消该订单")
 		}
 		if !containsInt32(allowed, o.Status) {
-			return fmt.Errorf("订单状态不允许取消")
+			return bizerr.New(codes.FailedPrecondition, "订单状态不允许取消")
 		}
 
 		now := time.Now().Format("2006-01-02 15:04:05")
@@ -785,7 +821,7 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("订单状态不允许取消")
+			return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
 		}
 
 		var items []*model.OrderItem
@@ -810,6 +846,63 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		closePendingPayments(ctx, req.Id)
 	}
 	return err
+}
+
+// DeleteOrder C 端用户删除订单（软删除）
+// 仅终态订单（5已完成 6已取消 8已退款）可删；存在进行中售后（待审核 1 / 退款中 4）时拒绝，
+// 避免删除后售后进度入口缺失；软删仅影响 C 端列表与角标统计，后台管理端与详情链路
+// （售后进度 / 支付详情）保留可达，不清理任何数据、不产生状态流转日志
+// 参数：
+//   - ctx: 上下文
+//   - req: 删除请求（id + user_id）
+//
+// 返回值：
+//   - error: 错误信息（订单不存在 / 非本人订单 / 非终态 / 有进行中售后 / 状态已变更）
+//
+// 使用示例：
+//
+//	err := svc.DeleteOrder(ctx, &order.DeleteOrderReq{Id: 123, UserId: 456})
+func (s *OrderService) DeleteOrder(ctx context.Context, req *order.DeleteOrderReq) error {
+	var o model.Order
+	if err := s.db.GetDb().WithContext(ctx).First(&o, req.Id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return bizerr.New(codes.NotFound, "订单不存在")
+		}
+		return err
+	}
+	if o.UserID != req.UserId {
+		return bizerr.New(codes.PermissionDenied, "无权限操作该订单")
+	}
+	// 仅终态可删：进行中的订单（含退款中 7）一律拒绝
+	if !containsInt32([]int32{5, 6, 8}, o.Status) {
+		return bizerr.New(codes.FailedPrecondition, "仅已完成、已取消或已退款的订单可删除")
+	}
+
+	// 进行中售后拦截：待审核(1)/退款中(4)的售后单存在时不允许删除
+	var refundCount int64
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+		Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
+		Count(&refundCount).Error; err != nil {
+		return err
+	}
+	if refundCount > 0 {
+		return bizerr.New(codes.FailedPrecondition, "订单存在进行中的售后，暂不能删除")
+	}
+
+	// 条件更新防并发：user_deleted=0 保证重复删除 / 并发删除只生效一次
+	res := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
+		Where("id = ? AND user_id = ? AND user_deleted = ?", o.ID, req.UserId, int32(0)).
+		Updates(map[string]interface{}{
+			"user_deleted": int32(1),
+			"updated_at":   time.Now().Format("2006-01-02 15:04:05"),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return bizerr.New(codes.FailedPrecondition, "订单不存在或已删除")
+	}
+	return nil
 }
 
 // releaseOrderStock 整单回补库存（C 端取消 / 后台取消 / 超时关单共用）
@@ -1279,7 +1372,7 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 		}
 	}
 	if target == nil {
-		return 0, 0, fmt.Errorf("未找到可用优惠券")
+		return 0, 0, bizerr.New(codes.FailedPrecondition, "未找到可用优惠券")
 	}
 	coupon, err := grpcclient.ProductClient.GetCoupon(ctx, &product.GetCouponReq{Id: couponID})
 	if err != nil {
@@ -1288,7 +1381,7 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 	// 券范围内商品金额（门槛与优惠基数）
 	eligible := couponEligibleAmount(coupon, items)
 	if eligible < target.Threshold {
-		return 0, 0, fmt.Errorf("订单中可使用该券的商品金额不满足使用门槛")
+		return 0, 0, bizerr.New(codes.FailedPrecondition, "订单中可使用该券的商品金额不满足使用门槛")
 	}
 	return calculateDiscount(eligible, coupon), target.Id, nil
 }

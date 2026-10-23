@@ -13,6 +13,8 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/debuglog"
+	"github.com/jcbowen/market/src/backend/common/proto/order"
+	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
 
@@ -50,12 +52,14 @@ const (
 // reconcileStat 单轮对账统计：debugger 进程记录的落库判定与摘要字段的唯一依据
 // panics 统计子任务 panic 次数（recoverTask 恢复后计入），使异常轮次不满足空转条件
 type reconcileStat struct {
-	rescued  int
-	stuck    int
-	closed   int
-	observed int
-	failed   int
-	panics   int
+	rescued      int
+	stuck        int
+	closed       int
+	observed     int
+	failed       int
+	panics       int
+	refundOK     int // 退款查单确认成功并完成落库（P0-2）
+	refundFailed int // 退款查单确认渠道终态失败，流水转待重试（P0-2）
 }
 
 // count 把单笔结论计入本轮统计
@@ -97,6 +101,8 @@ func (s *reconcileStat) merge(other reconcileStat) {
 	s.observed += other.observed
 	s.failed += other.failed
 	s.panics += other.panics
+	s.refundOK += other.refundOK
+	s.refundFailed += other.refundFailed
 }
 
 // shouldRecordReconcile 判定本轮对账是否值得写入 debugger 进程记录
@@ -168,6 +174,8 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 		stat.merge(s.retryFailures(ctx))
 		stat.merge(s.reconcilePending(ctx))
 		stat.merge(s.detectStuck(ctx))
+		stat.merge(s.detectPaidMismatch(ctx))
+		stat.merge(s.reconcileRefunds(ctx))
 	}
 	cleaned := s.cleanupNotifyLogs(ctx)
 	if !shouldRecordReconcile(stat, cleaned) {
@@ -183,9 +191,11 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 		"stuck":        stat.stuck,
 		"closed":       stat.closed,
 		"observed":     stat.observed,
-		"failed":       stat.failed,
-		"panics":       stat.panics,
-		"cleaned_logs": cleaned,
+		"failed":        stat.failed,
+		"panics":        stat.panics,
+		"refund_ok":     stat.refundOK,
+		"refund_failed": stat.refundFailed,
+		"cleaned_logs":  cleaned,
 		"duration_ms":  time.Since(start).Milliseconds(),
 	}
 	if stat.failed > 0 || stat.panics > 0 || cleaned < 0 {
@@ -252,6 +262,75 @@ func (s *Scheduler) scanPending(ctx context.Context, stat *reconcileStat) {
 //   - reconcileStat: 本轮统计（落库判定依据）
 func (s *Scheduler) detectStuck(ctx context.Context) reconcileStat {
 	return runReconcileTask("detectStuck", func(stat *reconcileStat) { s.scanStuck(ctx, stat) })
+}
+
+// detectPaidMismatch 检出「支付单已确认而订单未流转」的不一致（P0-3），带任务级 panic 兜底
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - reconcileStat: 本轮统计（落库判定依据）
+func (s *Scheduler) detectPaidMismatch(ctx context.Context) reconcileStat {
+	return runReconcileTask("detectPaidMismatch", func(stat *reconcileStat) { s.scanPaidMismatch(ctx, stat) })
+}
+
+// scanPaidMismatch 支付单/订单不一致检出的任务本体
+// 成因：handlePaySuccess 二阶段三次 RPC 都失败（order-service 抖动）时，支付单已是 status=2
+// 而订单停留在待支付甚至被取消——此前的两条扫描（status=1 回查、status=5 挂账）都看不见它，
+// 取消护栏的 orderID 分支也只查 status=1，资金不一致会一直悬着。
+// 本任务逐笔核对订单实态并修复：停留待支付族(1/100) → 补同步；已取消(6) → 挂账待办。
+// 扫描窗口与挂账检出一致（updated_at 落在渠道时效内），节流只推进 last_reconciled_at——
+// 不走渠道，不能消耗 reconcile_count 的渠道回查预算
+// 参数：
+//   - ctx: 上下文
+//   - stat: 本轮统计（写入指针，由 runReconcileTask 回传）
+func (s *Scheduler) scanPaidMismatch(ctx context.Context, stat *reconcileStat) {
+	lockKey := "scheduler:payment:reconcile:mismatch:lock"
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
+		return
+	}
+	defer s.releaseLock(ctx, lockKey, lockValue)
+
+	r := s.payment.cfg.Business.PaymentReconcile
+	updatedAfter := time.Now().Add(-time.Duration(config.ReconcileInt(r.PendingMaxMinutes, 120)) * time.Minute).Format(timeLayout)
+	throttleBefore := time.Now().Add(-time.Duration(config.ReconcileInt(r.ThrottleMinutes, 5)) * time.Minute).Format(timeLayout)
+
+	var rows []model.Payment
+	if err := s.payment.db.GetDb().WithContext(ctx).
+		Where("status = ? AND pay_type IN ? AND updated_at >= ?", model.PaymentStatusSuccess, []int32{1, 2, 5, 6}, updatedAfter).
+		Where("(last_reconciled_at IS NULL OR last_reconciled_at < ?)", throttleBefore).
+		Order("updated_at asc").
+		Limit(config.ReconcileInt(r.BatchSize, 100)).
+		Find(&rows).Error; err != nil {
+		log.Printf("[payment-scheduler] 扫描已确认支付单失败: %v", err)
+		stat.failed++ // 扫描失败计入本轮失败，使异常轮次落入 debugger 记录
+		return
+	}
+	for i := range rows {
+		s.repairPaidMismatch(ctx, &rows[i]).count(stat)
+	}
+}
+
+// repairPaidMismatch 核对并修复单笔「已确认支付单 vs 订单状态」的不一致
+// 参数：
+//   - ctx: 上下文
+//   - p: 已确认支付（status=2）的支付单
+//
+// 返回值：
+//   - reconcileOutcome: rescued=已补同步 / stuck=订单已取消转挂账待办 / failed=查询或补同步失败 / observed=一致无需动作
+func (s *Scheduler) repairPaidMismatch(ctx context.Context, p *model.Payment) reconcileOutcome {
+	// 只推进节流指针：本任务不走渠道，reconcile_count 是渠道查询语义，混用会提前耗尽回查预算
+	s.touchReconciled(ctx, p)
+	if grpcclient.OrderClient == nil {
+		return outcomeObserved
+	}
+	detail, err := grpcclient.OrderClient.GetOrder(ctx, &order.GetOrderReq{Id: p.OrderID})
+	if err != nil || detail == nil || detail.Order == nil {
+		log.Printf("[payment-scheduler] 核对订单状态失败 payment_no=%s order_id=%d: %v", p.PaymentNo, p.OrderID, err)
+		return outcomeFailed
+	}
+	return s.payment.repairPaidOrderSync(ctx, p, detail.Order.Status)
 }
 
 // scanStuck 挂账检出的任务本体
@@ -499,7 +578,11 @@ func (s *Scheduler) closePaymentLocally(ctx context.Context, p *model.Payment, r
 	now := time.Now().Format(timeLayout)
 	res := s.payment.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
 		Where("payment_no = ? AND status = 1", p.PaymentNo).
-		Updates(map[string]interface{}{"status": model.PaymentStatusClosed, "updated_at": now})
+		Updates(map[string]interface{}{
+			"status":       model.PaymentStatusClosed,
+			"pending_flag": nil, // 释放待支付占位键
+			"updated_at":   now,
+		})
 	if res.Error != nil {
 		log.Printf("[payment-scheduler] 关闭支付单失败 payment_no=%s: %v", p.PaymentNo, res.Error)
 		return
@@ -532,6 +615,23 @@ func (s *Scheduler) markReconciled(ctx context.Context, p *model.Payment) {
 		return
 	}
 	p.ReconcileCount++
+	p.LastReconciledAt = &now
+}
+
+// touchReconciled 只推进节流指针，不动回查计数
+// 供不走渠道的任务（支付单/订单不一致检出）使用：reconcile_count 是渠道查询预算，
+// 混用会让该单在 DB 校验类任务里被提前判成「回查已达上限」
+// 参数：
+//   - ctx: 上下文
+//   - p: 支付单
+func (s *Scheduler) touchReconciled(ctx context.Context, p *model.Payment) {
+	now := time.Now().Format(timeLayout)
+	if err := s.payment.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
+		Where("id = ?", p.ID).
+		Update("last_reconciled_at", now).Error; err != nil {
+		log.Printf("[payment-scheduler] 更新节流指针失败 payment_no=%s: %v", p.PaymentNo, err)
+		return
+	}
 	p.LastReconciledAt = &now
 }
 
@@ -735,6 +835,102 @@ func runReconcileTask(name string, fn func(stat *reconcileStat)) (stat reconcile
 	}()
 	fn(&stat)
 	return stat
+}
+
+// reconcileRefunds 退款查单收敛（P0-2），带任务级 panic 兜底
+// 微信退款受理（PROCESSING）是常态而非成功：扫描停留待退款超窗的微信渠道退款流水，
+// 按 RefundQuery 核实渠道终态——SUCCESS 完成落库收尾，ABNORMAL/CLOSED 置失败交由
+// order 侧卡单重试按「失败可重新发起」口径处理，PROCESSING 保持待退款下一轮再查
+//
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - reconcileStat: 本轮统计（落库判定依据）
+func (s *Scheduler) reconcileRefunds(ctx context.Context) reconcileStat {
+	return runReconcileTask("reconcileRefunds", func(stat *reconcileStat) { s.scanPendingRefunds(ctx, stat) })
+}
+
+// scanPendingRefunds 退款查单收敛的任务本体
+// 仅处理微信渠道（pay_type 1/5，支付宝退款为同步语义不在此列）；
+// 受理瞬间给渠道异步留 2 分钟窗口，避免刚受理就被查单打扰
+//
+// 参数：
+//   - ctx: 上下文
+//   - stat: 本轮统计（写入指针，由 runReconcileTask 回传）
+func (s *Scheduler) scanPendingRefunds(ctx context.Context, stat *reconcileStat) {
+	lockKey := "scheduler:payment:refund:reconcile:lock"
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
+		return
+	}
+	defer s.releaseLock(ctx, lockKey, lockValue)
+
+	deadline := time.Now().Add(-2 * time.Minute).Format(timeLayout)
+	var flows []model.RefundPayment
+	// refund_payments 无 pay_type 冗余列：JOIN payments 过滤微信渠道（pay_type 1/5）
+	if err := s.payment.db.GetDb().WithContext(ctx).
+		Table("refund_payments").
+		Select("refund_payments.*").
+		Joins("JOIN payments ON payments.payment_no = refund_payments.payment_no AND payments.pay_type IN ?", []int32{1, 5}).
+		Where("refund_payments.status = ? AND refund_payments.updated_at < ?", 1, deadline).
+		Order("refund_payments.id asc").Limit(20).
+		Scan(&flows).Error; err != nil {
+		log.Printf("[payment-scheduler] 查询待收敛退款流水失败: %v", err)
+		stat.failed++
+		return
+	}
+	if len(flows) == 0 {
+		return
+	}
+
+	client := s.payment.getWechatPayClient()
+	for i := range flows {
+		flow := &flows[i]
+		if client == nil {
+			log.Printf("[payment-scheduler] 微信客户端未就绪，退款查单本轮跳过 refund_no=%s", flow.RefundNo)
+			return
+		}
+		resp, err := client.RefundQuery(ctx, flow.RefundNo)
+		if err != nil {
+			// 查单失败不算流水失败：渠道单刚创建时可能暂不可查，下一轮继续
+			log.Printf("[payment-scheduler] 退款查单失败 refund_no=%s: %v", flow.RefundNo, err)
+			continue
+		}
+		switch resp.Status {
+		case "SUCCESS":
+			flow.TransactionID = resp.RefundID
+			if err := s.payment.completeChannelRefundSuccess(ctx, &model.Payment{PaymentNo: flow.PaymentNo}, flow); err != nil {
+				log.Printf("[payment-scheduler] 退款成功落库失败 refund_no=%s: %v", flow.RefundNo, err)
+				stat.failed++
+				continue
+			}
+			stat.refundOK++
+			log.Printf("[payment-scheduler] 退款查单确认成功 refund_no=%s，流水与支付单已收敛", flow.RefundNo)
+		case "ABNORMAL", "CLOSED":
+			// 渠道终态失败：流水置退款失败(3)。order 侧 QueryRefundResult 感知后走重试，
+			// ProcessRefund 的幂等逻辑允许清理失败流水后重新发起
+			now := time.Now().Format(timeLayout)
+			res := s.payment.db.GetDb().WithContext(ctx).Model(&model.RefundPayment{}).
+				Where("id = ? AND status = 1", flow.ID).
+				Updates(map[string]interface{}{
+					"status":         int32(3),
+					"transaction_id": resp.RefundID,
+					"updated_at":     now,
+				})
+			if res.Error != nil {
+				log.Printf("[payment-scheduler] 退款流水置失败 refund_no=%s: %v", flow.RefundNo, res.Error)
+				stat.failed++
+				continue
+			}
+			if res.RowsAffected > 0 {
+				stat.refundFailed++
+				log.Printf("[payment-scheduler] 退款查单确认渠道失败 refund_no=%s status=%s，流水已转待重试", flow.RefundNo, resp.Status)
+			}
+		default:
+			// PROCESSING 等：保持待退款，下一轮再查
+		}
+	}
 }
 
 // acquireLock 获取 Redis 分布式锁

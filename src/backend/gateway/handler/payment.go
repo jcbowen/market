@@ -22,6 +22,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
+	wegopayment "github.com/jcbowen/wego/payment"
 )
 
 // 支付类型：1=微信，2=支付宝，3=现金/货到付款
@@ -565,7 +566,9 @@ func (h *PaymentHandler) AlipayPayUrl(c *gin.Context) {
 }
 
 // WechatCallback 微信支付回调
-// 读取 raw body 与微信签名头，调用 payment.HandleWechatCallback，返回 XML 成功响应
+// 读取 raw body 与微信签名头，调用 payment.HandleWechatCallback，
+// 按 V3 规范应答：成功 HTTP 204 空体（wegopayment.NotificationSuccess），
+// 失败 5xx + {"code":"FAIL"}（wegopayment.NotificationFail，微信按间隔重试）
 // 受理情况经 recordWechatCallback 记入 debugger 进程级日志（请求体为渠道密文，只记元数据）
 // 参数：
 //   - c: gin 上下文
@@ -576,7 +579,9 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 	body, err := c.GetRawData()
 	if err != nil {
 		recordWechatCallback(clientIP, start, len(body), "failure", fmt.Sprintf("读取请求体失败: %v", err))
-		response.Error(c, errcode.ParamError)
+		// V3 规范失败应答：非 2xx + JSON。原 response.Error 返回 HTTP 200，
+		// 微信会视为受理成功而不再重试，导致通知丢失
+		wegopayment.NotificationFail(c.Writer, http.StatusInternalServerError, "读取请求体失败")
 		return
 	}
 
@@ -593,11 +598,13 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 	})
 	if err != nil {
 		recordWechatCallback(clientIP, start, len(body), "failure", err.Error())
-		c.String(http.StatusOK, "<xml><return_code><![CDATA[FAIL]]></return_code></xml>")
+		// V3 规范失败应答：5xx + {"code":"FAIL","message":"..."}，微信会按间隔重试
+		wegopayment.NotificationFail(c.Writer, http.StatusInternalServerError, "回调处理失败")
 		return
 	}
 	recordWechatCallback(clientIP, start, len(body), "success", "")
-	c.String(http.StatusOK, "<xml><return_code><![CDATA[SUCCESS]]></return_code></xml>")
+	// V3 规范成功应答：HTTP 204 空体（wego v0.2.0 NotificationSuccess）
+	wegopayment.NotificationSuccess(c.Writer)
 }
 
 // recordWechatCallback 把一次微信回调的受理情况记入 debugger 进程级日志

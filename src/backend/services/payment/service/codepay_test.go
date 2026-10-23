@@ -62,10 +62,17 @@ func TestBuildCodePayResp(t *testing.T) {
 	}
 }
 
-// TestCreatePaymentCodePayNotReady 渠道未就绪：付款码单创建被拦截（测试环境无支付配置，天然未就绪）
+// TestCreatePaymentCodePayNotReady 渠道未就绪：付款码单创建被拦截
+// 就绪判定显式桩为 false：本地开发库可能已配置真实渠道（如 alipay），
+// 依赖「测试环境无支付配置」的隐含前提会让结果随环境漂移
 func TestCreatePaymentCodePayNotReady(t *testing.T) {
 	s, _, cleanup := newPaymentTestEnv(t)
 	defer cleanup()
+
+	origWx, origAli := wechatPayReady, alipayPayReady
+	wechatPayReady = func(*PaymentService) bool { return false }
+	alipayPayReady = func(*PaymentService) bool { return false }
+	defer func() { wechatPayReady, alipayPayReady = origWx, origAli }()
 
 	for _, pt := range []int32{5, 6} {
 		_, _, err := s.CreatePayment(context.Background(), &payment.CreatePaymentReq{
@@ -387,7 +394,7 @@ func TestProcessRefundCodePay(t *testing.T) {
 			})
 
 			// 渠道未配置：退款第二阶段失败，流水置「退款失败」——证明已分流至渠道退款路径
-			if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: tc.orderID, RefundNo: tc.refundNo, Amount: 5}); err == nil {
+			if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: tc.orderID, RefundNo: tc.refundNo, Amount: 5}); err == nil {
 				t.Fatal("渠道未配置退款应报错")
 			}
 			var refunds []model.RefundPayment

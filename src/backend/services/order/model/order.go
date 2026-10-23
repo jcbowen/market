@@ -55,6 +55,9 @@ type Order struct {
 	CompleteTime        *string `gorm:"column:complete_time;type:datetime;comment:完成时间" json:"complete_time"`
 	CancelTime          *string `gorm:"column:cancel_time;type:datetime;comment:取消时间" json:"cancel_time"`
 	CancelReason        string  `gorm:"column:cancel_reason;type:varchar(255);comment:取消原因" json:"cancel_reason"`
+	// 用户侧软删除标记（C端「删除订单」）：1=用户已删；C 端列表与角标统计排除，
+	// 后台管理端不受影响；详情链路（售后进度/支付详情）保留可达
+	UserDeleted int32 `gorm:"column:user_deleted;type:tinyint;default:0;comment:用户软删除 0否 1是" json:"user_deleted"`
 	// 时间列参与调度器复合索引：超时扫描按 (status, created_at)、
 	// 卡单恢复与抢占按 (status, updated_at)；此前的 (community_id,status,created_at)
 	// 因缺少 community_id 前导列无法被这些查询使用

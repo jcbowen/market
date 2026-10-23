@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"strings"
 
 	"google.golang.org/grpc"
 
@@ -58,7 +59,7 @@ func main() {
 // 返回值：
 //   - error: 迁移错误信息
 func autoMigrate(db *mysql.Instance) error {
-	return db.GetDb().AutoMigrate(
+	if err := db.GetDb().AutoMigrate(
 		&model.Category{},
 		&model.Product{},
 		&model.ProductImage{},
@@ -90,7 +91,53 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.AttachmentConfig{},
 		&model.Attachment{},
 		&model.AttachmentMigrateItem{},
-	)
+	); err != nil {
+		return err
+	}
+	return ensureSkuBarcodeUniqueIndex(db)
+}
+
+// ensureSkuBarcodeUniqueIndex 创建 SKU 条码「同社区唯一、空串不参与」的功能唯一索引
+// AutoMigrate 无法用 tag 表达函数式索引（把空条码归一化为 NULL 以放行多行未设置条码），
+// 故在 AutoMigrate 后幂等补建；应用层同社区查重校验（spec.go）仍是第一道防线，
+// 此索引把「查后写窗口内并发落同一条码」兜成库级拒绝（GetByBarcode 不再可能随机命中多行）
+//
+// 依赖 MySQL 8.0.13+ 功能索引（部署镜像为 MySQL 8.0.x，满足）
+//
+// 参数：
+//   - db: MySQL 实例
+//
+// 返回值：
+//   - error: DDL 执行错误
+func ensureSkuBarcodeUniqueIndex(db *mysql.Instance) error {
+	// MySQL 8.0 不支持 CREATE INDEX IF NOT EXISTS（MariaDB 语法），先查 information_schema 再建；
+	// 并发双实例同时建索引撞 1061（duplicate key name）也按幂等成功处理
+	const indexName = "uk_skus_community_barcode"
+	var count int64
+	if err := db.GetDb().Raw(
+		"SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'product_skus' AND index_name = ?",
+		indexName).Scan(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	ddl := "CREATE UNIQUE INDEX " + indexName +
+		" ON product_skus ((IF(barcode = '', NULL, CONCAT(community_id, ':', barcode))))"
+	if err := db.GetDb().Exec(ddl).Error; err != nil {
+		if strings.Contains(err.Error(), "Duplicate key name") || strings.Contains(err.Error(), "1061") {
+			return nil
+		}
+		// 1062 = 存量数据已存在同社区重复条码（查后写窗口的历史产物）。
+		// 不阻断启动：条码唯一第一道防线在应用层（spec.go 社区查重），
+		// 库级索引待数据清洗或重建数据库后重启即自动补上
+		if strings.Contains(err.Error(), "Duplicate entry") || strings.Contains(err.Error(), "1062") {
+			log.Printf("警告: SKU 条码唯一索引创建失败（存量数据存在同社区重复条码），应用层查重继续兜底，数据清洗后重启自动补建: %v", err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // backfillProductSummary 回填商品汇总字段的存量数据

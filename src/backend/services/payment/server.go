@@ -131,11 +131,23 @@ func (s *server) HandleAlipayCallback(ctx stdctx.Context, req *payment.AlipayCal
 }
 
 // ProcessRefund 处理退款
-func (s *server) ProcessRefund(ctx stdctx.Context, req *payment.ProcessRefundReq) (*common.CommonResponse, error) {
-	if err := s.paymentService.ProcessRefund(ctx, req); err != nil {
+// completed=false 表示渠道已受理未到终态（微信 PROCESSING 常态），
+// 调用方不得按成功收尾，终态由 payment 侧退款查单任务收敛
+func (s *server) ProcessRefund(ctx stdctx.Context, req *payment.ProcessRefundReq) (*payment.ProcessRefundResp, error) {
+	resp, err := s.paymentService.ProcessRefund(ctx, req)
+	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+	return resp, nil
+}
+
+// QueryRefundResult 查询渠道退款流水状态（读库不触渠道）
+func (s *server) QueryRefundResult(ctx stdctx.Context, req *payment.QueryRefundResultReq) (*payment.QueryRefundResultResp, error) {
+	resp, err := s.paymentService.QueryRefundResult(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
 }
 
 // GetPayConfig 查询支付配置
@@ -215,7 +227,7 @@ func (s *server) MarkPaymentAnomalyHandled(ctx stdctx.Context, req *payment.Mark
 // MarkPaymentPaid 人工把待支付单标记为已支付
 // 订单侧的「必须仍是待支付」约束由网关先读订单状态把关，服务层再按支付单状态兜底
 func (s *server) MarkPaymentPaid(ctx stdctx.Context, req *payment.MarkPaymentPaidReq) (*common.CommonResponse, error) {
-	if err := s.paymentService.MarkPaymentPaidManually(ctx, req.PaymentNo, req.TransactionId, req.Amount, req.Remark); err != nil {
+	if err := s.paymentService.MarkPaymentPaidManually(ctx, req.OrderId, req.PaymentNo, req.TransactionId, req.Amount, req.Remark); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil

@@ -27,6 +27,7 @@ const (
 	PaymentService_HandleWechatCallback_FullMethodName      = "/payment.PaymentService/HandleWechatCallback"
 	PaymentService_HandleAlipayCallback_FullMethodName      = "/payment.PaymentService/HandleAlipayCallback"
 	PaymentService_ProcessRefund_FullMethodName             = "/payment.PaymentService/ProcessRefund"
+	PaymentService_QueryRefundResult_FullMethodName         = "/payment.PaymentService/QueryRefundResult"
 	PaymentService_GetPayConfig_FullMethodName              = "/payment.PaymentService/GetPayConfig"
 	PaymentService_SavePayConfig_FullMethodName             = "/payment.PaymentService/SavePayConfig"
 	PaymentService_UploadPayCert_FullMethodName             = "/payment.PaymentService/UploadPayCert"
@@ -53,7 +54,11 @@ type PaymentServiceClient interface {
 	BatchGetPayments(ctx context.Context, in *BatchGetPaymentsReq, opts ...grpc.CallOption) (*BatchGetPaymentsResp, error)
 	HandleWechatCallback(ctx context.Context, in *WechatCallbackReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	HandleAlipayCallback(ctx context.Context, in *AlipayCallbackReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
-	ProcessRefund(ctx context.Context, in *ProcessRefundReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// ProcessRefund 发起渠道退款。completed=false 表示渠道已受理但未到终态
+	// （微信受理常态 PROCESSING），调用方不得按成功收尾，由退款查单任务收敛
+	ProcessRefund(ctx context.Context, in *ProcessRefundReq, opts ...grpc.CallOption) (*ProcessRefundResp, error)
+	// QueryRefundResult 查询渠道退款流水状态（order 侧卡单退款收敛用，读库不触渠道）
+	QueryRefundResult(ctx context.Context, in *QueryRefundResultReq, opts ...grpc.CallOption) (*QueryRefundResultResp, error)
 	GetPayConfig(ctx context.Context, in *GetPayConfigReq, opts ...grpc.CallOption) (*PayConfig, error)
 	SavePayConfig(ctx context.Context, in *PayConfig, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	UploadPayCert(ctx context.Context, in *UploadPayCertReq, opts ...grpc.CallOption) (*UploadPayCertResp, error)
@@ -152,10 +157,20 @@ func (c *paymentServiceClient) HandleAlipayCallback(ctx context.Context, in *Ali
 	return out, nil
 }
 
-func (c *paymentServiceClient) ProcessRefund(ctx context.Context, in *ProcessRefundReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+func (c *paymentServiceClient) ProcessRefund(ctx context.Context, in *ProcessRefundReq, opts ...grpc.CallOption) (*ProcessRefundResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.CommonResponse)
+	out := new(ProcessRefundResp)
 	err := c.cc.Invoke(ctx, PaymentService_ProcessRefund_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *paymentServiceClient) QueryRefundResult(ctx context.Context, in *QueryRefundResultReq, opts ...grpc.CallOption) (*QueryRefundResultResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(QueryRefundResultResp)
+	err := c.cc.Invoke(ctx, PaymentService_QueryRefundResult_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +300,11 @@ type PaymentServiceServer interface {
 	BatchGetPayments(context.Context, *BatchGetPaymentsReq) (*BatchGetPaymentsResp, error)
 	HandleWechatCallback(context.Context, *WechatCallbackReq) (*common.CommonResponse, error)
 	HandleAlipayCallback(context.Context, *AlipayCallbackReq) (*common.CommonResponse, error)
-	ProcessRefund(context.Context, *ProcessRefundReq) (*common.CommonResponse, error)
+	// ProcessRefund 发起渠道退款。completed=false 表示渠道已受理但未到终态
+	// （微信受理常态 PROCESSING），调用方不得按成功收尾，由退款查单任务收敛
+	ProcessRefund(context.Context, *ProcessRefundReq) (*ProcessRefundResp, error)
+	// QueryRefundResult 查询渠道退款流水状态（order 侧卡单退款收敛用，读库不触渠道）
+	QueryRefundResult(context.Context, *QueryRefundResultReq) (*QueryRefundResultResp, error)
 	GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error)
 	SavePayConfig(context.Context, *PayConfig) (*common.CommonResponse, error)
 	UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error)
@@ -342,8 +361,11 @@ func (UnimplementedPaymentServiceServer) HandleWechatCallback(context.Context, *
 func (UnimplementedPaymentServiceServer) HandleAlipayCallback(context.Context, *AlipayCallbackReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method HandleAlipayCallback not implemented")
 }
-func (UnimplementedPaymentServiceServer) ProcessRefund(context.Context, *ProcessRefundReq) (*common.CommonResponse, error) {
+func (UnimplementedPaymentServiceServer) ProcessRefund(context.Context, *ProcessRefundReq) (*ProcessRefundResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProcessRefund not implemented")
+}
+func (UnimplementedPaymentServiceServer) QueryRefundResult(context.Context, *QueryRefundResultReq) (*QueryRefundResultResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryRefundResult not implemented")
 }
 func (UnimplementedPaymentServiceServer) GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPayConfig not implemented")
@@ -521,6 +543,24 @@ func _PaymentService_ProcessRefund_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PaymentServiceServer).ProcessRefund(ctx, req.(*ProcessRefundReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PaymentService_QueryRefundResult_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryRefundResultReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).QueryRefundResult(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_QueryRefundResult_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).QueryRefundResult(ctx, req.(*QueryRefundResultReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -757,6 +797,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ProcessRefund",
 			Handler:    _PaymentService_ProcessRefund_Handler,
+		},
+		{
+			MethodName: "QueryRefundResult",
+			Handler:    _PaymentService_QueryRefundResult_Handler,
 		},
 		{
 			MethodName: "GetPayConfig",

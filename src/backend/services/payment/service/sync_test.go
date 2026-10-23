@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
 
@@ -194,5 +198,152 @@ func TestSyncClosedPaymentLocateFallback(t *testing.T) {
 	}
 	if outcome.ChannelState != ChannelStateNotExist {
 		t.Errorf("渠道状态应为无此交易, got %q", outcome.ChannelState)
+	}
+}
+
+// TestSyncPaidPaymentRepairsUnpaidOrder 已确认支付单 + 订单停留待支付 → 补同步（P0-3）
+// 前置：status=2 支付单（订单因二阶段 RPC 失败没同步上），桩侧订单仍为待支付(1)
+// 断言：结论 paid=true、订单被补同步为已支付、消息说明已补齐、无挂账待办
+func TestSyncPaidPaymentRepairsUnpaidOrder(t *testing.T) {
+	s, stub, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	no := "ZFTEST-SYNC-PAID-REPAIR"
+	orderID := syncTestOrderIDBase + 5
+	seedSchedPayment(t, s, schedSeed{
+		No: no, OrderID: orderID, Amount: 66.00, Status: 2,
+		TransactionID: "TX-SYNC-PAID", CreatedAgo: 30 * time.Minute, UpdatedAgo: 30 * time.Minute, CommunityID: 3,
+	})
+	stub.setOrderStatus(orderID, 1)
+
+	outcome, err := s.SyncPaymentFromChannel(ctx, orderID, "", model.ConfirmRefManualSync)
+	if err != nil {
+		t.Fatalf("同步失败: %v", err)
+	}
+	if !outcome.Paid {
+		t.Error("支付单已确认应返回 paid=true")
+	}
+	if !strings.Contains(outcome.Message, "补齐") {
+		t.Errorf("消息应说明订单状态已补齐, got %q", outcome.Message)
+	}
+	calls := stub.orderCalls()
+	if len(calls) != 1 || calls[0].Status != 2 || calls[0].Id != orderID {
+		t.Errorf("应补同步订单为已支付 1 次, got %+v", calls)
+	}
+	if row := latestNotifyLogOpt(s, no, model.NotifyKindStuck); row != nil {
+		t.Errorf("补同步成功不应产出挂账待办, got %+v", row)
+	}
+}
+
+// assertBizCode 断言错误为业务错误且状态码相符（bizerr.New 产出的 *Error 需
+// 经 gRPC 边界 ToStatus 才转 status，服务层测试直接断言类型与 Code()）
+// 参数：
+//   - t: 测试上下文
+//   - err: 被测错误
+//   - want: 期望的 gRPC 状态码
+func assertBizCode(t *testing.T, err error, want codes.Code) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("应返回业务错误，实际为 nil")
+	}
+	var be *bizerr.Error
+	if !errors.As(err, &be) {
+		t.Fatalf("错误应为 *bizerr.Error, got %T (%v)", err, err)
+	}
+	if be.Code() != want {
+		t.Errorf("错误码应为 %v, got %v (%v)", want, be.Code(), err)
+	}
+}
+
+// TestSyncPaymentNoOrderBinding 单号不属于指定订单 → 拒绝对账（P1-2）
+// 前置：订单 A 名下有一笔待支付单，订单 B 下另有一笔待支付单
+// 断言：以订单 A 的 ID 配订单 B 的单号同步返回 FailedPrecondition，且零改动
+func TestSyncPaymentNoOrderBinding(t *testing.T) {
+	s, stub, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	fc := newFakeChannels()
+	installFakeChannels(t, fc)
+	ctx := context.Background()
+
+	orderA := syncTestOrderIDBase + 7
+	orderB := syncTestOrderIDBase + 8
+	seedSchedPayment(t, s, schedSeed{
+		No: "ZFTEST-SYNC-BIND-A", OrderID: orderA, Amount: 10.00, Status: 1,
+		CreatedAgo: time.Hour, UpdatedAgo: time.Hour, CommunityID: 3,
+	})
+	seedSchedPayment(t, s, schedSeed{
+		No: "ZFTEST-SYNC-BIND-B", OrderID: orderB, Amount: 20.00, Status: 1,
+		CreatedAgo: time.Hour, UpdatedAgo: time.Hour, CommunityID: 3,
+	})
+
+	_, err := s.SyncPaymentFromChannel(ctx, orderA, "ZFTEST-SYNC-BIND-B", model.ConfirmRefManualSync)
+	assertBizCode(t, err, codes.FailedPrecondition)
+	// 订单侧与支付单侧都不得被触碰
+	if got := stub.orderCalls(); len(got) != 0 {
+		t.Errorf("校验失败不应改订单状态, got %+v", got)
+	}
+	if got := reloadPaymentByNo(t, s, "ZFTEST-SYNC-BIND-B"); got.Status != 1 {
+		t.Errorf("校验失败不得改动支付单, got status=%d", got.Status)
+	}
+}
+
+// TestMarkPaymentPaidManuallyOrderBinding 人工标记时单号与订单不绑定 → 拒绝（P1-2）
+// 前置：订单 A 名下有一笔待支付单
+// 断言：以订单 B 的 ID 标记订单 A 的单号返回 FailedPrecondition，支付单保持待支付
+func TestMarkPaymentPaidManuallyOrderBinding(t *testing.T) {
+	s, stub, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	orderA := syncTestOrderIDBase + 9
+	orderB := syncTestOrderIDBase + 10
+	seedSchedPayment(t, s, schedSeed{
+		No: "ZFTEST-SYNC-MARK-BIND", OrderID: orderA, Amount: 30.00, Status: 1,
+		CreatedAgo: time.Hour, UpdatedAgo: time.Hour, CommunityID: 3,
+	})
+
+	err := s.MarkPaymentPaidManually(ctx, orderB, "ZFTEST-SYNC-MARK-BIND", "TX-MARK-BIND", 30.00, "抄错单号场景 by admin:1")
+	assertBizCode(t, err, codes.FailedPrecondition)
+	if got := reloadPaymentByNo(t, s, "ZFTEST-SYNC-MARK-BIND"); got.Status != 1 {
+		t.Errorf("校验失败不得改动支付单, got status=%d", got.Status)
+	}
+	if got := stub.orderCalls(); len(got) != 0 {
+		t.Errorf("校验失败不应改订单状态, got %+v", got)
+	}
+}
+
+// TestSyncPaidPaymentOrderCancelledStuck 已确认支付单 + 订单已取消 → 挂账待办（P0-3）
+// 前置：status=2 支付单，桩侧订单已取消(6)
+// 断言：结论 paid=true、写 kind=3/result=9 待办、不改订单状态
+func TestSyncPaidPaymentOrderCancelledStuck(t *testing.T) {
+	s, stub, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	no := "ZFTEST-SYNC-PAID-CANCELLED"
+	orderID := syncTestOrderIDBase + 6
+	seedSchedPayment(t, s, schedSeed{
+		No: no, OrderID: orderID, Amount: 66.00, Status: 2,
+		TransactionID: "TX-SYNC-PAID-CXL", CreatedAgo: 30 * time.Minute, UpdatedAgo: 30 * time.Minute, CommunityID: 3,
+	})
+	stub.setOrderStatus(orderID, 6)
+
+	outcome, err := s.SyncPaymentFromChannel(ctx, orderID, "", model.ConfirmRefManualSync)
+	if err != nil {
+		t.Fatalf("同步失败: %v", err)
+	}
+	if !outcome.Paid {
+		t.Error("支付单已确认应返回 paid=true")
+	}
+	if !strings.Contains(outcome.Message, "人工退款") {
+		t.Errorf("消息应指明人工退款路径, got %q", outcome.Message)
+	}
+	row := latestNotifyLog(t, s, no, model.NotifyKindStuck)
+	if row.Result != model.NotifyResultStuck || row.Handled != model.NotifyPending {
+		t.Errorf("应产出待人工处理的挂账待办, result=%d handled=%d", row.Result, row.Handled)
+	}
+	if got := stub.orderCalls(); len(got) != 0 {
+		t.Errorf("订单已取消不允许再改状态, got %d 次", len(got))
 	}
 }

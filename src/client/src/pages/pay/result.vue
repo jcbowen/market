@@ -45,6 +45,19 @@
       </view>
     </view>
 
+    <!-- 支付失败：渠道明确返回失败（status=3），终态不再轮询 -->
+    <view v-else-if="viewState === 'failed'" class="result-card">
+      <view class="result-icon">
+        <u-icon name="close-circle-fill" size="64" color="#ff4d4f" />
+      </view>
+      <text class="result-title">支付失败</text>
+      <text class="result-tip">本次支付未完成。若您已被扣款，请勿重复支付，可点击重新查询或联系客服核实</text>
+      <view class="result-actions">
+        <u-button plain type="info" text="重新查询" @click="refresh" />
+        <u-button type="success" text="回到首页" @click="goHome" />
+      </view>
+    </view>
+
     <!-- 待支付：轮询等待结果 -->
     <view v-else class="result-card">
       <view class="result-icon pending-icon">
@@ -88,13 +101,16 @@ const status = ref(0)
 const amount = ref(0)
 const firstLoaded = ref(false)
 const errorMessage = ref('')
-const viewState = computed<'loading' | 'pending' | 'paid' | 'closed' | 'refunded' | 'error'>(() => {
+const viewState = computed<'loading' | 'pending' | 'paid' | 'failed' | 'closed' | 'refunded' | 'error'>(() => {
   if (!firstLoaded.value) return 'loading'
   // -1 为查询失败哨兵值（支付单不存在/网络异常），须先于状态分发判定
   if (status.value === -1) return 'error'
   switch (status.value) {
     case 2:
       return 'paid'
+    case 3:
+      // 渠道明确失败：终态必须渲染失败态，落入 default 的 pending 文案会误导用户继续等待
+      return 'failed'
     case 4:
       return 'refunded'
     case 5:

@@ -689,11 +689,14 @@ func (x *ListProductsReq) GetStatusFilter() int32 {
 }
 
 type GetProductReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	CommunityId   int64                  `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	CommunityId int64                  `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 可售校验（P1-4）：true 时商品非上架态（status≠1，下架/仓库中/定时上架中）直接报错，
+	// 供加购等交易入口收口「可售」判定；公开详情与管理端详情不传，保持原行为
+	RequireSellable bool `protobuf:"varint,3,opt,name=require_sellable,json=requireSellable,proto3" json:"require_sellable,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *GetProductReq) Reset() {
@@ -738,6 +741,13 @@ func (x *GetProductReq) GetCommunityId() int64 {
 		return x.CommunityId
 	}
 	return 0
+}
+
+func (x *GetProductReq) GetRequireSellable() bool {
+	if x != nil {
+		return x.RequireSellable
+	}
+	return false
 }
 
 type SearchProductsReq struct {
@@ -3093,11 +3103,14 @@ func (x *BatchGetSkusResp) GetList() []*SkuInfo {
 
 // BatchGetProductsReq 商品批量查询（下单按明细取商品名/封面/分类，替代逐行 GetProduct）
 type BatchGetProductsReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ids           []int64                `protobuf:"varint,1,rep,packed,name=ids,proto3" json:"ids,omitempty"`
-	CommunityId   int64                  `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Ids         []int64                `protobuf:"varint,1,rep,packed,name=ids,proto3" json:"ids,omitempty"`
+	CommunityId int64                  `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 可售校验（P1-4）：true 时任一商品非上架态（status≠1）即整体报错，
+	// 供下单入口收口「可售」判定，与 GetByBarcode 的 status=1 口径一致
+	RequireSellable bool `protobuf:"varint,3,opt,name=require_sellable,json=requireSellable,proto3" json:"require_sellable,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *BatchGetProductsReq) Reset() {
@@ -3142,6 +3155,13 @@ func (x *BatchGetProductsReq) GetCommunityId() int64 {
 		return x.CommunityId
 	}
 	return 0
+}
+
+func (x *BatchGetProductsReq) GetRequireSellable() bool {
+	if x != nil {
+		return x.RequireSellable
+	}
+	return false
 }
 
 type BatchGetProductsResp struct {
@@ -13789,10 +13809,11 @@ const file_product_product_proto_rawDesc = "" +
 	"pagination\x18\x05 \x01(\v2\x12.common.PaginationR\n" +
 	"pagination\x12\x16\n" +
 	"\x06status\x18\x06 \x01(\x05R\x06status\x12#\n" +
-	"\rstatus_filter\x18\a \x01(\x05R\fstatusFilter\"B\n" +
+	"\rstatus_filter\x18\a \x01(\x05R\fstatusFilter\"m\n" +
 	"\rGetProductReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
-	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"\x84\x01\n" +
+	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12)\n" +
+	"\x10require_sellable\x18\x03 \x01(\bR\x0frequireSellable\"\x84\x01\n" +
 	"\x11SearchProductsReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x18\n" +
 	"\akeyword\x18\x02 \x01(\tR\akeyword\x122\n" +
@@ -14018,10 +14039,11 @@ const file_product_product_proto_rawDesc = "" +
 	"\x03ids\x18\x01 \x03(\x03R\x03ids\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"8\n" +
 	"\x10BatchGetSkusResp\x12$\n" +
-	"\x04list\x18\x01 \x03(\v2\x10.product.SkuInfoR\x04list\"J\n" +
+	"\x04list\x18\x01 \x03(\v2\x10.product.SkuInfoR\x04list\"u\n" +
 	"\x13BatchGetProductsReq\x12\x10\n" +
 	"\x03ids\x18\x01 \x03(\x03R\x03ids\x12!\n" +
-	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"@\n" +
+	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12)\n" +
+	"\x10require_sellable\x18\x03 \x01(\bR\x0frequireSellable\"@\n" +
 	"\x14BatchGetProductsResp\x12(\n" +
 	"\x04list\x18\x01 \x03(\v2\x14.product.ProductInfoR\x04list\"^\n" +
 	"\x0eDeductStockReq\x12\x15\n" +

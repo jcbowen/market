@@ -337,6 +337,16 @@ func (s *server) GetAdminByUsername(ctx stdctx.Context, req *user.GetAdminByUser
 	return service.ToAdminInfo(admin, communityIDs, nil), nil
 }
 
+// GetAdminById 按 ID 查询管理员（refresh 链路校验账号状态：停用/删除即失效）
+func (s *server) GetAdminById(ctx stdctx.Context, req *user.GetAdminByIdReq) (*user.AdminInfo, error) {
+	admin, err := s.adminService.GetAdminById(ctx, req.Id)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID)
+	return service.ToAdminInfo(admin, communityIDs, nil), nil
+}
+
 // GetAdminContext 实时解析管理员在指定社区的权限上下文
 func (s *server) GetAdminContext(ctx stdctx.Context, req *user.GetAdminContextReq) (*user.AdminContextInfo, error) {
 	isSuper, roleIDs, permissions, bound, err := s.adminService.GetAdminContext(ctx, req.AdminId, req.CommunityId)

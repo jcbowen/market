@@ -46,6 +46,7 @@ const (
 	UserService_GetRegionUpdateTask_FullMethodName       = "/user.UserService/GetRegionUpdateTask"
 	UserService_ApplyRegionUpdateTask_FullMethodName     = "/user.UserService/ApplyRegionUpdateTask"
 	UserService_GetAdminByUsername_FullMethodName        = "/user.UserService/GetAdminByUsername"
+	UserService_GetAdminById_FullMethodName              = "/user.UserService/GetAdminById"
 	UserService_ListAdmins_FullMethodName                = "/user.UserService/ListAdmins"
 	UserService_CreateAdmin_FullMethodName               = "/user.UserService/CreateAdmin"
 	UserService_UpdateAdmin_FullMethodName               = "/user.UserService/UpdateAdmin"
@@ -108,6 +109,8 @@ type UserServiceClient interface {
 	ApplyRegionUpdateTask(ctx context.Context, in *ApplyRegionUpdateTaskReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 管理员
 	GetAdminByUsername(ctx context.Context, in *GetAdminByUsernameReq, opts ...grpc.CallOption) (*AdminInfo, error)
+	// 按 ID 查询管理员（refresh 时实时校验账号状态：停用/删除即令牌失效）
+	GetAdminById(ctx context.Context, in *GetAdminByIdReq, opts ...grpc.CallOption) (*AdminInfo, error)
 	ListAdmins(ctx context.Context, in *ListAdminsReq, opts ...grpc.CallOption) (*ListAdminsResp, error)
 	CreateAdmin(ctx context.Context, in *CreateAdminReq, opts ...grpc.CallOption) (*AdminInfo, error)
 	UpdateAdmin(ctx context.Context, in *UpdateAdminReq, opts ...grpc.CallOption) (*AdminInfo, error)
@@ -420,6 +423,16 @@ func (c *userServiceClient) GetAdminByUsername(ctx context.Context, in *GetAdmin
 	return out, nil
 }
 
+func (c *userServiceClient) GetAdminById(ctx context.Context, in *GetAdminByIdReq, opts ...grpc.CallOption) (*AdminInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminInfo)
+	err := c.cc.Invoke(ctx, UserService_GetAdminById_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *userServiceClient) ListAdmins(ctx context.Context, in *ListAdminsReq, opts ...grpc.CallOption) (*ListAdminsResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAdminsResp)
@@ -696,6 +709,8 @@ type UserServiceServer interface {
 	ApplyRegionUpdateTask(context.Context, *ApplyRegionUpdateTaskReq) (*common.CommonResponse, error)
 	// 管理员
 	GetAdminByUsername(context.Context, *GetAdminByUsernameReq) (*AdminInfo, error)
+	// 按 ID 查询管理员（refresh 时实时校验账号状态：停用/删除即令牌失效）
+	GetAdminById(context.Context, *GetAdminByIdReq) (*AdminInfo, error)
 	ListAdmins(context.Context, *ListAdminsReq) (*ListAdminsResp, error)
 	CreateAdmin(context.Context, *CreateAdminReq) (*AdminInfo, error)
 	UpdateAdmin(context.Context, *UpdateAdminReq) (*AdminInfo, error)
@@ -825,6 +840,9 @@ func (UnimplementedUserServiceServer) ApplyRegionUpdateTask(context.Context, *Ap
 }
 func (UnimplementedUserServiceServer) GetAdminByUsername(context.Context, *GetAdminByUsernameReq) (*AdminInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetAdminByUsername not implemented")
+}
+func (UnimplementedUserServiceServer) GetAdminById(context.Context, *GetAdminByIdReq) (*AdminInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAdminById not implemented")
 }
 func (UnimplementedUserServiceServer) ListAdmins(context.Context, *ListAdminsReq) (*ListAdminsResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAdmins not implemented")
@@ -1387,6 +1405,24 @@ func _UserService_GetAdminByUsername_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UserService_GetAdminById_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAdminByIdReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).GetAdminById(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_GetAdminById_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).GetAdminById(ctx, req.(*GetAdminByIdReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UserService_ListAdmins_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListAdminsReq)
 	if err := dec(in); err != nil {
@@ -1929,6 +1965,10 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetAdminByUsername",
 			Handler:    _UserService_GetAdminByUsername_Handler,
+		},
+		{
+			MethodName: "GetAdminById",
+			Handler:    _UserService_GetAdminById_Handler,
 		},
 		{
 			MethodName: "ListAdmins",

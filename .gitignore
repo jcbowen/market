@@ -78,3 +78,8 @@ src/client/dist/
 
 # === 其他 ===
 Thumbs.db
+# === 本地临时预览与工具产物（2026-10 审查补充） ===
+.tmp-picker-preview/
+generated-images/
+.playwright-cli/
+config.debugtest.yaml

@@ -26,8 +26,8 @@ test.describe('认证流程', () => {
   test('非法手机号登录被拒绝', async ({ request }) => {
     const resp = await request.post('/api/v1/auth/login/phone', { data: { phone: '12345' } });
     const body = (await resp.json()) as ApiResponse;
-    // 业务码非 0（参数错误），且服务未崩溃
-    expect(resp.status()).toBeLessThan(500);
+    // 登录入口为公开路由，参数错误走统一错误响应：HTTP 200 + 非零业务码
+    expect(resp.status()).toBe(200);
     expect(body.code).not.toBe(0);
   });
 
@@ -53,7 +53,7 @@ test.describe('认证流程', () => {
     const resp = await request.get('/api/v1/user/profile');
     const body = (await resp.json()) as ApiResponse;
     // 网关可能以 HTTP 200 + 业务码 或 HTTP 401 表达未授权
-    expect(resp.status()).toBeLessThan(500);
+    expect([200, 401], '未授权只允许 HTTP 200+业务码 或 401 两种表达').toContain(resp.status());
     if (resp.status() === 200) expect(body.code).not.toBe(0);
     else expect(resp.status()).toBe(401);
   });
@@ -63,7 +63,7 @@ test.describe('认证流程', () => {
       headers: { Authorization: 'Bearer fake-token-abc' },
     });
     const body = (await resp.json()) as ApiResponse;
-    expect(resp.status()).toBeLessThan(500);
+    expect([200, 401], '未授权只允许 HTTP 200+业务码 或 401 两种表达').toContain(resp.status());
     if (resp.status() === 200) expect(body.code).not.toBe(0);
     else expect(resp.status()).toBe(401);
   });

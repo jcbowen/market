@@ -41,10 +41,10 @@ var ErrBarcodeNotFound = bizerr.New(codes.NotFound, "未找到该条码对应的
 //   - error: 校验或落库错误信息
 func (s *ProductService) saveSpecsAndSkus(tx *gorm.DB, p *model.Product, specs []*product.SpecReq, skuItems []*product.SkuItemReq) error {
 	if len(skuItems) == 0 {
-		return fmt.Errorf("请填写商品价格与库存")
+		return bizerr.New(codes.InvalidArgument, "请填写商品价格与库存")
 	}
 	if !p.IsMultiSpec && len(skuItems) > 1 {
-		return fmt.Errorf("单规格商品只允许一个 SKU")
+		return bizerr.New(codes.InvalidArgument, "单规格商品只允许一个 SKU")
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -121,10 +121,10 @@ func (s *ProductService) saveSpecTree(
 
 	for i, sp := range specs {
 		if sp.Name == "" {
-			return nil, nil, fmt.Errorf("第 %d 个规格名不能为空", i+1)
+			return nil, nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个规格名不能为空", i+1))
 		}
 		if len(sp.Values) == 0 {
-			return nil, nil, fmt.Errorf("规格「%s」至少需要一个规格值", sp.Name)
+			return nil, nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("规格「%s」至少需要一个规格值", sp.Name))
 		}
 
 		var specID int64
@@ -153,7 +153,7 @@ func (s *ProductService) saveSpecTree(
 
 		for _, v := range sp.Values {
 			if v.Name == "" {
-				return nil, nil, fmt.Errorf("规格「%s」的规格值不能为空", sp.Name)
+				return nil, nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("规格「%s」的规格值不能为空", sp.Name))
 			}
 
 			var valueID int64
@@ -244,10 +244,10 @@ func (s *ProductService) saveSkus(
 
 	for i, item := range skuItems {
 		if item.Price <= 0 {
-			return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU 的价格必须大于 0", i+1)
+			return nil, 0, 0, 0, 0, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的价格必须大于 0", i+1))
 		}
 		if item.Stock < 0 {
-			return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU 的库存不能为负数", i+1)
+			return nil, 0, 0, 0, 0, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的库存不能为负数", i+1))
 		}
 
 		// 解析规格值 ID：临时 ID 替换为真实 ID
@@ -255,7 +255,7 @@ func (s *ProductService) saveSkus(
 		for _, raw := range item.SpecValueIds {
 			id, err := resolveSpecValueID(raw, tempMap, valueNameMap)
 			if err != nil {
-				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%v", i+1, err)
+				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
 			}
 			resolved = append(resolved, id)
 		}
@@ -265,7 +265,7 @@ func (s *ProductService) saveSkus(
 		comboKey := joinSpecValueIDs(resolved)
 		if comboKey != "" {
 			if seenCombo[comboKey] {
-				return nil, 0, 0, 0, 0, fmt.Errorf("SKU 规格组合重复: %s", skuDisplayName(resolved, valueNameMap))
+				return nil, 0, 0, 0, 0, bizerr.New(codes.InvalidArgument, fmt.Sprintf("SKU 规格组合重复: %s", skuDisplayName(resolved, valueNameMap)))
 			}
 			seenCombo[comboKey] = true
 		}
@@ -329,7 +329,7 @@ func (s *ProductService) saveSkus(
 			if err := tx.Select("id", "stock", "cost_price", "sku_code", "community_id").
 				Where("id = ? AND product_id = ?", skuID, p.ID).
 				Take(&old).Error; err != nil {
-				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID)
+				return nil, 0, 0, 0, 0, bizerr.New(codes.NotFound, fmt.Sprintf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID))
 			}
 			if err := tx.Model(&model.Sku{}).
 				Where("id = ? AND product_id = ?", skuID, p.ID).
@@ -552,17 +552,17 @@ func deleteNotIn(tx *gorm.DB, dest interface{}, productID int64, keepIDs []int64
 func resolveSpecValueID(raw string, tempMap map[string]int64, valueNameMap map[int64]string) (int64, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return 0, fmt.Errorf("规格值 ID 不能为空")
+		return 0, bizerr.New(codes.InvalidArgument, "规格值 ID 不能为空")
 	}
 	if id, ok := tempMap[raw]; ok {
 		return id, nil
 	}
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || id <= 0 {
-		return 0, fmt.Errorf("无法识别的规格值引用: %s", raw)
+		return 0, bizerr.New(codes.InvalidArgument, fmt.Sprintf("无法识别的规格值引用: %s", raw))
 	}
 	if _, ok := valueNameMap[id]; !ok {
-		return 0, fmt.Errorf("规格值 %d 不存在于本次提交的规格树中", id)
+		return 0, bizerr.New(codes.NotFound, fmt.Sprintf("规格值 %d 不存在于本次提交的规格树中", id))
 	}
 	return id, nil
 }
@@ -662,7 +662,7 @@ func (s *ProductService) ensureBarcodeAvailable(tx *gorm.DB, communityID, exclud
 
 	var p model.Product
 	if err := tx.Select("name").Where("id = ?", sku.ProductID).First(&p).Error; err != nil {
-		return fmt.Errorf("条形码 %s 已被其他商品占用", barcode)
+		return bizerr.New(codes.InvalidArgument, fmt.Sprintf("条形码 %s 已被其他商品占用", barcode))
 	}
 	return bizerr.New(codes.InvalidArgument, fmt.Sprintf("条形码 %s 已被商品「%s」使用", barcode, p.Name))
 }

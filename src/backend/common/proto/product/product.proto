@@ -239,6 +239,9 @@ message ListProductsReq {
 message GetProductReq {
   int64 id = 1;
   int64 community_id = 2;
+  // 可售校验（P1-4）：true 时商品非上架态（status≠1，下架/仓库中/定时上架中）直接报错，
+  // 供加购等交易入口收口「可售」判定；公开详情与管理端详情不传，保持原行为
+  bool require_sellable = 3;
 }
 
 message SearchProductsReq {
@@ -520,6 +523,9 @@ message BatchGetSkusResp {
 message BatchGetProductsReq {
   repeated int64 ids = 1;
   int64 community_id = 2;
+  // 可售校验（P1-4）：true 时任一商品非上架态（status≠1）即整体报错，
+  // 供下单入口收口「可售」判定，与 GetByBarcode 的 status=1 口径一致
+  bool require_sellable = 3;
 }
 
 message BatchGetProductsResp {

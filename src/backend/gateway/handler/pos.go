@@ -61,8 +61,10 @@ type CreatePosOrderReq struct {
 }
 
 // CreatePosOrder 代客下单（收银台）
-// 流程：校验进行中班次（强制开工，无班次拒绝收银）→ 创建订单（source=2，经手人=当前管理员，
-// 归属当前班次）→ 按所选支付方式创建支付单（创建即支付成功，含 0 元全额优惠单）→ 返回订单信息。
+// 流程：校验进行中班次（强制开工，无班次拒绝收银）→ 付款码渠道就绪前置校验（不可用提示改用现金，
+// 先于建单，避免留下无法收款的孤儿待支付订单）→ 创建订单（source=2，经手人=当前管理员，
+// 归属当前班次）→ 按所选支付方式创建支付单（现金创建即支付成功，含 0 元全额优惠单；
+// 付款码仅建待支付支付单，扫码扣款走 PayPosOrderByCode）→ 返回订单信息。
 //
 // 接口: POST /api/v1/admin/pos/orders
 //
@@ -108,6 +110,17 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 		return
 	}
 
+	// 付款码支付(5/6)为两步化：先建待支付支付单，扫码后 pay-code 扣款
+	codePay := req.PayType == posPayTypeWechatCode || req.PayType == posPayTypeAlipayCode
+	// 渠道就绪前置校验（P1-8）：必须置于建单之前——建单后才发现渠道不可用，
+	// 会留下一笔无法收款的孤儿待支付订单（收银员已出小票、顾客已离场的场景尤其实时）
+	if codePay {
+		if err := h.ensurePosCodePayReady(c.Request.Context(), req.PayType); err != nil {
+			response.Error(c, errcode.OperationNotAllowed, err.Error())
+			return
+		}
+	}
+
 	items := make([]*order.OrderItem, 0, len(req.Items))
 	for _, item := range req.Items {
 		items = append(items, &order.OrderItem{SkuId: item.SkuID, Quantity: item.Quantity, Price: item.Price})
@@ -143,21 +156,12 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 
 	// 当场结清：统一创建支付单（含 0 元全额优惠单，amount=0 创建即成功），保持「订单必有支付记录」口径
 	// 社区与订单号随订单一并带入，支付异常队列据此按社区隔离、后台据此展示可核对的订单号
-	// 付款码支付(5/6)为两步化的第一步：只创建待支付支付单（不扣款），扫码扣款走 PayPosOrderByCode
-	codePay := req.PayType == posPayTypeWechatCode || req.PayType == posPayTypeAlipayCode
-	if codePay {
-		// 渠道就绪前置校验：未配置直接提示改用现金，避免产生无法收款的待支付单
-		if err := h.ensurePosCodePayReady(c.Request.Context(), req.PayType); err != nil {
-			response.Error(c, errcode.OperationNotAllowed, err.Error())
-			return
-		}
-		// 渠道不受理 0 元扣款，全额优惠单只能收现金；此时订单已创建（结算结果只能下单后确定），
-		// best-effort 自动取消刚建的订单，避免留下无支付单的孤儿待支付订单
-		if resp.PayAmount <= 0 {
-			h.cancelOrphanPosOrder(c, resp.Id, communityID, "收银台 0 元订单误选付款码，自动取消")
-			response.Error(c, errcode.OperationNotAllowed, "付款码支付不支持 0 元订单，请使用现金收款")
-			return
-		}
+	// 付款码渠道不受理 0 元扣款，全额优惠单只能收现金；结算金额（券/改价）只能下单后确定，
+	// 命中时订单已落库——best-effort 自动取消刚建的订单，避免留下无支付单的孤儿待支付订单
+	if codePay && resp.PayAmount <= 0 {
+		h.cancelOrphanPosOrder(c, resp.Id, communityID, "收银台 0 元订单误选付款码，自动取消")
+		response.Error(c, errcode.OperationNotAllowed, "付款码支付不支持 0 元订单，请使用现金收款")
+		return
 	}
 	payResp, err := h.paymentClient.CreatePayment(c.Request.Context(), &payment.CreatePaymentReq{
 		OrderId:     resp.Id,
@@ -183,6 +187,24 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 		"paid":       !codePay,
 		"payment_no": payResp.PaymentNo,
 	})
+}
+
+// isPosPaidStatus 判定订单是否处于已收款状态族（P1-7）
+// 2已支付 3备货中 4已发货 5已完成 7退款中 8已退款——后四态均由已收款订单流转而来，
+// 退款态也以收款为前提。收银台轮询「是否已收款」必须整族判定：付款成功后订单会被
+// 后续流程推离 2，只认 2 会把已收款单误报未收款，诱导重复扣款
+// 参数：
+//   - status: 订单状态
+//
+// 返回值：
+//   - bool: 已收款族返回 true
+func isPosPaidStatus(status int32) bool {
+	switch status {
+	case 2, 3, 4, 5, 7, 8:
+		return true
+	default:
+		return false
+	}
 }
 
 // cancelOrphanPosOrder best-effort 取消收银台下单后无法收款的孤儿订单
@@ -350,8 +372,11 @@ func (h *AdminHandler) GetPosOrderPayStatus(c *gin.Context) {
 		return
 	}
 	if o.Status != 1 && o.Status != 100 {
-		// 订单已不在待支付族：直接把事实告诉收银台（付款成功单已被同步为已支付）
-		response.Success(c, gin.H{"paid": o.Status == 2, "changed": false, "order_status": o.Status})
+		// 订单已不在待支付族：直接把事实告诉收银台。
+		// paid 判定必须覆盖已收款状态族（P1-7）：付款成功后订单可能已被发货/核销/完成
+		// 推往 3/4/5，退款中(7)/已退款(8)同样以收款为前提——只认 2 会把「已收款」
+		// 误报成未收款，诱导收银台重复扣款
+		response.Success(c, gin.H{"paid": isPosPaidStatus(o.Status), "changed": false, "order_status": o.Status})
 		return
 	}
 

@@ -118,10 +118,15 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 		return
 	}
 
-	miniClient := miniprogram.NewClient(&miniprogram.Config{
+	// E 版构造：配置非法时返回 error 而非 panic（wego v0.2.0 E 体系）
+	miniClient, err := miniprogram.NewClientE(&miniprogram.Config{
 		AppID:     chResp.AppId,
 		AppSecret: chResp.AppSecret,
 	})
+	if err != nil {
+		response.Error(c, errcode.InternalServerError, "微信小程序客户端初始化失败: "+err.Error())
+		return
+	}
 	session, err := miniClient.Code2Session(ctx, req.Code)
 	if err != nil {
 		response.Error(c, errcode.InternalServerError, err.Error())

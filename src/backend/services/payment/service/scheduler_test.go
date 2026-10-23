@@ -1241,6 +1241,8 @@ func TestNeedsHandlingMatrix(t *testing.T) {
 		{"挂账检出", model.NotifyKindStuck, model.NotifyResultStuck, true},
 		{"放弃对账", model.NotifyKindGiveUp, model.NotifyResultError, true},
 		{"渠道关单成功", model.NotifyKindChannelClose, model.NotifyResultClosed, false},
+		{"订单同步失败（回调）", model.NotifyKindCallback, model.NotifyResultSyncFailed, true},
+		{"订单同步失败（对账）", model.NotifyKindReconcile, model.NotifyResultSyncFailed, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1447,4 +1449,119 @@ func TestRunReconcileTaskPropagatesStat(t *testing.T) {
 			t.Errorf("panic 轮次应判定为需落库，实际统计 %+v", stat)
 		}
 	})
+}
+
+// TestSchedulerDetectPaidMismatchRepairsOrder T13：支付单已确认而订单停留待支付 → 补同步（P0-3）
+// 前置：status=2 支付单（回调二阶段曾失败），订单在桩侧仍为待支付(1)
+// 断言：结论 rescued、订单被补同步为已支付(2)、不写任何人工待办、节流指针推进但不消耗回查计数
+func TestSchedulerDetectPaidMismatchRepairsOrder(t *testing.T) {
+	env := newSchedEnv(t)
+	ctx := context.Background()
+	no := "ZFTEST-T13-MISMATCH-REPAIR"
+	orderID := schedOrderIDBase + 40
+	p := seedSchedPayment(t, env.s, schedSeed{
+		No: no, OrderID: orderID, Amount: 42.00, Status: 2,
+		TransactionID: "TX-T13", CreatedAgo: 30 * time.Minute, UpdatedAgo: 30 * time.Minute, CommunityID: 7,
+	})
+	env.stub.setOrderStatus(orderID, 1)
+
+	outcome := env.sched.repairPaidMismatch(ctx, p)
+	if outcome != outcomeRescued {
+		t.Fatalf("订单停留待支付应补同步(rescued), got %s", outcome)
+	}
+	calls := env.stub.orderCalls()
+	if len(calls) != 1 {
+		t.Fatalf("应恰好补同步 1 次, got %d", len(calls))
+	}
+	if calls[0].Id != orderID || calls[0].Status != 2 {
+		t.Errorf("补同步入参错误: id=%d status=%d", calls[0].Id, calls[0].Status)
+	}
+	got := reloadPayment(t, env.s, p.ID)
+	if got.ReconcileCount != 0 {
+		t.Errorf("不走渠道的任务不应消耗回查计数, got %d", got.ReconcileCount)
+	}
+	if got.LastReconciledAt == nil {
+		t.Error("节流指针 last_reconciled_at 应已推进")
+	}
+	if row := latestNotifyLogOpt(env.s, no, model.NotifyKindStuck); row != nil {
+		t.Errorf("补同步成功不应产出挂账待办, got %+v", row)
+	}
+}
+
+// TestSchedulerDetectPaidMismatchOrderCancelled T14：支付单已确认而订单已取消 → 挂账待办（P0-3）
+// 前置：status=2 支付单，订单在桩侧已取消(6)
+// 断言：结论 stuck、写 kind=3/result=9 待处理待办、不改订单状态
+func TestSchedulerDetectPaidMismatchOrderCancelled(t *testing.T) {
+	env := newSchedEnv(t)
+	ctx := context.Background()
+	no := "ZFTEST-T14-MISMATCH-CANCELLED"
+	orderID := schedOrderIDBase + 41
+	p := seedSchedPayment(t, env.s, schedSeed{
+		No: no, OrderID: orderID, Amount: 42.00, Status: 2,
+		TransactionID: "TX-T14", CreatedAgo: 30 * time.Minute, UpdatedAgo: 30 * time.Minute, CommunityID: 7,
+	})
+	env.stub.setOrderStatus(orderID, 6)
+
+	outcome := env.sched.repairPaidMismatch(ctx, p)
+	if outcome != outcomeStuck {
+		t.Fatalf("订单已取消应转挂账待办(stuck), got %s", outcome)
+	}
+	row := latestNotifyLog(t, env.s, no, model.NotifyKindStuck)
+	if row.Result != model.NotifyResultStuck || row.Handled != model.NotifyPending {
+		t.Errorf("挂账待办 result/handled 错误: result=%d handled=%d", row.Result, row.Handled)
+	}
+	if !strings.Contains(row.ErrorMsg, "订单已取消") {
+		t.Errorf("待办应说明订单已取消的事实, got %q", row.ErrorMsg)
+	}
+	if got := env.stub.orderCalls(); len(got) != 0 {
+		t.Errorf("订单已取消不允许再改状态, got %d 次", len(got))
+	}
+}
+
+// TestSchedulerDetectPaidMismatchConsistentNoAction T15：支付单已确认且订单已流转 → 无需动作
+// 前置：status=2 支付单，订单在桩侧为已支付(2)
+// 断言：结论 observed、零订单 RPC、无待办
+func TestSchedulerDetectPaidMismatchConsistentNoAction(t *testing.T) {
+	env := newSchedEnv(t)
+	ctx := context.Background()
+	no := "ZFTEST-T15-MISMATCH-CONSISTENT"
+	orderID := schedOrderIDBase + 42
+	p := seedSchedPayment(t, env.s, schedSeed{
+		No: no, OrderID: orderID, Amount: 42.00, Status: 2,
+		TransactionID: "TX-T15", CreatedAgo: 30 * time.Minute, UpdatedAgo: 30 * time.Minute,
+	})
+	env.stub.setOrderStatus(orderID, 2)
+
+	if outcome := env.sched.repairPaidMismatch(ctx, p); outcome != outcomeObserved {
+		t.Fatalf("订单已流转应无需动作(observed), got %s", outcome)
+	}
+	if got := env.stub.orderCalls(); len(got) != 0 {
+		t.Errorf("一致状态不应触发订单 RPC, got %d 次", len(got))
+	}
+	if row := latestNotifyLogOpt(env.s, no, model.NotifyKindStuck); row != nil {
+		t.Errorf("一致状态不应产出挂账待办, got %+v", row)
+	}
+}
+
+// TestSchedulerDetectPaidMismatchQueryFailure T15b：订单状态查不到 → 失败下轮重试，不妄动
+func TestSchedulerDetectPaidMismatchQueryFailure(t *testing.T) {
+	env := newSchedEnv(t)
+	ctx := context.Background()
+	no := "ZFTEST-T15B-MISMATCH-QUERYFAIL"
+	orderID := schedOrderIDBase + 43
+	p := seedSchedPayment(t, env.s, schedSeed{
+		No: no, OrderID: orderID, Amount: 42.00, Status: 2,
+		TransactionID: "TX-T15B", CreatedAgo: 30 * time.Minute, UpdatedAgo: 30 * time.Minute,
+	})
+	// 不预置订单状态：桩的 GetOrder 返回错误，模拟订单服务不可达
+
+	if outcome := env.sched.repairPaidMismatch(ctx, p); outcome != outcomeFailed {
+		t.Fatalf("订单状态查不到应记失败(failed), got %s", outcome)
+	}
+	if got := env.stub.orderCalls(); len(got) != 0 {
+		t.Errorf("查不到订单状态不允许改状态, got %d 次", len(got))
+	}
+	if row := latestNotifyLogOpt(env.s, no, model.NotifyKindStuck); row != nil {
+		t.Errorf("查询失败不应直接判挂账, got %+v", row)
+	}
 }

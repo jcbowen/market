@@ -119,7 +119,9 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 	u.Openid = orValue(req.Openid, u.Openid)
 	u.AlipayUserID = orPtrValue(req.AlipayUserId, u.AlipayUserID)
 	u.Unionid = orPtrValue(req.UnionId, u.Unionid)
-	u.Phone = req.Phone
+	// 手机号只在请求携带时覆盖：按 openid 命中的已绑手机会员走微信登录时 req.Phone 为空，
+	// 无条件赋值会把存量手机号清空（Save 全量落库），后续按 phone 查找即丢失该账号
+	u.Phone = orValue(req.Phone, u.Phone)
 	// 昵称只在为空时写入：登录入参不带真实昵称（微信授权昵称另有 user/profile 更新入口），
 	// 避免每次登录把用户自定义昵称刷回默认值
 	if u.Nickname == "" {
@@ -437,9 +439,22 @@ func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberRe
 		CommunityID: req.CommunityId,
 		Status:      1,
 	}
+	// 并发竞态兜底：两个同手机号请求同时通过上方查重后撞 phone 唯一索引（1062），
+	// 捕获后按 phone 重查复用既有会员，幂等口径与查重命中分支一致（补社区关联、非新注册），
+	// 而不是把 1062 冒泡成内部错误（网关吞成 10002）
+	created := true
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(u).Error; err != nil {
-			return err
+			if !isDuplicateKeyErr(err) {
+				return err
+			}
+			var existing model.User
+			if err := tx.Where("phone = ?", req.Phone).First(&existing).Error; err != nil {
+				return err
+			}
+			*u = existing
+			created = false
+			return nil
 		}
 		row := &model.UserCommunity{
 			UserID:      u.ID,
@@ -451,6 +466,13 @@ func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberRe
 		return tx.Create(row).Error
 	}); err != nil {
 		return nil, false, err
+	}
+
+	if !created {
+		if err := s.MarkUserCommunity(ctx, u.ID, req.CommunityId, source); err != nil {
+			return nil, false, err
+		}
+		return u, false, nil
 	}
 
 	// 新注册成功，触发扩展钩子（新用户活动预留；钩子内部失败不影响注册结果）

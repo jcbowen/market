@@ -161,11 +161,11 @@ test.describe('支付单查询与回调安全', () => {
       data: { nonce: 'fake', ciphertext: 'fake-cipher' },
       headers: { 'Content-Type': 'application/json' },
     });
-    // 微信回调按协议返回 XML 应答（FAIL），不返回 JSON 业务码
-    const text = await resp.text();
-    expect(resp.status()).toBeLessThan(500);
-    expect(text).toContain('<xml>');
-    expect(text).not.toContain('SUCCESS');
+    // V3 规范失败应答（wego v0.2.0 NotificationFail）：5xx + {"code":"FAIL"}，
+    // 微信按间隔重试；绝不能回 2xx——那会被渠道视为受理成功而停止重试，通知即丢失
+    expect(resp.status()).toBe(500);
+    const body = (await resp.json()) as { code: string; message?: string };
+    expect(body.code).toBe('FAIL');
   });
 });
 
@@ -253,7 +253,7 @@ test.describe('履约身份标识', () => {
   test('fulfillment-status 需登录', async ({ request }) => {
     const resp = await request.get('/api/v1/user/fulfillment-status');
     const body = (await resp.json()) as ApiResponse;
-    expect(resp.status()).toBeLessThan(500);
+    expect([200, 401], '未授权只允许 HTTP 200+业务码 或 401 两种表达').toContain(resp.status());
     if (resp.status() === 200) expect(body.code).not.toBe(0);
     else expect(resp.status()).toBe(401);
   });
@@ -261,7 +261,7 @@ test.describe('履约身份标识', () => {
   test('上传图片接口未登录被拒绝', async ({ request }) => {
     const resp = await request.post('/api/v1/upload/image');
     const body = (await resp.json()) as ApiResponse;
-    expect(resp.status()).toBeLessThan(500);
+    expect([200, 401], '未授权只允许 HTTP 200+业务码 或 401 两种表达').toContain(resp.status());
     if (resp.status() === 200) expect(body.code).not.toBe(0);
     else expect(resp.status()).toBe(401);
   });

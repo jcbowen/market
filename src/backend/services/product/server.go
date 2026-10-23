@@ -161,7 +161,9 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 }
 
 // GetProduct 获取商品详情
-// 返回商品基础信息、SKU 列表与规格树（单规格时规格树为空）
+// 返回商品基础信息、SKU 列表与规格树（单规格时规格树为空）。
+// require_sellable=true 时非上架态商品直接报错（加购等交易入口的可售收口，P1-4）；
+// 公开详情与管理端详情不传，仓库中商品仍可查看
 func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*product.ProductDetail, error) {
 	p, err := s.productService.GetProduct(ctx, req.Id)
 	if err != nil {
@@ -169,6 +171,13 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 	}
 	if err := service.EnsureScope(req.GetCommunityId(), p.CommunityID, "商品"); err != nil {
 		return nil, bizerr.ToStatus(err)
+	}
+	// 可售校验收口（P1-4）：与 BatchGetProducts 的 require_sellable 同口径，
+	// 由商品服务统一判定，交易入口（加购）只声明意图
+	if req.GetRequireSellable() {
+		if err := service.EnsureProductSellable(p); err != nil {
+			return nil, bizerr.ToStatus(err)
+		}
 	}
 	skus, err := s.productService.ListSkusByProductID(ctx, req.Id)
 	if err != nil {
@@ -408,9 +417,10 @@ func (s *server) BatchGetSkus(ctx stdctx.Context, req *product.BatchGetSkusReq) 
 }
 
 // BatchGetProducts 商品批量查询（下单明细取商品名/封面/分类，替代逐行 GetProduct）
-// 只回主表字段：调用方不需要 SKU 明细、规格树与图集，避免按行放大附属查询
+// 只回主表字段：调用方不需要 SKU 明细、规格树与图集，避免按行放大附属查询。
+// require_sellable=true 时任一商品非上架态即整体报错（下单入口的可售收口，P1-4）
 func (s *server) BatchGetProducts(ctx stdctx.Context, req *product.BatchGetProductsReq) (*product.BatchGetProductsResp, error) {
-	products, err := s.productService.BatchGetProducts(ctx, req.Ids, req.GetCommunityId())
+	products, err := s.productService.BatchGetProducts(ctx, req.Ids, req.GetCommunityId(), req.GetRequireSellable())
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}

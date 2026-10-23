@@ -83,6 +83,60 @@ func TestApplyEnvOverridesDebuggerServiceName(t *testing.T) {
 	}
 }
 
+// TestApplyEnvOverridesDbTopology 外部数据库连接拓扑六项：非空覆盖、留空不改写
+func TestApplyEnvOverridesDbTopology(t *testing.T) {
+	cfg := &Config{}
+	cfg.Db.Host = "mysql"
+	cfg.Db.Port = "3306"
+	cfg.Db.Dbname = "market"
+	cfg.Db.Username = "root"
+	cfg.Redis.Host = "redis"
+	cfg.Redis.Port = "6379"
+	cfg.Redis.Db = "0"
+
+	// 非空时覆盖配置文件值（external-db compose 注入口径）
+	t.Setenv("DB_HOST", "db.example.internal")
+	t.Setenv("DB_PORT", "3307")
+	t.Setenv("DB_NAME", "market_prod")
+	t.Setenv("DB_USER", "market_rw")
+	t.Setenv("REDIS_HOST", "cache.example.internal")
+	t.Setenv("REDIS_PORT", "6380")
+	t.Setenv("REDIS_DB", "2")
+	ApplyEnvOverrides(cfg)
+
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"DB_HOST", cfg.Db.Host, "db.example.internal"},
+		{"DB_PORT", cfg.Db.Port, "3307"},
+		{"DB_NAME", cfg.Db.Dbname, "market_prod"},
+		{"DB_USER", cfg.Db.Username, "market_rw"},
+		{"REDIS_HOST", cfg.Redis.Host, "cache.example.internal"},
+		{"REDIS_PORT", cfg.Redis.Port, "6380"},
+		{"REDIS_DB", cfg.Redis.Db, "2"},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s 应覆盖为 %q，实际 %q", c.name, c.want, c.got)
+		}
+	}
+
+	// 空值等同未设置：保持配置文件值（内部 compose 部署不设这些变量的口径）
+	t.Setenv("DB_HOST", "")
+	t.Setenv("DB_PORT", "")
+	t.Setenv("DB_NAME", "")
+	t.Setenv("DB_USER", "")
+	t.Setenv("REDIS_HOST", "")
+	t.Setenv("REDIS_PORT", "")
+	t.Setenv("REDIS_DB", "")
+	ApplyEnvOverrides(cfg)
+	if cfg.Db.Host != "db.example.internal" || cfg.Redis.Host != "cache.example.internal" {
+		t.Errorf("拓扑变量为空时不应改写配置文件值，db.host=%q redis.host=%q", cfg.Db.Host, cfg.Redis.Host)
+	}
+}
+
 // TestApplyEnvOverridesTrustedProxiesStillWorks 复用逗号解析后可信代理网段行为不变
 func TestApplyEnvOverridesTrustedProxiesStillWorks(t *testing.T) {
 	cfg := &Config{}

@@ -3,7 +3,7 @@
  * 包含创建订单、列表、详情、取消、申请退款
  */
 
-import { get, post, put } from './request'
+import { get, post, put, del } from './request'
 import type { PageData } from './request'
 import type { Order, Address } from './types'
 
@@ -79,6 +79,15 @@ export function getOrderStatusCounts() {
  */
 export function cancelOrder(id: number, reason?: string) {
   return put<Order>(`/orders/${id}/cancel`, { reason } as Record<string, unknown>)
+}
+
+/**
+ * 删除订单（软删除，仅终态订单可删）
+ * 删除后 C 端列表与角标统计不可见；详情链路（售后进度/支付详情）保留可达
+ * @param id 订单 ID
+ */
+export function deleteOrder(id: number) {
+  return del<{ id: number }>(`/orders/${id}`)
 }
 
 /** 申请退款参数 */

@@ -14,6 +14,8 @@ service OrderService {
   rpc GetOrder(GetOrderReq) returns (OrderDetail);
   rpc ListOrders(ListOrdersReq) returns (ListOrdersResp);
   rpc CancelOrder(CancelOrderReq) returns (common.CommonResponse);
+  // C 端用户删除订单（软删除）：仅终态订单可删，列表与角标统计排除，详情链路保留可达
+  rpc DeleteOrder(DeleteOrderReq) returns (common.CommonResponse);
   rpc UpdateOrderStatus(UpdateOrderStatusReq) returns (common.CommonResponse);
   // 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
   rpc VerifyPickup(VerifyPickupReq) returns (VerifyPickupResp);
@@ -37,7 +39,8 @@ service OrderService {
   rpc GetRevenueReport(GetRevenueReportReq) returns (RevenueReportResp);
   // 用户常买商品（购物车"常买商品"列表）：按用户有效订单统计
   rpc GetUserFrequentProducts(GetUserFrequentProductsReq) returns (GetUserFrequentProductsResp);
-  // 用户订单状态角标统计（C 端「我的-我的订单」红标）：按用户维度按状态聚合
+  // 用户订单状态角标统计（C 端「我的-我的订单」红标）：按用户维度聚合；
+  // after_sale 特殊——统计存在待审核售后单(refunds.status=1)的订单数，非按订单状态
   rpc GetUserOrderStatusCounts(GetUserOrderStatusCountsReq) returns (GetUserOrderStatusCountsResp);
   // 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
   rpc PreviewFreeShipping(PreviewFreeShippingReq) returns (PreviewFreeShippingResp);
@@ -159,6 +162,12 @@ message CancelOrderReq {
   int64 id = 1;
   int64 user_id = 2;
   string reason = 3;
+}
+
+// DeleteOrderReq C 端用户删除订单请求（软删除，仅终态订单）
+message DeleteOrderReq {
+  int64 id = 1;
+  int64 user_id = 2;
 }
 
 message UpdateOrderStatusReq {
@@ -509,7 +518,8 @@ message GetUserOrderStatusCountsReq {
   int64 user_id = 1;
 }
 
-// 口径与订单列表 Tab 一致：待支付=1；待发货=2/3 聚合；待收货=4；退款/售后=7/8 聚合
+// 口径与订单列表 Tab 一致：待支付=1；待发货=2/3 聚合；待收货=4；
+// 退款/售后角标（2026-10-23 调整）只统计存在待审核售后单的订单——商家同意/拒绝后不再亮
 message GetUserOrderStatusCountsResp {
   // 待支付（status=1）
   int32 pending_pay = 1;
@@ -517,7 +527,8 @@ message GetUserOrderStatusCountsResp {
   int32 pending_ship = 2;
   // 待收货（status=4 配送中）
   int32 pending_receive = 3;
-  // 退款/售后（status=7 退款中 / 8 已退款 聚合）
+  // 退款/售后（存在待审核售后单 refunds.status=1 的订单数，订单维度去重；
+  // 不再按 status=7/8 聚合：8 已退款为终态会永远亮角标，7 中已同意打款在途的不属"待商家处理"）
   int32 after_sale = 4;
 }
 
@@ -731,6 +742,8 @@ message SaveAppPreferencesReq {
 - 发货（`status=4`）时将 `express_company/express_no` 写入独立字段。
 - 订单号冲突重试：`CreateOrder` 生成订单号遇唯一约束冲突时自动换号重试，避免极小概率的号段碰撞导致下单失败。
 - 取消/超时关单后同步调用 payment 服务 `ClosePayments` 关闭待支付支付单（`status=5 已关闭`），防迟到回调误置已支付。
+
+**C 端用户删除订单（软删除，2026-10-23 新增）：** `DeleteOrder` 仅终态订单（`5已完成 6已取消 8已退款`）可删，删除为用户侧软删除（`orders.user_deleted=1`）——C 端 `ListOrders` 用户路径（`user_id>0`）与 `GetUserOrderStatusCounts` 角标统计均排除已删单，后台管理端路径（`user_id=0`）不受影响；存在进行中售后（`refunds.status IN (1待审核, 4退款中)`）时拒绝，避免删除后售后进度入口缺失；`GetOrder` 详情保留可达（售后进度/支付详情链路依赖）；不清理任何数据、不产生状态流转日志，条件更新 `WHERE user_deleted=0` 防并发重复删除。
 
 **退款社区隔离强校验：** `ApproveRefund`/`RejectRefund`/`RetryRefund`（出款链路）与 `AdminCreateRefund` 的 `community_id` 由网关从当前社区语境注入，order 服务端校验退款单归属订单的社区，跨社区操作直接拒绝；调度器等内部系统调用传 0 跳过校验。退款申请在事务内先锁订单行（FOR UPDATE）再查 pending，串行化同订单重复申请。
 

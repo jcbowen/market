@@ -251,14 +251,46 @@ func (s *Scheduler) retryStuckRefunds(ctx context.Context) orderStat {
 		return stat
 	}
 	for _, r := range refunds {
-		err := s.refundService.RetryRefund(ctx, &order.RetryRefundReq{Id: r.ID})
+		// P0-2：先问 payment 侧流水状态再决定动作——渠道受理中（PROCESSING）的单
+		// 不能盲目重发（ProcessRefund 幂等会拒绝「处理中」重复提交），查单确认成功
+		// 的直接收尾，失败/无流水的才重新发起
+		flowStatus, err := s.refundService.queryRefundFlowStatus(ctx, r)
 		if err != nil {
-			log.Printf("[order-scheduler] 自动重试退款单 %d 失败: %v", r.ID, err)
+			log.Printf("[order-scheduler] 查询退款流水状态失败 refund_id=%d: %v", r.ID, err)
 			stat.failed++
 			continue
 		}
-		log.Printf("[order-scheduler] 退款单 %d 卡单重试成功，已置为已退款", r.ID)
-		stat.refundOK++
+		switch flowStatus {
+		case 1:
+			// 渠道受理中：等待 payment 侧查单任务收敛，本轮跳过
+			continue
+		case 2:
+			// 渠道已确认退款成功：直接走统一收尾（置已退款、回补库存、更新订单去向）
+			var items []*model.RefundItem
+			if err := s.db.GetDb().WithContext(ctx).Where("refund_id = ?", r.ID).Find(&items).Error; err != nil {
+				log.Printf("[order-scheduler] 读取退款明细失败 refund_id=%d: %v", r.ID, err)
+				stat.failed++
+				continue
+			}
+			if err := s.refundService.completeRefundSuccess(ctx, r, items, "system", 0); err != nil {
+				log.Printf("[order-scheduler] 退款查单收敛收尾失败 refund_id=%d: %v", r.ID, err)
+				stat.failed++
+				continue
+			}
+			_ = s.refundService.createRefundLog(ctx, r.ID, "retry", "system", 0, "退款查单确认成功，自动完成收尾")
+			log.Printf("[order-scheduler] 退款单 %d 渠道确认成功，已置为已退款", r.ID)
+			stat.refundOK++
+		default:
+			// 0=流水不存在 / 3=渠道失败：重新发起渠道退款（失败流水由 payment 幂等清理后重发）
+			err := s.refundService.RetryRefund(ctx, &order.RetryRefundReq{Id: r.ID})
+			if err != nil {
+				log.Printf("[order-scheduler] 自动重试退款单 %d 失败: %v", r.ID, err)
+				stat.failed++
+				continue
+			}
+			log.Printf("[order-scheduler] 退款单 %d 卡单重试已发起", r.ID)
+			stat.refundOK++
+		}
 	}
 	return stat
 }

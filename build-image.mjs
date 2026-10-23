@@ -88,6 +88,18 @@ for (const p of platforms) {
 // ---------- 产物预检 ----------
 
 const DOCKERFILE = path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'Dockerfile.allinone');
+// 镜像直接 COPY 预编译产物（见 Dockerfile.allinone COPY 列表），构建期不编译：
+// 缺一个或旧于最新源码都会让 `docker compose up --build` / 本地 load 静默跑旧二进制
+const IMAGE_BINARIES = [
+  'gateway',
+  'user-service',
+  'product-service',
+  'order-service',
+  'cart-service',
+  'payment-service',
+  'market-admin',
+  'geoip-download',
+];
 const required = [
   { file: DOCKERFILE, hint: '缺失 Dockerfile.allinone' },
   { file: path.join(ROOT_DIR, 'bin', 'static', 'admin'), hint: '缺失前端产物 bin/static/admin，请先执行构建' },
@@ -97,15 +109,45 @@ const required = [
 ];
 for (const p of platforms) {
   const arch = p.split('/')[1];
-  required.push({
-    file: path.join(ROOT_DIR, 'bin', `linux-${arch}`, 'gateway'),
-    hint: `缺失 linux/${arch} 后端产物（bin/linux-${arch}/gateway），请先执行 node build.mjs`,
-  });
+  for (const name of IMAGE_BINARIES) {
+    required.push({
+      file: path.join(ROOT_DIR, 'bin', `linux-${arch}`, name),
+      hint: `缺失 linux/${arch} 后端产物 bin/linux-${arch}/${name}，请先执行 node build.mjs`,
+    });
+  }
 }
 for (const r of required) {
   if (!fs.existsSync(r.file)) {
     console.error(`错误: ${r.hint}`);
     process.exit(1);
+  }
+}
+
+// 产物新旧校验：任一二进制早于 src/backend 下最新源码（.go/.proto/go.mod/go.sum），
+// 说明改了代码但没重新 node build.mjs，直接失败提示重建，不静默打包旧产物
+const SOURCE_EXTENSIONS = new Set(['.go', '.proto', '.mod', '.sum']);
+function newestSourceMtime(dir) {
+  let newest = 0;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name === 'vendor' || e.name === 'tmp') continue;
+      newest = Math.max(newest, newestSourceMtime(full));
+    } else if (SOURCE_EXTENSIONS.has(path.extname(e.name))) {
+      newest = Math.max(newest, fs.statSync(full).mtimeMs);
+    }
+  }
+  return newest;
+}
+const newestSrc = newestSourceMtime(path.join(ROOT_DIR, 'src', 'backend'));
+for (const p of platforms) {
+  const arch = p.split('/')[1];
+  for (const name of IMAGE_BINARIES) {
+    const bin = path.join(ROOT_DIR, 'bin', `linux-${arch}`, name);
+    if (fs.statSync(bin).mtimeMs < newestSrc) {
+      console.error(`错误: bin/linux-${arch}/${name} 早于最新源码（改了 Go 代码但未重新编译），请先执行 node build.mjs`);
+      process.exit(1);
+    }
   }
 }
 

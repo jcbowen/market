@@ -60,7 +60,7 @@ func (s *SkuService) GetSkuByID(ctx context.Context, id int64) (*model.Sku, erro
 	var sku model.Sku
 	err := s.db.GetDb().WithContext(ctx).First(&sku, id).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("SKU 不存在")
+		return nil, bizerr.New(codes.NotFound, "SKU 不存在")
 	}
 	return &sku, err
 }

@@ -140,6 +140,28 @@ func RequireCommunityAccess() gin.HandlerFunc {
 	}
 }
 
+// AdminCommunityAccessible 判断当前请求头（X-Community-Id）声明的社区对管理员是否合法（实时口径，P1-10）
+// 超管任意社区合法；普通管理员以 GetAdminContext 的 Bound（该社区有任职）为准——
+// JWT 快照里的 CommunityIDs 是登录时绘制的，授权变更（追加/撤销任职）后需重登才刷新，
+// 不能作为数据归属判定依据。与 RequireCommunityAccess 共用同一请求内记忆化的
+// 实时上下文（gin context 记忆化，同一请求最多一次 RPC）
+// 未携带请求头时按默认社区解析——调用方（如 getAdminCommunityID）只在
+// 「请求头存在且合法」的分支里使用本函数，不会误用该语义
+//
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - bool: 合法返回 true；实时上下文解析失败按不合法处理（调用方回退默认社区，
+//     最终的访问拒绝由 RequirePermission/RequireCommunityAccess 中间件负责）
+func AdminCommunityAccessible(c *gin.Context) bool {
+	if appcontext.GetUserContext(c).Role == RoleSuperAdmin {
+		return true
+	}
+	ctxInfo := resolveAdminContext(c)
+	return ctxInfo != nil && (ctxInfo.IsSuper || ctxInfo.Bound)
+}
+
 // resolveAdminContext 解析并缓存当前请求的管理员权限上下文
 // 同一请求内只解析一次（gin context 记忆化），社区取 X-Community-Id 请求头，缺省回退 JWT 默认社区
 //

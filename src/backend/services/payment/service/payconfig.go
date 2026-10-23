@@ -154,7 +154,11 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 		row.WechatAppSecret = cfg.WechatAppSecret
 	}
 	row.WechatMchID = cfg.WechatMchId
-	row.WechatAPIV3Key = cfg.WechatApiV3Key
+	// V3 密钥网关 GET 已脱敏不回传明文：空值保留原值，避免前端回传空串时误清空
+	// （与 AppSecret/私钥同口径；需要更换密钥时提交新值即可覆盖）
+	if cfg.WechatApiV3Key != "" {
+		row.WechatAPIV3Key = cfg.WechatApiV3Key
+	}
 	row.WechatCertSerialNo = cfg.WechatCertSerialNo
 	// 私钥为空时保留原值，避免前端未重新上传证书时清空已上传内容
 	if cfg.WechatPrivateKey != "" {

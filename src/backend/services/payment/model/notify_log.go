@@ -18,7 +18,7 @@ type NotifyLog struct {
 	base.MysqlBaseModel
 	ID        int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	Kind      int32  `gorm:"column:kind;type:tinyint;not null;default:1;index:idx_notify_kind_result_created,priority:1;index:idx_notify_handled_created,priority:1;comment:1渠道回调 2对账补同步 3挂账检出 4渠道关单 5后台手动同步 6放弃对账" json:"kind"`
-	Result    int32  `gorm:"column:result;type:tinyint;not null;index:idx_notify_kind_result_created,priority:2;comment:1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账" json:"result"`
+	Result    int32  `gorm:"column:result;type:tinyint;not null;index:idx_notify_kind_result_created,priority:2;comment:1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败" json:"result"`
 	Channel   int32  `gorm:"column:channel;type:tinyint;not null;comment:1微信 2支付宝" json:"channel"`
 	PaymentNo string `gorm:"column:payment_no;type:varchar(50);not null;default:'';index;comment:支付单号，验签失败时可能解析不出而为空" json:"payment_no"`
 	OrderID   int64  `gorm:"column:order_id;type:bigint;not null;default:0;index;comment:订单 ID，同上可为 0" json:"order_id"`
@@ -79,6 +79,8 @@ const (
 	NotifyResultClosed = 8
 	// NotifyResultStuck 资金挂账：渠道已收款而本地支付单已关闭，必须人工退款
 	NotifyResultStuck = 9
+	// NotifyResultSyncFailed 支付已确认但订单状态同步失败（重试后仍失败），需人工触发同步
+	NotifyResultSyncFailed = 10
 )
 
 // 销账状态（NotifyLog.Handled）
@@ -104,8 +106,9 @@ const (
 //   - entry.Handled = boolToInt(model.NeedsHandling(entry.Kind, entry.Result))
 func NeedsHandling(kind, result int32) bool {
 	// 金额不符与挂账不分来源都要人工：钱可能少收/多收，或已收而订单已取消，
-	// 由对账或后台同步检出时同样不能留在队列里等人自己发现
-	if result == NotifyResultAmountMismatch || result == NotifyResultStuck {
+	// 由对账或后台同步检出时同样不能留在队列里等人自己发现；
+	// 订单同步失败同理：支付单已确认而订单未流转，不人工介入会一直悬着
+	if result == NotifyResultAmountMismatch || result == NotifyResultStuck || result == NotifyResultSyncFailed {
 		return true
 	}
 	switch kind {

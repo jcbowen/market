@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
-	"fmt"
+
+	"google.golang.org/grpc/codes"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -63,7 +65,7 @@ func (s *CategoryService) GetCategory(ctx context.Context, id, communityId int64
 	var c model.Category
 	err := s.db.GetDb().WithContext(ctx).First(&c, id).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("分类不存在")
+		return nil, bizerr.New(codes.NotFound, "分类不存在")
 	}
 	if err != nil {
 		return nil, err
@@ -139,7 +141,16 @@ func (s *CategoryService) DeleteCategory(ctx context.Context, id, communityId in
 		return err
 	}
 	if count > 0 {
-		return fmt.Errorf("存在子分类，无法删除")
+		return bizerr.New(codes.FailedPrecondition, "存在子分类，无法删除")
+	}
+	// 物理删除前校验商品引用：MysqlBaseModel 无 DeletedAt，删了就是真删，
+	// 不拦会让商品 category_id 悬空（列表/详情展示与编辑均失锚）
+	var productCount int64
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.Product{}).Where("category_id = ?", id).Count(&productCount).Error; err != nil {
+		return err
+	}
+	if productCount > 0 {
+		return bizerr.New(codes.FailedPrecondition, "分类下存在商品，无法删除")
 	}
 	return s.db.GetDb().WithContext(ctx).Delete(&model.Category{}, id).Error
 }
@@ -161,12 +172,12 @@ func (s *CategoryService) DeleteCategory(ctx context.Context, id, communityId in
 //	err := svc.BatchSortCategories(ctx, []*product.CategorySortItem{{Id: 3, Sort: 10}, {Id: 1, Sort: 20}}, 456)
 func (s *CategoryService) BatchSortCategories(ctx context.Context, items []*product.CategorySortItem, communityId int64) error {
 	if len(items) == 0 {
-		return fmt.Errorf("请提供排序数据")
+		return bizerr.New(codes.InvalidArgument, "请提供排序数据")
 	}
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, item := range items {
 			if item.GetId() <= 0 {
-				return fmt.Errorf("分类 ID 非法")
+				return bizerr.New(codes.InvalidArgument, "分类 ID 非法")
 			}
 			if _, err := s.GetCategory(ctx, item.GetId(), communityId); err != nil {
 				return err

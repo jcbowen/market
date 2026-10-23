@@ -24,6 +24,8 @@ func IsProduction() bool {
 // ApplyEnvOverrides 用环境变量覆盖配置文件中的部署相关项
 // 敏感凭据不入 git 仓库：MySQL/Redis 密码与 JWT 密钥支持经环境变量注入，
 // 未设置时沿用配置文件值（本地开发零配置可用）；
+// 外部数据库部署的连接拓扑（DB_HOST/DB_PORT/DB_NAME/DB_USER、REDIS_HOST/REDIS_PORT/REDIS_DB）
+// 同走环境变量，换外部实例只改 .env 不动手改入库的 config.docker.yaml；
 // 可信代理网段属部署拓扑（同机反代 vs 直连），同样由环境变量给，避免配置文件写死网段；
 // debugger 的开关/页面白名单/来源标识同理：compose 多服务共用一份配置模板，
 // 须按进程给值才能区分 debug_logs 的日志来源
@@ -38,6 +40,31 @@ func ApplyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("JWT_SECRET"); v != "" {
 		cfg.JWT.Secret = v
+	}
+	// 外部数据库部署的连接拓扑（docker-compose.external-db.yml 注入）：
+	// 主机/端口/库名与凭据同走环境变量，换外部实例只改 .env，不必手改入库的
+	// config.docker.yaml（其默认 host 面向 compose 内部服务名 mysql/redis）。
+	// 语义与凭据项一致「非空才覆盖」，内部 compose 部署不设这些变量、yaml 默认值原样生效
+	if v := os.Getenv("DB_HOST"); v != "" {
+		cfg.Db.Host = v
+	}
+	if v := os.Getenv("DB_PORT"); v != "" {
+		cfg.Db.Port = v
+	}
+	if v := os.Getenv("DB_NAME"); v != "" {
+		cfg.Db.Dbname = v
+	}
+	if v := os.Getenv("DB_USER"); v != "" {
+		cfg.Db.Username = v
+	}
+	if v := os.Getenv("REDIS_HOST"); v != "" {
+		cfg.Redis.Host = v
+	}
+	if v := os.Getenv("REDIS_PORT"); v != "" {
+		cfg.Redis.Port = v
+	}
+	if v := os.Getenv("REDIS_DB"); v != "" {
+		cfg.Redis.Db = v
 	}
 	// DEBUGGER_ENABLED 强制开关 debugger 请求日志（compose 部署注入，优先于配置文件）
 	if v := os.Getenv("DEBUGGER_ENABLED"); v != "" {

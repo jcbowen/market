@@ -46,6 +46,9 @@ const (
 	freshDays = 3
 	// httpTimeout 单次下载超时：数据库约 60MB（gz），国内经 jsDelivr 常规带宽下留足余量
 	httpTimeout = 10 * time.Minute
+	// maxDecompressedSize 解压体积上限：--url 可控，恶意/错误地址的 gzip 炸弹
+	// 会在 io.ReadAll 时无限膨胀直至 OOM；GeoLite2-City 解压后约 600MB，上限放宽到 1GB
+	maxDecompressedSize = 1 << 30
 )
 
 // metadataMarker mmdb 元数据段固定以 \xab\xcd\xefMaxMind.com 标识结尾，位于文件末尾
@@ -134,9 +137,13 @@ func downloadAndValidate(url string) ([]byte, error) {
 	}
 	defer gz.Close()
 
-	mmdb, err := io.ReadAll(gz)
+	// LimitReader 防解压炸弹：超限时读出长度恰好等于上限，走 validMMDB 失败路径拒绝落盘
+	mmdb, err := io.ReadAll(io.LimitReader(gz, maxDecompressedSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("解压失败: %w", err)
+	}
+	if len(mmdb) > maxDecompressedSize {
+		return nil, fmt.Errorf("解压后体积超过上限 %dMB，疑似非正常数据库，放弃更新", maxDecompressedSize>>20)
 	}
 
 	if !validMMDB(mmdb) {

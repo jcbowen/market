@@ -10,7 +10,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"log"
 	"math"
 	"math/big"
 	"net/http"
@@ -136,14 +138,21 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 	return string(data), nil
 }
 
+// errRefundAccepted 渠道退款「已受理未到终态」哨兵（P0-2）
+// 微信申请退款受理成功返回 status=PROCESSING（常态），并非退款成功；
+// 调用方收到本哨兵必须保持退款流水待退款(1)，由退款查单任务按 RefundQuery 收敛
+var errRefundAccepted = errors.New("退款已受理，等待渠道终态")
+
 // wechatRefund 调用微信退款接口
+// P0-2：按响应 Status 分流——仅渠道明确 SUCCESS 才视为退款成功；
+// PROCESSING（受理常态）等非终态保持待退款(1)，返回 errRefundAccepted 由调用方分流
 // 参数：
 //   - ctx: 上下文
 //   - p: 原支付记录
 //   - refund: 退款记录
 //
 // 返回值：
-//   - error: 错误信息
+//   - error: 渠道调用失败返回错误；受理未到终态返回 errRefundAccepted
 func (s *PaymentService) wechatRefund(ctx context.Context, p *model.Payment, refund *model.RefundPayment) error {
 	client := s.getWechatPayClient()
 	if client == nil {
@@ -163,6 +172,11 @@ func (s *PaymentService) wechatRefund(ctx context.Context, p *model.Payment, ref
 	}
 
 	refund.TransactionID = resp.RefundID
+	if resp.Status != "" && resp.Status != "SUCCESS" {
+		log.Printf("[ProcessRefund] 微信退款已受理未到终态 refund_no=%s refund_id=%s status=%s，保持待退款由查单任务收敛",
+			refund.RefundNo, resp.RefundID, resp.Status)
+		return errRefundAccepted
+	}
 	return nil
 }
 

@@ -76,6 +76,8 @@ func TestDebuggerDefaultSkipPaths(t *testing.T) {
 		"/api/v1/payments/callback",
 		"/api/v1/upload/image",
 		"/api/v1/admin/upload/image",
+		"/api/v1/admin/settings/payment",
+		"/api/v1/admin/settings/attachment",
 		"/health",
 	} {
 		if !containsPath(debuggerDefaultSkipPaths, prefix) {
@@ -91,6 +93,9 @@ func TestDebuggerDefaultSkipPaths(t *testing.T) {
 		"/api/v1/admin/auth/logout",
 		"/api/v1/payments/callback/alipay",
 		"/api/v1/admin/upload/image",
+		"/api/v1/admin/settings/payment",       // 支付配置保存（首次配置携带 V3 密钥）
+		"/api/v1/admin/settings/payment/cert",  // 证书粘贴上传（携带私钥明文）
+		"/api/v1/admin/settings/attachment",    // 附件配置保存（首次配置携带 OSS Secret）
 	} {
 		matched := false
 		for _, prefix := range debuggerDefaultSkipPaths {

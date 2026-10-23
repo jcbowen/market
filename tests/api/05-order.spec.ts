@@ -168,7 +168,7 @@ test.describe.serial('订单流程', () => {
   test('未登录创建订单被拒绝', async ({ request }) => {
     const resp = await request.post('/api/v1/orders', { data: { items: [] } });
     const body = (await resp.json()) as ApiResponse;
-    expect(resp.status()).toBeLessThan(500);
+    expect([200, 401], '未授权只允许 HTTP 200+业务码 或 401 两种表达').toContain(resp.status());
     if (resp.status() === 200) expect(body.code).not.toBe(0);
     else expect(resp.status()).toBe(401);
   });

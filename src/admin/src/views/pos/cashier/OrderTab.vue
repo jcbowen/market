@@ -368,7 +368,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
 import { CreateOutline, CubeOutline, SearchOutline } from '@vicons/ionicons5'
 import { pinyin } from 'pinyin-pro'
@@ -1135,6 +1135,15 @@ const authCode = ref('')
 const codePayInputRef = ref<{ focus: () => void } | null>(null)
 /** 轮询定时器句柄（弹窗关闭/收款成功时清理） */
 let codePayTimer: ReturnType<typeof setTimeout> | null = null
+
+// 组件卸载兜底：扫码窗轮询是 setTimeout 链，关窗/收工之外的卸载路径
+// （切 tab 销毁组件等）若不清理，回调仍会发起状态查询请求
+onBeforeUnmount(() => {
+  if (codePayTimer) {
+    clearTimeout(codePayTimer)
+    codePayTimer = null
+  }
+})
 /** 轮询起始时间（超过 3 分钟仍 PAYING 提示走订单列表处理，不让收银台干等） */
 let codePayPollStart = 0
 

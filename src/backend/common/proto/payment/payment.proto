@@ -16,7 +16,11 @@ service PaymentService {
   rpc BatchGetPayments(BatchGetPaymentsReq) returns (BatchGetPaymentsResp);
   rpc HandleWechatCallback(WechatCallbackReq) returns (common.CommonResponse);
   rpc HandleAlipayCallback(AlipayCallbackReq) returns (common.CommonResponse);
-  rpc ProcessRefund(ProcessRefundReq) returns (common.CommonResponse);
+  // ProcessRefund 发起渠道退款。completed=false 表示渠道已受理但未到终态
+  // （微信受理常态 PROCESSING），调用方不得按成功收尾，由退款查单任务收敛
+  rpc ProcessRefund(ProcessRefundReq) returns (ProcessRefundResp);
+  // QueryRefundResult 查询渠道退款流水状态（order 侧卡单退款收敛用，读库不触渠道）
+  rpc QueryRefundResult(QueryRefundResultReq) returns (QueryRefundResultResp);
   rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
   rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
   rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
@@ -179,6 +183,25 @@ message ProcessRefundReq {
   string payment_no = 4;
 }
 
+// ProcessRefundResp 退款处理结果
+// completed=false：渠道已受理（退款流水保持待退款），调用方不得走成功收尾，
+// 终态由 payment 侧退款查单任务对 RefundQuery 结果收敛
+message ProcessRefundResp {
+  bool completed = 1;
+}
+
+// QueryRefundResultReq 按退款单号查退款流水状态（order_id 仅作归属校验）
+message QueryRefundResultReq {
+  int64 order_id = 1;
+  string refund_no = 2;
+}
+
+// QueryRefundResultResp 渠道退款流水状态
+// status: 0=流水不存在 1=处理中（已受理待渠道终态） 2=退款成功 3=退款失败（可重新发起）
+message QueryRefundResultResp {
+  int32 status = 1;
+}
+
 message ClosePaymentsReq {
   int64 order_id = 1;
 }
@@ -329,5 +352,8 @@ message MarkPaymentPaidReq {
   string transaction_id = 2;
   double amount = 3;
   string remark = 4;
+  // 路径中的订单 ID（网关已过社区隔离）：服务层据此校验支付单归属，
+  // 防止在 A 订单页面提交 B 订单的支付单号，跨订单确认资金状态
+  int64 order_id = 5;
 }
 

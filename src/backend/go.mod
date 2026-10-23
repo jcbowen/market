@@ -11,11 +11,11 @@ replace github.com/jcbowen/alipay-sdk-go-all => ../../../alipay-sdk-go-all
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-redis/redis/v8 v8.11.5
-	github.com/golang-jwt/jwt/v5 v5.2.3
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jcbowen/alipay-sdk-go-all v0.0.6
 	github.com/jcbowen/jcbaseGo v0.16.6
-	github.com/jcbowen/wego v0.1.2
+	github.com/jcbowen/wego v0.2.0
 	github.com/oschwald/geoip2-golang/v2 v2.5.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0

@@ -89,7 +89,10 @@ business:
         batch_size: 100
         notify_log_retention_days: 30
 debugger:
-    enabled: true
+    # 出厂默认关闭（发布模板随 CI 打进 release 包）：调试页面有同机反代未配
+    # trusted_proxies 时 ClientIP 恒为 127.0.0.1 而绕过白名单的风险，
+    # 需要排查时改 true 或注入 DEBUGGER_ENABLED=1，勿随发布包默认开启
+    enabled: false
     service_name: gateway
     allowed_ips:
         - 127.0.0.1
@@ -105,7 +108,14 @@ debugger:
     skip_paths: []
     mask_body: null
     header_mask_keys: []
-    body_mask_keys: []
+    # 精确键名掩码补齐：组件内置仅覆盖 password/token/captcha 等通用词，
+    # 支付 V3 密钥/私钥/OSS 凭据类键名不在其中，落库前须替换为定长掩码
+    body_mask_keys:
+        - api_v3_key
+        - private_key
+        - oss_access_key_secret
+        - access_key_secret
+        - app_secret
     multipart_skip_files: null
     multipart_preserve_state: null
 user_service:

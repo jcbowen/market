@@ -557,11 +557,11 @@ func (s *MarketingService) UseCoupon(ctx context.Context, req *product.UseCoupon
 			return err
 		}
 		if uc.Status != 1 {
-			return fmt.Errorf("优惠券状态不可使用")
+			return bizerr.New(codes.FailedPrecondition, "优惠券状态不可使用")
 		}
 		now := time.Now().Format("2006-01-02 15:04:05")
 		if uc.ExpireAt != nil && *uc.ExpireAt < now {
-			return fmt.Errorf("优惠券已过期")
+			return bizerr.New(codes.FailedPrecondition, "优惠券已过期")
 		}
 
 		// 条件更新：仅未使用状态生效，并发核销时后到者 RowsAffected=0

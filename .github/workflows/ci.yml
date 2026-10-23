@@ -67,8 +67,8 @@ jobs:
           go-version: '1.26'
           cache-dependency-path: src/backend/go.sum
 
-      # jcbaseGo / wego / alipay-sdk-go-all 已在 GitHub 公开发布对应 tag
-      # （v0.16.1 / v0.1.0 / v0.0.2），本地开发经 go.mod replace 指向本机仓库目录；
+      # jcbaseGo / wego / alipay-sdk-go-all 已在 GitHub 公开发布对应 tag，
+      # 本地开发经 go.mod replace 指向本机仓库目录；
       # CI 统一 drop replace，从公共 Go proxy 拉取已发布版本。
       # 新增本地 replace 依赖时必须同步在此处补 dropreplace，否则 CI 上不存在
       # ../../../ 仓库外路径，go mod tidy 会直接报 replacement directory does not exist。

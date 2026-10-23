@@ -19,6 +19,8 @@ import (
 //   - 认证与支付回调：请求体含密码、验证码、token，响应体含签发的令牌与渠道签名参数，
 //     整条不入库，作为凭据掩码之外的第二道防线（C 端 /api/v1/auth 与管理端 /api/v1/admin/auth 都要覆盖）
 //   - 上传路由：multipart 二进制正文即使只记元数据也没有排查价值，且会挤占记录上限
+//   - 凭据类设置入口：支付/附件配置的 PUT 请求体在首次配置时会携带明文密钥
+//     （V3 密钥、OSS AccessKeySecret），证书粘贴上传同路径前缀，整条不入库
 var debuggerDefaultSkipPaths = []string{
 	"/health", "/s/", "/b/", "/uploads",
 	"/api/v1/auth",
@@ -26,6 +28,8 @@ var debuggerDefaultSkipPaths = []string{
 	"/api/v1/payments/callback",
 	"/api/v1/upload/image",
 	"/api/v1/admin/upload/image",
+	"/api/v1/admin/settings/payment",
+	"/api/v1/admin/settings/attachment",
 }
 
 // debuggerStatus debugger 实际运行状态

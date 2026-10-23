@@ -120,6 +120,8 @@ func isHTMLEntry(p, prefix string) bool {
 }
 
 // targetHTMLFile 解析请求路径对应的 HTML 文件绝对路径
+// 请求路径由外部可控，直接拼接可借 ../ 或编码反斜杠逃出静态目录（末段以 .html 结尾即可），
+// 故 Join（内含 Clean）后必须校验前缀仍落在入口目录内，越界一律回退入口页
 //
 // 参数：
 //   - p: 请求路径
@@ -132,7 +134,14 @@ func targetHTMLFile(p string, e htmlEntry) string {
 	if rest == "" || !strings.HasSuffix(rest, ".html") {
 		return filepath.Join(e.dir, "index.html")
 	}
-	return filepath.Join(e.dir, filepath.FromSlash(rest))
+	// 入口目录先归一化，避免配置值带尾分隔符/相对形态时前缀判定失真
+	dir := filepath.Clean(e.dir)
+	full := filepath.Join(dir, filepath.FromSlash(rest))
+	if full != dir && !strings.HasPrefix(full, dir+string(filepath.Separator)) {
+		// 越界路径（如 /b/../../etc/passwd.html）：按未命中处理，交回入口页
+		return filepath.Join(dir, "index.html")
+	}
+	return full
 }
 
 // load 读取并缓存 HTML 模板原文

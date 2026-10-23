@@ -282,7 +282,9 @@ func (s *ShiftService) calcStatistics(ctx context.Context, shiftID int64) (*orde
 	stat.OrderCount = int32(orderCount)
 
 	// 退款分组：按订单归属班次口径，关联订单支付方式
-	// 仅关联已支付/已退款(status IN 2,4)的支付单：排除待支付等无效支付单，防一对多 JOIN 放大退款金额
+	// 按 refunds.payment_no 精确 JOIN 退款来源支付单：原按 order_id JOIN 会在
+	// 一单多笔成功支付单（status IN 2,4）时把 SUM(refunds.amount) 按笛卡尔积翻倍；
+	// 仅关联已支付/已退款(status IN 2,4)支付单的过滤保持不变
 	var refundRows []struct {
 		PayType    int32
 		Amount     float64
@@ -292,7 +294,7 @@ func (s *ShiftService) calcStatistics(ctx context.Context, shiftID int64) (*orde
 		Table("refunds").
 		Select("payments.pay_type AS pay_type, COALESCE(SUM(refunds.amount),0) AS amount, COUNT(DISTINCT refunds.id) AS order_count").
 		Joins("JOIN orders ON orders.id = refunds.order_id").
-		Joins("JOIN payments ON payments.order_id = orders.id AND payments.status IN (?)", []int32{2, 4}).
+		Joins("JOIN payments ON payments.payment_no = refunds.payment_no AND payments.status IN (?)", []int32{2, 4}).
 		Where("orders.shift_id = ? AND refunds.status IN ?", shiftID, []int32{2, 4, 5}).
 		Group("payments.pay_type").
 		Scan(&refundRows).Error; err != nil {

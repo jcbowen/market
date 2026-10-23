@@ -43,10 +43,11 @@ type Cache struct {
 	envBaseURL string
 	ttl        time.Duration
 
-	mu        sync.RWMutex
-	snap      Snapshot
-	loaded    bool
-	fetchedAt time.Time
+	mu         sync.RWMutex
+	snap       Snapshot
+	loaded     bool
+	fetchedAt  time.Time
+	refreshing bool // 刷新进行中标记（single-flight）：过期瞬间的高并发只放行一次刷新
 }
 
 // New 创建站点设置内存缓存
@@ -87,20 +88,34 @@ func (c *Cache) snapshot() Snapshot {
 	return snap
 }
 
-// get 返回快照，并在缓存过期时向 user 服务刷新
-// 刷新失败保留旧快照并延后重试，避免配置服务抖动时把品牌清空或反复打库
+// get 返回快照，并在缓存过期时触发后台刷新（single-flight）
+// 过期瞬间若有 N 个并发请求，仅第一个放行刷新，其余直接拿当前快照（至多旧一个 TTL 周期），
+// 避免缓存失效瞬间 N 路请求同时打 user 服务；刷新失败由 refresh 内部 markFetched 延后重试
 //
 // 参数：
-//   - ctx: 请求上下文
+//   - ctx: 请求上下文（保留参数兼容调用方；刷新改用独立超时上下文，
+//     不随单个请求结束而中断共享刷新）
 //
 // 返回值：
 //   - Snapshot: 当前快照
 func (c *Cache) get(ctx context.Context) Snapshot {
-	c.mu.RLock()
+	c.mu.Lock()
 	stale := !c.loaded || time.Since(c.fetchedAt) > c.ttl
-	c.mu.RUnlock()
-	if stale {
-		c.refresh(ctx)
+	if stale && !c.refreshing {
+		c.refreshing = true
+		c.mu.Unlock()
+		go func() {
+			defer func() {
+				c.mu.Lock()
+				c.refreshing = false
+				c.mu.Unlock()
+			}()
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			c.refresh(refreshCtx)
+		}()
+	} else {
+		c.mu.Unlock()
 	}
 	return c.snapshot()
 }

@@ -71,6 +71,14 @@ func main() {
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.WebServer.Port),
 		Handler: r,
+		// 三类超时缺省 = 无限等待：慢连接（Slowloris）可长期占住 FD 与 goroutine。
+		// ReadHeaderTimeout 独立于 ReadTimeout：只限请求头到达，容忍大文件正文慢上传
+		// （证书/图片上传上限 12MB，ReadTimeout 留足）；WriteTimeout 覆盖响应写出，
+		// IdleTimeout 管Keep-Alive 空闲连接回收
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -257,6 +265,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.POST("/orders/free-shipping/preview", orderHandler.PreviewFreeShipping)
 			authUser.GET("/orders/:id", orderHandler.GetOrder)
 			authUser.PUT("/orders/:id/cancel", orderHandler.CancelOrder)
+			authUser.DELETE("/orders/:id", orderHandler.DeleteOrder)
 			authUser.POST("/orders/:id/receive", orderHandler.ConfirmReceive)
 			authUser.POST("/orders/:id/refund", orderHandler.ApplyRefund)
 			authUser.GET("/orders/:id/refunds", orderHandler.ListOrderRefunds)

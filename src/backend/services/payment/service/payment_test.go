@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -44,11 +45,12 @@ import (
 const testOrderIDBase = int64(990000001)
 
 // stubOrderClient 订单服务桩：记录 UpdateOrderStatus 调用入参，不落真实订单
-// 嵌入接口后仅覆写 UpdateOrderStatus，避免实现全部方法
+// 嵌入接口后仅覆写 UpdateOrderStatus/GetOrder，避免实现全部方法
 type stubOrderClient struct {
 	order.OrderServiceClient
-	mu    sync.Mutex
-	calls []*order.UpdateOrderStatusReq
+	mu           sync.Mutex
+	calls        []*order.UpdateOrderStatusReq
+	orderStatus  map[int64]int32 // GetOrder 预置的订单状态；缺省视为查询失败
 }
 
 // UpdateOrderStatus 记录调用并返回成功响应
@@ -57,6 +59,30 @@ func (s *stubOrderClient) UpdateOrderStatus(ctx context.Context, in *order.Updat
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, in)
 	return &common.CommonResponse{}, nil
+}
+
+// GetOrder 按预置状态返回订单摘要（未预置的订单返回错误，模拟订单服务查不到）
+func (s *stubOrderClient) GetOrder(ctx context.Context, in *order.GetOrderReq, opts ...grpc.CallOption) (*order.OrderDetail, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.orderStatus[in.Id]
+	if !ok {
+		return nil, fmt.Errorf("桩未预置订单 %d 的状态", in.Id)
+	}
+	return &order.OrderDetail{Order: &order.OrderInfo{Id: in.Id, Status: st}}, nil
+}
+
+// setOrderStatus 预置某订单在桩侧的状态（供支付单/订单一致性检测使用）
+// 参数：
+//   - id: 订单 ID
+//   - status: 订单状态
+func (s *stubOrderClient) setOrderStatus(id int64, status int32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.orderStatus == nil {
+		s.orderStatus = make(map[int64]int32)
+	}
+	s.orderStatus[id] = status
 }
 
 // orderCalls 返回已记录的订单状态同步调用快照
@@ -100,7 +126,7 @@ func newPaymentTestEnv(t *testing.T) (*PaymentService, *stubOrderClient, func())
 	// 直接构造服务实例，不触达 pay_config（微信/支付宝渠道保持未配置状态，便于测渠道失败路径）
 	s := &PaymentService{db: dbInst, cfg: &config.Config{}}
 
-	stub := &stubOrderClient{}
+	stub := &stubOrderClient{orderStatus: make(map[int64]int32)}
 	origOrder := grpcclient.OrderClient
 	grpcclient.OrderClient = stub
 	cleanup := func() {
@@ -364,8 +390,12 @@ func TestProcessRefundCash(t *testing.T) {
 	})
 
 	// 首次部分退款 30 元
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-001", Amount: 30}); err != nil {
+	resp, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-001", Amount: 30})
+	if err != nil {
 		t.Fatalf("现金退款失败: %v", err)
+	}
+	if !resp.Completed {
+		t.Fatal("现金退款无渠道异步，应即时完成 (completed=true)")
 	}
 	var refunds []model.RefundPayment
 	if err := s.db.GetDb().Where("order_id = ?", orderID).Find(&refunds).Error; err != nil {
@@ -376,7 +406,7 @@ func TestProcessRefundCash(t *testing.T) {
 	}
 
 	// 同 refund_no 重复提交：幂等成功，不新增流水
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-001", Amount: 30}); err != nil {
+	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-001", Amount: 30}); err != nil {
 		t.Fatalf("同退款单号重复提交应幂等成功, got %v", err)
 	}
 	if err := s.db.GetDb().Where("order_id = ?", orderID).Find(&refunds).Error; err != nil || len(refunds) != 1 {
@@ -384,12 +414,12 @@ func TestProcessRefundCash(t *testing.T) {
 	}
 
 	// 累计超限：30 + 71 > 100 拒绝
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-002", Amount: 71}); err == nil {
+	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-002", Amount: 71}); err == nil {
 		t.Fatal("退款金额超过剩余可退金额应报错")
 	}
 
 	// 退满剩余 70 元：成功且支付单置已退款(4)
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-003", Amount: 70}); err != nil {
+	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-003", Amount: 70}); err != nil {
 		t.Fatalf("退满剩余金额失败: %v", err)
 	}
 	var p model.Payment
@@ -398,10 +428,10 @@ func TestProcessRefundCash(t *testing.T) {
 	}
 
 	// 参数校验：非法入参拒绝
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-004", Amount: 0}); err == nil {
+	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-004", Amount: 0}); err == nil {
 		t.Error("退款金额为 0 应报错")
 	}
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "", Amount: 10}); err == nil {
+	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "", Amount: 10}); err == nil {
 		t.Error("退款单号为空应报错")
 	}
 }
@@ -425,7 +455,7 @@ func TestProcessRefundNoChannel(t *testing.T) {
 	})
 
 	// 微信渠道未配置：第二阶段渠道调用失败，流水置「退款失败」保留审计
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-NOCH-001", Amount: 10}); err == nil {
+	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-NOCH-001", Amount: 10}); err == nil {
 		t.Fatal("渠道未配置退款应报错")
 	}
 	var refunds []model.RefundPayment
@@ -437,7 +467,7 @@ func TestProcessRefundNoChannel(t *testing.T) {
 	}
 
 	// 同 refund_no 重试：上次失败流水被清理后重新发起，仍因渠道未配置失败（仍 1 条流水）
-	if err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-NOCH-001", Amount: 10}); err == nil {
+	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-NOCH-001", Amount: 10}); err == nil {
 		t.Fatal("重试应再次因渠道未配置失败")
 	}
 	if err := s.db.GetDb().Where("refund_no = ?", "RF-PAYTEST-NOCH-001").Find(&refunds).Error; err != nil || len(refunds) != 1 {

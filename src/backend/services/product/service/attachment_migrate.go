@@ -10,8 +10,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
 	"github.com/jcbowen/jcbaseGo/component/attachment/remote"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
@@ -221,7 +224,7 @@ func (s *AttachmentService) MigrateAttachmentItem(ctx context.Context, id int64)
 		return nil, err
 	}
 	if !model.CanMigrateAttachmentStatus(item.Status) {
-		return nil, fmt.Errorf("当前状态（%s）不允许迁移", migrateStatusLabel(item.Status))
+		return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("当前状态（%s）不允许迁移", migrateStatusLabel(item.Status)))
 	}
 
 	client, _, err := s.migrateOSSClient(ctx)
@@ -282,7 +285,7 @@ func (s *AttachmentService) VerifyAttachmentItem(ctx context.Context, id int64) 
 		return nil, err
 	}
 	if !model.CanVerifyAttachmentStatus(item.Status) {
-		return nil, fmt.Errorf("当前状态（%s）不允许验证", migrateStatusLabel(item.Status))
+		return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("当前状态（%s）不允许验证", migrateStatusLabel(item.Status)))
 	}
 
 	client, _, err := s.migrateOSSClient(ctx)
@@ -323,7 +326,7 @@ func (s *AttachmentService) DeleteAttachmentLocal(ctx context.Context, id int64)
 		return nil, err
 	}
 	if item.Status != model.MigrateStatusVerified {
-		return nil, fmt.Errorf("仅验证成功的条目可删除本地文件（当前状态：%s）", migrateStatusLabel(item.Status))
+		return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("仅验证成功的条目可删除本地文件（当前状态：%s）", migrateStatusLabel(item.Status)))
 	}
 	if err = removeLocalAttachmentFile(item.Path); err != nil {
 		return nil, err
@@ -565,7 +568,7 @@ func verifyMigrateObject(ctx context.Context, client *remote.OSSClient, item *mo
 			continue
 		}
 		if f.Size != item.Size {
-			return fmt.Errorf("OSS 对象大小不一致：本地 %d 字节，OSS %d 字节", item.Size, f.Size)
+			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("OSS 对象大小不一致：本地 %d 字节，OSS %d 字节", item.Size, f.Size))
 		}
 		return nil
 	}

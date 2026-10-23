@@ -23,6 +23,11 @@ import (
 // mtimeCheckInterval 文件 mtime 检查的最小间隔，避免每次查询都 stat 磁盘
 const mtimeCheckInterval = time.Minute
 
+// retireGracePeriod 被替换读取器的延迟关闭宽限期
+// Lookup 在锁外持指针查询（reader.City），热重载若立即 Close 旧读取器会让在途查询
+// use-after-close；宽限期远大于单次查询耗时，到期再回收，属一次性替换成本
+const retireGracePeriod = time.Minute
+
 // Location IP 归属地定位结果
 // 各字段取决于数据库数据，缺失时为零值（空字符串/0），调用方自行判断
 type Location struct {
@@ -94,6 +99,19 @@ func Lookup(dbPath string, ip netip.Addr) *Location {
 	return loc
 }
 
+// retireReader 延迟关闭被替换/丢弃的读取器
+// 读取器指针会被并发的 Lookup 持有（锁外查询），立即 Close 会造成 use-after-close；
+// 统一延迟一个宽限期再回收，期间在途查询正常完成，新查询已切到新读取器
+//
+// 参数：
+//   - old: 待回收的读取器，可为 nil
+func retireReader(old *geoip2.Reader) {
+	if old == nil {
+		return
+	}
+	time.AfterFunc(retireGracePeriod, func() { _ = old.Close() })
+}
+
 // acquireReader 获取可用的数据库读取器，必要时惰性加载或按 mtime 热重载
 // 数据库文件尚未下载（首次部署）时静默返回 nil，并按 mtimeCheckInterval 间隔重试
 // 参数：
@@ -112,7 +130,7 @@ func acquireReader(dbPath string) *geoip2.Reader {
 	mgr.lastCheck = time.Now()
 
 	if mgr.reader != nil && mgr.path != dbPath {
-		_ = mgr.reader.Close()
+		retireReader(mgr.reader)
 		mgr.reader = nil
 	}
 
@@ -120,7 +138,7 @@ func acquireReader(dbPath string) *geoip2.Reader {
 	if err != nil {
 		// 文件缺失：丢弃旧读取器，等待文件就绪后重建
 		if mgr.reader != nil {
-			_ = mgr.reader.Close()
+			retireReader(mgr.reader)
 			mgr.reader = nil
 		}
 		return nil
@@ -135,16 +153,14 @@ func acquireReader(dbPath string) *geoip2.Reader {
 	newReader, err := geoip2.Open(dbPath)
 	if err != nil {
 		if mgr.reader != nil {
-			_ = mgr.reader.Close()
+			retireReader(mgr.reader)
 			mgr.reader = nil
 		}
 		log.Printf("[geoip] 加载数据库失败 %s: %v", dbPath, err)
 		return nil
 	}
 
-	if mgr.reader != nil {
-		_ = mgr.reader.Close()
-	}
+	retireReader(mgr.reader)
 	mgr.reader = newReader
 	mgr.path = dbPath
 	mgr.modTime = info.ModTime()

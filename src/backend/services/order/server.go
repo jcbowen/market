@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -60,7 +58,9 @@ func (s *server) CreateOrder(ctx stdctx.Context, req *order.CreateOrderReq) (*or
 func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.OrderDetail, error) {
 	o, items, logs, refunds, err := s.orderService.GetOrder(ctx, req.Id, req.UserId)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		// 不再一刀切包成 NotFound：无权限（PermissionDenied）等业务错误需按原始码透传，
+		// 否则越权探测与「订单不存在」不可区分是设计意图，但 DB 故障也被吞成 NotFound 掩盖真相
+		return nil, bizerr.ToStatus(err)
 	}
 
 	detail := &order.OrderDetail{
@@ -110,6 +110,14 @@ func (s *server) ListOrders(ctx stdctx.Context, req *order.ListOrdersReq) (*orde
 // CancelOrder 取消订单
 func (s *server) CancelOrder(ctx stdctx.Context, req *order.CancelOrderReq) (*common.CommonResponse, error) {
 	if err := s.orderService.CancelOrder(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// DeleteOrder C 端用户删除订单（软删除）
+func (s *server) DeleteOrder(ctx stdctx.Context, req *order.DeleteOrderReq) (*common.CommonResponse, error) {
+	if err := s.orderService.DeleteOrder(ctx, req); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil

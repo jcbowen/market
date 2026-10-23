@@ -10,10 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -296,7 +299,7 @@ func (s *RegionService) GetRegionUpdateTask(ctx context.Context, id int64) (*mod
 	var task model.RegionUpdateTask
 	err := s.db.GetDb().WithContext(ctx).First(&task, id).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("任务不存在")
+		return nil, bizerr.New(codes.NotFound, "任务不存在")
 	}
 	if err != nil {
 		return nil, err
@@ -319,10 +322,10 @@ func (s *RegionService) ApplyRegionUpdateTask(ctx context.Context, id int64) err
 		return err
 	}
 	if task.Status != model.RegionTaskStatusDone {
-		return fmt.Errorf("任务尚未完成，无法应用差异")
+		return bizerr.New(codes.FailedPrecondition, "任务尚未完成，无法应用差异")
 	}
 	if task.Applied {
-		return fmt.Errorf("任务差异已应用过，请重新执行检查更新")
+		return bizerr.New(codes.FailedPrecondition, "任务差异已应用过，请重新执行检查更新")
 	}
 
 	var added, updated, removed []RegionDiffItem

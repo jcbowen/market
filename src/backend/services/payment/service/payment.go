@@ -91,20 +91,20 @@ func (s *PaymentService) reloadPayConfig() {
 //   - error: 错误信息
 func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreatePaymentReq) (*model.Payment, string, error) {
 	if req.OrderId <= 0 || req.Amount < 0 {
-		return nil, "", fmt.Errorf("参数错误")
+		return nil, "", bizerr.New(codes.InvalidArgument, "参数错误")
 	}
 	switch req.PayType {
 	case 1, 2, 3, 4, 5, 6:
 	default:
-		return nil, "", fmt.Errorf("不支持的支付方式")
+		return nil, "", bizerr.New(codes.InvalidArgument, "不支持的支付方式")
 	}
 	// 付款码支付依赖渠道真实扣款，渠道不受理 0 元交易；全额优惠单收银台应改用现金方式
 	if (req.PayType == 5 || req.PayType == 6) && req.Amount <= 0 {
-		return nil, "", fmt.Errorf("付款码支付金额必须大于 0")
+		return nil, "", bizerr.New(codes.InvalidArgument, "付款码支付金额必须大于 0")
 	}
 	// user_id 允许为 0 的场景：收银台散客单现金/付款码收款（线下当面收款，无会员账户）
 	if req.UserId <= 0 && req.PayType != 3 && req.PayType != 4 && req.PayType != 5 && req.PayType != 6 {
-		return nil, "", fmt.Errorf("参数错误")
+		return nil, "", bizerr.New(codes.InvalidArgument, "参数错误")
 	}
 
 	// 幂等校验：订单已存在支付成功的记录时拒绝再次创建支付单；
@@ -164,10 +164,43 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		return nil, "", err
 	}
 	p.PayParams = payParams
+	// 待支付占位键：配合 uk_payments_order_pending 唯一索引，库级兜底「同订单至多一笔
+	// 可扣款待支付单」；现金/货到付款创建即成功，不留待支付态，不置键
+	if p.Status == 1 {
+		p.PendingFlag = &req.OrderId
+	}
 
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(p).Error; err != nil {
-			return err
+			if !isDuplicateEntryErr(err) {
+				return err
+			}
+			// 并发竞态兜底：同订单两笔创建同时通过查重后撞 uk_payments_order_pending。
+			// 先按同金额同渠道找可复用单（幂等口径与 findReusablePendingPayment 命中一致）；
+			// 找不到说明是「金额/渠道已变化」的合法新建，关闭该订单遗留的旧待支付单后重建
+			reused, rerr := s.findReusablePendingPayment(ctx, req)
+			if rerr != nil {
+				return rerr
+			}
+			if reused != nil {
+				*p = *reused
+				// 调起参数必须取已落库单的：本次新生成的 prepay 未持久化，返回它会造成
+				// 前端调起参数与库内支付单不一致
+				payParams = reused.PayParams
+				return nil
+			}
+			if uerr := tx.Model(&model.Payment{}).
+				Where("order_id = ? AND status = 1 AND payment_no <> ?", req.OrderId, p.PaymentNo).
+				Updates(map[string]interface{}{
+					"status":       model.PaymentStatusClosed,
+					"pending_flag": nil,
+					"updated_at":   now,
+				}).Error; uerr != nil {
+				return uerr
+			}
+			if cerr := tx.Create(p).Error; cerr != nil {
+				return cerr
+			}
 		}
 		if req.PayType == 3 || req.PayType == 4 {
 			remark := "货到付款，支付成功"
@@ -383,6 +416,11 @@ func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.
 		entry.RawBody = truncateRunes(string(req.Body), notifyRawBodyMaxLen)
 		entry.Headers = maskWechatNotifyHeaders(headers)
 		s.recordNotifyLog(ctx, entry)
+		// 非支付成功通知（退款通知等）是合法分流：回 ACK 让微信停止重推（P1-1）。
+		// 回 FAIL 会让渠道按策略重发，每重发一次就多一条幂等忽略流水，把表撑成噪声
+		if errors.Is(err, errNotSuccessNotification) {
+			return nil
+		}
 		return err
 	}
 	params.NotifyKind = model.NotifyKindCallback
@@ -429,6 +467,11 @@ func (s *PaymentService) HandleAlipayCallback(ctx context.Context, req *payment.
 		entry.ErrorMsg = err.Error()
 		entry.RawBody = alipayNotifyRawBody(req.Params)
 		s.recordNotifyLog(ctx, entry)
+		// 非支付成功通知（WAIT_BUYER_PAY/TRADE_CLOSED 等状态推送）是合法分流：回 ACK 让支付宝
+		// 停止重发（P1-1）。回 failure 会触发按通知策略重发，每重发一次就多一条幂等忽略流水
+		if errors.Is(err, errNotSuccessNotification) {
+			return nil
+		}
 		return err
 	}
 	params.NotifyKind = model.NotifyKindCallback
@@ -456,25 +499,31 @@ func alipayCallbackFailureResult(err error) int32 {
 // 流程分两阶段：先在事务内（FOR UPDATE 锁支付单行）完成幂等判定、累计上限校验并落「待退款」流水，
 // 事务提交后再调用渠道退款，成功后将流水置「退款成功」——渠道调用不占用事务连接，
 // 渠道失败时流水置「退款失败」保留审计，重试由调用方以同一 refund_no 重新发起
+// P0-2：微信渠道受理常态（PROCESSING）不再视为成功——流水保持待退款并返回 completed=false，
+// 调用方（order 服务）不得走成功收尾，终态由退款查单任务 reconcileRefunds 收敛
 // 参数：
 //   - ctx: 上下文
 //   - req: 退款请求
 //
 // 返回值：
+//   - *payment.ProcessRefundResp: completed=渠道退款是否已到成功终态
 //   - error: 错误信息
-func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.ProcessRefundReq) error {
+func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.ProcessRefundReq) (*payment.ProcessRefundResp, error) {
 	if req.OrderId <= 0 || req.RefundNo == "" || req.Amount <= 0 {
-		return fmt.Errorf("退款参数错误")
+		return nil, bizerr.New(codes.InvalidArgument, "退款参数错误")
 	}
 
 	p, err := s.findRefundPayment(ctx, req.OrderId, req.PaymentNo)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 现金类支付（货到付款=3 / 收银台现金=4）不经过第三方退款，事务内直接落成功流水
 	if p.PayType == 3 || p.PayType == 4 {
-		return s.recordCashRefund(ctx, req, p)
+		if err := s.recordCashRefund(ctx, req, p); err != nil {
+			return nil, err
+		}
+		return &payment.ProcessRefundResp{Completed: true}, nil
 	}
 
 	// 渠道退款前检测配置版本：执行器/客户端随配置热更新重建，
@@ -514,7 +563,7 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 					return err
 				}
 			default:
-				return fmt.Errorf("退款处理中，请勿重复提交；如长时间未完成请人工核实渠道结果")
+				return bizerr.New(codes.FailedPrecondition, "退款处理中，请勿重复提交；如长时间未完成请人工核实渠道结果")
 			}
 		case !errors.Is(err, gorm.ErrRecordNotFound):
 			return err
@@ -530,12 +579,12 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 		}
 		// 金额为 float64（decimal 化立项前），累计比较带 1e-6 容差防浮点误差误判
 		if refunded+req.Amount > p.Amount+1e-6 {
-			return fmt.Errorf("退款金额超过剩余可退金额")
+			return bizerr.New(codes.FailedPrecondition, "退款金额超过剩余可退金额")
 		}
 
 		return tx.Create(refund).Error
 	}); err != nil {
-		return err
+		return nil, err
 	}
 
 	// 第二阶段：渠道调用移出事务（事务内调外部接口会长时间占用连接，且回滚无法撤回已发出的渠道请求）
@@ -547,6 +596,12 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 	} else {
 		refundErr = s.alipayRefund(ctx, p, refund)
 	}
+	if errors.Is(refundErr, errRefundAccepted) {
+		// P0-2：渠道已受理未到终态（受理常态 PROCESSING）——流水保持待退款(1)、
+		// TransactionID 已落，返回 completed=false 令调用方不得走成功收尾；
+		// 终态由退款查单任务（scheduler.reconcileRefunds）按 RefundQuery 收敛
+		return &payment.ProcessRefundResp{Completed: false}, nil
+	}
 	if refundErr != nil {
 		// 渠道失败：流水置「退款失败」保留审计，重试时由幂等清理逻辑放行
 		failTime := time.Now().Format("2006-01-02 15:04:05")
@@ -555,12 +610,31 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 			Updates(map[string]interface{}{"status": int32(3), "updated_at": failTime}).Error; uerr != nil {
 			log.Printf("[ProcessRefund] 退款流水置失败状态异常 refund_no=%s: %v", refund.RefundNo, uerr)
 		}
-		return refundErr
+		return nil, refundErr
 	}
 
 	// 第三阶段：渠道成功，锁定支付单行后确认流水成功并按累计判断支付单是否全额退款
+	if err := s.completeChannelRefundSuccess(ctx, p, refund); err != nil {
+		return nil, err
+	}
+	return &payment.ProcessRefundResp{Completed: true}, nil
+}
+
+// completeChannelRefundSuccess 渠道退款成功后的统一落库收尾（P0-2 抽取，供
+// ProcessRefund 第三阶段与退款查单任务 reconcileRefunds 共用）：
+// 流水置退款成功并记退款时间，累计退款金额等于支付金额时把支付单置为已退款
+//
+// 参数：
+//   - ctx: 上下文
+//   - p: 支付记录（方法内按主键重新 FOR UPDATE 加载，调用方传入的实例仅作定位）
+//   - refund: 退款流水（须处于待退款(1)状态，TransactionID 应已落渠道退款单号）
+//
+// 返回值：
+//   - error: 落库失败或流水状态冲突时返回错误
+func (s *PaymentService) completeChannelRefundSuccess(ctx context.Context, p *model.Payment, refund *model.RefundPayment) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(p, "id = ?", p.ID).Error; err != nil {
+		// 按支付单号加载（查单任务只有单号没有主键）；payment_no 唯一索引保证精确定位
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(p, "payment_no = ?", p.PaymentNo).Error; err != nil {
 			return err
 		}
 
@@ -575,7 +649,7 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("退款流水状态异常，请人工核查 refund_no=%s", refund.RefundNo)
+			return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("退款流水状态异常，请人工核查 refund_no=%s", refund.RefundNo))
 		}
 
 		// 累计退款金额等于支付金额时才标记支付单为已退款
@@ -593,6 +667,31 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 		}
 		return nil
 	})
+}
+
+// QueryRefundResult 查询渠道退款流水状态（读库不触渠道，供 order 侧卡单退款收敛决策）
+// 参数：
+//   - ctx: 上下文
+//   - req: 退款单号 + 订单 ID（归属校验）
+//
+// 返回值：
+//   - *payment.QueryRefundResultResp: status 0=流水不存在 1=处理中 2=成功 3=失败
+func (s *PaymentService) QueryRefundResult(ctx context.Context, req *payment.QueryRefundResultReq) (*payment.QueryRefundResultResp, error) {
+	if req.RefundNo == "" {
+		return nil, bizerr.New(codes.InvalidArgument, "退款单号不能为空")
+	}
+	var flow model.RefundPayment
+	err := s.db.GetDb().WithContext(ctx).
+		Where("refund_no = ? AND order_id = ?", req.RefundNo, req.OrderId).
+		First(&flow).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// 流水不存在（历史失败流水被清理后重试前的窗口）：按「失败」口径让调用方重新发起
+		return &payment.QueryRefundResultResp{Status: 3}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &payment.QueryRefundResultResp{Status: flow.Status}, nil
 }
 
 // ClosePayments 关闭订单的全部待支付支付单（status 1→5）
@@ -618,7 +717,7 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 //   - error: 错误信息
 func (s *PaymentService) ClosePayments(ctx context.Context, req *payment.ClosePaymentsReq) error {
 	if req.OrderId <= 0 {
-		return fmt.Errorf("参数错误")
+		return bizerr.New(codes.InvalidArgument, "参数错误")
 	}
 	var pending []model.Payment
 	if err := s.db.GetDb().WithContext(ctx).
@@ -639,7 +738,11 @@ func (s *PaymentService) ClosePayments(ctx context.Context, req *payment.ClosePa
 	now := time.Now().Format("2006-01-02 15:04:05")
 	res := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
 		Where("order_id = ? AND status = 1", req.OrderId).
-		Updates(map[string]interface{}{"status": model.PaymentStatusClosed, "updated_at": now})
+		Updates(map[string]interface{}{
+			"status":       model.PaymentStatusClosed,
+			"pending_flag": nil, // 释放待支付占位键，允许同订单创建新待支付单
+			"updated_at":   now,
+		})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -744,7 +847,7 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 			return err
 		}
 		if refunded+req.Amount > p.Amount+1e-6 {
-			return fmt.Errorf("退款金额超过剩余可退金额")
+			return bizerr.New(codes.FailedPrecondition, "退款金额超过剩余可退金额")
 		}
 		if err := tx.Create(refund).Error; err != nil {
 			return err
@@ -776,9 +879,10 @@ func (s *PaymentService) recordCashRefund(ctx context.Context, req *payment.Proc
 //
 // 两阶段设计：事务内仅更新支付单状态（快、无外部依赖），事务提交后再 RPC 同步订单状态；
 // 避免事务持锁期间依赖 order-service（慢/宕机时不会拖垮支付服务连接池）。
-// RPC 失败时立即重试 3 次；若仍失败则记 CRITICAL 日志（支付已确认但订单未同步）。
-// 兜底保障：支付服务自身的对账调度器每分钟回查待支付单（见 service/scheduler.go），
-// 回调丢失与订单同步失败都能被捞回——不再依赖「取消前反查」这一条路径。
+// RPC 失败时立即重试 3 次；若仍失败则落一条「订单同步失败」待处理异常（P0-3/P1-13）——
+// 支付单已确认而订单未流转属于资金不一致，必须进后台异常队列人工介入，
+// 不能只打 stderr：对账扫描（detectPaidMismatch）会尝试自动补同步，取消护栏也依赖订单实态。
+// 确认成功流水在订单同步落地后才写：未同步成功的「成功」是半成品，不构成完整事实。
 //
 // 参数：
 //   - ctx: 上下文
@@ -849,6 +953,7 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 			Where("payment_no = ? AND status = ?", p.PaymentNo, 1).
 			Updates(map[string]interface{}{
 				"status":         2,
+				"pending_flag":   nil, // 释放待支付占位键
 				"transaction_id": params.TransactionID,
 				"pay_time":       now,
 				"updated_at":     now,
@@ -873,10 +978,11 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 		s.writeCallbackLog(ctx, params, scope, notifyResult, notifyMsg)
 		return err
 	}
-	s.writeCallbackLog(ctx, params, scope, notifyResult, notifyMsg)
 
 	// 阶段二：事务外 RPC 同步订单状态（带重试，不占用 DB 连接）
 	if !needSync {
+		// 幂等忽略/金额不符/挂账等结论立即落流水；确认成功要等订单同步落地后才算完整动作
+		s.writeCallbackLog(ctx, params, scope, notifyResult, notifyMsg)
 		return nil
 	}
 	var lastErr error
@@ -891,11 +997,19 @@ func (s *PaymentService) handlePaySuccess(ctx context.Context, params *payCallba
 			Remark:       "支付成功",
 		})
 		if lastErr == nil {
-			return nil
+			break
 		}
 	}
-	log.Printf("[CRITICAL] 支付已确认但订单状态同步失败（对账调度器与取消前置会兜底）: payment_no=%s order_id=%d err=%v",
-		params.PaymentNo, orderID, lastErr)
+	if lastErr != nil {
+		// 终次失败（P0-3/P1-13）：支付单已确认（status=2）而订单未流转。
+		// 落一条待处理异常进后台队列，由对账扫描自动补同步或人工点「同步支付状态」修复
+		log.Printf("[CRITICAL] 支付已确认但订单状态同步失败: payment_no=%s order_id=%d err=%v",
+			params.PaymentNo, orderID, lastErr)
+		s.writeCallbackLog(ctx, params, scope, model.NotifyResultSyncFailed,
+			fmt.Sprintf("支付已确认但订单状态同步失败: %v", lastErr))
+		return nil
+	}
+	s.writeCallbackLog(ctx, params, scope, notifyResult, notifyMsg)
 	return nil
 }
 
@@ -1013,6 +1127,23 @@ func ptrString(s *string) string {
 //   - string: 支付单号
 func generatePaymentNo() string {
 	return "ZF" + uuid.New().String()
+}
+
+// isDuplicateEntryErr 判断错误是否为唯一索引冲突（MySQL 1062 Duplicate entry）
+// 供待支付占位键 uk_payments_order_pending 的并发竞态兜底使用；
+// 不校验索引名：GORM 返回的错误里索引名形态随驱动版本变化，按 1062 泛匹配即可，
+// 调用方随后按业务逻辑（复用/关闭重建）自证语义
+//
+// 参数：
+//   - err: 数据库错误
+//
+// 返回值：
+//   - bool: 唯一键冲突返回 true
+func isDuplicateEntryErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "Duplicate entry") || strings.Contains(err.Error(), "1062")
 }
 
 // _ 占位，避免 common 未使用告警

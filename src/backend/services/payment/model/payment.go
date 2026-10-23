@@ -19,6 +19,11 @@ type Payment struct {
 	// OrderNo 订单号快照（创建支付单时由网关随订单带入）：payment 服务不查 orders 表，
 	// 异常流水要能在后台读出可核对的订单号只能在此落库
 	OrderNo string `gorm:"column:order_no;type:varchar(50);not null;default:'';comment:订单号快照，供异常流水展示核对" json:"order_no"`
+	// PendingFlag 待支付占位键：status=1 时=order_id，离开待支付（2/3/4/5）即置 NULL。
+	// 配合唯一索引 uk_payments_order_pending 把「同一订单至多一笔可扣款待支付单」下沉为库级约束
+	// （MySQL 无部分索引，用可空列表达；NULL 不参与唯一冲突）。写入约定见
+	// service.CreatePayment（置值）与 handlePaySuccess/ClosePayments/closePaymentLocally（清值）
+	PendingFlag *int64 `gorm:"column:pending_flag;type:bigint;uniqueIndex:uk_payments_order_pending;comment:待支付占位键，status=1 时=order_id 否则 NULL" json:"pending_flag"`
 	UserID  int64  `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
 	// CommunityID 订单所属社区（创建支付单时由网关从订单带入），支付异常队列按社区隔离的唯一依据——
 	// payment 服务不查 orders 表，跨服务归属只能在此落库

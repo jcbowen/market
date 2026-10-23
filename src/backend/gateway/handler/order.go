@@ -684,6 +684,34 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	response.Success(c, gin.H{"id": id})
 }
 
+// DeleteOrder C 端用户删除订单（软删除）
+// 仅终态订单（5已完成 6已取消 8已退款）可删；用户归属由服务端以登录态 UserID 强校验，
+// 软删后 C 端列表与角标统计不可见，详情链路保留可达
+// 参数：
+//   - c: gin 上下文（路径参数 id）
+//
+// 异常：
+//   - ParamError: id 非法
+//   - GRPCError: 订单不存在 / 非本人订单 / 非终态 / 有进行中售后
+func (h *OrderHandler) DeleteOrder(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	_, err = h.orderClient.DeleteOrder(c.Request.Context(), &order.DeleteOrderReq{
+		Id:     id,
+		UserId: uc.UserID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id})
+}
+
 // ConfirmReceive 确认收货
 // 仅配送中（status=4）的配送单可确认收货；
 // 自提单已收紧为必须凭取货码核销（决策点⑤），C 端不可自行确认收货

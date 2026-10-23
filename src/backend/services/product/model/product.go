@@ -24,10 +24,12 @@ type Product struct {
 	VirtualSales     int32   `gorm:"column:virtual_sales;type:int;default:0;comment:虚拟销量（展示口径=真实销量+虚拟销量）" json:"virtual_sales"`
 	Stock            int32   `gorm:"column:stock;type:int;default:0;comment:汇总库存(所有SKU之和)" json:"stock"`
 	MinBuy           int32   `gorm:"column:min_buy;type:int;comment:最低购买份数" json:"min_buy"`
-	Status           int32   `gorm:"column:status;type:tinyint;default:1;comment:0下架 1上架 2删除" json:"status"`
+	Status           int32   `gorm:"column:status;type:tinyint;default:1;index:idx_products_status_on_sale,priority:1;comment:0下架 1上架 2删除" json:"status"`
 	Sort             int32   `gorm:"column:sort;type:int;default:0;comment:排序，默认0" json:"sort"`
 	SalesCount       int32   `gorm:"column:sales_count;type:int;default:0;comment:累计销量，默认0" json:"sales_count"`
-	OnSaleAt         *string `gorm:"column:on_sale_at;type:datetime;comment:定时上架时间，到点由调度器自动上架(NULL=不定时)" json:"on_sale_at"`
+	// OnSaleAt 定时上架时间：与 Status 组成复合索引 idx_products_status_on_sale，
+	// 调度器每分钟的到点扫描（WHERE status=0 AND on_sale_at<=NOW()）走索引，不再全表 UPDATE
+	OnSaleAt *string `gorm:"column:on_sale_at;type:datetime;index:idx_products_status_on_sale,priority:2;comment:定时上架时间，到点由调度器自动上架(NULL=不定时)" json:"on_sale_at"`
 	CreatedAt        string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	UpdatedAt        string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }

@@ -1,8 +1,10 @@
 # Docker 外部数据库部署配置
 #
 # 使用外部 MySQL / Redis 时，使用此文件替代默认 docker-compose.yml。
-# 使用前务必将 bin/config.docker.yaml 中的 db.host / db.password 和
-# redis.host / redis.password 修改为外部实例地址与密码。
+# 连接凭据与拓扑均在项目根目录 .env 配置（compose 自动读取）：
+#   必填：MYSQL_PASSWORD / REDIS_PASSWORD / JWT_SECRET / DB_HOST / REDIS_HOST
+#   可选：DB_PORT / DB_NAME / DB_USER / REDIS_PORT / REDIS_DB（留空走 config.docker.yaml 默认值）
+# 无需修改 bin/config.docker.yaml（其默认 host 面向内部 compose 拓扑，经环境变量覆盖）。
 #
 # 启动命令：
 #   docker compose -f docker-compose.external-db.yml up -d
@@ -20,6 +22,21 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位
+      # （common/config.ApplyEnvOverrides；外部 DB 部署凭据在宿主 .env 提供）
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_PASSWORD（外部 MySQL 口令）}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD（外部 Redis 口令）}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # 连接拓扑经环境变量注入（common/config.ApplyEnvOverrides）：外部实例地址必填
+      # （容器内无数据库，config.docker.yaml 的默认 host 指向内部服务名 mysql/redis），
+      # 端口/库名/用户留空走配置文件默认值，换环境只改 .env 不动手改入库配置
+      DB_HOST: ${DB_HOST:?请在项目根目录 .env 中配置 DB_HOST（外部 MySQL 地址）}
+      DB_PORT: ${DB_PORT:-}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      REDIS_HOST: ${REDIS_HOST:?请在项目根目录 .env 中配置 REDIS_HOST（外部 Redis 地址）}
+      REDIS_PORT: ${REDIS_PORT:-}
+      REDIS_DB: ${REDIS_DB:-}
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
     command: >
@@ -35,6 +52,21 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位
+      # （common/config.ApplyEnvOverrides；外部 DB 部署凭据在宿主 .env 提供）
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_PASSWORD（外部 MySQL 口令）}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD（外部 Redis 口令）}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # 连接拓扑经环境变量注入（common/config.ApplyEnvOverrides）：外部实例地址必填
+      # （容器内无数据库，config.docker.yaml 的默认 host 指向内部服务名 mysql/redis），
+      # 端口/库名/用户留空走配置文件默认值，换环境只改 .env 不动手改入库配置
+      DB_HOST: ${DB_HOST:?请在项目根目录 .env 中配置 DB_HOST（外部 MySQL 地址）}
+      DB_PORT: ${DB_PORT:-}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      REDIS_HOST: ${REDIS_HOST:?请在项目根目录 .env 中配置 REDIS_HOST（外部 Redis 地址）}
+      REDIS_PORT: ${REDIS_PORT:-}
+      REDIS_DB: ${REDIS_DB:-}
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
       # 本地附件共享目录：product 落盘与 gateway /uploads 静态服务共用同一宿主目录，
@@ -53,6 +85,21 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位
+      # （common/config.ApplyEnvOverrides；外部 DB 部署凭据在宿主 .env 提供）
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_PASSWORD（外部 MySQL 口令）}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD（外部 Redis 口令）}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # 连接拓扑经环境变量注入（common/config.ApplyEnvOverrides）：外部实例地址必填
+      # （容器内无数据库，config.docker.yaml 的默认 host 指向内部服务名 mysql/redis），
+      # 端口/库名/用户留空走配置文件默认值，换环境只改 .env 不动手改入库配置
+      DB_HOST: ${DB_HOST:?请在项目根目录 .env 中配置 DB_HOST（外部 MySQL 地址）}
+      DB_PORT: ${DB_PORT:-}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      REDIS_HOST: ${REDIS_HOST:?请在项目根目录 .env 中配置 REDIS_HOST（外部 Redis 地址）}
+      REDIS_PORT: ${REDIS_PORT:-}
+      REDIS_DB: ${REDIS_DB:-}
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
     command: >
@@ -68,6 +115,21 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位
+      # （common/config.ApplyEnvOverrides；外部 DB 部署凭据在宿主 .env 提供）
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_PASSWORD（外部 MySQL 口令）}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD（外部 Redis 口令）}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # 连接拓扑经环境变量注入（common/config.ApplyEnvOverrides）：外部实例地址必填
+      # （容器内无数据库，config.docker.yaml 的默认 host 指向内部服务名 mysql/redis），
+      # 端口/库名/用户留空走配置文件默认值，换环境只改 .env 不动手改入库配置
+      DB_HOST: ${DB_HOST:?请在项目根目录 .env 中配置 DB_HOST（外部 MySQL 地址）}
+      DB_PORT: ${DB_PORT:-}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      REDIS_HOST: ${REDIS_HOST:?请在项目根目录 .env 中配置 REDIS_HOST（外部 Redis 地址）}
+      REDIS_PORT: ${REDIS_PORT:-}
+      REDIS_DB: ${REDIS_DB:-}
     depends_on:
       product-service:
         condition: service_started
@@ -86,6 +148,21 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位
+      # （common/config.ApplyEnvOverrides；外部 DB 部署凭据在宿主 .env 提供）
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_PASSWORD（外部 MySQL 口令）}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD（外部 Redis 口令）}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # 连接拓扑经环境变量注入（common/config.ApplyEnvOverrides）：外部实例地址必填
+      # （容器内无数据库，config.docker.yaml 的默认 host 指向内部服务名 mysql/redis），
+      # 端口/库名/用户留空走配置文件默认值，换环境只改 .env 不动手改入库配置
+      DB_HOST: ${DB_HOST:?请在项目根目录 .env 中配置 DB_HOST（外部 MySQL 地址）}
+      DB_PORT: ${DB_PORT:-}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      REDIS_HOST: ${REDIS_HOST:?请在项目根目录 .env 中配置 REDIS_HOST（外部 Redis 地址）}
+      REDIS_PORT: ${REDIS_PORT:-}
+      REDIS_DB: ${REDIS_DB:-}
     depends_on:
       order-service:
         condition: service_started
@@ -102,6 +179,21 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位
+      # （common/config.ApplyEnvOverrides；外部 DB 部署凭据在宿主 .env 提供）
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_PASSWORD（外部 MySQL 口令）}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在项目根目录 .env 中配置 REDIS_PASSWORD（外部 Redis 口令）}
+      JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
+      # 连接拓扑经环境变量注入（common/config.ApplyEnvOverrides）：外部实例地址必填
+      # （容器内无数据库，config.docker.yaml 的默认 host 指向内部服务名 mysql/redis），
+      # 端口/库名/用户留空走配置文件默认值，换环境只改 .env 不动手改入库配置
+      DB_HOST: ${DB_HOST:?请在项目根目录 .env 中配置 DB_HOST（外部 MySQL 地址）}
+      DB_PORT: ${DB_PORT:-}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      REDIS_HOST: ${REDIS_HOST:?请在项目根目录 .env 中配置 REDIS_HOST（外部 Redis 地址）}
+      REDIS_PORT: ${REDIS_PORT:-}
+      REDIS_DB: ${REDIS_DB:-}
       # 可信反向代理网段（逗号分隔 CIDR/IP），与 docker-compose.yml 同口径：
       # 留空 = 不采信任何代理头；宿主 nginx 反代时必填其网段，详见 07-基础设施/02 与开发计划第 69 项
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}

@@ -44,6 +44,8 @@ service UserService {
 
   // 管理员
   rpc GetAdminByUsername(GetAdminByUsernameReq) returns (AdminInfo);
+  // 按 ID 查询管理员（refresh 时实时校验账号状态：停用/删除即令牌失效）
+  rpc GetAdminById(GetAdminByIdReq) returns (AdminInfo);
   rpc ListAdmins(ListAdminsReq) returns (ListAdminsResp);
   rpc CreateAdmin(CreateAdminReq) returns (AdminInfo);
   rpc UpdateAdmin(UpdateAdminReq) returns (AdminInfo);
@@ -364,6 +366,10 @@ message ListCommunitiesResp {
 
 message GetAdminByUsernameReq {
   string username = 1;
+}
+
+message GetAdminByIdReq {
+  int64 id = 1;
 }
 
 message AdminInfo {

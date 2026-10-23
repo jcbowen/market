@@ -27,23 +27,25 @@ func NewProductHandler(productClient product.ProductServiceClient) *ProductHandl
 	return &ProductHandler{productClient: productClient}
 }
 
-// ListProducts 商品列表
-// 支持 community_id、category_id、keyword、sort 与分页
+// ListProducts 商品列表（C 端公开入口）
+// 支持 community_id、category_id、keyword、sort 与分页。
+// status 服务端强制为 1（P1-3）：定时上架商品在调度器到点前 status=0（仓库中），
+// 此前「透传查询参数、缺省 0」会让这些商品照样曝光，定时上架功能等于未生效；
+// 已删除(2)同样被排除。管理端列表（需要看到仓库中商品）走 adminHandler.ListAdminProducts，
+// 传什么是什么，不受此约束；C 端调用方传任何 status 值均按 1 处理
 // 参数：
 //   - c: gin 上下文
 func (h *ProductHandler) ListProducts(c *gin.Context) {
 	page, pageSize := parsePageParams(c)
 	communityID, _ := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64)
 	categoryID, _ := strconv.ParseInt(c.DefaultQuery("category_id", "0"), 10, 64)
-	// status 透传：C 端传 status=1 只看上架商品；缺省 0 时服务端仅排除删除态
-	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 	keyword := c.Query("keyword")
 	sort := c.Query("sort")
 
 	resp, err := h.productClient.ListProducts(c.Request.Context(), &product.ListProductsReq{
 		CommunityId: communityID,
 		CategoryId:  categoryID,
-		Status:      int32(status),
+		Status:      1,
 		Keyword:     keyword,
 		Sort:        sort,
 		Pagination: &common.Pagination{

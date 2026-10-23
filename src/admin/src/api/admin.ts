@@ -201,6 +201,8 @@ export interface PaymentSetting {
   alipay_ready: boolean
   /** 支付宝配置自检失败原因，空表示自检通过（就绪 = 字段齐全且自检通过）；仅服务端出参，保存载荷无需携带 */
   alipay_ready_message?: string
+  /** 微信支付 V3 API 密钥是否已配置（密钥明文不回传，保存时留空即保留原值）；仅服务端出参 */
+  wechat_api_v3_configured?: boolean
   wechat_cert_uploaded: boolean
   alipay_cert_uploaded: boolean
   /** 支付宝证书模式三证书上传状态（证书内容不回传，仅回传标志）；仅服务端出参 */

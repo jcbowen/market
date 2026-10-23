@@ -305,6 +305,26 @@ func (s *ProductService) BuildProductImages(ctx context.Context, productIDs []in
 	return imageMap, nil
 }
 
+// ProductStatusOnSale 上架（可售）状态：人工上架与定时上架调度器到点翻转均落该值，
+// 是各交易入口「可售」判定的唯一口径（P1-4 收口，与 GetByBarcode 的 status=1 一致）
+const ProductStatusOnSale = 1
+
+// EnsureProductSellable 校验商品是否可售：仅上架态（status=1）可售；
+// 下架(0)/删除(2)/定时上架未到点(0)一律拒绝，文案带商品名便于前端直接展示。
+// 供 gRPC 层（GetProduct 的 require_sellable）与服务内批量入口共用，是「可售」判定的唯一口径
+//
+// 参数：
+//   - p: 商品模型
+//
+// 返回值：
+//   - error: 不可售时返回 FailedPrecondition 业务错误
+func EnsureProductSellable(p *model.Product) error {
+	if p.Status != ProductStatusOnSale {
+		return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("商品「%s」已下架，暂不可购买", p.Name))
+	}
+	return nil
+}
+
 // GetProduct 根据 ID 查询商品
 // 参数：
 //   - ctx: 上下文
@@ -317,7 +337,7 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 	var p model.Product
 	err := s.db.GetDb().WithContext(ctx).First(&p, id).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("商品不存在")
+		return nil, bizerr.New(codes.NotFound, "商品不存在")
 	}
 	return &p, err
 }
@@ -325,20 +345,23 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 // BatchGetProducts 按 ID 批量查询商品（下单/收银按明细取商品名与封面，替代逐行 GetProduct 的 N 次往返）
 // 只查主表：列表口径不需要 SKU 明细、规格树与图集，避免 GetProduct 的 4 组附属查询被放大 N 倍。
 // 任一 ID 不存在或不属于操作者社区即整体报错（订单明细不允许部分命中）。
+// requireSellable=true 时追加「可售」收口校验：任一商品非上架态（status≠1，含定时上架未到点）
+// 即整体报错，下单入口借此与 GetByBarcode 保持同一口径（P1-4）。
 //
 // 参数：
 //   - ctx: 上下文
 //   - ids: 商品 ID 列表（重复 ID 只查一次）
 //   - communityID: 操作者社区语境，<=0 跳过归属校验
+//   - requireSellable: 是否要求全部商品可售（下单传 true）
 //
 // 返回值：
 //   - []*model.Product: 商品模型列表（按首次出现顺序去重）
-//   - error: 参数非法/不存在/越权/数据库错误
+//   - error: 参数非法/不存在/越权/不可售/数据库错误
 //
 // 使用示例：
 //
-//	products, err := svc.BatchGetProducts(ctx, []int64{1, 2}, 456)
-func (s *ProductService) BatchGetProducts(ctx context.Context, ids []int64, communityID int64) ([]*model.Product, error) {
+//	products, err := svc.BatchGetProducts(ctx, []int64{1, 2}, 456, true)
+func (s *ProductService) BatchGetProducts(ctx context.Context, ids []int64, communityID int64, requireSellable bool) ([]*model.Product, error) {
 	ordered := dedupIDs(ids)
 	if len(ordered) == 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "请选择要查询的商品")
@@ -351,6 +374,11 @@ func (s *ProductService) BatchGetProducts(ctx context.Context, ids []int64, comm
 	for _, p := range rows {
 		if err := EnsureScope(communityID, p.CommunityID, "商品"); err != nil {
 			return nil, err
+		}
+		if requireSellable {
+			if err := EnsureProductSellable(p); err != nil {
+				return nil, err
+			}
 		}
 		byID[p.ID] = p
 	}
@@ -416,7 +444,7 @@ func (s *ProductService) FindProductsByIDs(ctx context.Context, ids []int64) (ma
 //   - error: 错误信息
 func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateProductReq) (*model.Product, error) {
 	if len(req.SkuItems) == 0 {
-		return nil, fmt.Errorf("请填写商品价格与库存")
+		return nil, bizerr.New(codes.InvalidArgument, "请填写商品价格与库存")
 	}
 	if err := ensureCategoryInCommunity(ctx, s.db.GetDb(), req.CategoryId, req.CommunityId); err != nil {
 		return nil, err
@@ -440,7 +468,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 	}
 	// 定时上架：非空且为未来时间时保存为下架+预约，到点由调度器自动上架（默认立即上架）
 	if req.OnSaleAt != "" {
-		if err := parseOnSaleAt(req.OnSaleAt); err != nil {
+		if err := s.validateOnSaleAt(ctx, req.OnSaleAt); err != nil {
 			return nil, err
 		}
 		p.Status = 0
@@ -534,7 +562,7 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	// 非空且为未来时间 → 下架+预约（支持设置/改期）；显式传空串 → 仅清除预约，
 	// 上下架终态由 status 提交值决定（不传时维持原状；预约中商品切「立即上架」由前端显式传 status=1）
 	if req.OnSaleAt != "" {
-		if err := parseOnSaleAt(req.OnSaleAt); err != nil {
+		if err := s.validateOnSaleAt(ctx, req.OnSaleAt); err != nil {
 			return nil, err
 		}
 		p.Status = 0
@@ -793,23 +821,37 @@ func (s *ProductService) saveProductImages(tx *gorm.DB, productID int64, images 
 	return tx.Create(&records).Error
 }
 
-// parseOnSaleAt 解析并校验定时上架时间
+// validateOnSaleAt 解析并校验定时上架时间
+// 时钟源统一到 MySQL NOW()（P1-11）：到点判定在调度器里就是按 MySQL NOW() 执行的
+// （scheduler.go 的 UPDATE ... on_sale_at <= NOW()），保存校验若用应用服务器时钟，
+// 双机时钟漂移会出现「保存即报过期」或「到点不触发」——三套时钟只保留 DB 一套权威源
+// （前端浏览器时钟仅用于选择器展示，不参与任何判定）
 //
 // 参数：
+//   - ctx: 上下文
 //   - raw: 前端提交的时间字符串（"2006-01-02 15:04:05"，空串由调用方短路处理）
 //
 // 返回值：
-//   - error: 格式非法或非未来时间时返回参数错误
+//   - error: 格式非法或非未来时间时返回参数错误；DB 时钟读取失败返回内部错误
 //
 // 使用示例：
 //
-//	if err := parseOnSaleAt("2026-11-01 10:00:00"); err != nil { ... }
-func parseOnSaleAt(raw string) error {
+//	if err := s.validateOnSaleAt(ctx, "2026-11-01 10:00:00"); err != nil { ... }
+func (s *ProductService) validateOnSaleAt(ctx context.Context, raw string) error {
 	t, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.Local)
 	if err != nil {
 		return bizerr.New(codes.InvalidArgument, "定时上架时间格式错误")
 	}
-	if !t.After(time.Now()) {
+	// 取 DB 时钟：DATE_FORMAT 固定输出格式，规避驱动 parseTime/loc 配置差异对解析的影响
+	var dbNowStr string
+	if err := s.db.GetDb().WithContext(ctx).Raw("SELECT DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')").Scan(&dbNowStr).Error; err != nil {
+		return bizerr.New(codes.Internal, "时间校验失败，请稍后重试")
+	}
+	dbNow, err := time.ParseInLocation("2006-01-02 15:04:05", dbNowStr, time.Local)
+	if err != nil {
+		return bizerr.New(codes.Internal, "时间校验失败，请稍后重试")
+	}
+	if !t.After(dbNow) {
 		return bizerr.New(codes.InvalidArgument, "定时上架时间需晚于当前时间")
 	}
 	return nil

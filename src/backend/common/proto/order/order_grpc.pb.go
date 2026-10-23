@@ -24,6 +24,7 @@ const (
 	OrderService_GetOrder_FullMethodName                 = "/order.OrderService/GetOrder"
 	OrderService_ListOrders_FullMethodName               = "/order.OrderService/ListOrders"
 	OrderService_CancelOrder_FullMethodName              = "/order.OrderService/CancelOrder"
+	OrderService_DeleteOrder_FullMethodName              = "/order.OrderService/DeleteOrder"
 	OrderService_UpdateOrderStatus_FullMethodName        = "/order.OrderService/UpdateOrderStatus"
 	OrderService_VerifyPickup_FullMethodName             = "/order.OrderService/VerifyPickup"
 	OrderService_ApplyRefund_FullMethodName              = "/order.OrderService/ApplyRefund"
@@ -64,6 +65,8 @@ type OrderServiceClient interface {
 	GetOrder(ctx context.Context, in *GetOrderReq, opts ...grpc.CallOption) (*OrderDetail, error)
 	ListOrders(ctx context.Context, in *ListOrdersReq, opts ...grpc.CallOption) (*ListOrdersResp, error)
 	CancelOrder(ctx context.Context, in *CancelOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// C 端用户删除订单（软删除）：仅终态订单可删，列表与角标统计排除，详情链路保留可达
+	DeleteOrder(ctx context.Context, in *DeleteOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	UpdateOrderStatus(ctx context.Context, in *UpdateOrderStatusReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
 	VerifyPickup(ctx context.Context, in *VerifyPickupReq, opts ...grpc.CallOption) (*VerifyPickupResp, error)
@@ -158,6 +161,16 @@ func (c *orderServiceClient) CancelOrder(ctx context.Context, in *CancelOrderReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.CommonResponse)
 	err := c.cc.Invoke(ctx, OrderService_CancelOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) DeleteOrder(ctx context.Context, in *DeleteOrderReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_DeleteOrder_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -472,6 +485,8 @@ type OrderServiceServer interface {
 	GetOrder(context.Context, *GetOrderReq) (*OrderDetail, error)
 	ListOrders(context.Context, *ListOrdersReq) (*ListOrdersResp, error)
 	CancelOrder(context.Context, *CancelOrderReq) (*common.CommonResponse, error)
+	// C 端用户删除订单（软删除）：仅终态订单可删，列表与角标统计排除，详情链路保留可达
+	DeleteOrder(context.Context, *DeleteOrderReq) (*common.CommonResponse, error)
 	UpdateOrderStatus(context.Context, *UpdateOrderStatusReq) (*common.CommonResponse, error)
 	// 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
 	VerifyPickup(context.Context, *VerifyPickupReq) (*VerifyPickupResp, error)
@@ -543,6 +558,9 @@ func (UnimplementedOrderServiceServer) ListOrders(context.Context, *ListOrdersRe
 }
 func (UnimplementedOrderServiceServer) CancelOrder(context.Context, *CancelOrderReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelOrder not implemented")
+}
+func (UnimplementedOrderServiceServer) DeleteOrder(context.Context, *DeleteOrderReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteOrder not implemented")
 }
 func (UnimplementedOrderServiceServer) UpdateOrderStatus(context.Context, *UpdateOrderStatusReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateOrderStatus not implemented")
@@ -723,6 +741,24 @@ func _OrderService_CancelOrder_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OrderServiceServer).CancelOrder(ctx, req.(*CancelOrderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_DeleteOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteOrderReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).DeleteOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_DeleteOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).DeleteOrder(ctx, req.(*DeleteOrderReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1289,6 +1325,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelOrder",
 			Handler:    _OrderService_CancelOrder_Handler,
+		},
+		{
+			MethodName: "DeleteOrder",
+			Handler:    _OrderService_DeleteOrder_Handler,
 		},
 		{
 			MethodName: "UpdateOrderStatus",

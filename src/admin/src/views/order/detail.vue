@@ -95,10 +95,10 @@
           <n-data-table :columns="logColumns" :data="detail.status_logs" size="small" :scroll-x="620" />
         </div>
 
-        <!-- 售后记录：本单每次退款（类型/金额/状态/明细） -->
+        <!-- 售后记录：本单每次退款（类型/金额/状态/明细），待审核行内可直接同意/拒绝 -->
         <div v-if="detail.refunds && detail.refunds.length">
           <div class="section-title">售后记录</div>
-          <n-data-table :columns="refundColumns" :data="detail.refunds" size="small" :scroll-x="620" />
+          <n-data-table :columns="refundColumns" :data="detail.refunds" size="small" :scroll-x="730" />
         </div>
 
         <!-- 支付通知轨迹：回调/对账/人工同步的全轨迹，用于判断「到底有没有回调进来过」 -->
@@ -190,6 +190,29 @@
       />
     </n-space>
   </n-modal>
+
+  <!-- 售后拒绝原因弹窗（售后记录行内「拒绝」入口，原因必填留痕并同步给用户） -->
+  <n-modal
+    :show="auditRejectVisible"
+    preset="dialog"
+    title="拒绝售后"
+    positive-text="确认拒绝"
+    negative-text="取消"
+    :loading="auditRejectSubmitting"
+    @update:show="(v: boolean) => (auditRejectVisible = v)"
+    @positive-click="submitAuditReject"
+  >
+    <n-space vertical>
+      <n-text depth="3">拒绝后订单回退到退款前状态，拒绝原因将展示给用户</n-text>
+      <n-input
+        v-model:value="auditRejectReason"
+        type="textarea"
+        placeholder="请填写拒绝原因（必填）"
+        maxlength="200"
+        show-count
+      />
+    </n-space>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -197,9 +220,9 @@
 // 底部按当前状态渲染操作按钮（发货/核销/完成/取消），操作后刷新详情并通知父级刷新列表
 defineOptions({ name: 'OrderDetailModal' })
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
+import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { completeOrder, getOrderDetail, syncOrderPayment, verifyPickup } from '@/api/order'
+import { approveRefund, completeOrder, getOrderDetail, rejectRefund, syncOrderPayment, verifyPickup } from '@/api/order'
 import type { OrderDetail, OrderItem, OrderPayment, OrderStatusLog, Refund } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import {
@@ -207,6 +230,7 @@ import {
   ORDER_SOURCE,
   ORDER_STATUS,
   PAY_TYPE,
+  REFUND_STATUS,
   canAdminRefund,
   canCancelOrder,
   deliveryTypeText,
@@ -309,7 +333,7 @@ const logColumns: DataTableColumns<OrderStatusLog> = [
   { title: '时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
 ]
 
-/** 售后记录列：每次退款单一行，展开/摘要展示退款原因与商品明细 */
+/** 售后记录列：每次退款单一行，展开/摘要展示退款原因与商品明细；待审核行内直接审核（免跳转售后管理页） */
 const refundColumns: DataTableColumns<Refund> = [
   {
     title: '类型',
@@ -344,6 +368,21 @@ const refundColumns: DataTableColumns<Refund> = [
   },
   { title: '原因', key: 'reason', ellipsis: { tooltip: true } },
   { title: '时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.refund_time || row.created_at) },
+  {
+    // 行内审核：仅待审核可操作，同意/拒绝逻辑与售后管理页一致；审核成功刷新详情并通知父级刷新列表
+    title: '操作',
+    key: 'audit',
+    width: 110,
+    render: (row) => {
+      if (row.status !== REFUND_STATUS.PENDING) return null
+      return h(NSpace, { size: 6, wrap: false }, {
+        default: () => [
+          h(NButton, { size: 'tiny', type: 'primary', onClick: () => confirmAuditApprove(row) }, { default: () => '同意' }),
+          h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => openAuditReject(row) }, { default: () => '拒绝' }),
+        ],
+      })
+    },
+  },
 ]
 
 /** 支付记录列：一次支付尝试一行，确认来源非「渠道回调」即说明回调出过问题 */
@@ -485,6 +524,66 @@ function openCancel(id: number) {
 function openRefund(id: number) {
   refundOrderId.value = id
   refundVisible.value = true
+}
+
+// --- 售后行内审核（售后记录操作列，逻辑与售后管理页一致） ---
+const auditRejectVisible = ref(false)
+const auditRejectId = ref(0)
+const auditRejectReason = ref('')
+const auditRejectSubmitting = ref(false)
+
+/**
+ * 同意退款（二次确认）
+ * 同意即按申请金额全额退回原支付流水（不调额：想少退走「拒绝 + 主动退款」组合）
+ * @param row 售后单行
+ */
+function confirmAuditApprove(row: Refund) {
+  dialog.warning({
+    title: '同意退款',
+    content: `确认同意售后单 ${row.refund_no} 的退款申请？同意后将按订单原支付流水退回 ￥${(row.amount ?? 0).toFixed(2)}。`,
+    positiveText: '确认同意',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await approveRefund(row.id)
+        message.success('已同意退款，正在退回原支付流水')
+        onActionSuccess()
+      } catch {
+        // 错误提示由请求拦截器统一弹出
+      }
+    },
+  })
+}
+
+/**
+ * 打开拒绝原因弹窗
+ * @param row 售后单行
+ */
+function openAuditReject(row: Refund) {
+  auditRejectId.value = row.id
+  auditRejectReason.value = ''
+  auditRejectVisible.value = true
+}
+
+/**
+ * 提交拒绝售后：拒绝后订单回退到退款前状态
+ */
+async function submitAuditReject() {
+  if (!auditRejectReason.value.trim()) {
+    dialog.error({ title: '提示', content: '请填写拒绝原因', positiveText: '知道了' })
+    return
+  }
+  auditRejectSubmitting.value = true
+  try {
+    await rejectRefund(auditRejectId.value, auditRejectReason.value.trim())
+    auditRejectVisible.value = false
+    message.success('已拒绝该售后申请')
+    onActionSuccess()
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    auditRejectSubmitting.value = false
+  }
 }
 
 /**

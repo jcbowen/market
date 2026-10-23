@@ -55,6 +55,28 @@ func (s *AdminService) GetAdminByUsername(ctx context.Context, username string) 
 	return &a, nil
 }
 
+// GetAdminById 按 ID 查询管理员
+// 供 refresh 链路实时校验账号状态（P1-5）：停用/删除的管理员必须立即失去续期能力，
+// 不能只靠登录时的那一次 status 检查
+// 参数：
+//   - ctx: 上下文
+//   - id: 管理员 ID
+//
+// 返回：
+//   - *model.Admin: 管理员模型
+//   - error: 账号不存在返回 codes.NotFound 业务错误；数据库等其他故障原样上抛
+func (s *AdminService) GetAdminById(ctx context.Context, id int64) (*model.Admin, error) {
+	var a model.Admin
+	err := s.db.GetDb().WithContext(ctx).First(&a, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, bizerr.New(codes.NotFound, "管理员不存在")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 // ListAdmins 分页查询员工列表（账号 + 指定社区任职）
 // communityID > 0：仅列出在该社区任职的员工；communityID = 0：列出全部账号
 // 返回值 assignments 按管理员 ID 分组返回其（语境社区内的）任职行
@@ -246,7 +268,7 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 	// 仅更新状态（超管账号管理：停用/启用），不触碰姓名/手机号/角色任职
 	if req.UpdateStatusOnly {
 		if req.Status != 0 && req.Status != 1 {
-			return nil, fmt.Errorf("状态取值非法")
+			return nil, bizerr.New(codes.InvalidArgument, "状态取值非法")
 		}
 		if err := s.db.GetDb().WithContext(ctx).
 			Model(&model.Admin{}).
@@ -259,7 +281,7 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 
 	if req.CommunityId > 0 && req.RoleIds != nil {
 		if len(req.RoleIds) == 0 {
-			return nil, fmt.Errorf("请至少保留一个角色；如需移除员工请使用移除操作")
+			return nil, bizerr.New(codes.InvalidArgument, "请至少保留一个角色；如需移除员工请使用移除操作")
 		}
 		if err := s.validateRolesForCommunity(ctx, req.CommunityId, req.RoleIds, req.OperatorIsSuper); err != nil {
 			return nil, err
@@ -305,7 +327,7 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 //   - error: 错误信息
 func (s *AdminService) bindMemberTx(tx *gorm.DB, adminID, userID int64) error {
 	if userID < 0 {
-		return fmt.Errorf("参数错误")
+		return bizerr.New(codes.InvalidArgument, "参数错误")
 	}
 	if userID == 0 {
 		// 解绑：仅清空本人的绑定，不影响其他员工
@@ -316,7 +338,7 @@ func (s *AdminService) bindMemberTx(tx *gorm.DB, adminID, userID int64) error {
 	var member model.User
 	if err := tx.First(&member, userID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return fmt.Errorf("会员不存在（ID %d）", userID)
+			return bizerr.New(codes.NotFound, fmt.Sprintf("会员不存在（ID %d）", userID))
 		}
 		return err
 	}
@@ -327,7 +349,7 @@ func (s *AdminService) bindMemberTx(tx *gorm.DB, adminID, userID int64) error {
 		return err
 	}
 	if cnt > 0 {
-		return fmt.Errorf("该会员已绑定其他员工")
+		return bizerr.New(codes.FailedPrecondition, "该会员已绑定其他员工")
 	}
 	return tx.Model(&model.Admin{}).
 		Where("id = ?", adminID).
@@ -350,7 +372,7 @@ func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID in
 		return err
 	}
 	if a.IsSuper {
-		return fmt.Errorf("超级管理员账号不可移除")
+		return bizerr.New(codes.FailedPrecondition, "超级管理员账号不可移除")
 	}
 
 	db := s.db.GetDb().WithContext(ctx).Where("admin_id = ?", id)
@@ -362,7 +384,7 @@ func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID in
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("该员工在此社区无任职")
+		return bizerr.New(codes.FailedPrecondition, "该员工在此社区无任职")
 	}
 	return nil
 }
@@ -387,7 +409,7 @@ func (s *AdminService) ChangeAdminPassword(ctx context.Context, id int64, oldPas
 
 	if !force {
 		if err := CheckPassword(oldPassword, a.Password); err != nil {
-			return fmt.Errorf("旧密码错误")
+			return bizerr.New(codes.InvalidArgument, "旧密码错误")
 		}
 	}
 
@@ -459,7 +481,7 @@ func (s *AdminService) getAdminByID(ctx context.Context, id int64) (*model.Admin
 	var a model.Admin
 	err := s.db.GetDb().WithContext(ctx).First(&a, id).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, fmt.Errorf("管理员不存在")
+		return nil, bizerr.New(codes.NotFound, "管理员不存在")
 	}
 	return &a, err
 }

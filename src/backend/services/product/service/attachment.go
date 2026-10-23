@@ -24,6 +24,9 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/jcbaseGo"
 	"github.com/jcbowen/jcbaseGo/component/attachment"
 	"github.com/jcbowen/jcbaseGo/component/attachment/remote"
@@ -270,7 +273,7 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 		return nil, errors.New("文件内容为空")
 	}
 	if int64(len(req.Content)) > maxSize {
-		return nil, fmt.Errorf("文件大小超出限制（最大 %dMB）", maxSize/1024/1024)
+		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("文件大小超出限制（最大 %dMB）", maxSize/1024/1024))
 	}
 
 	width, height := decodeImageSize(req.Content)
@@ -701,7 +704,7 @@ func validateStorageType(storageType string) error {
 	case "local", "oss":
 		return nil
 	default:
-		return fmt.Errorf("不支持的存储类型: %s", storageType)
+		return bizerr.New(codes.InvalidArgument, fmt.Sprintf("不支持的存储类型: %s", storageType))
 	}
 }
 
@@ -826,7 +829,7 @@ func fileMD5(content []byte) string {
 //   - error: 长度不为 32 位或含非十六进制字符时返回错误
 func normalizeMD5(value string) (string, error) {
 	if len(value) != md5HexLength {
-		return "", fmt.Errorf("MD5长度必须为%d位", md5HexLength)
+		return "", bizerr.New(codes.InvalidArgument, fmt.Sprintf("MD5长度必须为%d位", md5HexLength))
 	}
 	normalized := strings.ToLower(value)
 	for i := 0; i < len(normalized); i++ {
