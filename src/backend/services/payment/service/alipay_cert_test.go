@@ -217,7 +217,8 @@ func TestBuildAlipayExecutorCertMode(t *testing.T) {
 	}
 }
 
-// TestParseAlipayCallbackCertMode 证书模式回调验签：证书序列号命中即通过，不匹配一律拒绝
+// TestParseAlipayCallbackCertMode 证书模式回调验签：证书序列号命中即通过，不匹配一律拒绝；
+// 缺 alipay_cert_sn 用本证书公钥直验（通过与否取决于签名是否出自本证书私钥）
 func TestParseAlipayCallbackCertMode(t *testing.T) {
 	priKey, _ := newTestAlipayKeys(t)
 	carrier := certAlipayConfig(t, priKey)
@@ -256,10 +257,16 @@ func TestParseAlipayCallbackCertMode(t *testing.T) {
 		t.Fatalf("序列号不匹配应拒绝通知，实际: %v", err)
 	}
 
-	// 证书模式漏传 alipay_cert_sn：无法定位公钥，须拒绝而非放行
+	// 漏传 alipay_cert_sn：官方从不承诺通知带该字段（SDK v0.0.6 起按本商户支付宝公钥证书公钥直验）
 	noSN := successNotifyFields(testAlipayAppID)
-	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, noSN)); err == nil {
-		t.Fatalf("缺少 alipay_cert_sn 的通知应拒绝")
+	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, noSN)); err != nil {
+		t.Fatalf("缺 alipay_cert_sn 的本证书合法通知应验签通过: %v", err)
+	}
+
+	// 缺字段不等于放宽验签钥匙：非本商户证书私钥签的通知仍须拒绝
+	_, foreignPri := newTestAlipayCert(t, 20262)
+	if _, err := s.parseAlipayCallback(signedNotify(t, foreignPri, successNotifyFields(testAlipayAppID))); err == nil {
+		t.Fatalf("非本商户支付宝公钥证书签发的通知应拒绝")
 	}
 }
 
@@ -335,11 +342,13 @@ func TestCheckNotifyURL(t *testing.T) {
 /**
  * TestParseAlipayCallbackRecordsVerifyEvidence 验签失败的 debugger 取证记录
  *
- * 覆盖：
+ * 覆盖（故障形态取「证书不同源」——通知不带 alipay_cert_sn 且签名不出自本证书私钥；
+ * 缺该字段本身自 SDK v0.0.6 起不再判失败，不再作为取证入口）：
  *   - 记录内容与判据：alipay_mode、通知侧 alipay_cert_sn、本地证书序列号与是否命中、
  *     待验签串长度与指纹、sign 长度与指纹、参数条数与失败原因；
  *   - 待验签串指纹与测试内独立实现的拼接规则一致，证明复算未丢字段；
- *   - debugger 未登记（实例为 nil）时验签失败只走标准日志，不 panic。
+ *   - debugger 未登记（实例为 nil）时验签失败只走标准日志，不 panic；
+ *   - 验签通过的通知不落取证记录；序列号不匹配与证书不同源两种失败各自留痕。
  *
  * 与网关的「支付宝回调」记录（失败时含全量通知原文）用 out_trade_no 对齐即完成取证闭环。
  */
@@ -361,20 +370,31 @@ func TestParseAlipayCallbackRecordsVerifyEvidence(t *testing.T) {
 		AlipayRootCert:   carrier.AlipayRootCert,
 	}
 
-	// 证书模式漏传 alipay_cert_sn：真实故障场景，此时 debugger 尚未登记，须只走标准日志不 panic
+	// 取证要盯的故障形态是「证书不同源」：通知不带 alipay_cert_sn，签名又不出自本证书私钥。
+	// SDK v0.0.6 起缺该字段仍会用本证书公钥直验一次，签名对不上才失败（err 为 nil、ok 为 false）。
+	// 此处 debugger 尚未登记，须只走标准日志不 panic。
 	debuglog.SetInstance(nil)
 	t.Cleanup(func() { debuglog.SetInstance(nil) })
-	noSN := successNotifyFields(testAlipayAppID)
-	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, noSN)); err == nil {
-		t.Fatalf("缺少 alipay_cert_sn 的通知应拒绝")
+	_, foreignPri := newTestAlipayCert(t, 20262)
+	foreign := successNotifyFields(testAlipayAppID)
+	if _, err := s.parseAlipayCallback(signedNotify(t, foreignPri, foreign)); err == nil {
+		t.Fatalf("非本商户支付宝公钥证书签发的通知应拒绝")
 	}
 
 	dbg := newPaymentTestDebugger(t)
 	debuglog.SetInstance(dbg)
 
-	got := signedNotify(t, alipayPri, noSN)
+	got := signedNotify(t, foreignPri, foreign)
 	if _, err := s.parseAlipayCallback(got); err == nil {
-		t.Fatalf("缺少 alipay_cert_sn 的通知应拒绝")
+		t.Fatalf("非本商户支付宝公钥证书签发的通知应拒绝")
+	}
+
+	// 同一批字段改由本证书私钥签发：缺 alipay_cert_sn 也验签通过，且不落取证记录
+	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, successNotifyFields(testAlipayAppID))); err != nil {
+		t.Fatalf("缺 alipay_cert_sn 的本证书合法通知应验签通过: %v", err)
+	}
+	if _, passed, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"}); err != nil || passed != 1 {
+		t.Fatalf("验签通过不应新增取证记录，实际 total=%d err=%v", passed, err)
 	}
 
 	entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})

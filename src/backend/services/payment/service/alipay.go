@@ -338,8 +338,10 @@ func alipayV3ApiErrBody(apiErr *alipaysdk.ApiException) map[string]interface{} {
 // parseAlipayCallback 解析支付宝支付回调参数并完成 RSA2 验签
 // 验签按加签方式分流（RsaCheckV1 规则：剔除 sign/sign_type 后按 key 升序拼接验签），
 //   - 公钥模式：使用配置的支付宝公钥；
-//   - 证书模式：按通知里的 alipay_cert_sn 在「支付宝公钥证书 + 根证书链」中定位公钥，
-//     序列号不匹配（证书过期/未更新）时验签失败，同样拒绝该通知。
+//   - 证书模式：通知带 alipay_cert_sn 时按序列号在「支付宝公钥证书 + 根证书链」严格定位公钥，
+//     定位不到（证书过期/未同步更新）即拒绝；通知未带该字段时（官方从未承诺通知侧携带，
+//     SDK v0.0.6 起）直接用本商户支付宝公钥证书里的公钥验签，信任锚仍是本地那份证书，
+//     签名不出自该证书私钥照样拒绝，不存在放行路径。
 //
 // 验签不通过直接拒绝；验签后再核对 app_id、交易状态与金额，防跨应用通知重放与非成功通知误置
 // 参数：
@@ -366,7 +368,8 @@ func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCall
 	}
 	if err != nil || !ok {
 		// 只记参数 key 列表不记值（sign/金额等值不入标准日志），
-		// 用于区分「通知缺字段」（如公钥模式应用的通知不带 alipay_cert_sn）与「值不匹配」
+		// 用于区分「签名与本证书不同源」（err 为 nil、ok 为 false）与 SDK 明确报错（缺 sign、
+		// 序列号不匹配、证书不可解析）；缺 alipay_cert_sn 本身不再是失败原因
 		keys := make([]string, 0, len(params))
 		for k := range params {
 			keys = append(keys, k)
