@@ -18,6 +18,16 @@
 //   # 不使用构建缓存
 //   node build-image.mjs --tag <registry>/market:1.0.0 --push --no-cache
 //
+//   # 本地重建基础镜像（一般无需执行：CI 发 tag 时按 Dockerfile.base 内容哈希
+//   # 自动检测并构建；仅当本地想先于 CI 构建时使用，需 Docker Hub 登录 +
+//   # containerd 镜像存储）
+//   node build-image.mjs --build-base
+//
+// 基础镜像：Dockerfile.allinone 的 ubuntu + mysql/redis + appuser 层已固化为
+// market-base 镜像（见 src/backend/deploy/Dockerfile.base）。本脚本按该文件的
+// 内容 sha256 生成 tag（sha-<前12位>），先检测仓库是否已存在该 tag：
+//   存在 → 直接 --build-arg 引用；不存在 → 报错提示（CI 会自动构建，或本地 --build-base）。
+//
 // 前置条件：已执行 `node build.mjs` 产出 bin/linux-{amd64,arm64} 与 bin/static；
 // 多架构推送需本机 Docker 开启 containerd 镜像存储（Docker Desktop 设置项）。
 //
@@ -26,10 +36,12 @@
 //   --push                构建后推送到镜像仓库（多架构发布的唯一途径）
 //   --platforms <list>    逗号分隔，默认本机架构单平台（本地 load 不支持多架构）
 //   --no-cache            不使用构建缓存
+//   --build-base          构建（多架构）并推送 market-base 基础镜像
 
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { needsShell } from './deps-tools.mjs';
 import { fileURLToPath } from 'node:url';
@@ -41,12 +53,14 @@ const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 let tag = '';
 let push = false;
 let noCache = false;
+let buildBase = false;
 let platformsArg = '';
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--tag') tag = argv[++i] ?? '';
   else if (argv[i] === '--push') push = true;
   else if (argv[i] === '--no-cache') noCache = true;
+  else if (argv[i] === '--build-base') buildBase = true;
   else if (argv[i] === '--platforms') platformsArg = argv[++i] ?? '';
   else {
     console.error(`未知参数: ${argv[i]}`);
@@ -83,6 +97,47 @@ for (const p of platforms) {
     console.error(`错误: 不支持的平台 ${p}（一体化镜像仅支持 linux/amd64 与 linux/arm64）`);
     process.exit(1);
   }
+}
+
+// ---------- 基础镜像（market-base）解析 ----------
+
+const DOCKERHUB_OWNER = process.env.DOCKERHUB_USERNAME || 'jcbowen';
+const BASE_DOCKERFILE = path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'Dockerfile.base');
+if (!fs.existsSync(BASE_DOCKERFILE)) {
+  console.error(`错误: 缺失 ${BASE_DOCKERFILE}`);
+  process.exit(1);
+}
+// 内容哈希 tag：Dockerfile.base 内容不变 → tag 不变 → 永远复用仓库里的现成层；
+// 内容一旦改动 → 新 tag → CI/本地检测到缺失后自动重建
+const BASE_TAG = `sha-${crypto.createHash('sha256').update(fs.readFileSync(BASE_DOCKERFILE)).digest('hex').slice(0, 12)}`;
+const BASE_IMAGE = `docker.io/${DOCKERHUB_OWNER}/market-base:${BASE_TAG}`;
+const BASE_LATEST = `docker.io/${DOCKERHUB_OWNER}/market-base:latest`;
+
+function baseImageExists() {
+  const r = spawnSync('docker', ['manifest', 'inspect', BASE_IMAGE], {
+    encoding: 'utf8',
+    shell: needsShell('docker'),
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  return r.status === 0;
+}
+
+function runDocker(args) {
+  const r = spawnSync('docker', args, { stdio: 'inherit', cwd: ROOT_DIR, shell: needsShell('docker') });
+  return r.status === 0;
+}
+
+// 仅构建并推送基础镜像，然后退出
+if (buildBase) {
+  console.log(`==> 构建并推送基础镜像: ${BASE_IMAGE}（同时更新 ${BASE_LATEST}）`);
+  console.log('==> 平台: linux/amd64,linux/arm64（需 containerd 镜像存储 + Docker Hub 已登录）');
+  if (!runDocker(['buildx', 'build', '--platform', 'linux/amd64,linux/arm64',
+    '-f', BASE_DOCKERFILE, '-t', BASE_IMAGE, '-t', BASE_LATEST, '--push', '.'])) {
+    console.error('错误: 基础镜像构建失败');
+    process.exit(1);
+  }
+  console.log(`==> 基础镜像完成: ${BASE_IMAGE}`);
+  process.exit(0);
 }
 
 // ---------- 产物预检 ----------
@@ -155,7 +210,19 @@ if (!tag) tag = 'market:dev';
 
 // ---------- buildx 构建 ----------
 
+// 基础镜像存在性检查：缺失则明确报错（Dockerfile.allinone 的 FROM 依赖它，
+// 静默回退 latest 会跑旧基础层）
+if (!baseImageExists()) {
+  console.error(`错误: 基础镜像 ${BASE_IMAGE} 尚不存在（Dockerfile.base 已变更且未构建）`);
+  console.error('       处理方式二选一：');
+  console.error('       1. 推荐：提交并推送 v* tag，由 CI 的 release-base job 自动构建后再发业务镜像');
+  console.error('       2. 本地执行：node build-image.mjs --build-base');
+  process.exit(1);
+}
+console.log(`==> 基础镜像: ${BASE_IMAGE}`);
+
 const args = ['buildx', 'build', '--platform', platforms.join(','), '-f', DOCKERFILE, '-t', tag];
+args.push('--build-arg', `BASE_IMAGE=${BASE_IMAGE}`);
 if (noCache) args.push('--no-cache');
 args.push(push ? '--push' : '--load');
 args.push('.');

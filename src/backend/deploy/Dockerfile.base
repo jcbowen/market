@@ -1,0 +1,40 @@
+# market 基础层镜像（低频重建，内容哈希 tag 管理）
+# 仅包含 ubuntu + mysql-server + redis-server + appuser，
+# 由 src/backend/deploy/Dockerfile.allinone 通过 FROM 引用，业务层不再执行 apt。
+#
+# 为什么独立成镜像：
+#   apt-get install mysql-server/redis-server 约 1GB，且 arm64 侧需在 QEMU 模拟下
+#   执行（5~10 分钟），而这一层几乎不变。固化成独立镜像后，日常发版的多架构
+#   镜像构建降为秒级 COPY，并彻底摆脱 QEMU 与 1GB 大层的缓存搬运。
+#
+# tag 规则：docker.io/<DOCKERHUB_USERNAME>/market-base:sha-<本文件内容 sha256 前 12 位>
+#   ci.yml 的 release-base job 与本地 build-image.mjs 均按内容哈希自动检测：
+#   仓库中已存在同哈希 tag 则跳过构建，否则构建并推送（同时更新 latest）。
+#   即：改本文件并发布 tag → 自动重建 base；不改 → 永远复用仓库里的现成品。
+#
+# 手动重建（一般无需执行，CI 发 tag 时会自动处理）：
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -f src/backend/deploy/Dockerfile.base \
+#     -t docker.io/jcbowen/market-base:latest --push .
+#
+# 发布渠道：Docker Hub 为主（国内生产机可达，CI 存在性检测/回退均以此为准），
+# GHCR 双发冗余副本（ghcr.io/<owner>/<repo>-base，命名口径同业务镜像）；
+# 本地 --build-base 仅推 Docker Hub，GHCR 副本由 CI 补齐。
+#
+# 注意：mysql-server 为 Ubuntu noble 源的 MySQL 8.0.x；redis-server 为 7.x，
+# 与拆分前 Dockerfile.allinone 内联安装的版本完全一致，运行时行为不变。
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Shanghai
+
+# 包管理器自动创建 mysql/redis 系统用户
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       mysql-server redis-server ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+# 业务进程（6 个 Go 二进制 + market-admin）以固定 UID 10001 运行；
+# mysqld/redis 使用发行版内置 mysql/redis 用户。entrypoint 以 root 引导，
+# 启动时对 bind mount 目录按属主自动授权
+RUN useradd --system --uid 10001 appuser

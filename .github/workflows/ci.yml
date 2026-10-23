@@ -22,7 +22,7 @@ jobs:
   backend:
     name: 后端 go vet/test/build
     runs-on: ubuntu-latest
-    # tag 推送仅触发 release job，检查类 job 跳过（release 内含 go test 回归）
+    # tag 推送仅触发 release 流水线，检查类 job 跳过（release-test 内含 go test 回归）
     if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     # 集成测试依赖：MySQL/Redis 以 service 容器提供，端口映射到 runner 宿主 127.0.0.1。
     # 支付与调度器测试以 TEST_MYSQL_PASSWORD 为守卫，此前 CI 不设该变量导致
@@ -185,15 +185,50 @@ jobs:
       - name: 构建 H5
         run: npm run build:h5
 
-  release:
-    name: 构建 Release 产物并发布
+  # ================= tag 发布流水线（并行化，2026-10-23 改造） =================
+  # 依赖关系与墙钟时间：
+  #   release-test（回归）──> release-backend（matrix 6 平台并行编译）──┐
+  #   release-frontend（管理端 + H5，独立并行）──────────────────────┼──> release-image（多架构镜像）
+  #   release-base（按 Dockerfile.base 内容哈希按需构建基础镜像）─────┘
+  #   release-backend + release-frontend ──> release-packages（Release 压缩包）
+  # 各 job 产物经 upload/download-artifact 传递（无共享文件系统）；
+  # 慢的 apt/QEMU 仅存在于 release-base（低频触发），镜像构建降为秒级 COPY。
+
+  release-test:
+    name: 发布前回归测试
     runs-on: ubuntu-latest
-    # 仅推送 v* 格式 tag（如 v1.0.0）时触发，产物上传到平台 Release（GitHub / Gitea）；
-    # 产物覆盖 linux/darwin/windows × amd64/arm64 共 6 平台包，Linux 为生产部署主用
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
-      contents: write
-      packages: write
+      contents: read
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-mysql
+          MYSQL_DATABASE: market
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-mysql"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      TEST_MYSQL_HOST: 127.0.0.1
+      TEST_MYSQL_PORT: '3306'
+      TEST_MYSQL_USER: root
+      TEST_MYSQL_PASSWORD: ci-mysql
+      TEST_MYSQL_DBNAME: market
+      TEST_REDIS_ADDR: 127.0.0.1:6379
     steps:
       - uses: actions/checkout@v5
 
@@ -214,29 +249,88 @@ jobs:
         working-directory: src/backend
         run: go mod tidy
 
-      # 发布前回归：测试不通过则中止发布
       - name: 发布前回归测试
         working-directory: src/backend
         run: go test ./... -count=1
 
-      # 交叉编译 8 个产物（linux/darwin/windows × amd64/arm64 共 6 平台组合），
-      # 二进制名与 build.mjs SERVICES 保持一致；Windows 产物带 .exe 后缀。
-      # 版本号经 -ldflags 注入 common/version.AppVersion（tag 名），供管理后台「关于」页展示
-      - name: 交叉编译后端（linux/darwin/windows amd64/arm64）
+  release-backend:
+    name: 交叉编译 ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release-test
+    permissions:
+      contents: read
+    # 按平台拆 matrix：6 个 job 并行，每个 job 只编译自己平台的 8 个产物
+    #（换 GOOS/GOARCH 后 Go 编译缓存全 miss，串行时每平台都要全量重编一遍）
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-amd64, goos: linux, arch: amd64, ext: '' }
+          - { platform: linux-arm64, goos: linux, arch: arm64, ext: '' }
+          - { platform: darwin-amd64, goos: darwin, arch: amd64, ext: '' }
+          - { platform: darwin-arm64, goos: darwin, arch: arm64, ext: '' }
+          - { platform: windows-amd64, goos: windows, arch: amd64, ext: '.exe' }
+          - { platform: windows-arm64, goos: windows, arch: arm64, ext: '.exe' }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache-dependency-path: src/backend/go.sum
+
+      - name: 移除本地 replace 指令
         working-directory: src/backend
         run: |
-          for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
-            goos="${os_arch%-*}"; arch="${os_arch##*-}"
-            ext=""; [ "$goos" = "windows" ] && ext=".exe"
-            for svc in gateway services/user services/product services/order services/cart services/payment cmd/market-admin cmd/geoip-download; do
-              name=$(basename $svc); [ "$name" != "gateway" ] && name="${name}-service"
-              [ "$svc" = "cmd/market-admin" ] && name="market-admin"
-              [ "$svc" = "cmd/geoip-download" ] && name="geoip-download"
-              CGO_ENABLED=0 GOOS=$goos GOARCH=$arch go build \
-                -ldflags "-X github.com/jcbowen/market/src/backend/common/version.AppVersion=${GITHUB_REF_NAME}" \
-                -o ../../bin/${goos}-${arch}/${name}${ext} ./${svc}/
-            done
-          done
+          go mod edit -dropreplace github.com/jcbowen/jcbaseGo
+          go mod edit -dropreplace github.com/jcbowen/wego
+          go mod edit -dropreplace github.com/jcbowen/alipay-sdk-go-all
+
+      - name: 下载依赖
+        working-directory: src/backend
+        run: go mod tidy
+
+      # 平台内 8 个产物 xargs -P4 并行：共享同一份编译缓存，gateway 已缓存依赖
+      # 后其余构建很快；版本号经 -ldflags 注入 common/version.AppVersion
+      - name: 并行编译 8 个产物
+        working-directory: src/backend
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+          EXT: ${{ matrix.ext }}
+          OUT_DIR: ../../bin/${{ matrix.platform }}
+          LDFLAGS: -X github.com/jcbowen/market/src/backend/common/version.AppVersion=${{ github.ref_name }}
+        run: |
+          printf '%s\n' \
+            "gateway|gateway" \
+            "services/user|user-service" \
+            "services/product|product-service" \
+            "services/order|order-service" \
+            "services/cart|cart-service" \
+            "services/payment|payment-service" \
+            "cmd/market-admin|market-admin" \
+            "cmd/geoip-download|geoip-download" \
+          | xargs -P 4 -I{} bash -c '
+            item="{}"; svc="${item%%|*}"; name="${item##*|}"
+            CGO_ENABLED=0 go build -ldflags "${LDFLAGS}" -o "${OUT_DIR}/${name}${EXT}" "./${svc}/"
+          '
+          ls -lh "${OUT_DIR}"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.platform }}
+          path: bin/${{ matrix.platform }}/
+
+  release-frontend:
+    name: 前端构建（admin + H5）
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
         with:
@@ -269,6 +363,188 @@ jobs:
           done
           npm run build:h5
 
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-static
+          path: bin/static/
+
+  release-base:
+    name: 基础镜像（按需构建）
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release-test]
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      base_image: ${{ steps.base.outputs.base_image }}
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # 检测规则：tag = Dockerfile.base 内容 sha256 前 12 位。
+      # 内容未变 → 仓库里已有同 tag → 秒过；内容变了 → 新 tag 不存在 → 构建推送。
+      # base 镜像是 release-image 的 FROM 依赖，发布到 Docker Hub（国内生产机可达），
+      # 因此 DOCKERHUB secrets 为发布流水线硬性前置；GHCR 为双发冗余副本。
+      - name: 计算内容哈希并检测是否已发布
+        id: base
+        run: |
+          if [ -z "${DOCKERHUB_USERNAME}" ]; then
+            echo "错误：base 镜像发布到 Docker Hub，请先在仓库 Secrets 配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"
+            exit 1
+          fi
+          BASE_TAG="sha-$(sha256sum src/backend/deploy/Dockerfile.base | cut -c1-12)"
+          BASE_IMAGE="docker.io/${DOCKERHUB_USERNAME}/market-base:${BASE_TAG}"
+          BASE_LATEST="docker.io/${DOCKERHUB_USERNAME}/market-base:latest"
+          # GHCR 双发（与 release-image 的 GHCR 命名口径一致：<repo> + "-base" 后缀）
+          GHCR_IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}-base"
+          echo "base_image=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "BASE_IMAGE=${BASE_IMAGE}" >> "$GITHUB_ENV"
+          echo "BASE_LATEST=${BASE_LATEST}" >> "$GITHUB_ENV"
+          echo "GHCR_IMAGE=${GHCR_IMAGE}" >> "$GITHUB_ENV"
+          # 注意：market-base 为公开仓库，匿名 manifest 检测可用；若改为私有需先 docker login
+          if docker manifest inspect "${BASE_IMAGE}" > /dev/null 2>&1; then
+            echo "基础镜像已存在，跳过构建：${BASE_IMAGE}"
+            echo "need_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "基础镜像不存在，将构建：${BASE_IMAGE}"
+            echo "need_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 以下步骤仅 base 缺失时执行（apt + arm64 QEMU 的 5~10 分钟只发生在改过
+      # Dockerfile.base 的那次发版）
+      - name: 设置 QEMU（多架构构建）
+        if: steps.base.outputs.need_build == 'true'
+        uses: docker/setup-qemu-action@v4
+
+      - name: 设置 Buildx
+        if: steps.base.outputs.need_build == 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录 Docker Hub
+        if: steps.base.outputs.need_build == 'true'
+        run: echo "${DOCKERHUB_TOKEN}" | docker login docker.io -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+      - name: 登录 GHCR
+        if: steps.base.outputs.need_build == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送多架构基础镜像
+        if: steps.base.outputs.need_build == 'true'
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -f src/backend/deploy/Dockerfile.base \
+            -t "${BASE_IMAGE}" \
+            -t "${BASE_LATEST}" \
+            -t "${GHCR_IMAGE}:${BASE_TAG}" \
+            -t "${GHCR_IMAGE}:latest" \
+            --push .
+
+  release-image:
+    name: 多架构一体化镜像
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release-backend, release-frontend, release-base]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # 汇合各 matrix 平台与前端产物：merge-multiple 合并下载到 bin/，
+      # 恢复出与原单 job 布局一致的 bin/linux-* 与 bin/static
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: bin
+          merge-multiple: true
+
+      - name: 产物完整性校验
+        run: |
+          test -f bin/linux-amd64/gateway
+          test -f bin/linux-amd64/payment-service
+          test -f bin/linux-arm64/gateway
+          test -f bin/linux-arm64/market-admin
+          test -d bin/static/admin
+          test -d bin/static/h5
+          test -f bin/config.allinone.yaml
+          chmod +x bin/linux-amd64/* bin/linux-arm64/*
+
+      # FROM market-base（apt 层已固化），本 job 无需 QEMU，仅 COPY 产物 + 推送
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Docker Hub 双发（国内生产机可达）；release-base 已强制配置 secrets
+      - name: 登录 Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login docker.io -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+      - name: 构建并推送多架构一体化镜像
+        env:
+          BASE_IMAGE: ${{ needs.release-base.outputs.base_image }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          TAGS="-t ${IMAGE}:${GITHUB_REF_NAME} -t ${IMAGE}:latest"
+          if [ -n "${DOCKERHUB_USERNAME}" ]; then
+            TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market:${GITHUB_REF_NAME} -t docker.io/${DOCKERHUB_USERNAME}/market:latest"
+          fi
+          # 构建缓存改存 registry（与镜像同仓库，不再受 GHA 缓存 10GB 上限约束；
+          # base 拆分后剩余层很小，此缓存仅为加速重复产物层上传）
+          CACHE_ARGS=""
+          if [ -n "${DOCKERHUB_USERNAME}" ]; then
+            CACHE_ARGS="--cache-from type=registry,ref=docker.io/${DOCKERHUB_USERNAME}/market:buildcache --cache-to type=registry,mode=max,ref=docker.io/${DOCKERHUB_USERNAME}/market:buildcache"
+          fi
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -f src/backend/deploy/Dockerfile.allinone \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            ${TAGS} \
+            ${CACHE_ARGS} \
+            --push .
+
+  release-packages:
+    name: 打包 Release 并发布
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release-backend, release-frontend]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: bin
+          merge-multiple: true
+
+      - name: 产物完整性校验
+        run: |
+          chmod +x bin/linux-*/* bin/darwin-*/*
+          test -f bin/windows-amd64/gateway.exe
+          test -f bin/config.yaml
+          test -d bin/static/admin
+          test -d bin/static/h5
+
       # 打包：解压后得到 market-{ver}-{os}-{arch}/ 目录，布局对齐部署文档 9.3.5 的 /opt/market；
       # linux/darwin 打 tar.gz，windows 打 zip（ubuntu runner 自带 zip 命令）
       - name: 打包 Release 产物
@@ -289,59 +565,6 @@ jobs:
             esac
           done
           ls -lh package/*.tar.gz package/*.zip
-
-      # 多架构一体化镜像发布（all-in-one：MySQL+Redis+全部服务，见 Dockerfile.allinone）：
-      # 仅 GitHub 平台自动发布到 GHCR（GITHUB_TOKEN 免配置）；Gitea 使用自有 registry
-      # 时可参照本段改造（需先在 Gitea 配置 registry 账号 secrets）
-      - name: 设置 QEMU（多架构构建）
-        if: ${{ contains(github.server_url, 'github.com') }}
-        uses: docker/setup-qemu-action@v4
-
-      - name: 设置 Buildx
-        if: ${{ contains(github.server_url, 'github.com') }}
-        uses: docker/setup-buildx-action@v4
-
-      - name: 登录 GHCR
-        if: ${{ contains(github.server_url, 'github.com') }}
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Docker Hub 双发：需在仓库 Secrets 配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN；
-      # 注意 secrets 上下文不能用于 step if，故经 env 注入后在 shell 内判断，
-      # 未配置时跳过登录（build 步骤同样按 env 非空决定是否追加 Docker Hub tag）。
-      # Docker Hub 首次推送自动建仓，个人账号默认公开可见性
-      - name: 登录 Docker Hub
-        if: ${{ contains(github.server_url, 'github.com') }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          if [ -z "${DOCKERHUB_USERNAME}" ]; then
-            echo "未配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，跳过 Docker Hub 发布（仅发 GHCR）"
-            exit 0
-          fi
-          echo "${DOCKERHUB_TOKEN}" | docker login docker.io -u "${DOCKERHUB_USERNAME}" --password-stdin
-
-      - name: 构建并推送多架构一体化镜像
-        if: ${{ contains(github.server_url, 'github.com') }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        run: |
-          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
-          TAGS="-t ${IMAGE}:${GITHUB_REF_NAME} -t ${IMAGE}:latest"
-          if [ -n "${DOCKERHUB_USERNAME}" ]; then
-            TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market:${GITHUB_REF_NAME} -t docker.io/${DOCKERHUB_USERNAME}/market:latest"
-          fi
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            -f src/backend/deploy/Dockerfile.allinone \
-            $TAGS \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --push .
 
       # 通过平台 API 发布（GitHub / Gitea 双端兼容）：内置 GITHUB_TOKEN（Gitea 等价 GITEA_TOKEN），无需第三方 action
       - name: 创建 Release 并上传产物

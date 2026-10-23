@@ -18,7 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createContext, parseAutoFix, preflightGoModules, runWithRepair } from './deps-tools.mjs';
 
@@ -123,6 +123,35 @@ function localPlatform() {
   return [localOs, localArch];
 }
 
+// 有限并发执行任务队列：并发度取 min(limit, 任务数)
+async function runLimited(limit, tasks) {
+  const queue = [...tasks];
+  await Promise.all(
+    Array.from({ length: Math.min(limit, queue.length) }, async () => {
+      while (queue.length) await queue.shift()();
+    }),
+  );
+}
+
+// 直接编译（不走依赖自动修复）：并发路径使用，失败只记录不修复，
+// 失败项收集后由 runWithRepair 串行重试——修复含 go mod tidy，不能并发写 go.mod/go.sum
+function buildOnePlain(goos, arch, svc) {
+  const ext = goos === 'windows' ? '.exe' : '';
+  const out = path.join(BUILD_DIR, `${goos}-${arch}`, svc + ext);
+  return new Promise((resolve, reject) => {
+    execFile(
+      'go',
+      ['build', '-ldflags', LDFLAGS, '-o', out, srcDirOf(svc)],
+      { cwd: BACKEND_DIR, env: { ...ctx.goEnv, GOOS: goos, GOARCH: arch } },
+      (err) => (err ? reject(err) : resolve()),
+    );
+  });
+}
+
+// 同平台内服务级并行度：8 个服务共享同一份 Go 编译缓存，
+// 首个服务（gateway 串行预热）最贵，其余并发提速约 2~3 倍
+const SERVICE_PARALLEL = Math.max(2, Math.min(4, os.cpus().length));
+
 fs.mkdirSync(path.join(BUILD_DIR, 'static'), { recursive: true });
 
 // 编译前预检 Go 模块依赖（本地 replace 路径、go.mod/go.sum 一致性）
@@ -132,13 +161,31 @@ await preflightGoModules(ctx);
 // 注入版本号统一展示，便于确认产物版本来源
 console.log(`==> 注入版本号: ${APP_VERSION}`);
 
-// 逐平台组合编译
+// 逐平台组合编译（平台间串行——各平台编译缓存互不相通；平台内服务并行）
 for (const [goos, arch] of PLATFORMS) {
   console.log(`==> 构建 ${goos}/${arch} ...`);
   safeCleanDir(path.join(BUILD_DIR, `${goos}-${arch}`));
   fs.mkdirSync(path.join(BUILD_DIR, `${goos}-${arch}`), { recursive: true });
-  for (const svc of SERVICES) {
-    console.log(`    构建 ${svc} ...`);
+
+  // gateway 串行先行：预热本平台的依赖编译缓存，并让依赖修复（若触发）安全串行
+  console.log('    构建 gateway ...');
+  await buildOne(goos, arch, 'gateway');
+
+  // 其余服务有限并发；失败项收集后走 runWithRepair 串行重试（可自动 go mod tidy）
+  const rest = SERVICES.filter((svc) => svc !== 'gateway');
+  const failed = [];
+  await runLimited(
+    SERVICE_PARALLEL,
+    rest.map((svc) => async () => {
+      try {
+        await buildOnePlain(goos, arch, svc);
+      } catch {
+        failed.push(svc);
+      }
+    }),
+  );
+  for (const svc of failed) {
+    console.log(`    重试（含依赖修复）: ${svc} ...`);
     await buildOne(goos, arch, svc);
   }
 }

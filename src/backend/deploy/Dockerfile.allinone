@@ -8,6 +8,12 @@
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -f src/backend/deploy/Dockerfile.allinone -t <registry>/market:1.0.0 --push .
 #
+# 基础层：ubuntu + mysql/redis + appuser 已固化为 market-base 镜像（见
+# Dockerfile.base，内容哈希 tag 自动检测、低频重建），本文件只做秒级 COPY，
+# 不再执行 apt，构建期无需 QEMU。CI 与 build-image.mjs 均会通过
+# --build-arg BASE_IMAGE=<sha-哈希 tag> 传入精确版本；
+# 下面的默认值仅作兜底（latest 随最近一次 base 构建更新）。
+#
 # 运行示例（数据目录需先创建，Linux 宿主无需手动 chown——entrypoint 以 root
 # 引导并完成授权）：
 #   docker run -d --name market --restart unless-stopped -p 18080:18080 \
@@ -26,28 +32,15 @@
 #      故不再 :ro 挂载），下载失败仅 IP 定位优雅降级；更新可由宿主机 crontab
 #      跑发布包内二进制或 docker exec 触发）
 #     <registry>/market:1.0.0
-FROM ubuntu:24.04
+ARG BASE_IMAGE=docker.io/jcbowen/market-base:latest
+FROM ${BASE_IMAGE}
 
 # TARGETARCH 由 BuildKit 按目标平台自动注入（amd64/arm64），从 build.mjs
 # 输出的 bin/linux-{arch} 目录取对应架构产物
 ARG TARGETARCH
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Asia/Shanghai \
-    CONFIG_FILE=/app/runtime/config.market-admin.yaml \
+ENV CONFIG_FILE=/app/runtime/config.market-admin.yaml \
     MARKET_ADMIN_CREDENTIALS_FILE=/app/runtime/admin_credentials.json
-
-# mysql-server: Ubuntu noble 源为 MySQL 8.0.x（与原 mysql:8.0 镜像同大版本）；
-# redis-server: 7.x（与原 redis:7 镜像同大版本）；包管理器自动创建 mysql/redis 系统用户
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       mysql-server redis-server ca-certificates tzdata \
-    && rm -rf /var/lib/apt/lists/*
-
-# 业务进程（6 个 Go 二进制 + market-admin）以固定 UID 10001 运行；
-# mysqld/redis 使用发行版内置 mysql/redis 用户。entrypoint 以 root 引导，
-# 启动时对 bind mount 目录按属主自动授权
-RUN useradd --system --uid 10001 appuser
 
 WORKDIR /app
 
