@@ -737,6 +737,68 @@ type ApplyRefundItemReq struct {
 	Quantity    int32 `json:"quantity"`
 }
 
+// ListOrderRefunds 查询订单退款进度（C端订单详情「退款进度」弹窗用）
+// 先校验订单归属当前用户，防止越权查看他人退款单；
+// 仅回传进度展示所需字段（金额/原因/状态/拒绝原因/到账时间/商品明细），不含后台审批日志
+//
+// 接口: GET /api/v1/orders/:id/refunds
+//
+// 参数：
+//   - c: gin 上下文
+func (h *OrderHandler) ListOrderRefunds(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	// 订单归属校验：GetOrderReq 携带 UserId 由服务端过滤，非本人订单视为不存在
+	uc := appcontext.GetUserContext(c)
+	orderResp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: id, UserId: uc.UserID})
+	if err != nil || orderResp.Order == nil {
+		response.Error(c, errcode.NotFound, "订单不存在")
+		return
+	}
+
+	resp, err := h.orderClient.ListRefunds(c.Request.Context(), &order.ListRefundsReq{
+		UserId:  uc.UserID,
+		OrderId: id,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	refunds := make([]gin.H, 0, len(resp.List))
+	for _, r := range resp.List {
+		items := make([]gin.H, 0, len(r.Items))
+		for _, item := range r.Items {
+			items = append(items, gin.H{
+				"product_name":  item.ProductName,
+				"spec_name":     item.SpecName,
+				"quantity":      item.Quantity,
+				"refund_amount": item.RefundAmount,
+			})
+		}
+		refunds = append(refunds, gin.H{
+			"id":            r.Id,
+			"refund_no":     r.RefundNo,
+			"amount":        r.Amount,
+			"freight_amount": r.FreightAmount,
+			// 退款类型：1整单退 2部分退 3仅金额退
+			"type":          r.Type,
+			"reason":        r.Reason,
+			// 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
+			"status":        r.Status,
+			"reject_reason": r.RejectReason,
+			"refund_time":   r.RefundTime,
+			"created_at":    r.CreatedAt,
+			"items":         items,
+		})
+	}
+	response.Success(c, gin.H{"refunds": refunds})
+}
+
 // ApplyRefundReq 申请退款请求
 // items 为空表示整单退；amount 为客户端手动调低后的金额（仅允许低于服务端汇算值）
 type ApplyRefundReq struct {

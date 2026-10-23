@@ -224,8 +224,9 @@ func (s *PaymentService) findReusablePendingPayment(ctx context.Context, req *pa
 	return &pending, nil
 }
 
-// GetPayment 根据订单 ID 查询最新成功支付记录
-// 多次支付场景下返回该订单最近一次支付成功的记录
+// GetPayment 根据订单 ID 查询最近一笔有效支付记录
+// 有效口径：支付成功(2)或已退款(4)——已退款单同样需要向用户展示原支付方式，
+// 故退款后仍返回该笔支付单（Status=4），调用方按需甄别
 // 参数：
 //   - ctx: 上下文
 //   - orderID: 订单 ID
@@ -235,7 +236,9 @@ func (s *PaymentService) findReusablePendingPayment(ctx context.Context, req *pa
 //   - error: 错误信息
 func (s *PaymentService) GetPayment(ctx context.Context, orderID int64) (*model.Payment, error) {
 	var p model.Payment
-	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ? AND status = ?", orderID, 2).Order("id desc").First(&p).Error; err != nil {
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("order_id = ? AND status IN ?", orderID, []int32{model.PaymentStatusSuccess, model.PaymentStatusRefunded}).
+		Order("id desc").First(&p).Error; err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -302,10 +305,11 @@ func (s *PaymentService) GetAlipayPayUrl(ctx context.Context, paymentNo string) 
 // BatchGetPaymentsMaxOrderIDs 单次批量查询的订单 ID 上限（后台列表每页最多 50，留足余量并封顶超大 IN）
 const BatchGetPaymentsMaxOrderIDs = 200
 
-// BatchGetPayments 按订单 ID 集合批量查询成功支付记录
-// 口径与 GetPayment 一致：一个订单可能有多条支付记录，只回传每个订单最近一次支付成功（status=2）的那条。
+// BatchGetPayments 按订单 ID 集合批量查询有效支付记录
+// 口径与 GetPayment 一致：一个订单可能有多条支付记录，只回传每个订单最近一笔有效支付单
+// （status 为支付成功 2 或已退款 4，已退款单同样需要展示原支付方式）。
 // 后台订单列表原先逐行 GetPayment，一页 N 行即 N 次往返；本方法一次往返取回整页。
-// 未支付/无成功记录的订单不出现在结果里，调用方按「查不到即未支付」处理。
+// 待支付/无有效记录的订单不出现在结果里，调用方按「查不到即未支付」处理。
 //
 // 参数：
 //   - ctx: 上下文
@@ -333,9 +337,9 @@ func (s *PaymentService) BatchGetPayments(ctx context.Context, orderIDs []int64)
 	}
 
 	var rows []*model.Payment
-	// 按 id 倒序遍历、每个订单只留首条即「最近一次成功支付」，避免相关子查询
+	// 按 id 倒序遍历、每个订单只留首条即「最近一笔有效支付」（成功/已退款），避免相关子查询
 	if err := s.db.GetDb().WithContext(ctx).
-		Where("order_id IN ? AND status = ?", clean, 2).
+		Where("order_id IN ? AND status IN ?", clean, []int32{model.PaymentStatusSuccess, model.PaymentStatusRefunded}).
 		Order("id DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}

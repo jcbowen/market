@@ -259,6 +259,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.PUT("/orders/:id/cancel", orderHandler.CancelOrder)
 			authUser.POST("/orders/:id/receive", orderHandler.ConfirmReceive)
 			authUser.POST("/orders/:id/refund", orderHandler.ApplyRefund)
+			authUser.GET("/orders/:id/refunds", orderHandler.ListOrderRefunds)
 			authUser.GET("/refund/config", orderHandler.GetRefundConfig)
 
 			// 履约工作台（B）：handler 内统一校验履约人员身份

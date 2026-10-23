@@ -826,6 +826,12 @@ func (s *RefundService) ListRefunds(ctx context.Context, req *order.ListRefundsR
 	if req.Status > 0 {
 		db = db.Where("status = ?", req.Status)
 	}
+	if req.UserId > 0 {
+		db = db.Where("user_id = ?", req.UserId)
+	}
+	if req.OrderId > 0 {
+		db = db.Where("order_id = ?", req.OrderId)
+	}
 
 	var total int64
 	if err := db.Count(&total).Error; err != nil {

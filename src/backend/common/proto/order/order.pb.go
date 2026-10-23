@@ -2036,10 +2036,14 @@ func (x *AdminCreateRefundReq) GetMode() int32 {
 }
 
 type ListRefundsReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CommunityId   int64                  `protobuf:"varint,1,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	Status        int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
-	Pagination    *common.Pagination     `protobuf:"bytes,3,opt,name=pagination,proto3" json:"pagination,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	CommunityId int64                  `protobuf:"varint,1,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	Status      int32                  `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
+	Pagination  *common.Pagination     `protobuf:"bytes,3,opt,name=pagination,proto3" json:"pagination,omitempty"`
+	// 按用户过滤（C端退款进度：网关凭登录态传入，防越权查他人退款单）
+	UserId int64 `protobuf:"varint,4,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 按订单过滤（C端订单详情退款进度查询）
+	OrderId       int64 `protobuf:"varint,5,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2093,6 +2097,20 @@ func (x *ListRefundsReq) GetPagination() *common.Pagination {
 		return x.Pagination
 	}
 	return nil
+}
+
+func (x *ListRefundsReq) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *ListRefundsReq) GetOrderId() int64 {
+	if x != nil {
+		return x.OrderId
+	}
+	return 0
 }
 
 // GetRefundConfigReq 查询退款配置请求
@@ -5352,13 +5370,15 @@ const file_order_order_proto_rawDesc = "" +
 	"\voperator_id\x18\x06 \x01(\x03R\n" +
 	"operatorId\x12!\n" +
 	"\fcommunity_id\x18\a \x01(\x03R\vcommunityId\x12\x12\n" +
-	"\x04mode\x18\b \x01(\x05R\x04mode\"\x7f\n" +
+	"\x04mode\x18\b \x01(\x05R\x04mode\"\xb3\x01\n" +
 	"\x0eListRefundsReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x122\n" +
 	"\n" +
 	"pagination\x18\x03 \x01(\v2\x12.common.PaginationR\n" +
-	"pagination\"\x14\n" +
+	"pagination\x12\x17\n" +
+	"\auser_id\x18\x04 \x01(\x03R\x06userId\x12\x19\n" +
+	"\border_id\x18\x05 \x01(\x03R\aorderId\"\x14\n" +
 	"\x12GetRefundConfigReq\"B\n" +
 	"\fRefundConfig\x122\n" +
 	"\x15refund_freight_policy\x18\x01 \x01(\tR\x13refundFreightPolicy\"I\n" +

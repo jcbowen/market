@@ -89,3 +89,17 @@ export function receiveButtonText(o: OrderActionTarget): string {
  * 订单取消原因预设列表（取消确认弹窗单选项）
  */
 export const CANCEL_REASONS = ['不想要了', '买错了', '地址填错了', '商品缺货', '其他']
+
+/**
+ * 退款原因预设列表（申请退款弹窗标签快选项，选中「其他」时补充输入）
+ */
+export const REFUND_REASONS = [
+  '不想要了',
+  '拍错了',
+  '商品与描述不符',
+  '商品质量问题',
+  '商品破损或漏发',
+  '少发货',
+  '发货太慢',
+  '其他',
+]

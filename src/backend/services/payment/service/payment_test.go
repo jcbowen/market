@@ -479,3 +479,66 @@ func TestClosePayments(t *testing.T) {
 		t.Errorf("迟到回调不应改变已关闭单状态, got %d err %v", p.Status, err)
 	}
 }
+
+// TestGetPaymentRefundedVisible GetPayment/BatchGetPayments 有效口径：
+// 支付成功(2)与已退款(4)均可见（已退款单需向用户展示原支付方式），待支付/已关闭不可见
+func TestGetPaymentRefundedVisible(t *testing.T) {
+	s, _, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	const orderID = testOrderIDBase + 40
+	paidNo := "PAYTEST-RF-VISIBLE-01"
+	insertPayment(t, s, &model.Payment{
+		PaymentNo: paidNo,
+		OrderID:   orderID,
+		UserID:    1,
+		PayType:   1,
+		Amount:    88.00,
+		Status:    model.PaymentStatusSuccess,
+		CreatedAt: "2026-01-01 00:00:00",
+		UpdatedAt: "2026-01-01 00:00:00",
+	})
+
+	// 支付成功(2)：可见
+	p, err := s.GetPayment(ctx, orderID)
+	if err != nil || p == nil || p.Status != model.PaymentStatusSuccess {
+		t.Fatalf("支付成功单应可见, got %v err %v", p, err)
+	}
+
+	// 全额退款后置已退款(4)：仍可见（口径修正点）
+	if err := s.db.GetDb().Model(&model.Payment{}).
+		Where("payment_no = ?", paidNo).
+		Update("status", model.PaymentStatusRefunded).Error; err != nil {
+		t.Fatalf("置已退款失败: %v", err)
+	}
+	p, err = s.GetPayment(ctx, orderID)
+	if err != nil || p == nil || p.Status != model.PaymentStatusRefunded {
+		t.Fatalf("已退款单应仍可见（返回原支付方式）, got %v err %v", p, err)
+	}
+
+	// BatchGetPayments 同口径：已退款单返回，待支付单不返回
+	pendingOrderID := orderID + 1
+	insertPayment(t, s, &model.Payment{
+		PaymentNo: "PAYTEST-RF-VISIBLE-02",
+		OrderID:   pendingOrderID,
+		UserID:    1,
+		PayType:   1,
+		Amount:    10.00,
+		Status:    model.PaymentStatusPending,
+		CreatedAt: "2026-01-01 00:00:00",
+		UpdatedAt: "2026-01-01 00:00:00",
+	})
+	batch, err := s.BatchGetPayments(ctx, []int64{orderID, pendingOrderID})
+	if err != nil {
+		t.Fatalf("BatchGetPayments 失败: %v", err)
+	}
+	if len(batch) != 1 || batch[0].OrderID != orderID || batch[0].Status != model.PaymentStatusRefunded {
+		t.Fatalf("BatchGetPayments 应仅返回已退款单 1 条, got %+v err %v", batch, err)
+	}
+
+	// 待支付订单：GetPayment 查不到
+	if _, err := s.GetPayment(ctx, pendingOrderID); err == nil {
+		t.Fatal("待支付单不应被 GetPayment 命中")
+	}
+}

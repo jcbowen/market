@@ -44,39 +44,59 @@
           </view>
         </view>
 
-        <!-- 退款原因 -->
-        <view class="section-title">退款原因</view>
-        <view class="reason-input">
-          <u-input v-model="reason" placeholder="请填写退款原因" border="surround" maxlength="100" />
-        </view>
-
-        <!-- 金额确认 -->
+        <!-- 退款金额（核心信息前置：大字合计 + 分项明细 + 可调低） -->
         <view class="amount-box">
-          <view class="amount-line">
-            <text class="amount-label">商品应退</text>
-            <text>￥{{ formatAmount(goodsRefund) }}</text>
+          <view class="amount-header">
+            <text class="amount-title">退款金额</text>
+            <text class="amount-way">原路返回</text>
           </view>
-          <view v-if="freightRefund > 0" class="amount-line">
-            <text class="amount-label">运费应退</text>
-            <text>￥{{ formatAmount(freightRefund) }}</text>
+          <view class="amount-total">
+            <text class="amount-currency">￥</text>
+            <text class="amount-value">{{ formatAmount(effectiveAmount) }}</text>
           </view>
-          <view class="amount-line total">
-            <text class="amount-label">合计应退</text>
-            <text class="amount-value">￥{{ formatAmount(refundable) }}</text>
+          <view class="amount-detail">
+            <view class="amount-line">
+              <text class="amount-label">商品</text>
+              <text>￥{{ formatAmount(goodsRefund) }}</text>
+            </view>
+            <view v-if="freightRefund > 0" class="amount-line">
+              <text class="amount-label">运费</text>
+              <text>￥{{ formatAmount(freightRefund) }}</text>
+            </view>
           </view>
           <view class="amount-edit">
-            <text class="amount-label">退款金额（可调低）</text>
-            <!-- uview-plus u-input 值变化 emit change（仅用户输入触发，外部赋值不触发），用 change 标记手动修改 -->
-            <u-input
-              v-model="amountInput"
-              type="digit"
-              border="surround"
-              :placeholder="`不超过 ${formatAmount(refundable)}`"
-              style="flex: 1"
-              @change="onAmountInput"
-            />
+            <text class="amount-edit-label">调整金额</text>
+            <view class="amount-input-wrap">
+              <text class="amount-input-prefix">￥</text>
+              <!-- uview-plus u-input 值变化 emit change（仅用户输入触发，外部赋值不触发），用 change 标记手动修改 -->
+              <u-input
+                v-model="amountInput"
+                type="digit"
+                border="none"
+                :placeholder="`不超过 ${formatAmount(refundable)}`"
+                class="amount-input"
+                @change="onAmountInput"
+              />
+            </view>
+            <text class="amount-reset" @click="resetAmount">重置</text>
           </view>
-          <text class="amount-tip">金额以商家审核确认为准，仅支持调低退款金额</text>
+          <text class="amount-tip">金额以商家审核确认为准，仅支持调低</text>
+        </view>
+
+        <!-- 退款原因：常见理由标签快选，选「其他」时补充输入 -->
+        <view class="section-title">退款原因</view>
+        <view class="reason-tags">
+          <view
+            v-for="r in REFUND_REASONS"
+            :key="r"
+            :class="['reason-tag', selectedReason === r ? 'active' : '']"
+            @click="selectedReason = r"
+          >
+            <text>{{ r }}</text>
+          </view>
+        </view>
+        <view v-if="selectedReason === '其他'" class="reason-input">
+          <u-input v-model="customReason" placeholder="请填写退款原因" border="surround" maxlength="100" />
         </view>
       </scroll-view>
 
@@ -90,11 +110,12 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { getOrderDetail, getRefundConfig, applyRefund } from '@/api/order'
+import { REFUND_REASONS } from '@/utils/order'
 import type { Order, OrderItem } from '@/api/types'
 
 /**
  * 申请退款弹窗组件
- * 展示退款商品明细（可选行/数量）、运费策略、汇算金额，支持手动调低退款金额
+ * 展示退款商品明细（可选行/数量）、退款金额卡片（可调低）、常见理由快选
  */
 
 /** 退款行状态 */
@@ -127,7 +148,9 @@ const order = ref<Order | null>(null)
 const lines = ref<RefundLine[]>([])
 const policy = ref('always')
 const wantFreight = ref(false)
-const reason = ref('')
+/** 预设退款理由（「其他」时展示补充输入框） */
+const selectedReason = ref(REFUND_REASONS[0])
+const customReason = ref('')
 const amountInput = ref('')
 const submitting = ref(false)
 /** 用户是否手动修改过退款金额；为 true 后不再自动联动覆盖 */
@@ -173,8 +196,17 @@ const goodsRefund = computed(() => {
   return round2(sum)
 })
 
-/** 合计应退金额（商品 + 运费） */
+/** 合计应退金额（商品 + 运费），即可调低的上限 */
 const refundable = computed(() => round2(goodsRefund.value + freightRefund.value))
+
+/** 当前申请退款金额（大字展示）：有效手动输入优先，否则为汇算应退金额 */
+const effectiveAmount = computed(() => {
+  const input = parseFloat(amountInput.value)
+  if (!Number.isNaN(input) && input > 0 && input <= refundable.value + 0.001) {
+    return round2(input)
+  }
+  return refundable.value
+})
 
 /**
  * 金额保留两位小数
@@ -248,11 +280,19 @@ function fillDefaultAmount() {
 }
 
 /**
+ * 重置退款金额为汇算应退金额（清除手动调整）
+ */
+function resetAmount() {
+  fillDefaultAmount()
+}
+
+/**
  * 加载订单详情与退款配置，初始化退款行
  */
 async function load() {
   submitting.value = false
-  reason.value = ''
+  selectedReason.value = REFUND_REASONS[0]
+  customReason.value = ''
   amountInput.value = ''
   amountTouched.value = false
   wantFreight.value = false
@@ -287,7 +327,8 @@ async function load() {
  * 整单退（全部行全数量）不传 items；手动调低金额时传 amount
  */
 async function submit() {
-  if (!reason.value.trim()) {
+  const reason = selectedReason.value === '其他' ? customReason.value.trim() : selectedReason.value
+  if (!reason) {
     uni.showToast({ title: '请填写退款原因', icon: 'none' })
     return
   }
@@ -322,7 +363,7 @@ async function submit() {
   submitting.value = true
   try {
     await applyRefund(o.id, {
-      reason: reason.value.trim(),
+      reason,
       items,
       amount,
       refund_freight: full && policy.value === 'user_decide' ? wantFreight.value : false,
@@ -472,53 +513,139 @@ watch(refundable, (value) => {
   color: #333333;
 }
 
-.reason-input {
+.reason-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
   margin-bottom: 8rpx;
 }
 
+.reason-tag {
+  padding: 10rpx 24rpx;
+  font-size: 26rpx;
+  color: #666666;
+  border: 2rpx solid #dddddd;
+  border-radius: 28rpx;
+  background-color: #f7f7f7;
+}
+
+.reason-tag.active {
+  color: #07c160;
+  border-color: #07c160;
+  background-color: #f0faf4;
+}
+
+.reason-input {
+  margin: 8rpx 0;
+}
+
+/* 退款金额卡片：大字合计 + 分项明细 + 调整输入 */
 .amount-box {
   margin-top: 20rpx;
-  padding: 20rpx;
-  border-radius: 12rpx;
-  background-color: #f7f7f7;
+  padding: 24rpx;
+  border: 2rpx solid #d6f2df;
+  border-radius: 16rpx;
+  background: linear-gradient(180deg, #f0faf4, #ffffff);
+}
+
+.amount-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.amount-title {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
+.amount-way {
+  font-size: 22rpx;
+  color: #999999;
+}
+
+.amount-total {
+  display: flex;
+  align-items: baseline;
+  margin: 12rpx 0 4rpx;
+  color: #ff4d4f;
+}
+
+.amount-currency {
+  font-size: 30rpx;
+  font-weight: bold;
+}
+
+.amount-value {
+  font-size: 56rpx;
+  font-weight: bold;
+  line-height: 1.2;
+}
+
+.amount-detail {
+  padding: 12rpx 0;
+  border-bottom: 1rpx solid #e8f5ec;
 }
 
 .amount-line {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8rpx 0;
-  font-size: 26rpx;
-  color: #666666;
-}
-
-.amount-line.total {
-  border-top: 1rpx solid #eeeeee;
-  margin-top: 8rpx;
-  padding-top: 16rpx;
+  padding: 4rpx 0;
+  font-size: 24rpx;
+  color: #999999;
 }
 
 .amount-label {
-  color: #333333;
-}
-
-.amount-value {
-  font-size: 32rpx;
-  font-weight: bold;
-  color: #ff4d4f;
+  color: #999999;
 }
 
 .amount-edit {
   display: flex;
   align-items: center;
   gap: 16rpx;
-  margin-top: 12rpx;
+  margin-top: 20rpx;
+}
+
+.amount-edit-label {
+  flex-shrink: 0;
+  font-size: 24rpx;
+  color: #666666;
+}
+
+.amount-input-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+  min-width: 0;
+  padding: 10rpx 16rpx;
+  border: 2rpx solid #dddddd;
+  border-radius: 10rpx;
+  background-color: #ffffff;
+}
+
+.amount-input {
+  flex: 1;
+}
+
+.amount-input-prefix {
+  flex-shrink: 0;
   font-size: 26rpx;
+  color: #333333;
+}
+
+.amount-reset {
+  flex-shrink: 0;
+  font-size: 26rpx;
+  color: #07c160;
+  padding: 8rpx 0 8rpx 8rpx;
 }
 
 .amount-tip {
   display: block;
-  margin-top: 12rpx;
+  margin-top: 14rpx;
   font-size: 22rpx;
   color: #999999;
 }

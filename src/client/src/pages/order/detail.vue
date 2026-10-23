@@ -104,10 +104,18 @@
       >
         <u-button plain type="info" text="申请退款" @click="onRefund" />
       </view>
+      <view
+        v-if="showRefundProgress"
+        class="action-btn"
+      >
+        <u-button plain type="info" text="退款进度" @click="onShowRefundProgress" />
+      </view>
     </view>
 
     <!-- 申请退款弹窗 -->
     <RefundModal v-model:show="refundVisible" :order-id="orderId" @success="loadOrder" />
+    <!-- 退款进度弹窗 -->
+    <RefundProgressModal v-model:show="refundProgressVisible" :order-id="orderId" />
     <!-- 取消订单弹窗（需选择原因） -->
     <CancelOrderModal v-model:show="cancelVisible" :order-id="orderId" @success="loadOrder" />
   </view>
@@ -124,11 +132,13 @@ import { goOrderList, goProductDetail } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { canReceive, receiveButtonText, canCancel, canRefund, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
+import RefundProgressModal from '@/components/RefundProgressModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
 
 const orderId = ref(0)
 const refundVisible = ref(false)
+const refundProgressVisible = ref(false)
 const cancelVisible = ref(false)
 /** 倒计时当前时间（每秒刷新，页面隐藏时暂停避免后台计时偏差） */
 const nowTick = ref(Date.now())
@@ -167,6 +177,9 @@ const order = ref<Order>({
 
 /** 是否自提单 */
 const isPickup = computed(() => order.value.delivery_type === DELIVERY_TYPE_PICKUP)
+
+/** 是否展示「退款进度」入口：退款中(7)/已退款(8)订单 */
+const showRefundProgress = computed(() => order.value.status === 7 || order.value.status === 8)
 
 // --- 自提取货码 ---
 // 待自提（已支付2/备货中3）时展示取货码与二维码；已完成/已取消不再展示
@@ -389,6 +402,13 @@ function onReceive() {
  */
 function onRefund() {
   refundVisible.value = true
+}
+
+/**
+ * 查看退款进度：打开退款进度弹窗（时间线展示审核/打款/到账）
+ */
+function onShowRefundProgress() {
+  refundProgressVisible.value = true
 }
 </script>
 

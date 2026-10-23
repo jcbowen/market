@@ -98,6 +98,10 @@ message GetPaymentReq {
   int64 order_id = 1;
 }
 
+// GetPayment 口径（2026-10-23 修正）：返回该订单最近一笔「有效」支付单——
+// status 为支付成功(2)或已退款(4)。已退款单的支付单状态被置 4，
+// 原先只查 status=2 导致已退款订单详情支付方式显示「未支付」，现退款后仍返回该笔（Status=4），调用方按需甄别。
+// BatchGetPayments 与本口径保持一致。
 message PaymentInfo {
   int64 id = 1;
   string payment_no = 2;
@@ -119,7 +123,7 @@ message PaymentInfo {
 }
 
 // BatchGetPaymentsReq 支付记录批量查询（后台订单列表按行取支付方式，替代逐行 GetPayment）
-// 每个订单可能有多条支付记录，服务端按订单只回传口径与 GetPayment 一致的那条
+// 每个订单可能有多条支付记录，服务端按订单只回传口径与 GetPayment 一致的那条（成功 2 或已退款 4）
 message BatchGetPaymentsReq {
   repeated int64 order_ids = 1;
 }

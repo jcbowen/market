@@ -102,6 +102,44 @@ export function applyRefund(id: number, data: ApplyRefundParams) {
   return post(`/orders/${id}/refund`, data as unknown as Record<string, unknown>)
 }
 
+/** 退款进度商品明细项 */
+export interface RefundProgressItem {
+  product_name: string
+  spec_name: string
+  quantity: number
+  refund_amount: number
+}
+
+/** 退款进度记录（订单详情「退款进度」弹窗展示用） */
+export interface RefundProgress {
+  id: number
+  refund_no: string
+  /** 退款金额（商品 + 运费，服务端汇算） */
+  amount: number
+  /** 本单退还的运费金额 */
+  freight_amount: number
+  /** 退款类型：1整单退 2部分退 3仅金额退 */
+  type: number
+  /** 退款原因 */
+  reason: string
+  /** 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款 */
+  status: number
+  /** 拒绝原因（仅已拒绝时有值） */
+  reject_reason: string
+  /** 退款成功时间（到账时间） */
+  refund_time: string
+  created_at: string
+  items: RefundProgressItem[]
+}
+
+/**
+ * 查询订单退款进度
+ * @param id 订单 ID
+ */
+export function getOrderRefunds(id: number) {
+  return get<{ refunds: RefundProgress[] }>(`/orders/${id}/refunds`)
+}
+
 /**
  * 获取退款配置（运费退还策略）
  * @returns refund_freight_policy: always/never/user_decide
