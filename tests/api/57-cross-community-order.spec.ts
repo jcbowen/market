@@ -56,16 +56,26 @@ async function pickOtherCommunitySku(
     (c) => c.id !== homeCommunityId && c.status === 1 && c.enable_self_pickup !== false,
   );
   for (const community of candidates) {
-    const productsBody = await json<PageData<{ id: number }>>(
-      await api.get('/api/v1/products', { params: { community_id: community.id, page: 1, page_size: 10, status: 1 } }),
+    const sku = await pickCommunityOnsaleSku(api, community.id);
+    if (sku) return { community, skuId: sku.skuId, productId: sku.productId };
+  }
+  return null;
+}
+
+/** 取指定社区的在售 SKU（stock>0）；没有则返回 null */
+async function pickCommunityOnsaleSku(
+  api: APIRequestContext,
+  communityId: number,
+): Promise<{ skuId: number; productId: number } | null> {
+  const productsBody = await json<PageData<{ id: number }>>(
+    await api.get('/api/v1/products', { params: { community_id: communityId, page: 1, page_size: 10, status: 1 } }),
+  );
+  for (const p of productsBody.data?.list ?? []) {
+    const skusBody = await json<{ id: number; product_id: number; stock: number; status: number }[]>(
+      await api.get('/api/v1/skus', { params: { product_id: p.id } }),
     );
-    for (const p of productsBody.data?.list ?? []) {
-      const skusBody = await json<{ id: number; product_id: number; stock: number; status: number }[]>(
-        await api.get('/api/v1/skus', { params: { product_id: p.id } }),
-      );
-      const sku = (skusBody.data ?? []).find((s) => s.status === 1 && s.stock > 0);
-      if (sku) return { community, skuId: sku.id, productId: sku.product_id };
-    }
+    const sku = (skusBody.data ?? []).find((s) => s.status === 1 && s.stock > 0);
+    if (sku) return { skuId: sku.id, productId: sku.product_id };
   }
   return null;
 }
@@ -175,15 +185,35 @@ test.describe.serial('跨社区购物车与订单', () => {
     expect(previewResp.data).toBeTruthy();
   });
 
-  test('跨社区下单不传 community_id 时按用户归属社区（回归）', async () => {
+  test('不传 community_id：跨社区 SKU 拒绝、归属社区 SKU 按归属社区成交（回归）', async () => {
     test.skip(!target, '环境不满足：无第二营业社区或目标社区无在售商品');
+    // 2026-10-23 P0 收口后分两半断言：
+    // ① 他社区 SKU + 不传 community_id（网关按归属社区兜底）→ 必须拒绝（NoPermission 11005），
+    //    杜绝「订单挂 A 社区、用 B 社区商品与库存成交、A 社区商家履约」；
+    //    修复前此处会成功且订单挂到用户归属社区，即漏洞本身，故旧预期已作废。
+    const rejectResp = await json<OrderBrief>(
+      await api.post('/api/v1/orders', {
+        data: {
+          delivery_type: 1,
+          address_id: 0,
+          remark: 'AUTO-TEST 跨社区SKU默认社区应被拒',
+          items: [{ sku_id: target!.skuId, quantity: 1 }],
+        },
+      }),
+    );
+    expect(rejectResp.code).toBe(11005);
+
+    // ② 归属社区 SKU + 不传 community_id → 仍按用户归属社区成交（网关兜底口径不变）。
+    //    归属社区无在售 SKU 时跳过（环境不满足不代表行为回退）。
+    const homeSku = await pickCommunityOnsaleSku(api, homeCommunityId);
+    test.skip(!homeSku, '环境不满足：归属社区无在售 SKU');
     const createResp = await json<OrderBrief>(
       await api.post('/api/v1/orders', {
         data: {
           delivery_type: 1,
           address_id: 0,
           remark: 'AUTO-TEST 默认社区下单',
-          items: [{ sku_id: target!.skuId, quantity: 1 }],
+          items: [{ sku_id: homeSku!.skuId, quantity: 1 }],
         },
       }),
     );

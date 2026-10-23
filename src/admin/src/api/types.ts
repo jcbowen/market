@@ -271,6 +271,8 @@ export interface Order {
   delivery_type: number
   status: number
   status_text: string
+  /** 用户已从自己的订单列表软删除（1=已删）：后台仍全量可见，并提供恢复入口 */
+  user_deleted?: number
   /** 订单来源：1=C端 2=收银台（决策点⑨） */
   source?: number
   /** 手动优惠金额（收银台整单改价/抹零折算，仅收银单） */

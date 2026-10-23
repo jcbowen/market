@@ -103,8 +103,10 @@ func HasPermission(c *gin.Context, permission string) bool {
 }
 
 // RequireCommunityAccess 校验请求头声明的当前社区是否对管理员合法
-// 超管任意社区均合法；普通管理员的社区须在其绑定范围内
-// （先查 JWT 快照，未命中时实时查任职——覆盖登录后新授权的社区），越权直接 403
+// 实时口径优先（P1-6）：以 GetAdminContext 的 IsSuper/Bound 为准——JWT 快照里的
+// Role/CommunityIDs 是登录时绘制的，降权或解除任职后照抄快照等于把旧授权续到令牌过期。
+// 快照只在实时解析失败（user 服务抖动/不可用）时作为降级兜底放行，
+// 保证已授权的正常管理员不因瞬时故障被挡在门外；解析成功即完全以实时结果为准。
 //
 // 返回值：
 //   - gin.HandlerFunc: 社区访问校验中间件
@@ -118,19 +120,20 @@ func RequireCommunityAccess() gin.HandlerFunc {
 			return
 		}
 
-		uc := appcontext.GetUserContext(c)
-		if uc.Role == RoleSuperAdmin {
-			c.Next()
-			return
-		}
-		if containsInt64(uc.CommunityIDs, id) {
-			c.Next()
+		ctxInfo := resolveAdminContext(c)
+		if ctxInfo != nil {
+			if ctxInfo.IsSuper || ctxInfo.Bound {
+				c.Next()
+				return
+			}
+			response.Error(c, errcode.NoPermission)
+			c.Abort()
 			return
 		}
 
-		// 快照未命中（如登录后被追加授权的社区）实时查任职
-		ctxInfo := resolveAdminContext(c)
-		if ctxInfo != nil && (ctxInfo.IsSuper || ctxInfo.Bound) {
+		// 实时解析不可用：回退登录快照（降级放行，口径见函数注释）
+		uc := appcontext.GetUserContext(c)
+		if uc.Role == RoleSuperAdmin || containsInt64(uc.CommunityIDs, id) {
 			c.Next()
 			return
 		}

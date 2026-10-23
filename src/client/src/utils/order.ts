@@ -78,12 +78,14 @@ export function canReceive(o: OrderActionTarget): boolean {
 
 /**
  * 判断订单是否可删除（C 端软删除）
- * 与后端 order-service DeleteOrder 口径一致：仅终态订单（5已完成 6已取消 8已退款）可删；
- * 门店单也是用户名下订单，删除仅为用户侧列表清理（软删，后台不受影响），同样允许
+ * 与后端 order-service DeleteOrder 口径一致：仅终态订单（5已完成 6已取消 8已退款）可删，
+ * 且门店单（收银台代客下单，source=2）不可删——门店单据归门店口径管理，
+ * 用户侧删掉只会让单据在「我的订单」凭空消失，后续售后也无从发起
  * @param o 订单
  * @returns 是否可删除
  */
 export function canDelete(o: OrderActionTarget): boolean {
+  if (isStoreOrder(o)) return false
   return [5, 6, 8].includes(o.status)
 }
 

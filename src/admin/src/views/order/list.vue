@@ -170,7 +170,7 @@ import { computed, h, onActivated, onMounted, onUnmounted, reactive, ref } from 
 import { useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { completeOrder, getOrderList, verifyPickup, assignDelivery } from '@/api/order'
+import { completeOrder, getOrderList, verifyPickup, assignDelivery, restoreOrder } from '@/api/order'
 import { getFulfillers } from '@/api/user'
 import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
 import OrderDetailModal from './detail.vue'
@@ -404,7 +404,16 @@ const columns: DataTableColumns<Order> = [
     title: '状态',
     key: 'status',
     width: 100,
-    render: (row) => h(NTag, { type: orderStatusTagType(row.status), size: 'small', bordered: false }, { default: () => row.status_text }),
+    render: (row) =>
+      h(NSpace, { size: 4, vertical: true, wrap: true }, {
+        default: () => [
+          h(NTag, { type: orderStatusTagType(row.status), size: 'small', bordered: false }, { default: () => row.status_text }),
+          // 用户已从自己的订单列表删除（软删）：后台仍全量可见，这里标出来避免误判为脏数据
+          row.user_deleted === 1
+            ? h(NTag, { type: 'warning', size: 'small', bordered: false }, { default: () => '用户已删' })
+            : null,
+        ],
+      }),
   },
   { title: '创建时间', key: 'created_at', width: 180, render: (row) => formatDateTime(row.created_at) },
   {
@@ -482,6 +491,16 @@ const columns: DataTableColumns<Order> = [
             NButton,
             { size: 'small', type: 'error', onClick: () => openCancel(row.id) },
             { default: () => '取消订单' },
+          ),
+        )
+      }
+      // 恢复被用户删除的订单：客服场景（用户误删后请求找回），只改可见性不动资金与状态
+      if (row.user_deleted === 1) {
+        buttons.push(
+          h(
+            NButton,
+            { size: 'small', type: 'warning', onClick: () => confirmRestore(row) },
+            { default: () => '恢复' },
           ),
         )
       }
@@ -754,6 +773,26 @@ function batchComplete() {
         }
       }
       message.success(`批量完成：成功 ${successCount} 单`)
+      loadData()
+    },
+  })
+}
+
+/**
+ * 恢复被用户删除的订单
+ * 软删只是把订单从用户自己的列表隐藏（资金、状态、售后一律不变），
+ * 恢复后订单重新出现在用户的「我的订单」里；错误提示由请求拦截器统一弹出
+ * @param row 订单行
+ */
+function confirmRestore(row: Order) {
+  dialog.warning({
+    title: '恢复订单',
+    content: `确认将订单 ${row.order_no} 恢复到用户的订单列表？该操作只改可见性，不影响订单状态与资金。`,
+    positiveText: '确认恢复',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      await restoreOrder(row.id)
+      message.success('订单已恢复')
       loadData()
     },
   })

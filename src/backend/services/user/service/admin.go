@@ -581,6 +581,7 @@ func (s *AdminService) ListAdminAssignments(ctx context.Context, adminID int64) 
 // 超管不受社区约束；普通管理员权限 = 该社区全部任职角色的权限并集，
 // 再与本社区权限上限（内置社区管理员角色的权限集）取交集——
 // 超管在「社区权限」页收紧上限后立即对全员生效，无需清理存量角色
+// 账号已停用（status≠1）时一律按「非超管、无权限、无任职」返回，停用即时收口
 //
 // 参数：
 //   - ctx: 上下文
@@ -597,6 +598,12 @@ func (s *AdminService) GetAdminContext(ctx context.Context, adminID, communityID
 	a, err := s.getAdminByID(ctx, adminID)
 	if err != nil {
 		return false, nil, nil, false, err
+	}
+	// 账号停用（status≠1）直接判为「无权限、无任职」：网关的逐请求鉴权与社区访问校验都以
+	// 本口径为准，停用立即生效，不必等 access_token 自然过期或管理员重登（P1-6）。
+	// 返回空权限而非报错——「账号不存在」与「已停用」对外表现一致，不透露账号状态
+	if a.Status != 1 {
+		return false, nil, []string{}, false, nil
 	}
 	if a.IsSuper {
 		return true, nil, nil, true, nil

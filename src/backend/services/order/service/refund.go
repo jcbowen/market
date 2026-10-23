@@ -1090,6 +1090,12 @@ func (s *RefundService) queryRefundFlowStatus(ctx context.Context, refund *model
 
 // completeRefundSuccess 退款成功的统一收尾：置已退款、按明细回补库存、更新订单去向并写状态日志。
 // 整单退/全部退完 → 订单 8 已退款；部分退款完成 → 回退款前状态。
+//
+// 跨服务副作用（库存回补、优惠券回补）一律在事务提交后触发：
+// 事务内调 RPC 会让退款单/订单的行锁横跨网络往返（并发退款互相阻塞、连接池被拖垮），
+// 更糟的是「RPC 已成功、事务随后回滚」会在 product 侧留下无对应的回补流水。
+// 事务内只组装事实（订单 ID、明细、幂等槽位、是否整单退），提交后再统一调用，
+// 失败由 runRefundEffect 有限重试并打 [CRITICAL] 告警
 // 参数：
 //   - ctx: 上下文
 //   - refund: 退款单（须处于退款中状态）
@@ -1098,8 +1104,15 @@ func (s *RefundService) queryRefundFlowStatus(ctx context.Context, refund *model
 //   - operatorID: 操作者 ID
 //
 // 返回值：
-//   - error: 错误信息
+//   - error: 本地事务失败时返回错误；提交后的跨服务副作用失败只告警，不影响返回值
 func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model.Refund, items []*model.RefundItem, operatorType string, operatorID int64) error {
+	// 事务内向事务外传递的收尾事实
+	var (
+		stockOrderID  int64
+		stockBizNo    string
+		stockItems    []*product.StockItemQty
+		couponOrderID int64
+	)
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var refundCompleted model.Refund
 		if err := tx.First(&refundCompleted, refund.ID).Error; err != nil {
@@ -1128,16 +1141,16 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 			return err
 		}
 
-		// 按退款明细整批释放库存（仅金额退无商品明细，不回补库存）；
+		// 按退款明细整批回补库存（仅金额退无商品明细，不回补库存）；
 		// biz_no=退款单号：每笔退款独立幂等槽位，同一订单同一 SKU 多笔部分退款互不吞并。
-		// 原先逐行 ReleaseStock + ReleaseFlashSaleStock（2N 次往返），收口为 2 次批量 RPC
-		stockItems := make([]*product.StockItemQty, 0, len(items))
+		// 原先逐行 ReleaseStock + ReleaseFlashSaleStock（2N 次往返），收口为 2 次批量 RPC。
+		// 此处只组装入参，真正调用放到事务提交之后
+		stockItems = make([]*product.StockItemQty, 0, len(items))
 		for _, item := range items {
 			stockItems = append(stockItems, &product.StockItemQty{SkuId: item.SkuID, Quantity: item.Quantity})
 		}
-		if err := releaseStockBatch(ctx, o.ID, stockItems, refundCompleted.RefundNo); err != nil {
-			return err
-		}
+		stockOrderID = o.ID
+		stockBizNo = refundCompleted.RefundNo
 
 		// 订单去向与类型升级（money 口径）：累计成功退款（含运费）达到实付 → 订单 8 已退款，
 		// 且本笔退款单类型升级为整单退（部分退/仅金额退补齐全款后同样按整单退展示）；
@@ -1156,11 +1169,10 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 				return err
 			}
 			refundCompleted.Type = 1
-			// 整单退款回补优惠券：与取消订单同口径，全额退款后券应返还用户
+			// 整单退款回补优惠券：与取消订单同口径，全额退款后券应返还用户。
+			// 这里只记录「需要回补」，ReleaseCoupon 的 RPC 同样移到事务外
 			if o.CouponID > 0 {
-				if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
-					return fmt.Errorf("回补优惠券失败: %w", err)
-				}
+				couponOrderID = o.ID
 			}
 		}
 
@@ -1182,12 +1194,66 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 		o.UpdatedAt = now
 		return createStatusLogTx(tx, o.ID, 7, nextStatus, operatorType, operatorID, remark)
 	})
-	if err == nil {
-		// 事务提交成功后按退款明细回退销量（仅金额退无商品明细自然跳过）；
-		// 失败仅记日志：AdjustSalesCount 无幂等键，放事务内重试会重复回退
-		s.adjustRefundSales(ctx, refund.ID, items)
+	if err != nil {
+		return err
 	}
-	return err
+
+	// 事务提交成功后再执行跨服务副作用与销量回退（失败均不回滚已提交的退款）
+	_ = runRefundEffect(ctx, "回补库存", fmt.Sprintf("order_id=%d biz_no=%s", stockOrderID, stockBizNo),
+		func(c context.Context) error { return releaseStockBatch(c, stockOrderID, stockItems, stockBizNo) })
+	if couponOrderID > 0 {
+		_ = runRefundEffect(ctx, "回补优惠券", fmt.Sprintf("order_id=%d", couponOrderID),
+			func(c context.Context) error {
+				_, err := grpcclient.ProductClient.ReleaseCoupon(c, &product.ReleaseCouponReq{OrderId: couponOrderID})
+				return err
+			})
+	}
+	// 按退款明细回退销量（仅金额退无商品明细自然跳过）；
+	// AdjustSalesCount 无幂等键，放事务内重试会重复回退
+	s.adjustRefundSales(ctx, refund.ID, items)
+	return nil
+}
+
+// 退款收尾跨服务调用的重试节奏
+const (
+	// refundEffectRetry 单笔副作用的最大尝试次数
+	refundEffectRetry = 3
+	// refundEffectRetryGap 重试间隔；product 侧抖动通常在百毫秒级恢复
+	refundEffectRetryGap = 100 * time.Millisecond
+)
+
+// runRefundEffect 在退款主事务提交后执行一项跨服务副作用（库存回补 / 优惠券回补）
+// 只做「有限次重试 + 失败告警」，绝不回滚已提交的退款：退款钱已经退给用户，
+// 收尾动作不能让调用方误以为退款失败而重复退款。
+// product 侧以 order_id+sku_id+op_type+biz_no 唯一键去重（退款场景 biz_no=退款单号，
+// 优惠券按 order_id+status 幂等），因此重复调用只生效一次，重试是安全的；
+// 三次仍失败时打 [CRITICAL] 日志并带上幂等槽位，运维按同一 biz_no 手工补做即可对齐
+// 参数：
+//   - ctx: 上下文
+//   - name: 动作名，用于日志定位（如「回补库存」）
+//   - detail: 定位信息（订单号 / 退款单号 / 幂等槽位），写进日志便于人工补做
+//   - fn: 实际的跨服务调用
+//
+// 返回值：
+//   - error: 全部尝试失败时返回最后一次错误；任一成功即返回 nil
+//
+// 使用示例：
+//   - err := runRefundEffect(ctx, "回补库存", "order_id=12 biz_no=RF20261021001",
+//   - func(c context.Context) error { return releaseStockBatch(c, 12, items, "RF20261021001") })
+func runRefundEffect(ctx context.Context, name, detail string, fn func(context.Context) error) error {
+	var last error
+	for i := 0; i < refundEffectRetry; i++ {
+		if last = fn(ctx); last == nil {
+			return nil
+		}
+		log.Printf("[refund] 退款收尾%s失败（第 %d/%d 次）%s: %v", name, i+1, refundEffectRetry, detail, last)
+		if i == refundEffectRetry-1 {
+			break
+		}
+		time.Sleep(refundEffectRetryGap)
+	}
+	log.Printf("[CRITICAL] 退款收尾%s最终失败，退款单已置成功而该项未生效，请按幂等槽位人工补做：%s: %v", name, detail, last)
+	return last
 }
 
 // adjustRefundSales 退款成功后按明细回退销量（净成交口径）

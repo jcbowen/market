@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -574,7 +573,9 @@ func (s *MarketingService) UseCoupon(ctx context.Context, req *product.UseCoupon
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("优惠券状态不可使用")
+			// 并发核销后到者：与函数开头的前置判定同口径（FailedPrecondition + 同文案），
+			// 用 fmt.Errorf 会被 ToStatus 归为 Internal，用户与网关都看到"系统错误"
+			return bizerr.New(codes.FailedPrecondition, "优惠券状态不可使用")
 		}
 
 		// UsedCount 原子自增，防并发丢失更新

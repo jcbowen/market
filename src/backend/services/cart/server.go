@@ -53,9 +53,14 @@ func (s *server) GetCart(ctx stdctx.Context, req *cart.GetCartReq) (*cart.CartRe
 	return &cart.CartResp{Items: items}, nil
 }
 
+// skuStatusEnabled 与商品服务 SkuService.SkuStatusEnabled 同值：SKU 启用态是加购与展示的
+// 共同口径（cart 不引商品服务包，proto SkuInfo.status 原样透出，此处按值判定）
+const skuStatusEnabled = 1
+
 // AddItem 添加商品到购物车
 // 若同一用户同一 SKU 已存在记录，则累加数量并置为选中；否则新建记录。
-// 保持与 Redis 实现一致，仅校验 SKU/商品是否存在及数量大于 0，不校验 min_buy。
+// 交易入口校验三件事：加购社区=SKU 归属社区（P0-4）、SKU 启用（规格未失效）、商品可售（P1-4）；
+// 不校验 min_buy（与既有口径一致，由结算/下单侧把关）
 //
 // 参数：
 //   - ctx: 上下文
@@ -85,6 +90,13 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 		req.CommunityId = skuInfo.CommunityId
 	} else if skuInfo.CommunityId != req.CommunityId {
 		return nil, status.Errorf(codes.PermissionDenied, "该商品不属于当前社区")
+	}
+
+	// 规格失效收口：SKU 被后台禁用/移除规格/随商品软删连带禁用（status≠1）后不允许加购。
+	// 与结算侧商品服务的拦截（BatchGetSkus 只放启用 SKU）以及展示侧 invalidReasonOf
+	// 的「规格已失效」同口径，避免加进去结算不了
+	if skuInfo.Status != skuStatusEnabled {
+		return nil, status.Errorf(codes.FailedPrecondition, "规格已失效，暂不可购买")
 	}
 
 	// 可售收口（P1-4）：加购即交易入口，非上架态（下架/定时上架未到点）不允许加购。
@@ -286,7 +298,8 @@ func (s *server) buildCartItems(ctx stdctx.Context, list []*model.Cart) ([]*cart
 }
 
 // buildCartItem 将单个购物车模型转换为响应项
-// 失效判定：SKU 不存在/商品不存在 →"商品已失效"；商品下架 →"商品已下架"；库存为 0 →"商品已售罄"。
+// 失效判定：SKU 不存在 →"商品已失效"；SKU 已禁用/移除 →"规格已失效"；商品不存在 →"商品已失效"；
+// 商品下架 →"商品已下架"；库存为 0 →"商品已售罄"（判定实现见 invalidReasonOf）。
 // 失效项不再跳过而是返回并携带失效原因，展示信息优先使用实时数据，SKU/商品已删除时回退快照；
 // 失效项 selected 强制置为 false，结算（GetSelectedItems）与合计自动排除。
 //
@@ -351,8 +364,11 @@ func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartIte
 }
 
 // invalidReasonOf 判定购物车项的失效原因
-// 判定顺序：SKU 不存在 →"商品已失效"；商品不存在 →"商品已失效"；商品下架 →"商品已下架"；库存为 0 →"商品已售罄"。
+// 判定顺序：SKU 不存在 →"商品已失效"；SKU 已禁用/被移除（status≠1）→"规格已失效"；
+// 商品不存在 →"商品已失效"；商品下架 →"商品已下架"；库存为 0 →"商品已售罄"。
 // SKU/商品的"不存在"类错误（NotFound）同样归入失效而非系统错误；其他查询错误按系统错误返回。
+// 「规格已失效」与后端拦截同口径（商品服务 BatchGetSkus 只放启用 SKU），
+// 后台禁用某 SKU 后购物车存量行不再显示有效，也不会被选进结算。
 //
 // 参数：
 //   - ctx: 上下文
@@ -382,6 +398,8 @@ func (s *server) invalidReasonOf(ctx stdctx.Context, skuID int64) (*product.SkuI
 	}
 
 	switch {
+	case skuInfo.Status != skuStatusEnabled:
+		return skuInfo, productInfo, "规格已失效", nil
 	case productInfo.Product == nil || productInfo.Product.Id == 0:
 		return skuInfo, productInfo, "商品已失效", nil
 	case productInfo.Product.Status != 1:

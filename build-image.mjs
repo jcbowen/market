@@ -180,6 +180,14 @@ for (const r of required) {
 
 // 产物新旧校验：任一二进制早于 src/backend 下最新源码（.go/.proto/go.mod/go.sum），
 // 说明改了代码但没重新 node build.mjs，直接失败提示重建，不静默打包旧产物
+//
+// 范围取舍（两条刻意排除，均有依据）：
+//   - *_test.go 不参与 go build 产物（构建时被编译器排除），改测试/注释不应
+//     触发 8 个二进制 × 双平台全量重编，故新鲜度判定跳过测试文件；
+//   - entrypoint.sh / Dockerfile.allinone / config.allinone.yaml 是镜像构建期
+//     直接 COPY 的文件（见 Dockerfile.allinone），不进 bin/linux-* 产物、也不该
+//     要求先跑 build.mjs——buildx 对 COPY 层按文件内容哈希失效，内容一变该层
+//     自动重建，天然比 mtime 判定更可靠，故不纳入本校验（缺失检查仍在上文 required）。
 const SOURCE_EXTENSIONS = new Set(['.go', '.proto', '.mod', '.sum']);
 function newestSourceMtime(dir) {
   let newest = 0;
@@ -188,7 +196,8 @@ function newestSourceMtime(dir) {
     if (e.isDirectory()) {
       if (e.name === 'vendor' || e.name === 'tmp') continue;
       newest = Math.max(newest, newestSourceMtime(full));
-    } else if (SOURCE_EXTENSIONS.has(path.extname(e.name))) {
+    } else if (SOURCE_EXTENSIONS.has(path.extname(e.name)) && !e.name.endsWith('_test.go')) {
+      // 跳过 *_test.go：测试文件不进二进制产物，仅其变更不应强制全量重编
       newest = Math.max(newest, fs.statSync(full).mtimeMs);
     }
   }

@@ -12,9 +12,9 @@ const (
 
 // 出库单类型常量（后端枚举校验，禁止前端随意传值）
 const (
-	StockOutTypeLoss    int32 = 1 // 报损出库
-	StockOutTypeUse     int32 = 2 // 领用出库
-	StockOutTypeAdjust  int32 = 3 // 调整出库
+	StockOutTypeLoss   int32 = 1 // 报损出库
+	StockOutTypeUse    int32 = 2 // 领用出库
+	StockOutTypeAdjust int32 = 3 // 调整出库
 )
 
 // StockInOrder 入库单模型
@@ -87,11 +87,11 @@ func (StockOutOrder) TableName() string {
 // StockOutOrderItem 出库单明细模型
 type StockOutOrderItem struct {
 	base.MysqlBaseModel
-	ID        int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	OutOrderID int64 `gorm:"column:out_order_id;type:bigint;not null;index;comment:出库单 ID" json:"out_order_id"`
-	SkuID     int64  `gorm:"column:sku_id;type:bigint;not null;index;comment:SKU ID" json:"sku_id"`
-	Quantity  int32  `gorm:"column:quantity;type:int;not null;comment:出库数量" json:"quantity"`
-	CreatedAt string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	ID         int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	OutOrderID int64  `gorm:"column:out_order_id;type:bigint;not null;index;comment:出库单 ID" json:"out_order_id"`
+	SkuID      int64  `gorm:"column:sku_id;type:bigint;not null;index;comment:SKU ID" json:"sku_id"`
+	Quantity   int32  `gorm:"column:quantity;type:int;not null;comment:出库数量" json:"quantity"`
+	CreatedAt  string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 }
 
 // TableName 返回出库单明细表名

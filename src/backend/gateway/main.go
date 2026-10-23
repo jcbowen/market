@@ -46,7 +46,15 @@ func main() {
 	defer func() { _ = clients.Close() }()
 
 	// 站点设置（部署域名与品牌）内存缓存：支付回调派生、附件外链基址、HTML 品牌注入共用
-	brand.SetDefault(brand.New(clients.UserClient, os.Getenv("SITE_BASE_URL")))
+	// 启动期同步预热一次（P1-13）：缓存首次读是异步刷新，冷启动第一个 HTML 请求会拿到空品牌，
+	// 预热失败不阻断启动（user 服务稍后就绪时由 TTL 刷新补上）
+	brandCache := brand.New(clients.UserClient, os.Getenv("SITE_BASE_URL"))
+	brand.SetDefault(brandCache)
+	warmCtx, warmCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := brandCache.Warm(warmCtx); err != nil {
+		log.Printf("[WARN] 站点设置预热未完成: %v", err)
+	}
+	warmCancel()
 
 	r := gin.New()
 	applyTrustedProxies(r, cfg)
@@ -56,13 +64,16 @@ func main() {
 	stopDebugger := registerDebugger(r, cfg)
 	defer stopDebugger()
 	r.Use(gwMiddleware.RequestLoggerMiddleware())
+	// CORS 必须在限流之前（P1-9）：跨域预检是不带凭据的 OPTIONS 请求，一旦被判 429，
+	// 响应里没有 Access-Control-* 头，浏览器只会报 opaque 的「CORS 失败」，
+	// 前端与运维都看不出真实原因（限流），排查成本远高于少扣的那几个令牌
+	baseMw := jcMiddleware.Base{}
+	r.Use(baseMw.Cors())
 	r.Use(gwMiddleware.SecurityHeadersMiddleware())
 	r.Use(gwMiddleware.BlockTraceMiddleware())
 	r.Use(gwMiddleware.RealIPMiddleware())
 	r.Use(gwMiddleware.RateLimitMiddleware(100, 150))
 
-	baseMw := jcMiddleware.Base{}
-	r.Use(baseMw.Cors())
 	r.Use(baseMw.SetGPC(r))
 	r.Use(staticCacheMiddleware())
 
@@ -185,7 +196,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	// C 端上传（履约签收照片等）：独立 handler 持有 product 客户端，IsDisplay=false
 	fulfillmentUploadHandler := handler.NewFulfillmentUploadHandler(clients.ProductClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
-	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient)
+	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg)
 	// IP 定位：本地 GeoLite2-City 数据库，相对路径以可执行文件所在目录为基准
 	geoipHandler := handler.NewGeoIPHandler(resolveBinPath(cfg.GeoIP.DBPath))
 	// 行政区划：级联选择器懒加载、IP 定位反查区划、后台管理（列表/检查更新/差异覆盖）
@@ -368,6 +379,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 两者都会流转订单状态，权限与改订单一致（order:update）
 			authAdmin.POST("/orders/:id/payment-sync", gwMiddleware.RequirePermission("order:update"), adminHandler.SyncAdminOrderPayment)
 			authAdmin.POST("/orders/:id/payment-mark-paid", gwMiddleware.RequirePermission("order:update"), adminHandler.MarkAdminOrderPaid)
+			// 恢复被用户软删除的订单（C 端删除仅从列表移除，后台可恢复）
+			authAdmin.POST("/orders/:id/restore", gwMiddleware.RequirePermission("order:update"), adminHandler.RestoreAdminOrder)
 			// 支付异常队列：浏览与订单同域（order:view），销账属处置（order:update）；
 			// 报文原文另收一道 payment:raw:view（刻意不进社区管理员默认权限上限，实际只有超管能展开），
 			// 社区范围由 handler 按管理员语境下发

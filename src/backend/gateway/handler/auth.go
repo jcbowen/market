@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/channel"
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -29,6 +30,9 @@ const phoneOpenidPrefix = "phone_"
 type AuthHandler struct {
 	jwtManager *jwt.Manager
 	userClient user.UserServiceClient
+	// refreshGuard refresh 令牌黑名单（P1-8）：与后台共用一套机制——
+	// C 端刷新同样轮转，旧令牌不登记黑名单等于登出只是前端表演
+	refreshGuard *refreshGuard
 }
 
 // NewAuthHandler 创建 C 端认证处理器
@@ -37,13 +41,15 @@ type AuthHandler struct {
 // 参数：
 //   - jwtManager: JWT 管理器
 //   - userClient: user-service gRPC 客户端
+//   - cfg: 全局配置（取 Redis 连接参数，供 refresh 黑名单）
 //
 // 返回：
 //   - *AuthHandler: 认证处理器实例
-func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient) *AuthHandler {
+func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, cfg *config.Config) *AuthHandler {
 	return &AuthHandler{
-		jwtManager: jwtManager,
-		userClient: userClient,
+		jwtManager:   jwtManager,
+		userClient:   userClient,
+		refreshGuard: newRefreshGuard(cfg),
 	}
 }
 
@@ -119,17 +125,21 @@ func (h *AuthHandler) WechatLogin(c *gin.Context) {
 	}
 
 	// E 版构造：配置非法时返回 error 而非 panic（wego v0.2.0 E 体系）
+	// 原始错误只进日志（P1-12）：配置类错误文本常带 AppID 等渠道标识，透给客户端等于对外暴露凭证信息
 	miniClient, err := miniprogram.NewClientE(&miniprogram.Config{
 		AppID:     chResp.AppId,
 		AppSecret: chResp.AppSecret,
 	})
 	if err != nil {
-		response.Error(c, errcode.InternalServerError, "微信小程序客户端初始化失败: "+err.Error())
+		log.Printf("[ERROR] 微信小程序客户端初始化失败 channel=%s: %v", channel.MP, err)
+		response.Error(c, errcode.InternalServerError, "登录服务暂不可用，请稍后重试")
 		return
 	}
 	session, err := miniClient.Code2Session(ctx, req.Code)
 	if err != nil {
-		response.Error(c, errcode.InternalServerError, err.Error())
+		// Code2Session 失败多为 code 已被使用/过期或渠道凭证失效，原文含微信返回码与appid，不外泄
+		log.Printf("[WARN] 微信小程序 Code2Session 失败: %v", err)
+		response.Error(c, errcode.InternalServerError, "微信登录失败，请重新进入小程序重试")
 		return
 	}
 
@@ -224,6 +234,9 @@ func (h *AuthHandler) PhoneLogin(c *gin.Context) {
 // 同时刷新 refresh_token，返回完整登录信息
 // 令牌来源：httpOnly cookie（H5）优先，请求体兜底（小程序/App）
 //
+// 加固口径与后台一致（P1-8）：旧令牌在入口即被原子消费进黑名单——successResponse
+// 每次都会签发新的 refresh 令牌，若不登记旧 jti，登出/泄露的令牌在 7 天有效期内仍可续期。
+//
 // 参数：
 //   - c: gin 上下文
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
@@ -245,6 +258,11 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	// 强校验 token 用途：仅 refresh token 可刷新，access token 不得用于换取新令牌
 	if claims.Type != jwt.TokenTypeUser || claims.TokenUse != jwt.TokenUseRefresh {
 		response.Error(c, errcode.NoPermission)
+		return
+	}
+	// 黑名单原子消费（SETNX）：已用过的旧令牌直接拒，并发重放只有一次能通过
+	if h.refreshGuard.consume(c.Request.Context(), claims.ID, time.Until(claims.ExpiresAt.Time)) {
+		response.Error(c, errcode.InvalidToken)
 		return
 	}
 
@@ -322,13 +340,21 @@ func (h *AuthHandler) successResponse(c *gin.Context, u *user.UserInfo) {
 	response.Success(c, result)
 }
 
-// Logout C 端登出：清除 refresh_token 的 httpOnly cookie
-// 本地令牌清理由前端完成，本端点只负责 JS 清不掉的那一份
+// Logout C 端登出：清除 refresh_token 的 httpOnly cookie 并吊销该令牌
+// 本地令牌清理由前端完成，本端点只负责 JS 清不掉的那一份；
+// 不吊销服务端令牌的话，登出后旧 refresh 在剩余有效期内仍能续期出新的 access_token（P1-8）
 //
 // 参数：
 //   - c: gin 上下文
 func (h *AuthHandler) Logout(c *gin.Context) {
 	clearRefreshTokenCookie(c)
+	// 吊销当前 refresh 令牌：解析失败（过期/伪造）时无需处理，令牌本就不可用
+	if token := firstNonEmptyRefreshToken(c, ""); token != "" {
+		if claims, err := h.jwtManager.ParseToken(token); err == nil &&
+			claims.Type == jwt.TokenTypeUser && claims.TokenUse == jwt.TokenUseRefresh {
+			h.refreshGuard.revoke(c.Request.Context(), claims.ID, time.Until(claims.ExpiresAt.Time))
+		}
+	}
 	response.Success(c, gin.H{})
 }
 

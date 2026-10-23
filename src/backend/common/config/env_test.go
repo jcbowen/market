@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,8 @@ import (
  *   - DEBUGGER_ENABLED 优先于配置文件值，未设置时不改写
  *   - DEBUGGER_SERVICE_NAME 覆盖 debug_logs 来源标识（去空白），未设置时不改写
  *   - 逗号列表解析：去空白、丢空项
+ *   - 外部 DB 拓扑七项：非空覆盖、空值逐项不改写；端口/库号整数校验（parseNumericEnv 正反用例）
+ *   - EnsureSecureJWT：生产环境（APP_ENV=production）无视 JWT_ALLOW_INSECURE_DEV 一律 fail-fast
  */
 
 // TestApplyEnvOverridesDebuggerIPs DEBUGGER_ALLOWED_IPS 覆盖配置文件里的白名单（M2）
@@ -123,7 +126,8 @@ func TestApplyEnvOverridesDbTopology(t *testing.T) {
 		}
 	}
 
-	// 空值等同未设置：保持配置文件值（内部 compose 部署不设这些变量的口径）
+	// 空值等同未设置：全部 7 项逐一断言保持配置文件值（内部 compose 部署不设这些变量的口径；
+	// compose 以 ${VAR:-} 注入空串属常态，空串若报错/覆盖即破坏「留空沿用配置」契约）
 	t.Setenv("DB_HOST", "")
 	t.Setenv("DB_PORT", "")
 	t.Setenv("DB_NAME", "")
@@ -132,8 +136,96 @@ func TestApplyEnvOverridesDbTopology(t *testing.T) {
 	t.Setenv("REDIS_PORT", "")
 	t.Setenv("REDIS_DB", "")
 	ApplyEnvOverrides(cfg)
-	if cfg.Db.Host != "db.example.internal" || cfg.Redis.Host != "cache.example.internal" {
-		t.Errorf("拓扑变量为空时不应改写配置文件值，db.host=%q redis.host=%q", cfg.Db.Host, cfg.Redis.Host)
+	emptyChecks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"DB_HOST 为空", cfg.Db.Host, "db.example.internal"},
+		{"DB_PORT 为空", cfg.Db.Port, "3307"},
+		{"DB_NAME 为空", cfg.Db.Dbname, "market_prod"},
+		{"DB_USER 为空", cfg.Db.Username, "market_rw"},
+		{"REDIS_HOST 为空", cfg.Redis.Host, "cache.example.internal"},
+		{"REDIS_PORT 为空", cfg.Redis.Port, "6380"},
+		{"REDIS_DB 为空", cfg.Redis.Db, "2"},
+	}
+	for _, c := range emptyChecks {
+		if c.got != c.want {
+			t.Errorf("%s 时不应改写配置文件值，期望保持 %q，实际 %q", c.name, c.want, c.got)
+		}
+	}
+}
+
+// TestParseNumericEnv 端口/库号类环境变量的整数校验：合法值通过、非法值报错且带变量名
+// 非法口径：非纯整数（夹带空白、写成 tcp、带引号）或超出区间；空串不进入本函数
+// （调用方 applyNumericEnvOverride 已短路为「沿用配置文件」，见拓扑用例的空值阶段）
+func TestParseNumericEnv(t *testing.T) {
+	// 正例：区间内的纯整数原样解析
+	for _, c := range []struct {
+		key  string
+		val  string
+		min  int
+		max  int
+		want int
+	}{
+		{"DB_PORT", "3306", minPort, maxPort, 3306},
+		{"DB_PORT", "1", minPort, maxPort, 1},
+		{"DB_PORT", "65535", minPort, maxPort, 65535},
+		{"REDIS_PORT", "6379", minPort, maxPort, 6379},
+		{"REDIS_DB", "0", minRedisDB, maxRedisDB, 0},
+		{"REDIS_DB", "2", minRedisDB, maxRedisDB, 2},
+	} {
+		got, err := parseNumericEnv(c.key, c.val, c.min, c.max)
+		if err != nil {
+			t.Errorf("parseNumericEnv(%s, %q) 不应报错，实际 %v", c.key, c.val, err)
+		}
+		if got != c.want {
+			t.Errorf("parseNumericEnv(%s, %q) = %d，期望 %d", c.key, c.val, got, c.want)
+		}
+	}
+
+	// 反例：伪装成「网络不可达」的经典误配，必须报出变量名而非透传
+	for _, c := range []struct {
+		key string
+		val string
+		min int
+		max int
+	}{
+		{"DB_PORT", "3306 ", minPort, maxPort},       // 夹带尾随空格
+		{"DB_PORT", " tcp", minPort, maxPort},        // 把协议名写进端口
+		{"DB_PORT", "tcp", minPort, maxPort},         // 同上
+		{"REDIS_PORT", "6379\t", minPort, maxPort},   // 夹带制表符
+		{"DB_PORT", "0", minPort, maxPort},           // 端口下界外
+		{"DB_PORT", "70000", minPort, maxPort},       // 端口上界外
+		{"REDIS_DB", "-1", minRedisDB, maxRedisDB},   // 库号不能为负
+		{"REDIS_DB", "6379", minRedisDB, maxRedisDB}, // 把端口误填进库号
+	} {
+		_, err := parseNumericEnv(c.key, c.val, c.min, c.max)
+		if err == nil {
+			t.Errorf("parseNumericEnv(%s, %q) 应拒绝非法值，实际通过", c.key, c.val)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.key) {
+			t.Errorf("parseNumericEnv(%s, %q) 错误文案应包含变量名，实际 %v", c.key, c.val, err)
+		}
+	}
+}
+
+// TestApplyEnvOverridesValidPortNormalize 合法端口经校验后规范化覆盖（走生产读取的真实变量名）
+func TestApplyEnvOverridesValidPortNormalize(t *testing.T) {
+	cfg := &Config{}
+	cfg.Db.Port = "3306"
+	cfg.Redis.Port = "6379"
+	cfg.Redis.Db = "0"
+
+	t.Setenv("DB_PORT", "3307")
+	t.Setenv("REDIS_PORT", "6380")
+	t.Setenv("REDIS_DB", "3")
+	ApplyEnvOverrides(cfg)
+
+	if cfg.Db.Port != "3307" || cfg.Redis.Port != "6380" || cfg.Redis.Db != "3" {
+		t.Errorf("合法数值应校验后覆盖：db.port=%q redis.port=%q redis.db=%q",
+			cfg.Db.Port, cfg.Redis.Port, cfg.Redis.Db)
 	}
 }
 
@@ -165,5 +257,55 @@ func TestSplitCSVList(t *testing.T) {
 	}
 	if list := splitCSVList(""); len(list) != 0 {
 		t.Errorf("空输入应返回空切片，实际 %v", list)
+	}
+}
+
+// TestEnsureSecureJWTProductionIgnoresAllowInsecure 生产闸门：APP_ENV=production 时
+// 密钥为空/默认/过短一律拒绝启动，即使显式设了 JWT_ALLOW_INSECURE_DEV=true 也无效
+// （默认占位密钥是公开值，放行等于任何人可伪造超管上线）；错误文案须带变量名
+func TestEnsureSecureJWTProductionIgnoresAllowInsecure(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv(EnvAllowInsecureJWT, "true")
+
+	cfg := &Config{}
+	cfg.JWT.Secret = DefaultJWTSecret
+	if err := EnsureSecureJWT(cfg); err == nil {
+		t.Fatal("production + 默认占位密钥 + 放行开关应拒绝启动，实际放行")
+	} else if !strings.Contains(err.Error(), EnvAllowInsecureJWT) {
+		t.Errorf("拒绝启动的错误文案应包含变量名 %s，实际: %v", EnvAllowInsecureJWT, err)
+	}
+
+	// 空密钥与过短密钥同属不安全口径，生产下一视同仁拒绝
+	cfg.JWT.Secret = ""
+	if err := EnsureSecureJWT(cfg); err == nil {
+		t.Error("production + 空密钥应拒绝启动")
+	}
+	cfg.JWT.Secret = "short-secret"
+	if err := EnsureSecureJWT(cfg); err == nil {
+		t.Error("production + 过短密钥应拒绝启动")
+	}
+
+	// 生产环境注入合格强密钥应放行（闸门只管不安全值，不拦正常部署）
+	cfg.JWT.Secret = strings.Repeat("k", minJWTSecretLen)
+	if err := EnsureSecureJWT(cfg); err != nil {
+		t.Errorf("production + 32 位强密钥应通过，实际 %v", err)
+	}
+}
+
+// TestEnsureSecureJWTDevAllowInsecure 非生产环境保留零配置放行：
+// 不安全密钥 + JWT_ALLOW_INSECURE_DEV=true 可启动（仅告警），不设开关则拒绝
+func TestEnsureSecureJWTDevAllowInsecure(t *testing.T) {
+	t.Setenv("APP_ENV", "")
+	cfg := &Config{}
+	cfg.JWT.Secret = DefaultJWTSecret
+
+	t.Setenv(EnvAllowInsecureJWT, "true")
+	if err := EnsureSecureJWT(cfg); err != nil {
+		t.Errorf("非生产 + 放行开关应可用，实际 %v", err)
+	}
+
+	t.Setenv(EnvAllowInsecureJWT, "")
+	if err := EnsureSecureJWT(cfg); err == nil {
+		t.Error("非生产未设放行开关时，默认占位密钥应拒绝启动")
 	}
 }

@@ -200,6 +200,21 @@ services:
       # 可信平台专用头（前置 CDN 时填代理强制覆盖写入的客户端真实 IP 头，客户端伪造无效），
       # 如阿里云 CDN 填 Ali-CDN-Real-IP；与 TRUSTED_PROXIES 同口径，留空不启用
       TRUSTED_PLATFORM: ${TRUSTED_PLATFORM:-}
+      # 部署域名基址（scheme://host，不含路径），仅 gateway 需要：作为后台「站点设置」的
+      # 兜底默认值，支付回调地址/附件外链/HTML 品牌注入按生效域名派生。留空按当前请求域名现推
+      SITE_BASE_URL: ${SITE_BASE_URL:-}
+      # debugger 临时排查开关与白名单（与主 compose 同口径：留空 = 不覆盖配置文件；
+      # 两行都给才既记日志又开页面，只给 ENABLED 不给白名单时页面不注册 fail-closed）
+      DEBUGGER_ENABLED: ${DEBUGGER_ENABLED:-}
+      DEBUGGER_ALLOWED_IPS: ${DEBUGGER_ALLOWED_IPS:-}
+      # 运行环境标识：gateway 据此判定生产（IsProduction→EnsureSecureJWT 无视
+      # JWT_ALLOW_INSECURE_DEV 放行、fail-fast），后台「关于」页同源显示；留空 = 非生产
+      APP_ENV: ${APP_ENV:-}
+      # 后台版本检查源（gateway/handler/update.go 直读环境变量，不经配置文件）：
+      # 留空走内置默认（jcbowen/market + 官方 Docker Hub API），设 off/none/disable 关闭对应源
+      DOCKERHUB_REPO: ${DOCKERHUB_REPO:-}
+      GHCR_REPO: ${GHCR_REPO:-}
+      DOCKERHUB_API_BASE: ${DOCKERHUB_API_BASE:-}
     depends_on:
       user-service:
         condition: service_started

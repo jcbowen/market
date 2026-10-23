@@ -311,6 +311,7 @@ func (h *AdminHandler) getAdminPermissionsForCommunity(ctx context.Context, admi
 //
 // 返回值：
 //   - int64: 社区 ID
+//
 // getAdminCommunityID 解析当前请求的数据归属社区（管理端查询的统一作用域）
 // 优先级：X-Community-Id 请求头（实时校验归属后才采用）→ JWT 默认社区快照
 // 实时校验（P1-10）：JWT 快照的 CommunityIDs 绘于登录时，任职被撤销/追加后需重登才刷新，
@@ -1416,12 +1417,15 @@ func (e errorString) Error() string { return string(e) }
 // 令牌来源：httpOnly cookie（新版前端）优先，表单/请求体兜底（旧前端缓存、POS 端）
 //
 // P1-5 三道加固（此前只凭旧 claims 续发，停用管理员在令牌有效期内永远在线）：
-//  1. 黑名单校验：轮转后旧 jti 立即失效，重放的旧令牌直接拒（Redis 故障时放行降级）；
+//  1. 黑名单原子消费（SETNX）：旧 jti 在入口即登记为「已使用」，并发重放只有一次能通过
+//     （Redis 故障时放行降级）。代价是刷新中途失败也需重新登录——安全优先于便利；
 //  2. 账号实时校验：按 claims.UserID 查库，账号已删除或 status≠1（停用）即拒，
 //     不必等 7 天 refresh 令牌自然过期；
 //  3. 轮转：签发新 refresh 令牌并吊销旧的——被盗令牌在合法用户刷新一次后即失效。
 //     cookie 模式（新版前端）新令牌随 httpOnly cookie 下发；旧前端/POS 从响应体取，
 //     两种模式都会拿到新值，不存在「吊销了却还在用旧值」的断档。
+//  4. 角色/社区按实时账号重推导（P1-2）：不再照抄旧令牌 claims 的 super_admin 快照，
+//     降权或解除社区绑定后刷新即生效。
 //
 // 参数：
 //   - c: gin 上下文
@@ -1447,8 +1451,9 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		response.Error(c, errcode.InvalidToken)
 		return
 	}
-	// 黑名单校验（P1-5）：轮转吊销过的旧令牌不得再用
-	if h.refreshGuard.revoked(ctx, claims.ID) {
+	// 黑名单原子消费（P1-5 + P1-7）：SETNX 一次完成「查旧 jti 是否用过 + 登记为已用」，
+	// 同一枚令牌被并发提交两次时只有先抢到的那次能刷新
+	if h.refreshGuard.consume(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)) {
 		response.Error(c, errcode.InvalidToken)
 		return
 	}
@@ -1469,20 +1474,32 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
+	// 角色与社区语境按实时账号重推导（P1-2）：claims 里的 super_admin / community_ids
+	// 是签发当时的快照，降权或解除社区绑定后若照抄快照，refresh 等于把旧权限无限续期。
+	// 默认社区沿用登录口径；旧令牌社区若仍在当前任职列表内则保留（不打断正在操作的社区），
+	// 已被解除绑定时回退默认社区。权限不写进 JWT（登录侧同样传 nil），由中间件按社区实时解析。
+	communityID := h.getAdminDefaultCommunityID(admin)
+	if claims.CommunityID > 0 && (admin.IsSuper || containsInt64(admin.CommunityIds, claims.CommunityID)) {
+		communityID = claims.CommunityID
+	}
+	roleCode := "admin"
+	if admin.IsSuper {
+		roleCode = "super_admin"
+	}
+
 	accessToken, accessExpire, err := h.jwtManager.GenerateAdminAccessToken(
-		claims.UserID, claims.Phone, claims.Role, claims.CommunityID, claims.CommunityIDs, claims.Permissions, claims.Username, claims.RealName,
+		admin.Id, admin.Phone, roleCode, communityID, admin.CommunityIds, nil, admin.Username, admin.RealName,
 	)
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
-	// 轮转：新 refresh 令牌随本次刷新一起签发，旧令牌进黑名单
+	// 轮转：新 refresh 令牌随本次刷新一起签发；旧令牌已在入口原子消费，无需再写黑名单
 	newRefresh, refreshExpire, err := h.jwtManager.GenerateRefreshToken(claims.UserID, jwt.TokenTypeAdmin)
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
-	h.refreshGuard.revoke(ctx, claims.ID, time.Until(claims.ExpiresAt.Time))
 
 	now := time.Now()
 	resp := gin.H{
@@ -2202,17 +2219,19 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 	shiftID, _ := strconv.ParseInt(c.DefaultQuery("shift_id", "0"), 10, 64)
 
 	resp, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
-		CommunityId:   communityID,
-		UserId:        userID,
-		Source:        int32(source),
-		Status:        int32(status),
-		ShiftId:       shiftID,
-		OrderNo:       c.Query("order_no"),
-		StartTime:     c.Query("start_time"),
-		EndTime:       c.Query("end_time"),
-		ReceiverName:  c.Query("receiver_name"),
-		ReceiverPhone: c.Query("receiver_phone"),
-		PickupCode:    c.Query("pickup_code"),
+		CommunityId: communityID,
+		UserId:      userID,
+		// 后台管理端一律看全量：软删除只影响 C 端列表，客服按会员查订单必须能查到已删单
+		IncludeUserDeleted: true,
+		Source:             int32(source),
+		Status:             int32(status),
+		ShiftId:            shiftID,
+		OrderNo:            c.Query("order_no"),
+		StartTime:          c.Query("start_time"),
+		EndTime:            c.Query("end_time"),
+		ReceiverName:       c.Query("receiver_name"),
+		ReceiverPhone:      c.Query("receiver_phone"),
+		PickupCode:         c.Query("pickup_code"),
 		Pagination: &common.Pagination{
 			Page:     int32(page),
 			PageSize: int32(pageSize),
@@ -2266,6 +2285,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"status":          o.Status,
 			"status_text":     orderStatusText(o.Status, o.DeliveryType),
 			"source":          o.Source,
+			"user_deleted":    o.UserDeleted,
 			"operator_name":   o.OperatorName,
 			"shift_id":        o.ShiftId,
 			"pay_type":        payType,
@@ -2484,11 +2504,13 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"express_company": o.ExpressCompany,
 		"express_no":      o.ExpressNo,
 		"source":          o.Source,
-		"operator_name":   o.OperatorName,
-		"shift_id":        o.ShiftId,
-		"pay_type":        payType,
-		"pay_type_text":   payTypeText,
-		"pickup_code":     o.PickupCode,
+		// 用户软删标记：详情页据此显示「已被用户删除」并给出恢复入口
+		"user_deleted":  o.UserDeleted,
+		"operator_name": o.OperatorName,
+		"shift_id":      o.ShiftId,
+		"pay_type":      payType,
+		"pay_type_text": payTypeText,
+		"pickup_code":   o.PickupCode,
 		// 配送员（履约人员姓名快照）与签收凭证图片（决策点②拍照留证）
 		"delivery_user_name":    o.DeliveryUserName,
 		"delivery_proof_images": o.DeliveryProofImages,
@@ -2719,6 +2741,41 @@ func (h *AdminHandler) ensureOrderHasPaidRecord(c *gin.Context, orderID int64) e
 // 同一订单可能有多次支付尝试，默认核实最近一笔待支付的渠道单；排查特定一笔时带上支付单号
 type AdminSyncPaymentReq struct {
 	PaymentNo string `json:"payment_no"`
+}
+
+// RestoreAdminOrder 后台恢复被用户软删除的订单（客服场景「我删错了，帮我找回上次买的东西」）
+// 软删除只影响 C 端列表与角标，数据与状态从未变动，故恢复只是把标记复位。
+// 社区隔离沿用 orderInCommunity 的实时口径：社区管理员只能恢复可操作社区的订单。
+//
+// 接口: POST /api/v1/admin/orders/:id/restore
+//
+// 参数：
+//   - c: gin 上下文，路径 :id 为订单 ID
+func (h *AdminHandler) RestoreAdminOrder(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	o, err := h.orderInCommunity(c, id)
+	if err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return
+	}
+	if o.UserDeleted != 1 {
+		response.Error(c, errcode.OperationNotAllowed, "该订单未被用户删除")
+		return
+	}
+
+	if _, err := h.orderClient.RestoreOrder(c.Request.Context(), &order.RestoreOrderReq{
+		Id:          id,
+		CommunityId: o.CommunityId,
+	}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id})
 }
 
 // SyncAdminOrderPayment 后台「同步支付状态」：向渠道核实该订单是否已收款，已收款则补同步
@@ -4303,6 +4360,9 @@ func (h *AdminHandler) ListUserFrequentProducts(c *gin.Context) {
 		Page:        int32(page),
 		PageSize:    int32(pageSize),
 		CommunityId: h.scopeCommunityID(c),
+		// 后台会员弹窗为全量口径：同弹窗「订单」Tab 能看到已删单，
+		// 「常买商品」也必须按同一批订单统计，否则两个 Tab 互相矛盾
+		IncludeUserDeleted: true,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

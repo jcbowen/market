@@ -33,6 +33,10 @@ const (
 
 	// refreshGuardOpTimeout 单次 Redis 命令超时（刷新是低频入口，1s 足够）
 	refreshGuardOpTimeout = time.Second
+
+	// refreshGuardMinTTL consume 兜底 TTL：令牌剩余寿命非正时仍须落键，
+	// 用 1 分钟足够覆盖并发对手的重放窗口，又不会为废令牌长期占内存
+	refreshGuardMinTTL = time.Minute
 )
 
 // refreshGuard refresh 令牌黑名单
@@ -96,6 +100,43 @@ func (g *refreshGuard) revoked(ctx context.Context, jti string) bool {
 		return false
 	}
 	return n > 0
+}
+
+// consume 原子「校验并消费」一个 jti，返回是否应判为已吊销（P1-7 并发重放）
+// 刷新链路不能用「先 revoked 查、成功后再 revoke 写」两步：同一枚旧 refresh 令牌被并发
+// 提交两次时，两个请求都在写键前查到「未吊销」，于是都换取到新令牌——轮转防线失效。
+// SETNX 把两步合一：抢到键即「此前未吊销且本次已消费」，抢不到即已被并发请求或上次轮转消费。
+// Redis 故障时无法判定，沿用 fail-open 契约放行（与 revoked 一致），缓存抖动不关闭刷新入口。
+//
+// 参数：
+//   - ctx: 上下文
+//   - jti: 令牌唯一标识（空串按不参与黑名单处理，返回 false）
+//   - ttl: 消费记录存活时长，取被消费令牌的剩余寿命
+//
+// 返回值：
+//   - bool: true 表示该令牌已被消费/吊销，调用方须拒绝
+//
+// 使用示例：
+//
+//	if h.refreshGuard.consume(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)) {
+//		response.Error(c, errcode.InvalidToken)
+//		return
+//	}
+func (g *refreshGuard) consume(ctx context.Context, jti string, ttl time.Duration) bool {
+	if jti == "" {
+		return false
+	}
+	if ttl <= 0 {
+		// 令牌已自然过期（正常情况下 ParseToken 已先拒掉），仍落一个短 TTL 键，
+		// 避免「已过期」被当成「未消费」放行
+		ttl = refreshGuardMinTTL
+	}
+	ok, err := g.client().SetNX(ctx, refreshJtiKey(jti), 1, ttl).Result()
+	if err != nil {
+		log.Printf("[WARN] 消费 refresh 令牌失败（本次放行）jti=%s: %v", jti, err)
+		return false
+	}
+	return !ok
 }
 
 // revoke 吊销 jti（TTL 取令牌剩余寿命，过期后条目自动消失，无需清理）

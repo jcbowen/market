@@ -2,12 +2,14 @@ package main
 
 import (
 	stdctx "context"
+	"errors"
 	"log"
 	"strings"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -64,6 +66,32 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 	}
 }
 
+// readError 读接口错误归一：仅「记录不存在」透出 NotFound，其余一律 Internal
+// 此前的写法是把任何 error（含连接超时、SQL 报错等瞬时故障）都包成 NotFound，
+// 叠加下游（购物车 invalidReasonOf / AddItem）对 NotFound 的原样透出与「按失效处理」，
+// 商品库抖机会被显示成「商品已失效」，既误导用户也掩盖故障。
+// 服务层的 bizerr（已带状态码与文案）继续走 bizerr.ToStatus，语义不变。
+//
+// 参数：
+//   - err: 服务层返回的错误
+//   - name: 资源名称，用于原生 gorm.ErrRecordNotFound 的文案（如「商品」「SKU」）
+//
+// 返回值：
+//   - error: gRPC 状态错误（NotFound / 业务码 / Internal）
+//
+// 使用示例：
+//
+//	p, err := s.productService.GetProduct(ctx, req.Id)
+//	if err != nil {
+//		return nil, readError(err, "商品")
+//	}
+func readError(err error, name string) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return status.Error(codes.NotFound, name+"不存在")
+	}
+	return bizerr.ToStatus(err)
+}
+
 // ListCategories 获取分类列表（includeDisabled=true 时含禁用分类，管理端分类管理页使用）
 func (s *server) ListCategories(ctx stdctx.Context, req *product.ListCategoriesReq) (*product.ListCategoriesResp, error) {
 	list, err := s.categoryService.ListCategories(ctx, req.CommunityId, req.GetIncludeDisabled())
@@ -85,7 +113,7 @@ func (s *server) BatchSortCategories(ctx stdctx.Context, req *product.BatchSortC
 func (s *server) GetCategory(ctx stdctx.Context, req *product.GetCategoryReq) (*product.CategoryInfo, error) {
 	c, err := s.categoryService.GetCategory(ctx, req.Id, req.CommunityId)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, readError(err, "分类")
 	}
 	return service.ToCategoryInfo(c), nil
 }
@@ -167,17 +195,12 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*product.ProductDetail, error) {
 	p, err := s.productService.GetProduct(ctx, req.Id)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
-	}
-	if err := service.EnsureScope(req.GetCommunityId(), p.CommunityID, "商品"); err != nil {
-		return nil, bizerr.ToStatus(err)
+		return nil, readError(err, "商品")
 	}
 	// 可售校验收口（P1-4）：与 BatchGetProducts 的 require_sellable 同口径，
-	// 由商品服务统一判定，交易入口（加购）只声明意图
-	if req.GetRequireSellable() {
-		if err := service.EnsureProductSellable(p); err != nil {
-			return nil, bizerr.ToStatus(err)
-		}
+	// 归属 + 可售由 EnsureTradeAccess 一次判完，交易入口（加购）只声明意图
+	if err := service.EnsureTradeAccess(req.GetCommunityId(), p, nil, req.GetRequireSellable()); err != nil {
+		return nil, bizerr.ToStatus(err)
 	}
 	skus, err := s.productService.ListSkusByProductID(ctx, req.Id)
 	if err != nil {
@@ -386,10 +409,13 @@ func (s *server) UpdateSku(ctx stdctx.Context, req *product.UpdateSkuReq) (*prod
 }
 
 // GetSkuById 根据 ID 获取 SKU
+// 原始读：不按 status 过滤（管理端编辑、C 端详情展示都取得到禁用规格），
+// 但回包含 status 字段供下游（购物车/加购）自判；
+// 交易取用的状态与归属收口在 BatchGetSkus
 func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*product.SkuInfo, error) {
 	sku, err := s.skuService.GetSkuByID(ctx, req.Id)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, readError(err, "SKU")
 	}
 	if err := service.EnsureScope(req.GetCommunityId(), sku.CommunityID, "SKU"); err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -401,6 +427,8 @@ func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*pr
 }
 
 // BatchGetSkus SKU 批量查询（下单/收银明细取价取库存，替代逐行 GetSkuById）
+// 交易口径入口：归属（community_id>0 逐条比对）与 SKU 启用态（status=1）都在商品服务收口，
+// 调用方（订单服务 loadOrderItemCatalog）须与 BatchGetProducts 传同一个 community_id
 func (s *server) BatchGetSkus(ctx stdctx.Context, req *product.BatchGetSkusReq) (*product.BatchGetSkusResp, error) {
 	skus, err := s.skuService.BatchGetSkus(ctx, req.Ids, req.GetCommunityId())
 	if err != nil {
@@ -715,13 +743,13 @@ func (s *server) ListStockOutOrders(ctx stdctx.Context, req *product.ListStockOu
 	}
 	for _, o := range list {
 		resp.List = append(resp.List, &product.StockOutOrderInfo{
-			Id:         o.ID,
-			OutNo:      o.OutNo,
+			Id:          o.ID,
+			OutNo:       o.OutNo,
 			CommunityId: o.CommunityID,
-			Type:       o.Type,
-			OperatorId: o.OperatorID,
-			Remark:     o.Remark,
-			CreatedAt:  o.CreatedAt,
+			Type:        o.Type,
+			OperatorId:  o.OperatorID,
+			Remark:      o.Remark,
+			CreatedAt:   o.CreatedAt,
 		})
 	}
 	return resp, nil
@@ -787,7 +815,6 @@ func (s *server) GetStockWarnings(ctx stdctx.Context, req *product.GetStockWarni
 	}
 	return &product.ListStockWarningsResp{List: list}, nil
 }
-
 
 // GeneratePurchaseOrder 生成补货建议单
 func (s *server) GeneratePurchaseOrder(ctx stdctx.Context, req *product.GeneratePurchaseOrderReq) (*product.GeneratePurchaseOrderResp, error) {
@@ -869,7 +896,7 @@ func (s *server) ListCoupons(ctx stdctx.Context, req *product.ListCouponsReq) (*
 func (s *server) GetCoupon(ctx stdctx.Context, req *product.GetCouponReq) (*product.CouponInfo, error) {
 	c, err := s.marketingService.GetCoupon(ctx, req.Id, req.CommunityId)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, readError(err, "优惠券")
 	}
 	return service.ToCouponInfo(c), nil
 }
@@ -988,7 +1015,7 @@ func (s *server) ListFlashSales(ctx stdctx.Context, req *product.ListFlashSalesR
 func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) (*product.FlashSaleDetail, error) {
 	fs, items, err := s.marketingService.GetFlashSale(ctx, req.Id, req.CommunityId)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, readError(err, "秒杀活动")
 	}
 
 	// 明细档案批量回填：原先逐行 GetSkuByID + GetProduct（N 行 2N 次查询），

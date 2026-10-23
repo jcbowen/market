@@ -17,6 +17,7 @@ import (
 // newTestOrder 构造汇算用订单
 // 参数：
 //   - total/ discount/ manual: 订单总额/系统优惠/手动优惠
+//
 // 返回值：
 //   - *model.Order
 func newTestOrder(total, discount, manual float64) *model.Order {

@@ -2574,8 +2574,11 @@ type UpdateSkuReq struct {
 	CostPrice   float64                `protobuf:"fixed64,5,opt,name=cost_price,json=costPrice,proto3" json:"cost_price,omitempty"`
 	SafetyStock int32                  `protobuf:"varint,6,opt,name=safety_stock,json=safetyStock,proto3" json:"safety_stock,omitempty"`
 	Image       string                 `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
-	Status      int32                  `protobuf:"varint,8,opt,name=status,proto3" json:"status,omitempty"`
-	Barcode     string                 `protobuf:"bytes,9,opt,name=barcode,proto3" json:"barcode,omitempty"` // 商品条形码
+	// 目标状态：1 启用，0 禁用（SKU 口径 status 只有 0/1）。
+	// 必须声明为 optional：proto3 裸 int32 的「未传」与「传 0」都是 0，
+	// 服务端无法区分「不改状态」和「要禁用」，历史上因此永远改不出禁用态
+	Status  *int32 `protobuf:"varint,8,opt,name=status,proto3,oneof" json:"status,omitempty"`
+	Barcode string `protobuf:"bytes,9,opt,name=barcode,proto3" json:"barcode,omitempty"` // 商品条形码
 	// 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区改价/改状态（超管传 0 放行）
 	CommunityId   int64 `protobuf:"varint,10,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2662,8 +2665,8 @@ func (x *UpdateSkuReq) GetImage() string {
 }
 
 func (x *UpdateSkuReq) GetStatus() int32 {
-	if x != nil {
-		return x.Status
+	if x != nil && x.Status != nil {
+		return *x.Status
 	}
 	return 0
 }
@@ -13988,7 +13991,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\fsafety_stock\x18\t \x01(\x05R\vsafetyStock\x12\x14\n" +
 	"\x05image\x18\n" +
 	" \x01(\tR\x05image\x12\x18\n" +
-	"\abarcode\x18\v \x01(\tR\abarcode\"\x9b\x02\n" +
+	"\abarcode\x18\v \x01(\tR\abarcode\"\xab\x02\n" +
 	"\fUpdateSkuReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1b\n" +
 	"\tspec_name\x18\x02 \x01(\tR\bspecName\x12\x1b\n" +
@@ -13997,11 +14000,12 @@ const file_product_product_proto_rawDesc = "" +
 	"\n" +
 	"cost_price\x18\x05 \x01(\x01R\tcostPrice\x12!\n" +
 	"\fsafety_stock\x18\x06 \x01(\x05R\vsafetyStock\x12\x14\n" +
-	"\x05image\x18\a \x01(\tR\x05image\x12\x16\n" +
-	"\x06status\x18\b \x01(\x05R\x06status\x12\x18\n" +
+	"\x05image\x18\a \x01(\tR\x05image\x12\x1b\n" +
+	"\x06status\x18\b \x01(\x05H\x00R\x06status\x88\x01\x01\x12\x18\n" +
 	"\abarcode\x18\t \x01(\tR\abarcode\x12!\n" +
 	"\fcommunity_id\x18\n" +
-	" \x01(\x03R\vcommunityId\"\xd6\x03\n" +
+	" \x01(\x03R\vcommunityIdB\t\n" +
+	"\a_status\"\xd6\x03\n" +
 	"\aSkuInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +
@@ -15646,6 +15650,7 @@ func file_product_product_proto_init() {
 	if File_product_product_proto != nil {
 		return
 	}
+	file_product_product_proto_msgTypes[33].OneofWrappers = []any{}
 	file_product_product_proto_msgTypes[123].OneofWrappers = []any{}
 	file_product_product_proto_msgTypes[124].OneofWrappers = []any{}
 	file_product_product_proto_msgTypes[168].OneofWrappers = []any{}

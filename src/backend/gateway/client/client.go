@@ -33,6 +33,7 @@ var (
 // NewServiceClients 根据全局配置初始化所有 gRPC 客户端连接
 // 参数：
 //   - cfg: 全局配置，包含各微服务 gRPC 地址
+//
 // 返回：
 //   - *ServiceClients: 客户端集合
 //   - error: 初始化失败时的错误信息

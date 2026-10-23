@@ -184,8 +184,8 @@ func doRefreshRequest(t *testing.T, h *AdminHandler, refreshToken string, optInC
 
 // refreshResp 刷新端点响应体（成功时 data 携带新令牌）
 type refreshResp struct {
-	Code    int                   `json:"code"`
-	Message string                `json:"message"`
+	Code    int                    `json:"code"`
+	Message string                 `json:"message"`
 	Data    map[string]interface{} `json:"data"`
 }
 
@@ -338,7 +338,7 @@ func TestRefreshTokenRotatesInCookie(t *testing.T) {
 
 	var newToken string
 	for _, ck := range recorder.Result().Cookies() {
-		if ck.Name == refreshTokenCookieName {
+		if ck.Name == adminRefreshTokenCookieName {
 			newToken = ck.Value
 			if !ck.HttpOnly {
 				t.Error("刷新下发的 cookie 必须 HttpOnly")
@@ -409,6 +409,66 @@ func TestRefreshTokenBlacklistReplay(t *testing.T) {
 	next := decodeRefreshResp(t, doRefreshRequest(t, h, newToken, false))
 	if next.Code != errcode.Success {
 		t.Fatalf("轮转后的新令牌应可继续刷新，code = %d(%s)", next.Code, next.Message)
+	}
+}
+
+// TestRefreshTokenRebuildsRoleFromLiveAccount 刷新签发的 access 令牌按实时账号重推导角色与社区（P1-2）
+// refresh 令牌本身不带角色/社区，此前照抄 claims 等于把角色清空、社区丢给默认回退；
+// 更关键的是账号降权/解除任职后，续期必须跟随库里的实时形态，不能续上登录时的旧快照
+func TestRefreshTokenRebuildsRoleFromLiveAccount(t *testing.T) {
+	stub := &stubRefreshUserClient{admin: &user.AdminInfo{
+		Id: 1001, Status: 1, Username: "ex-super", RealName: "前超管", Phone: "13800138000",
+		IsSuper: false, CommunityIds: []int64{3, 4},
+	}}
+	h, m := newRefreshTestHandler(stub)
+
+	token, _, err := m.GenerateRefreshToken(1001, jwt.TokenTypeAdmin)
+	if err != nil {
+		t.Fatalf("生成 refresh 令牌失败: %v", err)
+	}
+	resp := decodeRefreshResp(t, doRefreshRequest(t, h, token, false))
+	if resp.Code != errcode.Success {
+		t.Fatalf("刷新应成功，code = %d(%s)", resp.Code, resp.Message)
+	}
+	access, _ := resp.Data["access_token"].(string)
+	if access == "" {
+		t.Fatal("未取到新 access 令牌")
+	}
+	claims, err := m.ParseToken(access)
+	if err != nil {
+		t.Fatalf("解析新 access 令牌失败: %v", err)
+	}
+	if claims.Role != "admin" {
+		t.Errorf("降权后角色应为 admin，实得 %q", claims.Role)
+	}
+	// 默认社区取任职列表第一个（refresh 请求未声明 X-Community-Id）
+	if claims.CommunityID != 3 {
+		t.Errorf("社区语境应回落实时默认社区 3，实得 %d", claims.CommunityID)
+	}
+	if len(claims.CommunityIDs) != 2 {
+		t.Errorf("社区列表应按实时账号签发，实得 %v", claims.CommunityIDs)
+	}
+
+	// 实时超管续期仍按 super_admin 签发（另取一枚令牌，避免与上一步共用同一 jti）
+	stubSuper := &stubRefreshUserClient{admin: &user.AdminInfo{
+		Id: 1002, Status: 1, Username: "super", RealName: "超管", IsSuper: true,
+	}}
+	h2, m2 := newRefreshTestHandler(stubSuper)
+	superToken, _, err := m2.GenerateRefreshToken(1002, jwt.TokenTypeAdmin)
+	if err != nil {
+		t.Fatalf("生成 refresh 令牌失败: %v", err)
+	}
+	resp2 := decodeRefreshResp(t, doRefreshRequest(t, h2, superToken, false))
+	if resp2.Code != errcode.Success {
+		t.Fatalf("超管刷新应成功，code = %d(%s)", resp2.Code, resp2.Message)
+	}
+	access2, _ := resp2.Data["access_token"].(string)
+	claims2, err := m2.ParseToken(access2)
+	if err != nil {
+		t.Fatalf("解析超管续期令牌失败: %v", err)
+	}
+	if claims2.Role != "super_admin" {
+		t.Errorf("实时超管应签发 super_admin，实得 %q", claims2.Role)
 	}
 }
 

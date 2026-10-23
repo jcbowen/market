@@ -182,12 +182,13 @@ function remainingText(order: Order): string {
 
 /**
  * 重置分页状态并回到第 1 页刷新（切 tab / onShow 共用）
+ * @returns 本次列表加载的 Promise，需要「刷新完成后再提示」的调用方可 await
  */
 function resetAndReload() {
   page.value = 1
   orders.value = []
   loadStatus.value = 'loadmore'
-  loadOrders()
+  return loadOrders()
 }
 
 /**
@@ -325,19 +326,21 @@ function onRefund(id: number) {
 /**
  * 删除订单：二次确认后软删除（仅终态单展示入口）
  * 删除后从列表移除并回到第 1 页刷新；「我的」页角标在返回该页时经 onShow 自动刷新
+ * 提示词按软删口径措辞：仅从「我的订单」列表移除，后台仍保留记录、客服可协助找回
  * @param id 订单 ID
  */
 function onDelete(id: number) {
   uni.showModal({
     title: '删除订单',
-    content: '删除后将从订单列表中移除，且不可恢复，确定删除吗？',
+    content: '删除后订单将从你的订单列表中移除，如需找回可联系客服。确定删除吗？',
     confirmColor: '#ee0a24',
     success: async (res) => {
       if (!res.confirm) return
       try {
         await deleteOrder(id)
-        uni.showToast({ title: '删除成功', icon: 'success' })
-        resetAndReload()
+        // 先刷新再提示：uni.showToast 与列表刷新竞态时，后发的 loading/刷新会盖掉 toast
+        await resetAndReload()
+        uni.showToast({ title: '已删除', icon: 'success' })
       } catch {
         // request 已统一提示错误
       }

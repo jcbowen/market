@@ -10,6 +10,13 @@
     <n-spin :show="loading">
       <n-empty v-if="!detail && !loading" description="订单不存在" />
       <n-space v-else-if="detail" vertical :size="16">
+        <!-- 用户已从自己的订单列表删除（软删）：后台仍全量可见，提供恢复入口 -->
+        <n-alert v-if="detail.user_deleted === 1" type="warning" title="该订单已被用户从订单列表删除">
+          <template #action>
+            <n-button size="small" type="warning" :loading="restoring" @click="confirmRestore">恢复</n-button>
+          </template>
+          软删只影响用户侧可见性，订单状态、资金与售后记录均未变动。恢复后订单会重新出现在用户的「我的订单」里。
+        </n-alert>
         <!-- 描述列表：窄屏自动降为单列，避免两列内容挤压换行难读 -->
         <n-descriptions label-placement="left" bordered :column="descColumn" size="small">
           <n-descriptions-item label="订单号">{{ detail.order_no }}</n-descriptions-item>
@@ -222,7 +229,7 @@ defineOptions({ name: 'OrderDetailModal' })
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { approveRefund, completeOrder, getOrderDetail, rejectRefund, syncOrderPayment, verifyPickup } from '@/api/order'
+import { approveRefund, completeOrder, getOrderDetail, rejectRefund, restoreOrder, syncOrderPayment, verifyPickup } from '@/api/order'
 import type { OrderDetail, OrderItem, OrderPayment, OrderStatusLog, Refund } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import {
@@ -291,6 +298,8 @@ const refundOrderId = ref<number | null>(null)
 const markPaidVisible = ref(false)
 const syncingPayment = ref(false)
 const verifyingStuck = ref(false)
+/** 恢复被用户删除的订单：进行中时按钮转圈，避免重复提交 */
+const restoring = ref(false)
 
 /**
  * 用户字段点击：上抛 view-user 事件，由页面层打开会员订单弹窗
@@ -729,6 +738,34 @@ async function loadDetail(id: number) {
   } finally {
     loading.value = false
   }
+}
+
+/**
+ * 恢复被用户软删除的订单
+ * 只改用户侧可见性（订单状态、资金与售后记录一律不动），成功后就地更新弹窗状态并通知列表刷新
+ */
+function confirmRestore() {
+  const order = detail.value
+  if (!order) return
+  dialog.warning({
+    title: '恢复订单',
+    content: `确认将订单 ${order.order_no} 恢复到用户的订单列表？该操作只改可见性，不影响订单状态与资金。`,
+    positiveText: '确认恢复',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      restoring.value = true
+      try {
+        await restoreOrder(order.id)
+        message.success('订单已恢复')
+        detail.value = { ...order, user_deleted: 0 }
+        emit('refresh')
+      } catch {
+        // 错误提示由请求拦截器统一弹出
+      } finally {
+        restoring.value = false
+      }
+    },
+  })
 }
 
 /**

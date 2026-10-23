@@ -13,9 +13,9 @@ import "testing"
 // TestIsTransitionAllowed 状态机合法流转判定
 func TestIsTransitionAllowed(t *testing.T) {
 	cases := []struct {
-		name       string
-		from, to   int32
-		want       bool
+		name     string
+		from, to int32
+		want     bool
 	}{
 		{"待支付→已支付", 1, 2, true},
 		{"取消处理中→已支付（调度器补同步）", 100, 2, true},

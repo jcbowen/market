@@ -106,12 +106,12 @@ func (s *BannerService) UpdateBanner(ctx context.Context, req *product.UpdateBan
 		return nil, err
 	}
 	updates := map[string]any{
-		"title":     req.Title,
-		"image_url": req.ImageUrl,
-		"link_url":  req.LinkUrl,
-		"position":  req.Position,
-		"sort":      req.Sort,
-		"status":    req.Status,
+		"title":      req.Title,
+		"image_url":  req.ImageUrl,
+		"link_url":   req.LinkUrl,
+		"position":   req.Position,
+		"sort":       req.Sort,
+		"status":     req.Status,
 		"start_time": strPtr(req.StartTime),
 		"end_time":   strPtr(req.EndTime),
 	}

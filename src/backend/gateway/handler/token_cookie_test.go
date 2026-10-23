@@ -74,35 +74,87 @@ func TestRefreshTokenCookieOptIn(t *testing.T) {
 }
 
 // TestSetRefreshTokenCookieAttributes 验证 cookie 的安全属性与存活时长
+// 两端分名分路径（P1-11）：同源部署下后台与会员各用一枚 cookie，互不覆盖、互不清除
 func TestSetRefreshTokenCookieAttributes(t *testing.T) {
-	c, w := newCookieTestContext(http.MethodPost, "/api/v1/admin/auth/login", nil)
-	setRefreshTokenCookie(c, "refresh-token-value", int64(7*24*time.Hour/time.Second))
+	cases := []struct {
+		scope    string
+		path     string
+		wantName string
+		wantPath string
+	}{
+		{"后台", "/api/v1/admin/auth/login", adminRefreshTokenCookieName, adminCookiePath},
+		{"C 端", "/api/v1/auth/login/phone", refreshTokenCookieName, refreshCookiePath},
+	}
+	for _, tc := range cases {
+		c, w := newCookieTestContext(http.MethodPost, tc.path, nil)
+		setRefreshTokenCookie(c, "refresh-token-value", int64(7*24*time.Hour/time.Second))
 
-	cookies := w.Result().Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("期望下发 1 枚 cookie，实得 %d 枚（Set-Cookie=%q）", len(cookies), w.Header().Values("Set-Cookie"))
+		cookies := w.Result().Cookies()
+		if len(cookies) != 1 {
+			t.Fatalf("%s: 期望下发 1 枚 cookie，实得 %d 枚（Set-Cookie=%q）", tc.scope, len(cookies), w.Header().Values("Set-Cookie"))
+		}
+		got := cookies[0]
+		if got.Name != tc.wantName {
+			t.Errorf("%s: cookie 名 = %q, 期望 %q", tc.scope, got.Name, tc.wantName)
+		}
+		if !got.HttpOnly {
+			t.Error("cookie 缺少 HttpOnly，JS 仍能读到 7 天有效期的长期凭证")
+		}
+		if got.Secure {
+			t.Error("HTTP 请求下不应置 Secure：浏览器会丢弃该 cookie，登录直接不可用")
+		}
+		if got.Path != tc.wantPath {
+			t.Errorf("%s: cookie Path = %q, 期望 %q（不应全站请求携带令牌）", tc.scope, got.Path, tc.wantPath)
+		}
+		if got.MaxAge <= 0 {
+			t.Errorf("cookie Max-Age = %d, 期望正数", got.MaxAge)
+		}
+		if got.SameSite != http.SameSiteLaxMode {
+			t.Errorf("cookie SameSite = %v, 期望 Lax", got.SameSite)
+		}
+		if got.Value != "refresh-token-value" {
+			t.Errorf("cookie 值 = %q, 期望原样透传", got.Value)
+		}
 	}
-	got := cookies[0]
-	if got.Name != refreshTokenCookieName {
-		t.Errorf("cookie 名 = %q, 期望 %q", got.Name, refreshTokenCookieName)
+}
+
+// TestRefreshCookieScopeIsolation 验证两端 cookie 互不串用（P1-11）
+// 后台令牌只随 /api/v1/admin 上行；C 端请求读不到后台那枚，反之亦然，
+// 否则后台登出会清掉会员会话、或会员端刷新时拿到后台令牌
+func TestRefreshCookieScopeIsolation(t *testing.T) {
+	// 后台登录下发的令牌
+	adminCtx, adminW := newCookieTestContext(http.MethodPost, "/api/v1/admin/auth/login", nil)
+	setRefreshTokenCookie(adminCtx, "admin-token", 60)
+	adminCookies := adminW.Result().Cookies()
+	if len(adminCookies) != 1 {
+		t.Fatalf("后台登录应下发 1 枚 cookie，实得 %d 枚", len(adminCookies))
 	}
-	if !got.HttpOnly {
-		t.Error("cookie 缺少 HttpOnly，JS 仍能读到 7 天有效期的长期凭证")
+
+	// 该枚后台令牌拿到 C 端刷新请求里，不应被读到
+	crossReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	crossReq.AddCookie(adminCookies[0])
+	crossCtx, _ := newCookieTestContext(http.MethodPost, "/api/v1/auth/refresh", nil)
+	crossCtx.Request = crossReq
+	if got := readRefreshTokenCookie(crossCtx); got != "" {
+		t.Errorf("C 端不应读到后台 cookie，实得 %q", got)
 	}
-	if got.Secure {
-		t.Error("HTTP 请求下不应置 Secure：浏览器会丢弃该 cookie，登录直接不可用")
+
+	// C 端登录下发的令牌
+	userCtx, userW := newCookieTestContext(http.MethodPost, "/api/v1/auth/login/phone", nil)
+	setRefreshTokenCookie(userCtx, "user-token", 60)
+	userCookies := userW.Result().Cookies()
+	if len(userCookies) != 1 {
+		t.Fatalf("C 端登录应下发 1 枚 cookie，实得 %d 枚", len(userCookies))
 	}
-	if got.Path != refreshCookiePath {
-		t.Errorf("cookie Path = %q, 期望 %q（不应全站请求携带令牌）", got.Path, refreshCookiePath)
-	}
-	if got.MaxAge <= 0 {
-		t.Errorf("cookie Max-Age = %d, 期望正数", got.MaxAge)
-	}
-	if got.SameSite != http.SameSiteLaxMode {
-		t.Errorf("cookie SameSite = %v, 期望 Lax", got.SameSite)
-	}
-	if got.Value != "refresh-token-value" {
-		t.Errorf("cookie 值 = %q, 期望原样透传", got.Value)
+	// C 端 cookie 的 Path=/api/v1 是前缀匹配，浏览器请求后台接口时确实会一并带上，
+	// 后台必须只认自己那枚
+	bothReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/auth/refresh", nil)
+	bothReq.AddCookie(adminCookies[0])
+	bothReq.AddCookie(userCookies[0])
+	bothCtx, _ := newCookieTestContext(http.MethodPost, "/api/v1/admin/auth/refresh", nil)
+	bothCtx.Request = bothReq
+	if got := readRefreshTokenCookie(bothCtx); got != "admin-token" {
+		t.Errorf("后台请求应只认后台令牌，实得 %q", got)
 	}
 }
 

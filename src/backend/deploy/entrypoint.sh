@@ -172,8 +172,15 @@ prepare_dir /data "$(id -u redis)"
 # crontab 直接跑发布包内二进制，或 docker exec 触发。
 if ! compgen -G "$APP_DIR/data/geoip/*.mmdb" >/dev/null; then
   log "GeoIP 定位库缺失，后台执行 geoip-download（就绪前 IP 定位优雅降级）..."
-  runuser -u appuser -- bash -c "cd $APP_DIR && exec ./geoip-download --dest $APP_DIR/data/geoip/GeoLite2-City.mmdb" \
-    >> "$APP_DIR/logs/geoip-download.log" 2>&1 &
+  # 子 shell 后台包装：下载进程的 stdout/stderr 仍只落 geoip-download.log，
+  # 但退出码非 0 时向前台（docker logs）补一行明确告警——否则下载失败在
+  # docker logs 全程无感知，只能进容器翻日志文件才能发现
+  (
+    if ! runuser -u appuser -- bash -c "cd $APP_DIR && exec ./geoip-download --dest $APP_DIR/data/geoip/GeoLite2-City.mmdb" \
+        >> "$APP_DIR/logs/geoip-download.log" 2>&1; then
+      log "警告: GeoIP 下载失败（退出码非 0），IP 定位将持续优雅降级；明细见 $APP_DIR/logs/geoip-download.log，重启容器会自动重试"
+    fi
+  ) &
 fi
 
 # 运行时配置：每个进程一份私有副本（关键！）。框架加载配置时会回写文件，

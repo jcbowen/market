@@ -275,15 +275,15 @@ func TestPayByAuthCodeIdempotent(t *testing.T) {
 
 	orderID := testOrderIDBase + 45
 	insertPayment(t, s, &model.Payment{
-		PaymentNo: "PAYTEST-CODE-IDEM",
-		OrderID:   orderID,
-		UserID:    0,
-		PayType:   5,
-		Amount:    12.00,
-		Status:    2,
+		PaymentNo:     "PAYTEST-CODE-IDEM",
+		OrderID:       orderID,
+		UserID:        0,
+		PayType:       5,
+		Amount:        12.00,
+		Status:        2,
 		TransactionID: "WX-TX-IDEM-001",
-		CreatedAt: "2026-01-01 00:00:00",
-		UpdatedAt: "2026-01-01 00:00:00",
+		CreatedAt:     "2026-01-01 00:00:00",
+		UpdatedAt:     "2026-01-01 00:00:00",
 	})
 
 	origPay := wechatAuthCodePay

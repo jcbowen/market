@@ -41,6 +41,7 @@ func LoadConfig() *config.Config {
 // InitMySQL 根据全局配置初始化 MySQL 连接
 // 参数：
 //   - cfg: 全局配置
+//
 // 返回：
 //   - *mysql.Instance: MySQL 实例
 //   - error: 初始化失败时的错误信息
@@ -51,6 +52,7 @@ func InitMySQL(cfg *config.Config) (*mysql.Instance, error) {
 // InitRedis 根据全局配置初始化 Redis 连接
 // 参数：
 //   - cfg: 全局配置
+//
 // 返回：
 //   - *redis.Instance: Redis 实例
 func InitRedis(cfg *config.Config) *redis.Instance {
@@ -70,6 +72,7 @@ func RegisterHealth(server *grpc.Server) {
 // 参数：
 //   - server: gRPC 服务端实例
 //   - port: 监听端口
+//
 // 返回：
 //   - error: 启动或关闭过程中的错误信息
 func RunGRPCServer(server *grpc.Server, port int) error {

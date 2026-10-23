@@ -38,12 +38,21 @@ test.afterAll(async () => {
  * - 参数: skuId — SKU ID；quantity — 数量（同用户连续下单时错开重复指纹，默认 1）
  * - 返回: Promise<OrderInfo>
  * - 异常: 下单/支付失败时抛出 Error
+ * 说明: 网关有 5s 防重复下单窗口（同用户+社区+配送方式+商品列表）。Playwright 重试会
+ * 在窗口内重放同一请求体，被 11005 之外的 ParamError「请勿重复提交订单」挡下——这不是
+ * 产品缺陷，故此处对去重报错做一次「等窗口过去再提交」的兼容，而非改指纹或弱化断言。
  */
 async function createPaidPickupOrder(skuId: number, quantity = 1): Promise<OrderInfo> {
-  const resp = await api.post('/api/v1/orders', {
+  const submit = () => api.post('/api/v1/orders', {
     data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity }] },
   });
-  const body = (await resp.json()) as ApiResponse<OrderInfo>;
+  let resp = await submit();
+  let body = (await resp.json()) as ApiResponse<OrderInfo>;
+  if (body.code !== 0 && body.message?.includes('请勿重复提交订单')) {
+    await new Promise((r) => setTimeout(r, 5500)); // 等过 5s 防重窗口再重放
+    resp = await submit();
+    body = (await resp.json()) as ApiResponse<OrderInfo>;
+  }
   if (body.code !== 0) throw new Error(`下单失败 ${body.message}`);
   const order = body.data as OrderInfo;
   const pay = (await (

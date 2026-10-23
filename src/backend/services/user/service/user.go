@@ -24,6 +24,7 @@ type UserService struct {
 // NewUserService 创建用户业务服务
 // 参数：
 //   - db: MySQL 实例
+//
 // 返回：
 //   - *UserService: 用户业务服务实例
 func NewUserService(db *mysql.Instance) *UserService {
@@ -34,6 +35,7 @@ func NewUserService(db *mysql.Instance) *UserService {
 // 参数：
 //   - ctx: 上下文
 //   - id: 用户 ID
+//
 // 返回：
 //   - *model.User: 用户模型
 //   - error: 错误信息
@@ -52,6 +54,7 @@ func (s *UserService) GetUserById(ctx context.Context, id int64) (*model.User, e
 // 参数：
 //   - ctx: 上下文
 //   - phone: 手机号
+//
 // 返回：
 //   - *model.User: 用户模型
 //   - error: 错误信息
@@ -73,6 +76,7 @@ func (s *UserService) GetUserByPhone(ctx context.Context, phone string) (*model.
 // 参数：
 //   - ctx: 上下文
 //   - openid: 微信 openid
+//
 // 返回：
 //   - *model.User: 用户模型
 //   - error: 错误信息
@@ -98,6 +102,7 @@ func (s *UserService) GetUserByOpenid(ctx context.Context, openid string) (*mode
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建用户请求
+//
 // 返回：
 //   - *model.User: 用户模型
 //   - error: 错误信息
@@ -153,6 +158,7 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 //   - ctx: 上下文
 //   - userID: 用户 ID
 //   - communityID: 社区 ID
+//
 // 返回：
 //   - error: 错误信息
 func (s *UserService) UpdateUserCommunity(ctx context.Context, userID, communityID int64) error {
@@ -169,6 +175,7 @@ func (s *UserService) UpdateUserCommunity(ctx context.Context, userID, community
 // 参数：
 //   - ctx: 上下文
 //   - req: 更新用户资料请求
+//
 // 返回：
 //   - *model.User: 用户模型
 //   - error: 错误信息
@@ -201,6 +208,7 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, req *user.UpdateUse
 //   - statusFilter: 状态筛选：-1 全部，0 拉黑，1 正常（提供时优先于 status）
 //   - page: 页码
 //   - pageSize: 每页数量
+//
 // 返回：
 //   - []*model.User: 用户模型列表
 //   - int64: 总数
@@ -314,6 +322,7 @@ func (s *UserService) getCommunityName(ctx context.Context, id int64) string {
 //   - userID: 用户 ID
 //   - communityID: 社区 ID
 //   - source: 关联来源（address/order/admin/backfill）
+//
 // 返回：
 //   - error: 错误信息
 func (s *UserService) MarkUserCommunity(ctx context.Context, userID, communityID int64, source string) error {
@@ -347,6 +356,7 @@ func (s *UserService) MarkUserCommunity(ctx context.Context, userID, communityID
 //   - id: 用户 ID
 //   - status: 0 拉黑 1 正常
 //   - communityId: 操作者社区语境（>0 时要求会员与本社区有绑定关系，防止跨社区拉黑；0=超管）
+//
 // 返回：
 //   - error: 参数非法/会员不存在/无权操作
 func (s *UserService) SetUserStatus(ctx context.Context, id int64, status int32, communityId int64) error {
@@ -409,6 +419,7 @@ func runAfterRegisterHooks(ctx context.Context, u *model.User) {
 // 参数：
 //   - ctx: 上下文
 //   - req: 注册请求
+//
 // 返回：
 //   - *model.User: 注册（或复用）的会员
 //   - bool: 是否本次新注册
@@ -547,6 +558,7 @@ func (s *UserService) CheckFulfiller(ctx context.Context, userID, communityID in
 
 // phoneOpenidPrefix 生成手机号会员的 openid 占位标识（与手机号登录约定一致）// 参数：
 //   - phone: 手机号
+//
 // 返回：
 //   - string: phone_<手机号>
 func phoneOpenidPrefix(phone string) string {
@@ -556,6 +568,7 @@ func phoneOpenidPrefix(phone string) string {
 // isDuplicateKeyErr 判断是否为唯一键冲突错误（MySQL 1062）
 // 参数：
 //   - err: 数据库错误
+//
 // 返回：
 //   - bool: 是否唯一键冲突
 func isDuplicateKeyErr(err error) bool {
@@ -570,6 +583,7 @@ func isDuplicateKeyErr(err error) bool {
 // 依赖 (user_id, community_id) 唯一索引保证重复执行不产生重复数据
 // 参数：
 //   - ctx: 上下文
+//
 // 返回：
 //   - error: 错误信息
 func (s *UserService) BackfillUserCommunities(ctx context.Context) error {
@@ -601,6 +615,7 @@ func (s *UserService) BackfillUserCommunities(ctx context.Context) error {
 // ToUserInfo 将用户模型转换为 proto 用户信息
 // 参数：
 //   - u: 用户模型
+//
 // 返回：
 //   - *user.UserInfo: proto 用户信息
 func ToUserInfo(u *model.User) *user.UserInfo {

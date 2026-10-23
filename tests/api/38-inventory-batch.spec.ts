@@ -110,10 +110,19 @@ test.describe.serial('库存批次进阶', () => {
     expect(await skuStock(sku.id, sku.product_id)).toBe(before - 10);
 
     const records = (await (await adminApi.get('/api/v1/admin/inventory/entries', { params: { page: 1, page_size: 20, sku_id: sku.id } })).json()) as ApiResponse<PageData<StockRecord>>;
-    const record = asList<StockRecord>(records.data).find((r) => r.type === 2 && r.remark?.includes('AUTO-TEST 38 批次出库'));
-    expect(record, '出库流水应包含本次记录').toBeTruthy();
-    expect(record!.quantity).toBe(-10);
-    expect(record!.after_stock - record!.before_stock).toBe(-10);
+    // FEFO 逐批次落流水：一次出库可能拆成多条记录（每批次一条），不能假设单条 -10。
+    // 取最新一条同备注记录拿到本次出库单号，再按 ref_no 聚合本轮全部流水断言。
+    const newest = asList<StockRecord>(records.data).find((r) => r.type === 2 && r.remark?.includes('AUTO-TEST 38 批次出库'));
+    expect(newest, '出库流水应包含本次记录').toBeTruthy();
+    const sameOrder = asList<StockRecord>(records.data).filter((r) => r.type === 2 && r.ref_no === newest!.ref_no);
+    expect(sameOrder.length, '同一出库单至少落一条流水').toBeGreaterThan(0);
+    const totalOut = sameOrder.reduce((sum, r) => sum + r.quantity, 0);
+    expect(totalOut).toBe(-10);
+    // 快照自洽：聚合后 after-before 等于总扣减，且链上首条 before 与末条 after 连续
+    expect(sameOrder[0]!.before_stock - sameOrder[sameOrder.length - 1]!.after_stock).toBe(10);
+    for (let i = 1; i < sameOrder.length; i++) {
+      expect(sameOrder[i]!.before_stock).toBe(sameOrder[i - 1]!.after_stock);
+    }
   });
 
   test('出库超库存被拒', async () => {

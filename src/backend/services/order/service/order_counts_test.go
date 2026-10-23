@@ -54,12 +54,27 @@ func TestGetUserOrderStatusCountsAfterSale(t *testing.T) {
 	o3 := seedSchedOrder(t, env.db, "counts-c", 8, schedTimeAgo(2*time.Hour), schedTimeAgo(time.Hour))
 	seedRefund(t, env.db, o3, 5, 10)
 
+	// 场景4：已完成(5)订单 + 待审核(1)售后单 → 计入
+	// 角标口径只绑「售后单是否待审核」，不硬绑 orders.status=7：
+	// 商家对已完成单发起/同意部分退款后再拒、或已完成单申请售后，都可能停在状态 5 + 待审核，
+	// 硬绑 7 会让这类订单永远不亮标，用户看不见自己的待处理售后（1.6）
+	o4 := seedSchedOrder(t, env.db, "counts-d", 5, schedTimeAgo(2*time.Hour), schedTimeAgo(time.Hour))
+	seedRefund(t, env.db, o4, 1, 3)
+
+	// 场景5：用户已软删的订单 + 待审核(1)售后单 → 不计入
+	// 软删只影响用户侧列表与角标（后台仍全量可见、可恢复），删掉的单不该继续催用户
+	o5 := seedSchedOrder(t, env.db, "counts-e", 5, schedTimeAgo(2*time.Hour), schedTimeAgo(time.Hour))
+	seedRefund(t, env.db, o5, 1, 3)
+	if err := env.db.GetDb().Exec("UPDATE orders SET user_deleted = 1 WHERE id = ?", o5).Error; err != nil {
+		t.Fatalf("置软删标记失败: %v", err)
+	}
+
 	got, err := svc.GetUserOrderStatusCounts(ctx, &order.GetUserOrderStatusCountsReq{UserId: uid})
 	if err != nil {
 		t.Fatalf("查询角标失败: %v", err)
 	}
-	if want := base.AfterSale + 1; got.AfterSale != want {
-		t.Fatalf("AfterSale = %d, want %d（仅场景1的订单计入，多笔待审核去重）", got.AfterSale, want)
+	if want := base.AfterSale + 2; got.AfterSale != want {
+		t.Fatalf("AfterSale = %d, want %d（场景1、4 计入；场景1 多笔去重计 1，软删单场景5 不计）", got.AfterSale, want)
 	}
 	// 状态 7/8 不得混入 pending 口径
 	if got.PendingShip != base.PendingShip {

@@ -13,6 +13,7 @@ package brand
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -161,6 +162,33 @@ func (c *Cache) markFetched(backoff time.Duration) {
 	c.mu.Lock()
 	c.fetchedAt = time.Now().Add(-c.ttl + backoff)
 	c.mu.Unlock()
+}
+
+// Warm 启动期同步预取一次站点设置（冷启动首屏兜底）
+// get 的刷新是异步的：进程刚起来时快照还是空的，第一个 HTML 请求会拿到空品牌/空 SEO
+// （注入的是占位标题，搜索引擎抓到的正是这一份）。启动时按超时同步拉一次，
+// 拉不到只记日志、不阻断启动——user 服务稍后恢复时 TTL 刷新会补上。
+//
+// 参数：
+//   - ctx: 预热上下文（调用方给超时，避免 user 服务未就绪时拖慢启动）
+//
+// 返回值：
+//   - error: 预取失败原因（已内部记日志，返回值仅供调用方决定是否告警）
+//
+// 使用示例：
+//
+//	warmCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//	_ = cache.Warm(warmCtx)
+func (c *Cache) Warm(ctx context.Context) error {
+	c.refresh(ctx)
+	c.mu.RLock()
+	loaded := c.loaded
+	c.mu.RUnlock()
+	if !loaded {
+		return errors.New("站点设置预热未取到数据（沿用空快照，等待 TTL 刷新重试）")
+	}
+	return nil
 }
 
 // invalidate 使快照立即过期，保存站点设置后调用，使本实例无需等待 TTL 即生效

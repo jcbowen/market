@@ -48,7 +48,9 @@ func (s *SkuService) ListSkus(ctx context.Context, productID int64) ([]*model.Sk
 	return list, err
 }
 
-// GetSkuByID 根据 ID 查询 SKU
+// GetSkuByID 根据 ID 查询 SKU（原始读，不过滤 status、不校验归属）
+// 管理端按 ID 编辑与商品服务内部复用走本方法；交易取用走 BatchGetSkus（含状态与归属收口），
+// 归属校验由 gRPC 层用 EnsureScope 按请求社区补齐
 // 参数：
 //   - ctx: 上下文
 //   - id: SKU ID
@@ -65,18 +67,59 @@ func (s *SkuService) GetSkuByID(ctx context.Context, id int64) (*model.Sku, erro
 	return &sku, err
 }
 
+// SkuStatusEnabled SKU 启用态：与 ProductStatusOnSale 同为交易口径的唯一判定值。
+// status=0 覆盖「后台禁用」「商品编辑移除规格」「商品软删连带禁用」三种来源，
+// 三者都不允许再被取用成交（GetByBarcode 的 status=1、SearchSkus 的 s.status=1 与此同构）
+const SkuStatusEnabled = 1
+
+// EnsureSkuSellable 校验 SKU 是否可售：仅启用态（status=1）可售，禁用/移除一律拒绝。
+// 与 EnsureProductSellable 同构，是「规格不可售」判定的唯一口径，
+// 由 EnsureTradeAccess 统一调用，交易入口（下单批量取明细）不各自判状态
+//
+// 参数：
+//   - sku: SKU 模型
+//
+// 返回值：
+//   - error: 非启用态时返回 FailedPrecondition，文案带规格名（无规格名回落 SKU 编码）便于前端直接展示
+//
+// 使用示例：
+//
+//	if err := EnsureSkuSellable(sku); err != nil {
+//		return nil, err
+//	}
+func EnsureSkuSellable(sku *model.Sku) error {
+	if sku.Status == SkuStatusEnabled {
+		return nil
+	}
+	name := sku.SpecName
+	if name == "" {
+		name = sku.SkuCode
+	}
+	if name == "" {
+		name = fmt.Sprintf("SKU %d", sku.ID)
+	}
+	return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("规格「%s」已失效，暂不可购买", name))
+}
+
 // BatchGetSkus 按 ID 批量查询 SKU（下单/收银按明细取价取库存，替代逐行 GetSkuByID 的 N 次往返）
-// 任一 ID 不存在或不属于操作者社区即整体报错：订单明细不允许部分命中，
-// 缺项继续算价会造成金额与库存双口径偏差
+// 本方法是交易口径的取用入口，三条收口恒定生效：
+//  1. 任一 ID 不存在即整体报错：订单明细不允许部分命中，缺项继续算价会造成金额与库存双口径偏差；
+//  2. communityID>0 时逐条比对 SKU 归属社区，任一越权即整体拒绝（下单须传成交社区，
+//     与 BatchGetProducts 成对使用、传同一 community_id；商品侧归属由那边同口径校验）；
+//  3. 任一 SKU 非启用态（status=0，含后台禁用/移除规格/商品软删连带禁用）即整体拒绝，
+//     堵住「后台禁用 SKU 后购物车存量行仍能按快照规格成交并扣库存」。
+//
+// BatchGetSkusReq 暂无 require_sellable 字段，故本入口不按开关分叉：
+// 容忍缺失、不做越权与状态校验的展示/回填口径请走 FindSkusByIDs。
 //
 // 参数：
 //   - ctx: 上下文
 //   - ids: SKU ID 列表（重复 ID 只查一次，返回值按首次出现顺序去重）
-//   - communityID: 操作者社区语境，<=0 跳过归属校验
+//   - communityID: 成交/操作者社区语境，<=0 跳过归属校验
 //
 // 返回值：
 //   - []*model.Sku: SKU 模型列表
-//   - error: 参数非法/不存在/越权/数据库错误
+//   - error: 参数非法/不存在/越权（PermissionDenied）/规格已失效（FailedPrecondition）/数据库错误
 //
 // 使用示例：
 //
@@ -92,7 +135,8 @@ func (s *SkuService) BatchGetSkus(ctx context.Context, ids []int64, communityID 
 	}
 	byID := make(map[int64]*model.Sku, len(rows))
 	for _, sku := range rows {
-		if err := EnsureScope(communityID, sku.CommunityID, "SKU"); err != nil {
+		// 交易口径统一判定：归属 + 可售（requireSellable 恒为 true，见方法注释）
+		if err := EnsureTradeAccess(communityID, nil, sku, true); err != nil {
 			return nil, err
 		}
 		byID[sku.ID] = sku
@@ -165,19 +209,30 @@ func dedupIDs(ids []int64) []int64 {
 	return ordered
 }
 
-// CreateSku 创建 SKU
+// CreateSku 创建 SKU（新 SKU 一律启用，禁用由 UpdateSku 负责）
 // 参数：
 //   - ctx: 上下文
-//   - req: 创建请求
+//   - req: 创建请求（barcode 非空时按商品保存链路同口径校验格式与本社区占用）
 //
 // 返回值：
 //   - *model.Sku: SKU 模型
-//   - error: 错误信息
+//   - error: 错误信息（条码格式非法 / 条码被其他商品占用 / 落库失败）
+//
+// 使用示例：
+//   - sku, err := s.CreateSku(ctx, &product.CreateSkuReq{ProductId: 1, CommunityId: 2, Barcode: "6901234567890", Stock: 10})
 func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (*model.Sku, error) {
 	// spec_json 为 JSON 列，空字符串非法，归一化为空对象
 	specJSON := req.SpecJson
 	if specJSON == "" {
 		specJSON = "{}"
+	}
+	// 条码与商品保存链路同口径校验（格式 + 本社区占用）：
+	// 独立 SKU 接口此前不校验，撞库级函数索引只会回一个裸 1062
+	barcode := strings.TrimSpace(req.Barcode)
+	if barcode != "" {
+		if err := validateBarcode(barcode); err != nil {
+			return nil, err
+		}
 	}
 	sku := &model.Sku{
 		ProductID:   req.ProductId,
@@ -190,12 +245,20 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 		Stock:       req.Stock,
 		SafetyStock: req.SafetyStock,
 		Image:       req.Image,
-		Barcode:     strings.TrimSpace(req.Barcode),
+		Barcode:     barcode,
 		Status:      1,
 	}
 	// 建品与初始批次同事务：批次库存是扣减的唯一来源，汇总库存必须有对应批次，
 	// 批次落库失败时连同 SKU 一并回滚，避免产生"有汇总库存无批次"的不可售 SKU
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 排除商品 ID 传 0：本接口一次只动一个 SKU，同商品下已有同码 SKU 也算占用
+		// （库级函数索引按 社区+条码 唯一，与商品无关；商品保存链路才需要排除自身商品，
+		// 因为它在同一事务里整批重写本商品的 SKU）
+		if barcode != "" {
+			if err := ensureSkuBarcodeAvailable(tx, req.CommunityId, 0, barcode); err != nil {
+				return err
+			}
+		}
 		if err := tx.Create(sku).Error; err != nil {
 			return err
 		}
@@ -212,14 +275,17 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 	return sku, nil
 }
 
-// UpdateSku 更新 SKU
+// UpdateSku 更新 SKU（字段级：空串/零值表示不改；status 为 optional，nil 表示不改、显式 0 即禁用）
 // 参数：
 //   - ctx: 上下文
-//   - req: 更新请求
+//   - req: 更新请求（barcode 变更时按商品保存链路同口径校验格式与本社区占用）
 //
 // 返回值：
 //   - *model.Sku: SKU 模型
-//   - error: 错误信息
+//   - error: 错误信息（SKU 不存在 / 跨社区 / 条码格式非法 / 条码被占用 / 落库失败）
+//
+// 使用示例：
+//   - _, err := s.UpdateSku(ctx, &product.UpdateSkuReq{Id: 12, CommunityId: 2, Status: proto.Int32(0)})
 func (s *SkuService) UpdateSku(ctx context.Context, req *product.UpdateSkuReq) (*model.Sku, error) {
 	sku, err := s.GetSkuByID(ctx, req.Id)
 	if err != nil {
@@ -248,14 +314,31 @@ func (s *SkuService) UpdateSku(ctx context.Context, req *product.UpdateSkuReq) (
 	if req.Image != "" {
 		sku.Image = req.Image
 	}
-	if req.Status != 0 {
-		sku.Status = req.Status
+	// 状态为 optional：nil 表示不改，显式传 0 才能禁用（历史上裸 int32 把
+	// 「未传」与「传 0」都读成 0，导致本接口永远无法把 SKU 置为禁用）
+	if req.Status != nil {
+		sku.Status = *req.Status
 	}
-	if req.Barcode != "" {
-		sku.Barcode = strings.TrimSpace(req.Barcode)
+	barcode := strings.TrimSpace(req.Barcode)
+	barcodeChanged := barcode != "" && barcode != sku.Barcode
+	if barcodeChanged {
+		if err := validateBarcode(barcode); err != nil {
+			return nil, err
+		}
 	}
 
-	if err := s.db.GetDb().WithContext(ctx).Save(sku).Error; err != nil {
+	// 查重与落库同事务：先占用校验再 Save，避免校验通过后被并发插入的同码抢先、
+	// 落库只剩一个裸 1062 抛给调用方。排除商品 ID 传 0 的理由同 CreateSku：
+	// 目标 SKU 自身的同码情况已由 barcodeChanged 排除，不会误判
+	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if barcodeChanged {
+			if err := ensureSkuBarcodeAvailable(tx, sku.CommunityID, 0, barcode); err != nil {
+				return err
+			}
+			sku.Barcode = barcode
+		}
+		return tx.Save(sku).Error
+	}); err != nil {
 		return nil, err
 	}
 	return sku, nil

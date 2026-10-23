@@ -284,19 +284,32 @@ func (s *ShiftService) calcStatistics(ctx context.Context, shiftID int64) (*orde
 	// 退款分组：按订单归属班次口径，关联订单支付方式
 	// 按 refunds.payment_no 精确 JOIN 退款来源支付单：原按 order_id JOIN 会在
 	// 一单多笔成功支付单（status IN 2,4）时把 SUM(refunds.amount) 按笛卡尔积翻倍；
-	// 仅关联已支付/已退款(status IN 2,4)支付单的过滤保持不变
+	// 仅关联已支付/已退款(status IN 2,4)支付单的过滤保持不变。
+	// payment_no 为空的存量退款单（早期版本未回填）走 INNER JOIN 会被静默漏统计，
+	// 交班表的退款合计与钱箱应交金额随之偏小，故改 LEFT JOIN 并按 order_id 兜底取
+	// 该订单最近一笔成功支付单的支付方式；两侧都取不到时归入 pay_type=0（未知）一行，
+	// 金额仍计入合计，绝不丢单。
+	// 先算逐笔支付方式（子查询 t）再外层聚合：ONLY_FULL_GROUP_BY 下无法直接
+	// GROUP BY 带相关子查询的 COALESCE 表达式（MySQL 判定其含非聚合列）
 	var refundRows []struct {
 		PayType    int32
 		Amount     float64
 		OrderCount int64
 	}
-	if err := s.db.GetDb().WithContext(ctx).
+	refundPayTypes := s.db.GetDb().WithContext(ctx).
 		Table("refunds").
-		Select("payments.pay_type AS pay_type, COALESCE(SUM(refunds.amount),0) AS amount, COUNT(DISTINCT refunds.id) AS order_count").
+		Select(`refunds.id AS refund_id, refunds.amount AS amount,
+			COALESCE(payments.pay_type, (
+				SELECT p2.pay_type FROM payments p2
+				WHERE p2.order_id = refunds.order_id AND p2.status IN (2,4)
+				ORDER BY p2.id DESC LIMIT 1)) AS pay_type`).
 		Joins("JOIN orders ON orders.id = refunds.order_id").
-		Joins("JOIN payments ON payments.payment_no = refunds.payment_no AND payments.status IN (?)", []int32{2, 4}).
-		Where("orders.shift_id = ? AND refunds.status IN ?", shiftID, []int32{2, 4, 5}).
-		Group("payments.pay_type").
+		Joins("LEFT JOIN payments ON payments.payment_no = refunds.payment_no AND payments.status IN (?)", []int32{2, 4}).
+		Where("orders.shift_id = ? AND refunds.status IN ?", shiftID, []int32{2, 4, 5})
+	if err := s.db.GetDb().WithContext(ctx).
+		Table("(?) AS t", refundPayTypes).
+		Select("t.pay_type AS pay_type, COALESCE(SUM(t.amount),0) AS amount, COUNT(DISTINCT t.refund_id) AS order_count").
+		Group("t.pay_type").
 		Scan(&refundRows).Error; err != nil {
 		return nil, err
 	}

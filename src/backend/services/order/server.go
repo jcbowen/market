@@ -123,6 +123,14 @@ func (s *server) DeleteOrder(ctx stdctx.Context, req *order.DeleteOrderReq) (*co
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// RestoreOrder 后台恢复被用户软删除的订单
+func (s *server) RestoreOrder(ctx stdctx.Context, req *order.RestoreOrderReq) (*common.CommonResponse, error) {
+	if err := s.orderService.RestoreOrder(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // UpdateOrderStatus 更新订单状态
 func (s *server) UpdateOrderStatus(ctx stdctx.Context, req *order.UpdateOrderStatusReq) (*common.CommonResponse, error) {
 	if err := s.orderService.UpdateOrderStatus(ctx, req); err != nil {
@@ -400,37 +408,40 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		return nil
 	}
 	info := &order.OrderInfo{
-		Id:             o.ID,
-		OrderNo:        o.OrderNo,
-		CommunityId:    o.CommunityID,
-		UserId:         o.UserID,
-		Status:         o.Status,
-		TotalAmount:    o.TotalAmount,
-		DiscountAmount: o.DiscountAmount,
-		DeliveryFee:    o.DeliveryFee,
-		PayAmount:      o.PayAmount,
-		DeliveryType:   o.DeliveryType,
-		DeliveryTime:   o.DeliveryTime,
-		ContactName:    o.ContactName,
-		ContactPhone:   o.ContactPhone,
-		ContactAddress: o.ContactAddress,
-		Remark:         o.Remark,
-		PayTime:        ptrString(o.PayTime),
-		DeliverTime:    ptrString(o.DeliverTime),
-		CompleteTime:   ptrString(o.CompleteTime),
-		CancelTime:     ptrString(o.CancelTime),
-		CancelReason:   o.CancelReason,
-		CreatedAt:      o.CreatedAt,
-		PickupCode:     ptrString(o.PickupCode),
-		ExpressCompany: o.ExpressCompany,
-		ExpressNo:      o.ExpressNo,
-		Source:         o.Source,
-		OperatorId:     o.OperatorID,
-		OperatorName:   o.OperatorName,
-		ManualDiscount: o.ManualDiscount,
-		ShiftId:        o.ShiftID,
+		Id:               o.ID,
+		OrderNo:          o.OrderNo,
+		CommunityId:      o.CommunityID,
+		UserId:           o.UserID,
+		Status:           o.Status,
+		TotalAmount:      o.TotalAmount,
+		DiscountAmount:   o.DiscountAmount,
+		DeliveryFee:      o.DeliveryFee,
+		PayAmount:        o.PayAmount,
+		DeliveryType:     o.DeliveryType,
+		DeliveryTime:     o.DeliveryTime,
+		ContactName:      o.ContactName,
+		ContactPhone:     o.ContactPhone,
+		ContactAddress:   o.ContactAddress,
+		Remark:           o.Remark,
+		PayTime:          ptrString(o.PayTime),
+		DeliverTime:      ptrString(o.DeliverTime),
+		CompleteTime:     ptrString(o.CompleteTime),
+		CancelTime:       ptrString(o.CancelTime),
+		CancelReason:     o.CancelReason,
+		CreatedAt:        o.CreatedAt,
+		PickupCode:       ptrString(o.PickupCode),
+		ExpressCompany:   o.ExpressCompany,
+		ExpressNo:        o.ExpressNo,
+		Source:           o.Source,
+		OperatorId:       o.OperatorID,
+		OperatorName:     o.OperatorName,
+		ManualDiscount:   o.ManualDiscount,
+		ShiftId:          o.ShiftID,
 		DeliveryUserId:   o.DeliveryUserID,
 		DeliveryUserName: o.DeliveryUserName,
+		// 用户软删标记透出，供后台列表/详情显示「已被用户删除」并给出恢复入口
+		// （网关侧为手工装配 gin.H，不存在 omitempty 吞零值的问题）
+		UserDeleted: o.UserDeleted,
 	}
 	// 送达签收凭证：DB 存 JSON 数组字符串，解析失败静默为空
 	if o.DeliveryProofImages != "" {

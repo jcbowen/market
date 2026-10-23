@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -189,7 +190,7 @@ func (s *ProductService) GetProductStatusStats(ctx context.Context, req *product
 			COALESCE(SUM(CASE WHEN status = 1 AND stock > 0 THEN 1 ELSE 0 END), 0) AS on_sale,
 			COALESCE(SUM(CASE WHEN status = 1 AND stock <= 0 THEN 1 ELSE 0 END), 0) AS sold_out,
 			COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) AS warehouse,
-			COALESCE(SUM(CASE WHEN status = 1 AND stock > 0 AND ` + lowStockCondition + ` THEN 1 ELSE 0 END), 0) AS low_stock`).
+			COALESCE(SUM(CASE WHEN status = 1 AND stock > 0 AND `+lowStockCondition+` THEN 1 ELSE 0 END), 0) AS low_stock`).
 		Where("status != ?", 2).
 		Scan(&row).Error
 	if err != nil {
@@ -311,7 +312,8 @@ const ProductStatusOnSale = 1
 
 // EnsureProductSellable 校验商品是否可售：仅上架态（status=1）可售；
 // 下架(0)/删除(2)/定时上架未到点(0)一律拒绝，文案带商品名便于前端直接展示。
-// 供 gRPC 层（GetProduct 的 require_sellable）与服务内批量入口共用，是「可售」判定的唯一口径
+// 供 gRPC 层（GetProduct 的 require_sellable）与服务内批量入口共用，是商品侧「可售」判定的唯一口径；
+// 交易入口统一经 EnsureTradeAccess 调用（与 SKU 侧 EnsureSkuSellable 同构）
 //
 // 参数：
 //   - p: 商品模型
@@ -344,19 +346,22 @@ func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Produ
 
 // BatchGetProducts 按 ID 批量查询商品（下单/收银按明细取商品名与封面，替代逐行 GetProduct 的 N 次往返）
 // 只查主表：列表口径不需要 SKU 明细、规格树与图集，避免 GetProduct 的 4 组附属查询被放大 N 倍。
-// 任一 ID 不存在或不属于操作者社区即整体报错（订单明细不允许部分命中）。
+// 任一 ID 不存在即整体报错（订单明细不允许部分命中）。
+// communityID>0 时逐条比对商品归属社区，任一越权即整体拒绝：
+// 网关 C 端下单的 community_id 由订单服务原样透传，传了就一定拦得住（PermissionDenied）。
 // requireSellable=true 时追加「可售」收口校验：任一商品非上架态（status≠1，含定时上架未到点）
 // 即整体报错，下单入口借此与 GetByBarcode 保持同一口径（P1-4）。
+// 归属与可售的判定统一走 EnsureTradeAccess，与 SKU 侧同构。
 //
 // 参数：
 //   - ctx: 上下文
 //   - ids: 商品 ID 列表（重复 ID 只查一次）
-//   - communityID: 操作者社区语境，<=0 跳过归属校验
+//   - communityID: 成交/操作者社区语境，<=0 跳过归属校验
 //   - requireSellable: 是否要求全部商品可售（下单传 true）
 //
 // 返回值：
 //   - []*model.Product: 商品模型列表（按首次出现顺序去重）
-//   - error: 参数非法/不存在/越权/不可售/数据库错误
+//   - error: 参数非法/不存在/越权（PermissionDenied）/不可售（FailedPrecondition）/数据库错误
 //
 // 使用示例：
 //
@@ -372,13 +377,8 @@ func (s *ProductService) BatchGetProducts(ctx context.Context, ids []int64, comm
 	}
 	byID := make(map[int64]*model.Product, len(rows))
 	for _, p := range rows {
-		if err := EnsureScope(communityID, p.CommunityID, "商品"); err != nil {
+		if err := EnsureTradeAccess(communityID, p, nil, requireSellable); err != nil {
 			return nil, err
-		}
-		if requireSellable {
-			if err := EnsureProductSellable(p); err != nil {
-				return nil, err
-			}
 		}
 		byID[p.ID] = p
 	}
@@ -597,7 +597,11 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	return p, nil
 }
 
-// DeleteProduct 删除商品（软删除：状态置为 2）
+// DeleteProduct 删除商品（软删除：状态置为 2，并连带禁用其全部 SKU）
+// SKU 必须与商品同事务禁用：条码「存活」的唯一口径是 SKU status=1
+// （应用层查重 spec.go ensureSkuBarcodeAvailable 排除已删商品的 SKU，
+// 库级函数索引 main.go ensureSkuBarcodeUniqueIndex 也只对 status=1 的行生效），
+// 只软删商品不禁用 SKU 会让商家复用旧条码时插入即撞 1062、保存被卡死
 // 参数：
 //   - ctx: 上下文
 //   - id: 商品 ID
@@ -610,7 +614,14 @@ func (s *ProductService) DeleteProduct(ctx context.Context, id, communityId int6
 	if err := ensureProductInScope(db, id, communityId); err != nil {
 		return err
 	}
-	return db.Model(&model.Product{}).Where("id = ?", id).Update("status", 2).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Product{}).Where("id = ?", id).Update("status", 2).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Sku{}).
+			Where("product_id = ? AND status = 1", id).
+			Update("status", 0).Error
+	})
 }
 
 // UpdateProductStatus 更新商品状态
@@ -853,6 +864,45 @@ func (s *ProductService) validateOnSaleAt(ctx context.Context, raw string) error
 	}
 	if !t.After(dbNow) {
 		return bizerr.New(codes.InvalidArgument, "定时上架时间需晚于当前时间")
+	}
+	return nil
+}
+
+// WarnIfDBClockZoneMismatch 启动期体检：MySQL 服务器墙钟是否与应用进程不在同一时区口径
+// 定时上架整条链路以 MySQL NOW() 为权威时钟（见 validateOnSaleAt），而 NOW() 返回的是
+// 服务器本地墙钟字符串：操作员在后台填「2026-11-01 10:00」时想的是北京时间，
+// 若外部托管库的 time_zone 是 UTC（托管服务默认值），这串值就被当成 UTC 墙钟比较，
+// 到点自动上架会整整晚 8 小时——且保存校验与调度器口径一致，全程无人报错、静默失效。
+// 本体检只做一次墙钟差比对并告警，不改任何行为：偏差超过 5 分钟即打 WARN，
+// 提示运维把数据库时区设为 +08:00（或让应用容器同口径）。
+//
+// 参数：
+//   - db: 商品服务的 MySQL 实例
+//
+// 返回值：
+//   - error: 读取 DB 时钟失败（调用方只记日志，不阻断启动）
+//
+// 使用示例：
+//
+//	if err := service.WarnIfDBClockZoneMismatch(db.GetDb()); err != nil {
+//		log.Printf("[WARN] 数据库时钟体检失败: %v", err)
+//	}
+func WarnIfDBClockZoneMismatch(db *gorm.DB) error {
+	// DATE_FORMAT 固定输出格式，规避驱动 parseTime/loc 配置差异对解析的影响
+	var dbNowStr string
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.WithContext(ctx).Raw("SELECT DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')").Scan(&dbNowStr).Error; err != nil {
+		return err
+	}
+	dbNow, err := time.ParseInLocation("2006-01-02 15:04:05", dbNowStr, time.Local)
+	if err != nil {
+		return fmt.Errorf("DB 时间解析失败 %q: %w", dbNowStr, err)
+	}
+	if skew := time.Since(dbNow); skew > 5*time.Minute || skew < -5*time.Minute {
+		log.Printf("[WARN] MySQL 墙钟与应用本地时钟相差 %v（DB NOW()=%s）。"+
+			"定时上架以 MySQL NOW() 为准，外部库请把 time_zone 设为 '+08:00'（或让应用容器与库同口径），"+
+			"否则到点自动上架会按该偏差整体偏移", skew, dbNowStr)
 	}
 	return nil
 }

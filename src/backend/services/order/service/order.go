@@ -14,6 +14,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -60,21 +61,27 @@ func (s *OrderService) WithRedis(client *redis.Client) *OrderService {
 // 整单固定 2 次往返；返回值以 ID 为键，重复 SKU 的多行共用同一份档案。
 // 商品档案带可售收口（require_sellable）：任一明细商品非上架态即整体报错（P1-4），
 // 未到点的定时上架商品与已下架商品都无法下单。
+// 社区语境必须原样透传成交社区（trade 链路不适用「内部调用传 0」的旧约定）：
+// 商品与 SKU 都是社区私有资产，跨社区取用价格/库存无从拦截（P1-3 收口点）。
 //
 // 参数：
 //   - ctx: 上下文
 //   - skuIDs: 明细 SKU ID 集合（可重复，product 侧会去重）
+//   - communityID: 成交社区 ID（<=0 时 product 侧跳过归属校验，仅内部全量场景可用）
 //
 // 返回值：
 //   - map[int64]*product.SkuInfo: SKU ID -> SKU 档案
 //   - map[int64]*product.ProductInfo: 商品 ID -> 商品档案
-//   - error: RPC 失败（SKU/商品缺失由 product 侧整体报错，不会返回部分结果）
+//   - error: RPC 失败（SKU/商品缺失由 product 侧整体报错，不会返回部分结果；越权为 PermissionDenied）
 //
 // 使用示例：
 //
-//	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, []int64{11, 12})
-func (s *OrderService) loadOrderItemCatalog(ctx context.Context, skuIDs []int64) (map[int64]*product.SkuInfo, map[int64]*product.ProductInfo, error) {
-	skuResp, err := grpcclient.ProductClient.BatchGetSkus(ctx, &product.BatchGetSkusReq{Ids: skuIDs})
+//	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, []int64{11, 12}, 456)
+func (s *OrderService) loadOrderItemCatalog(ctx context.Context, skuIDs []int64, communityID int64) (map[int64]*product.SkuInfo, map[int64]*product.ProductInfo, error) {
+	skuResp, err := grpcclient.ProductClient.BatchGetSkus(ctx, &product.BatchGetSkusReq{
+		Ids:         skuIDs,
+		CommunityId: communityID,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("批量获取 SKU 失败: %w", err)
 	}
@@ -87,6 +94,8 @@ func (s *OrderService) loadOrderItemCatalog(ctx context.Context, skuIDs []int64)
 
 	productResp, err := grpcclient.ProductClient.BatchGetProducts(ctx, &product.BatchGetProductsReq{
 		Ids: productIDs,
+		// 与 BatchGetSkus 传同一个社区，归属漂移时两侧任一侧都能拦下
+		CommunityId: communityID,
 		// 可售收口（P1-4）：任一明细商品非上架态（下架/定时上架未到点）即拒单，
 		// 判定统一在商品服务（require_sellable），此处只声明意图
 		RequireSellable: true,
@@ -163,12 +172,12 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	// 明细商品预取：原先每行 2 次 RPC（SKU + 商品），N 行订单即 2N 次往返，
 	// 收银台整单尤其明显；收口为两次批量查询后按 ID 取内存结果。
 	// 批量查询任一 ID 缺失即整体报错，不会出现「部分明细算价」的金额/库存双口径偏差。
-	// 社区语境传 0（服务间内部调用约定），越权收口在网关与后台写接口侧
+	// 社区语境透传成交社区：越权取用其他社区的 SKU/商品在此拦下
 	skuIDs := make([]int64, 0, len(req.Items))
 	for _, item := range req.Items {
 		skuIDs = append(skuIDs, item.SkuId)
 	}
-	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs)
+	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs, req.CommunityId)
 	if err != nil {
 		return nil, err
 	}
@@ -579,9 +588,14 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	}
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Order{})
+	// 用户软删除过滤：靠 include_user_deleted 显式区分调用方，不能拿 user_id 是否非零推断——
+	// 后台「按会员查订单」（UserOrdersModal）同样传 user_id，靠它推断会把已删单从客服视图
+	// 一并抹掉，与「软删仅影响 C 端列表」的设计不变量冲突
+	if !req.IncludeUserDeleted {
+		db = db.Where("user_deleted = ?", int32(0))
+	}
 	if req.UserId > 0 {
-		// C 端用户路径：排除用户已软删除的订单（后台管理端路径 UserId=0，不受影响）
-		db = db.Where("user_id = ? AND user_deleted = ?", req.UserId, int32(0))
+		db = db.Where("user_id = ?", req.UserId)
 	}
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
@@ -687,11 +701,13 @@ func (s *OrderService) GetUserOrderStatusCounts(ctx context.Context, req *order.
 	}
 
 	// after_sale 专项统计：订单维度去重（同一订单可有多笔待审核售后单只计 1）
-	// 限定 orders.status=7 与退款单状态机一致（待审核售后单仅存于退款中的订单）
+	// 不再硬绑 orders.status=7：状态机正常时待审核售后单只存在于退款中的订单，
+	// 但后台改状态/历史数据可能留下「非 7 且挂着待审核售后单」的形态，
+	// 绑死 7 会漏计用户真正需要被提醒的一笔待处理售后
 	var afterSale int64
 	err = s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
 		Joins("JOIN orders ON orders.id = refunds.order_id").
-		Where("orders.user_id = ? AND orders.status = ? AND refunds.status = ?", req.UserId, int32(7), int32(1)).
+		Where("orders.user_id = ? AND refunds.status = ?", req.UserId, int32(1)).
 		// 用户已软删除的订单不参与角标统计（该口径理论上少命中：有进行中售后时不允许删除）
 		Where("orders.user_deleted = ?", int32(0)).
 		Distinct("refunds.order_id").
@@ -849,58 +865,121 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 }
 
 // DeleteOrder C 端用户删除订单（软删除）
-// 仅终态订单（5已完成 6已取消 8已退款）可删；存在进行中售后（待审核 1 / 退款中 4）时拒绝，
-// 避免删除后售后进度入口缺失；软删仅影响 C 端列表与角标统计，后台管理端与详情链路
+// 仅终态订单（5已完成 6已取消 8已退款）可删；收银台代客单（source=2）在 C 端只读、
+// 不提供任何操作（与 CancelOrder/ApplyRefund/ConfirmReceive 同口径），存在进行中售后
+// （待审核 1 / 退款中 4）时拒绝；软删仅影响 C 端列表与角标统计，后台管理端与详情链路
 // （售后进度 / 支付详情）保留可达，不清理任何数据、不产生状态流转日志
+// 并发口径：整段在事务内对订单行加写锁，最终 UPDATE 的 WHERE 同时带状态与未删除条件，
+// 与后台代客退款（把 5 改成 7 并插入待审核售后单）串行化，杜绝「读校验通过后状态已变」
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 删除请求（id + user_id）
 //
 // 返回值：
-//   - error: 错误信息（订单不存在 / 非本人订单 / 非终态 / 有进行中售后 / 状态已变更）
+//   - error: 错误信息（未登录 / 订单不存在 / 非本人订单 / 门店单 / 非终态 / 有进行中售后 / 状态已变更）
 //
 // 使用示例：
 //
 //	err := svc.DeleteOrder(ctx, &order.DeleteOrderReq{Id: 123, UserId: 456})
 func (s *OrderService) DeleteOrder(ctx context.Context, req *order.DeleteOrderReq) error {
-	var o model.Order
-	if err := s.db.GetDb().WithContext(ctx).First(&o, req.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return bizerr.New(codes.NotFound, "订单不存在")
+	// 归属必须来自服务端解析的用户上下文；拿不到时 UserID=0，
+	// 若放行会命中收银台散客单（user_id=0）形成跨用户删除
+	if req.UserId <= 0 {
+		return bizerr.New(codes.InvalidArgument, "未登录或用户标识缺失")
+	}
+
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var o model.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&o, req.Id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return bizerr.New(codes.NotFound, "订单不存在")
+			}
+			return err
 		}
-		return err
-	}
-	if o.UserID != req.UserId {
-		return bizerr.New(codes.PermissionDenied, "无权限操作该订单")
-	}
-	// 仅终态可删：进行中的订单（含退款中 7）一律拒绝
-	if !containsInt32([]int32{5, 6, 8}, o.Status) {
-		return bizerr.New(codes.FailedPrecondition, "仅已完成、已取消或已退款的订单可删除")
+		if o.UserID != req.UserId {
+			return bizerr.New(codes.PermissionDenied, "无权限操作该订单")
+		}
+		// 幂等：重复删除视为目标已达成，不再回错误（前端统一提示删除成功）
+		if o.UserDeleted == 1 {
+			return nil
+		}
+		// 门店/收银台代客单 C 端只读：这类单允许商家发起代客退款，
+		// 一旦被删，用户在等一笔钱却在 App 里看不到任何售后进度入口
+		if o.Source == 2 {
+			return bizerr.New(codes.FailedPrecondition, "门店订单请在门店办理")
+		}
+		// 仅终态可删：进行中的订单（含退款中 7）一律拒绝
+		if !containsInt32([]int32{5, 6, 8}, o.Status) {
+			return bizerr.New(codes.FailedPrecondition, "仅已完成、已取消或已退款的订单可删除")
+		}
+
+		// 进行中售后拦截：待审核(1)/退款中(4)的售后单存在时不允许删除
+		var refundCount int64
+		if err := tx.Model(&model.Refund{}).
+			Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
+			Count(&refundCount).Error; err != nil {
+			return err
+		}
+		if refundCount > 0 {
+			return bizerr.New(codes.FailedPrecondition, "订单存在进行中的售后，暂不能删除")
+		}
+
+		// 条件更新：状态与未删除一并进 WHERE，与并发的后台代客退款串行化；
+		// 0 行说明订单在这把锁拿到之前已变更为不可删状态
+		res := tx.Model(&model.Order{}).
+			Where("id = ? AND user_id = ? AND user_deleted = ? AND status IN ?",
+				o.ID, req.UserId, int32(0), []int32{5, 6, 8}).
+			Updates(map[string]interface{}{
+				"user_deleted": int32(1),
+				"updated_at":   time.Now().Format("2006-01-02 15:04:05"),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
+		}
+		return nil
+	})
+}
+
+// RestoreOrder 后台恢复被用户软删除的订单
+// 客服场景「我删错了，帮我找回上次买的东西」：只复位 user_deleted 标记，不改状态、
+// 不补状态日志。community_id>0 时限定在该社区范围内操作（社区管理员不得跨社区恢复），
+// =0 表示不限（超管）。
+//
+// 参数：
+//   - ctx: 上下文
+//   - req: 恢复请求（id + community_id）
+//
+// 返回值：
+//   - error: 错误信息（ID 非法 / 订单不存在或未被用户删除 / 不在可操作社区 / 更新失败）
+//
+// 使用示例：
+//
+//	err := svc.RestoreOrder(ctx, &order.RestoreOrderReq{Id: 123, CommunityId: 1})
+func (s *OrderService) RestoreOrder(ctx context.Context, req *order.RestoreOrderReq) error {
+	if req.Id <= 0 {
+		return bizerr.New(codes.InvalidArgument, "订单 ID 无效")
 	}
 
-	// 进行中售后拦截：待审核(1)/退款中(4)的售后单存在时不允许删除
-	var refundCount int64
-	if err := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
-		Where("order_id = ? AND status IN ?", o.ID, []int32{1, 4}).
-		Count(&refundCount).Error; err != nil {
-		return err
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
+		Where("id = ? AND user_deleted = ?", req.Id, int32(1))
+	if req.CommunityId > 0 {
+		db = db.Where("community_id = ?", req.CommunityId)
 	}
-	if refundCount > 0 {
-		return bizerr.New(codes.FailedPrecondition, "订单存在进行中的售后，暂不能删除")
-	}
-
-	// 条件更新防并发：user_deleted=0 保证重复删除 / 并发删除只生效一次
-	res := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).
-		Where("id = ? AND user_id = ? AND user_deleted = ?", o.ID, req.UserId, int32(0)).
-		Updates(map[string]interface{}{
-			"user_deleted": int32(1),
-			"updated_at":   time.Now().Format("2006-01-02 15:04:05"),
-		})
+	res := db.Updates(map[string]interface{}{
+		"user_deleted": int32(0),
+		"updated_at":   time.Now().Format("2006-01-02 15:04:05"),
+	})
 	if res.Error != nil {
 		return res.Error
 	}
+	// 0 行：订单不存在、不在该社区，或本来就没被删（三种情况对外统一为「未找到需恢复的订单」，
+	// 不透露其他社区是否存在该单）
 	if res.RowsAffected == 0 {
-		return bizerr.New(codes.FailedPrecondition, "订单不存在或已删除")
+		return bizerr.New(codes.NotFound, "未找到需恢复的订单")
 	}
 	return nil
 }
@@ -1636,6 +1715,11 @@ func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.G
 			Table("order_items").
 			Joins("JOIN orders ON orders.id = order_items.order_id").
 			Where("orders.user_id = ? AND orders.status IN ?", req.UserId, validStatuses)
+		// 用户软删除过滤：C 端购物车「常买商品」不统计已被用户删除的历史订单，
+		// 后台会员弹窗（include_user_deleted=true）与同弹窗订单 Tab 保持全量口径
+		if !req.IncludeUserDeleted {
+			q = q.Where("orders.user_deleted = ?", int32(0))
+		}
 		// 社区语境：管理端仅统计本社区订单（超管/C 端本人查询传 0 表示不过滤）
 		if req.CommunityId > 0 {
 			q = q.Where("orders.community_id = ?", req.CommunityId)
@@ -1654,7 +1738,7 @@ func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.G
 	}
 
 	query := baseQuery().
-		Select("order_items.product_id, order_items.product_name, MAX(order_items.product_image) AS product_image, "+
+		Select("order_items.product_id, order_items.product_name, MAX(order_items.product_image) AS product_image, " +
 			"COUNT(DISTINCT orders.id) AS purchase_count, SUM(order_items.quantity) AS total_quantity").
 		Group("order_items.product_id, order_items.product_name").
 		Order("purchase_count DESC, total_quantity DESC")

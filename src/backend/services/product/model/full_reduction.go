@@ -13,16 +13,16 @@ import (
 //go:generate go tool gormgen -struct FullReduction
 type FullReduction struct {
 	base.MysqlBaseModel
-	ID          int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	CommunityID int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
-	Name        string  `gorm:"column:name;type:varchar(100);not null;comment:活动名称" json:"name"`
+	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	CommunityID  int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
+	Name         string  `gorm:"column:name;type:varchar(100);not null;comment:活动名称" json:"name"`
 	Threshold    float64 `gorm:"column:threshold;type:decimal(10,2);not null;comment:满减门槛" json:"threshold"`
 	ReduceAmount float64 `gorm:"column:reduce_amount;type:decimal(10,2);not null;comment:减免金额" json:"reduce_amount"`
-	StartTime   *string `gorm:"column:start_time;type:datetime;comment:开始时间" json:"start_time"`
-	EndTime     *string `gorm:"column:end_time;type:datetime;comment:结束时间" json:"end_time"`
-	Status      int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
-	CreatedAt   string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt   string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	StartTime    *string `gorm:"column:start_time;type:datetime;comment:开始时间" json:"start_time"`
+	EndTime      *string `gorm:"column:end_time;type:datetime;comment:结束时间" json:"end_time"`
+	Status       int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
+	CreatedAt    string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt    string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回满减活动表名

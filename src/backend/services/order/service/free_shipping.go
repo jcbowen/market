@@ -184,7 +184,7 @@ func (s *OrderService) PreviewFreeShipping(ctx context.Context, req *order.Previ
 	for _, item := range req.Items {
 		skuIDs = append(skuIDs, item.SkuId)
 	}
-	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs)
+	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs, req.CommunityId)
 	if err != nil {
 		return nil, err
 	}

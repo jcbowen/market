@@ -6,11 +6,11 @@ import (
 
 // 采购单状态常量
 const (
-	PurchaseStatusDraft      int32 = 1 // 草稿
-	PurchaseStatusOrdered    int32 = 2 // 已下单（在途）
-	PurchaseStatusPartial    int32 = 3 // 部分入库
-	PurchaseStatusCompleted  int32 = 4 // 已完结（全部入库）
-	PurchaseStatusCancelled  int32 = 5 // 已取消
+	PurchaseStatusDraft     int32 = 1 // 草稿
+	PurchaseStatusOrdered   int32 = 2 // 已下单（在途）
+	PurchaseStatusPartial   int32 = 3 // 部分入库
+	PurchaseStatusCompleted int32 = 4 // 已完结（全部入库）
+	PurchaseStatusCancelled int32 = 5 // 已取消
 )
 
 // PurchaseOrder 采购单模型

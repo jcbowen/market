@@ -60,6 +60,7 @@ type reconcileStat struct {
 	panics       int
 	refundOK     int // 退款查单确认成功并完成落库（P0-2）
 	refundFailed int // 退款查单确认渠道终态失败，流水转待重试（P0-2）
+	refundTodo   int // 退款流水收敛无进展已转人工待办（P0-2 兜底）
 }
 
 // count 把单笔结论计入本轮统计
@@ -88,7 +89,7 @@ func (o reconcileOutcome) count(stat *reconcileStat) {
 // 返回值：
 //   - bool: true 表示有实质动作
 func (s reconcileStat) hasAction() bool {
-	return s.rescued+s.stuck+s.closed+s.failed > 0
+	return s.rescued+s.stuck+s.closed+s.failed+s.refundTodo > 0
 }
 
 // merge 把另一份统计并入本轮（子任务结果汇总）
@@ -103,6 +104,7 @@ func (s *reconcileStat) merge(other reconcileStat) {
 	s.panics += other.panics
 	s.refundOK += other.refundOK
 	s.refundFailed += other.refundFailed
+	s.refundTodo += other.refundTodo
 }
 
 // shouldRecordReconcile 判定本轮对账是否值得写入 debugger 进程记录
@@ -187,16 +189,17 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 		return
 	}
 	fields := map[string]interface{}{
-		"rescued":      stat.rescued,
-		"stuck":        stat.stuck,
-		"closed":       stat.closed,
-		"observed":     stat.observed,
+		"rescued":       stat.rescued,
+		"stuck":         stat.stuck,
+		"closed":        stat.closed,
+		"observed":      stat.observed,
 		"failed":        stat.failed,
 		"panics":        stat.panics,
 		"refund_ok":     stat.refundOK,
 		"refund_failed": stat.refundFailed,
+		"refund_todo":   stat.refundTodo,
 		"cleaned_logs":  cleaned,
-		"duration_ms":  time.Since(start).Milliseconds(),
+		"duration_ms":   time.Since(start).Milliseconds(),
 	}
 	if stat.failed > 0 || stat.panics > 0 || cleaned < 0 {
 		rec.Error("本轮对账存在失败", fields)
@@ -280,7 +283,21 @@ func (s *Scheduler) detectPaidMismatch(ctx context.Context) reconcileStat {
 // 取消护栏的 orderID 分支也只查 status=1，资金不一致会一直悬着。
 // 本任务逐笔核对订单实态并修复：停留待支付族(1/100) → 补同步；已取消(6) → 挂账待办。
 // 扫描窗口与挂账检出一致（updated_at 落在渠道时效内），节流只推进 last_reconciled_at——
-// 不走渠道，不能消耗 reconcile_count 的渠道回查预算
+// 不走渠道，不能消耗 reconcile_count 的渠道回查预算。
+//
+// 批次选取取舍（P0-3 防截断，二选一后定稿）：
+//   - 方案 a：给 payments 增加持久「已核对一致」标记列，核对成功置位、支付单状态
+//     再次变化时清位。优点是「核对过」与「没排上」在数据上可区分、后台可查；
+//     代价是新增一列并要求所有改支付单状态的写路径都记得清位，漏一处就永久漏检。
+//   - 方案 b（本任务采用）：不改数据，只把批次排序从 updated_at asc 换成
+//     按节流指针 last_reconciled_at asc 做游标轮转。MySQL 的 ASC 把 NULL 排最前，
+//     故「刚支付成功、从未核对过」的单一定赢下批次；已核对过的按「最久未核对」轮转，
+//     不会像 updated_at 排序那样让同一批老单（touchReconciled 不动 updated_at）
+//     长期霸占 LIMIT 名额、把新单永久挤在批外。
+//     排序前缀还与既有索引 idx_payments_status_reconciled(status, last_reconciled_at) 对齐。
+//     代价是与方案 a 相比无法区分「已核对一致」和「本轮没取到」，
+//     只能靠 updated_at 时效窗口判断是否值得关注——与 scanPending/scanStuck 口径一致。
+//
 // 参数：
 //   - ctx: 上下文
 //   - stat: 本轮统计（写入指针，由 runReconcileTask 回传）
@@ -300,7 +317,7 @@ func (s *Scheduler) scanPaidMismatch(ctx context.Context, stat *reconcileStat) {
 	if err := s.payment.db.GetDb().WithContext(ctx).
 		Where("status = ? AND pay_type IN ? AND updated_at >= ?", model.PaymentStatusSuccess, []int32{1, 2, 5, 6}, updatedAfter).
 		Where("(last_reconciled_at IS NULL OR last_reconciled_at < ?)", throttleBefore).
-		Order("updated_at asc").
+		Order("last_reconciled_at asc").
 		Limit(config.ReconcileInt(r.BatchSize, 100)).
 		Find(&rows).Error; err != nil {
 		log.Printf("[payment-scheduler] 扫描已确认支付单失败: %v", err)
@@ -851,9 +868,37 @@ func (s *Scheduler) reconcileRefunds(ctx context.Context) reconcileStat {
 	return runReconcileTask("reconcileRefunds", func(stat *reconcileStat) { s.scanPendingRefunds(ctx, stat) })
 }
 
+// 退款查单收敛（scanPendingRefunds）的节奏常量
+// 与支付侧回查不同，退款流水只有「渠道终态」一个事实来源，且没有 reconcile_count 那样的
+// 渠道预算列，故用 retry_count（连续查单失败次数）+ updated_at（节流指针）两个字段推进
+const (
+	// refundScanBatch 单轮退款查单收敛的批次上限
+	refundScanBatch = 20
+	// refundAcceptWindow 受理后留给渠道异步出款的窗口，避免刚受理就查单打扰渠道
+	refundAcceptWindow = 2 * time.Minute
+	// refundQueryMaxRetry 同一笔退款流水连续查单失败的上限：
+	// 60s 一轮 + 每笔失败推进 2 分钟节流，约 20 分钟仍问不出结果即转人工待办
+	refundQueryMaxRetry = 10
+	// refundStaleTodoAfter 待退款流水停留超此时长即无条件转人工待办（P0-2 兜底）：
+	// 覆盖退款查单能力之外的渠道（支付宝退款为同步语义，没有可轮询的查单接口），
+	// 以及被自动批次排除的历史旧单
+	refundStaleTodoAfter = 24 * time.Hour
+	// refundStaleBatch 单轮超期体检的批次上限
+	refundStaleBatch = 50
+)
+
 // scanPendingRefunds 退款查单收敛的任务本体
 // 仅处理微信渠道（pay_type 1/5，支付宝退款为同步语义不在此列）；
-// 受理瞬间给渠道异步留 2 分钟窗口，避免刚受理就被查单打扰
+// 受理瞬间给渠道异步留 refundAcceptWindow 窗口，避免刚受理就被查单打扰。
+//
+// 防队首饿死约定（P0-2）：
+//   - 批次排序用 updated_at ASC 而非 id ASC——updated_at 同时是本任务的节流指针，
+//     每笔处理完（成功落库/查单失败/仍在处理）都会刷新，队首自然轮转；
+//   - 查单失败不再「只打日志后 continue」：按笔推进 retry_count + updated_at，
+//     retry_count 达到 refundQueryMaxRetry 即登记人工待办并退出自动批次
+//     （与支付侧「回查超上限放弃对账」同口径，见 escalateRefundFlow）；
+//   - 进入查单前先跑 escalateStaleRefunds 超期体检，保证「渠道永远问不出结果」
+//     和「非微信渠道」的流水都有确定出口，不会无限停在待退款。
 //
 // 参数：
 //   - ctx: 上下文
@@ -866,42 +911,48 @@ func (s *Scheduler) scanPendingRefunds(ctx context.Context, stat *reconcileStat)
 	}
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
-	deadline := time.Now().Add(-2 * time.Minute).Format(timeLayout)
+	s.escalateStaleRefunds(ctx, stat)
+
+	if !wechatPayReady(s.payment) {
+		log.Println("[payment-scheduler] 微信渠道未配置，本轮退款查单跳过")
+		return
+	}
+
+	deadline := time.Now().Add(-refundAcceptWindow).Format(timeLayout)
 	var flows []model.RefundPayment
 	// refund_payments 无 pay_type 冗余列：JOIN payments 过滤微信渠道（pay_type 1/5）
+	// retry_count 上限是「放弃收敛」的出口；escalated 只作待办去重，不影响是否再查
 	if err := s.payment.db.GetDb().WithContext(ctx).
 		Table("refund_payments").
 		Select("refund_payments.*").
 		Joins("JOIN payments ON payments.payment_no = refund_payments.payment_no AND payments.pay_type IN ?", []int32{1, 5}).
-		Where("refund_payments.status = ? AND refund_payments.updated_at < ?", 1, deadline).
-		Order("refund_payments.id asc").Limit(20).
+		Where("refund_payments.status = ? AND refund_payments.retry_count < ? AND refund_payments.updated_at < ?",
+			1, refundQueryMaxRetry, deadline).
+		Order("refund_payments.updated_at asc").Limit(refundScanBatch).
 		Scan(&flows).Error; err != nil {
 		log.Printf("[payment-scheduler] 查询待收敛退款流水失败: %v", err)
 		stat.failed++
 		return
 	}
-	if len(flows) == 0 {
-		return
-	}
 
-	client := s.payment.getWechatPayClient()
 	for i := range flows {
 		flow := &flows[i]
-		if client == nil {
-			log.Printf("[payment-scheduler] 微信客户端未就绪，退款查单本轮跳过 refund_no=%s", flow.RefundNo)
-			return
-		}
-		resp, err := client.RefundQuery(ctx, flow.RefundNo)
+		status, refundID, err := wechatRefundQuery(ctx, s.payment, flow.RefundNo)
 		if err != nil {
-			// 查单失败不算流水失败：渠道单刚创建时可能暂不可查，下一轮继续
+			// 查单失败不算渠道终态失败：渠道单刚创建时可能暂不可查，下一轮继续，
+			// 但必须推进节流与重试次数，否则同一笔会永久霸占队首名额
 			log.Printf("[payment-scheduler] 退款查单失败 refund_no=%s: %v", flow.RefundNo, err)
+			s.retryRefundQuery(ctx, flow, err, stat)
 			continue
 		}
-		switch resp.Status {
+		switch status {
 		case "SUCCESS":
-			flow.TransactionID = resp.RefundID
+			flow.TransactionID = refundID
 			if err := s.payment.completeChannelRefundSuccess(ctx, &model.Payment{PaymentNo: flow.PaymentNo}, flow); err != nil {
+				// 渠道侧已出款，本地只是写库抖动：同样按重试推进，下一轮再来，
+				// 连续失败到上限转人工待办，不会静默停在待退款
 				log.Printf("[payment-scheduler] 退款成功落库失败 refund_no=%s: %v", flow.RefundNo, err)
+				s.retryRefundQuery(ctx, flow, err, stat)
 				stat.failed++
 				continue
 			}
@@ -915,7 +966,8 @@ func (s *Scheduler) scanPendingRefunds(ctx context.Context, stat *reconcileStat)
 				Where("id = ? AND status = 1", flow.ID).
 				Updates(map[string]interface{}{
 					"status":         int32(3),
-					"transaction_id": resp.RefundID,
+					"transaction_id": refundID,
+					"retry_count":    0,
 					"updated_at":     now,
 				})
 			if res.Error != nil {
@@ -925,12 +977,136 @@ func (s *Scheduler) scanPendingRefunds(ctx context.Context, stat *reconcileStat)
 			}
 			if res.RowsAffected > 0 {
 				stat.refundFailed++
-				log.Printf("[payment-scheduler] 退款查单确认渠道失败 refund_no=%s status=%s，流水已转待重试", flow.RefundNo, resp.Status)
+				log.Printf("[payment-scheduler] 退款查单确认渠道失败 refund_no=%s status=%s，流水已转待重试", flow.RefundNo, status)
 			}
 		default:
-			// PROCESSING 等：保持待退款，下一轮再查
+			// PROCESSING / 渠道未给状态等：保持待退款，只推进节流指针，按窗口节奏再查
+			s.touchRefundFlow(ctx, flow)
 		}
 	}
+}
+
+// touchRefundFlow 推进单笔退款流水的节流指针（updated_at）
+// 渠道已明确回答「仍在处理」时用它：流水不动，但必须离开队首，
+// 让本批次去处理别的流水，下一轮按 refundAcceptWindow 节奏再查
+// 参数：
+//   - ctx: 上下文
+//   - flow: 待收敛退款流水
+func (s *Scheduler) touchRefundFlow(ctx context.Context, flow *model.RefundPayment) {
+	now := time.Now().Format(timeLayout)
+	if err := s.payment.db.GetDb().WithContext(ctx).Model(&model.RefundPayment{}).
+		Where("id = ?", flow.ID).
+		Update("updated_at", now).Error; err != nil {
+		log.Printf("[payment-scheduler] 推进退款查单节流失败 refund_no=%s: %v", flow.RefundNo, err)
+		return
+	}
+	flow.UpdatedAt = now
+}
+
+// retryRefundQuery 退款查单/落库失败时的重试推进
+// 一次失败做三件事：retry_count +1、刷新 updated_at（节流 + 轮转出队首）、
+// 达到 refundQueryMaxRetry 后登记人工待办并退出自动批次
+// 参数：
+//   - ctx: 上下文
+//   - flow: 待收敛退款流水
+//   - cause: 本轮失败原因，写入待办供人工核对
+//   - stat: 本轮统计（写入指针）
+func (s *Scheduler) retryRefundQuery(ctx context.Context, flow *model.RefundPayment, cause error, stat *reconcileStat) {
+	now := time.Now().Format(timeLayout)
+	res := s.payment.db.GetDb().WithContext(ctx).Model(&model.RefundPayment{}).
+		Where("id = ? AND status = 1", flow.ID).
+		Updates(map[string]interface{}{
+			"retry_count": gorm.Expr("retry_count + 1"),
+			"updated_at":  now,
+		})
+	if res.Error != nil {
+		log.Printf("[payment-scheduler] 推进退款重试计数失败 refund_no=%s: %v", flow.RefundNo, res.Error)
+		return
+	}
+	flow.RetryCount++
+	flow.UpdatedAt = now
+	if flow.RetryCount < refundQueryMaxRetry {
+		log.Printf("[payment-scheduler] 退款流水待收敛，第 %d/%d 次尝试 refund_no=%s", flow.RetryCount, refundQueryMaxRetry, flow.RefundNo)
+		return
+	}
+	if s.escalateRefundFlow(ctx, flow, fmt.Sprintf("退款查单连续 %d 次未能确认终态，最后错误：%v", flow.RetryCount, cause)) {
+		stat.refundTodo++
+	}
+}
+
+// escalateStaleRefunds 待退款流水的超期体检（P0-2 兜底）
+// 自动收敛批次只看得见微信渠道（JOIN payments 过滤 pay_type 1/5）且未放弃收敛的流水，
+// 于是有两类流水没有确定出口：支付宝/现金等同步语义渠道的落库残单
+// （ProcessRefund 第三阶段写失败，渠道侧不会再给回执）、以及长期在途的历史旧单。
+// 本体检只看创建时间：status=1 停留超过 refundStaleTodoAfter 即登记一次人工待办，
+// 让每一笔待退款都能被运维看见；只置 escalated 去重标记，不退出自动批次——
+// 微信退款本就允许 1-3 个工作日到账，超期提醒后仍要让它继续被渠道终态收敛
+// 参数：
+//   - ctx: 上下文
+//   - stat: 本轮统计（写入指针，转办数计入 refundTodo）
+func (s *Scheduler) escalateStaleRefunds(ctx context.Context, stat *reconcileStat) {
+	staleBefore := time.Now().Add(-refundStaleTodoAfter).Format(timeLayout)
+	var flows []model.RefundPayment
+	if err := s.payment.db.GetDb().WithContext(ctx).
+		Where("status = ? AND escalated = 0 AND created_at < ?", 1, staleBefore).
+		Order("created_at asc").
+		Limit(refundStaleBatch).
+		Find(&flows).Error; err != nil {
+		log.Printf("[payment-scheduler] 扫描超期待退款流水失败: %v", err)
+		stat.failed++
+		return
+	}
+	for i := range flows {
+		flow := &flows[i]
+		reason := fmt.Sprintf("退款流水停留「待退款」超过 %v（退款单 %s，金额 %.2f，支付单 %s）：渠道未确认终态，"+
+			"订单退款单会停留「退款中」，请到渠道商户平台核实后人工收敛",
+			refundStaleTodoAfter, flow.RefundNo, flow.Amount, flow.PaymentNo)
+		if s.escalateRefundFlow(ctx, flow, reason) {
+			stat.refundTodo++
+		}
+	}
+}
+
+// escalateRefundFlow 登记单笔退款流水的人工待办并置已转办标记
+// escalated 条件更新保证幂等：只有本次真正翻转（0→1）才写待办流水，
+// 已转办的流水不重复进异常队列（待办销账由后台人工完成）
+// 待办归属（社区/订单号）来自支付单快照，与「放弃对账」写 NotifyKindReconcile +
+// NotifyResultSyncFailed 的口径保持一致，后台异常队列一处可查
+//
+// 参数：
+//   - ctx: 上下文
+//   - flow: 待转办退款流水
+//   - reason: 转办原因，写入待办详情
+//
+// 返回值：
+//   - bool: true 表示本次完成转办（已登记待办）；false 表示已转办过或更新失败
+//
+// 使用示例：
+//   - if s.escalateRefundFlow(ctx, flow, "退款查单连续 10 次失败") { stat.refundTodo++ }
+func (s *Scheduler) escalateRefundFlow(ctx context.Context, flow *model.RefundPayment, reason string) bool {
+	res := s.payment.db.GetDb().WithContext(ctx).Model(&model.RefundPayment{}).
+		Where("id = ? AND escalated = 0", flow.ID).
+		Update("escalated", int32(1))
+	if res.Error != nil {
+		log.Printf("[payment-scheduler] 退款流水转人工待办失败 refund_no=%s: %v", flow.RefundNo, res.Error)
+		return false
+	}
+	if res.RowsAffected == 0 {
+		return false
+	}
+	flow.Escalated = 1
+
+	var p model.Payment
+	if err := s.payment.db.GetDb().WithContext(ctx).
+		Where("payment_no = ?", flow.PaymentNo).First(&p).Error; err != nil {
+		// 支付单查不到时只带退款信息登记，仍要保证异常不丢
+		p = model.Payment{PaymentNo: flow.PaymentNo, OrderID: flow.OrderID}
+	}
+	entry := notifyEntryFrom(&p, model.NotifyKindReconcile, model.NotifyResultSyncFailed)
+	entry.ErrorMsg = reason
+	s.payment.recordNotifyLog(ctx, entry)
+	log.Printf("[CRITICAL] 退款流水已转人工待办 refund_no=%s payment_no=%s：%s", flow.RefundNo, flow.PaymentNo, reason)
+	return true
 }
 
 // acquireLock 获取 Redis 分布式锁

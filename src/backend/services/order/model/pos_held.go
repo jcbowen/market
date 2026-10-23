@@ -12,12 +12,12 @@ import (
 //go:generate go tool gormgen -struct PosHeldOrder
 type PosHeldOrder struct {
 	base.MysqlBaseModel
-	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	CommunityID  int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
-	OperatorID   int64   `gorm:"column:operator_id;type:bigint;default:0;comment:挂单收银员 ID" json:"operator_id"`
-	OperatorName string  `gorm:"column:operator_name;type:varchar(50);comment:挂单收银员姓名快照" json:"operator_name"`
-	UserID       int64   `gorm:"column:user_id;type:bigint;default:0;comment:会员 ID（0=散客）" json:"user_id"`
-	UserName     string  `gorm:"column:user_name;type:varchar(50);comment:会员名称快照" json:"user_name"`
+	ID           int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	CommunityID  int64  `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
+	OperatorID   int64  `gorm:"column:operator_id;type:bigint;default:0;comment:挂单收银员 ID" json:"operator_id"`
+	OperatorName string `gorm:"column:operator_name;type:varchar(50);comment:挂单收银员姓名快照" json:"operator_name"`
+	UserID       int64  `gorm:"column:user_id;type:bigint;default:0;comment:会员 ID（0=散客）" json:"user_id"`
+	UserName     string `gorm:"column:user_name;type:varchar(50);comment:会员名称快照" json:"user_name"`
 	// ItemsJSON 商品明细快照 JSON（[]PosHeldOrderItem），恢复时由 service 反序列化
 	ItemsJSON   string  `gorm:"column:items_json;type:text;comment:商品明细快照 JSON" json:"-"`
 	ItemCount   int32   `gorm:"column:item_count;type:int;default:0;comment:明细行数" json:"item_count"`

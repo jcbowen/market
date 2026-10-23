@@ -21,6 +21,7 @@ type GeoIPHandler struct {
 // NewGeoIPHandler 创建 IP 定位 handler
 // 参数：
 //   - dbPath: GeoLite2-City mmdb 数据库路径（相对路径以可执行文件所在目录为基准）
+//
 // 返回：
 //   - *GeoIPHandler: handler 实例
 func NewGeoIPHandler(dbPath string) *GeoIPHandler {

@@ -48,9 +48,9 @@ const testOrderIDBase = int64(990000001)
 // 嵌入接口后仅覆写 UpdateOrderStatus/GetOrder，避免实现全部方法
 type stubOrderClient struct {
 	order.OrderServiceClient
-	mu           sync.Mutex
-	calls        []*order.UpdateOrderStatusReq
-	orderStatus  map[int64]int32 // GetOrder 预置的订单状态；缺省视为查询失败
+	mu          sync.Mutex
+	calls       []*order.UpdateOrderStatusReq
+	orderStatus map[int64]int32 // GetOrder 预置的订单状态；缺省视为查询失败
 }
 
 // UpdateOrderStatus 记录调用并返回成功响应
@@ -434,6 +434,116 @@ func TestProcessRefundCash(t *testing.T) {
 	if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "", Amount: 10}); err == nil {
 		t.Error("退款单号为空应报错")
 	}
+}
+
+// TestProcessRefundConcurrentSamePayment 同一支付单的并发退款回归（FOR UPDATE 累计防线）
+// 三个并发场景各起一组 goroutine，全部走现金路径（pay_type=4，不触渠道，只考 DB 串行化）：
+//  1. 并发不同 refund_no、单笔即超剩余额度：只允许一笔成功，其余必须被累计上限拒绝；
+//  2. 并发同一 refund_no 双提交：只落一条流水，两次调用都按幂等成功返回（不得二次出款）；
+//  3. 并发同 refund_no 但金额不同：一笔成功、另一笔被拒（拒绝「换金额重试静默按旧金额成功」）
+//
+// 参数：
+//   - t: 测试对象
+//
+// 使用示例：
+//
+//	TEST_MYSQL_PASSWORD=xxx go test ./services/payment/service/ -run TestProcessRefundConcurrentSamePayment -v
+func TestProcessRefundConcurrentSamePayment(t *testing.T) {
+	s, _, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// newPaidPayment 建一笔金额 amount 的已支付现金单，返回订单 ID 与支付单号
+	newPaidPayment := func(orderID int64, paymentNo string, amount float64) {
+		t.Helper()
+		insertPayment(t, s, &model.Payment{
+			PaymentNo: paymentNo,
+			OrderID:   orderID,
+			UserID:    1,
+			PayType:   4,
+			Amount:    amount,
+			Status:    2,
+			CreatedAt: "2026-01-01 00:00:00",
+			UpdatedAt: "2026-01-01 00:00:00",
+		})
+	}
+
+	// runConcurrent 并发发起 n 笔退款（refundNo 由下标生成），返回成功笔数
+	runConcurrent := func(orderID int64, n int, amount float64, refundNo func(i int) string) int {
+		t.Helper()
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		ok := 0
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				_, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{
+					OrderId:  orderID,
+					RefundNo: refundNo(i),
+					Amount:   amount,
+				})
+				if err == nil {
+					mu.Lock()
+					ok++
+					mu.Unlock()
+				}
+			}(i)
+		}
+		wg.Wait()
+		return ok
+	}
+
+	// countFlows 统计某支付单的成功(2)流水条数与金额合计
+	countFlows := func(paymentNo string) (int, float64) {
+		t.Helper()
+		var rows []model.RefundPayment
+		if err := s.db.GetDb().Where("payment_no = ? AND status = 2", paymentNo).Find(&rows).Error; err != nil {
+			t.Fatalf("查询退款流水失败: %v", err)
+		}
+		var sum float64
+		for _, r := range rows {
+			sum += r.Amount
+		}
+		return len(rows), sum
+	}
+
+	t.Run("并发不同退款单号超额度只放行一笔", func(t *testing.T) {
+		orderID := testOrderIDBase + 30
+		newPaidPayment(orderID, "PAYTEST-CC-1", 100.00)
+		if ok := runConcurrent(orderID, 4, 60, func(i int) string { return fmt.Sprintf("RF-PAYTEST-CC1-%d", i) }); ok != 1 {
+			t.Fatalf("100 元支付单并发退 60 元 × 4，应恰好 1 笔成功，实际 %d 笔", ok)
+		}
+		if n, sum := countFlows("PAYTEST-CC-1"); n != 1 || sum != 60 {
+			t.Fatalf("成功流水应为 1 条共 60 元，实际 %d 条共 %.2f 元", n, sum)
+		}
+	})
+
+	t.Run("并发同退款单号双提交只落一条流水", func(t *testing.T) {
+		orderID := testOrderIDBase + 31
+		newPaidPayment(orderID, "PAYTEST-CC-2", 100.00)
+		if ok := runConcurrent(orderID, 2, 40, func(int) string { return "RF-PAYTEST-CC2-SAME" }); ok != 2 {
+			t.Fatalf("同退款单号双提交应两次都返回成功（首次落库 + 幂等命中），实际成功 %d 次", ok)
+		}
+		if n, sum := countFlows("PAYTEST-CC-2"); n != 1 || sum != 40 {
+			t.Fatalf("幂等双提交只应出款一次（1 条 40 元），实际 %d 条共 %.2f 元", n, sum)
+		}
+	})
+
+	t.Run("并发同退款单号不同金额拒绝一笔", func(t *testing.T) {
+		orderID := testOrderIDBase + 32
+		newPaidPayment(orderID, "PAYTEST-CC-3", 100.00)
+		// 先落一笔 50 元成功流水，再用同单号请求 20 元：必须被拒而不是按旧金额静默成功
+		if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-CC3", Amount: 50}); err != nil {
+			t.Fatalf("首次退款失败: %v", err)
+		}
+		if _, err := s.ProcessRefund(ctx, &payment.ProcessRefundReq{OrderId: orderID, RefundNo: "RF-PAYTEST-CC3", Amount: 20}); err == nil {
+			t.Fatal("同退款单号换金额重试应被拒绝（否则调用方会以为新金额已退成功）")
+		}
+		if n, sum := countFlows("PAYTEST-CC-3"); n != 1 || sum != 50 {
+			t.Fatalf("流水应保持原样（1 条 50 元），实际 %d 条共 %.2f 元", n, sum)
+		}
+	})
 }
 
 // TestProcessRefundNoChannel 渠道未配置：流水落「退款失败」保留审计，同 refund_no 重试时清理后重新发起

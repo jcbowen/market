@@ -169,8 +169,8 @@ func (h *ProductHandler) ListCoupons(c *gin.Context) {
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
 	resp, err := h.productClient.ListCoupons(c.Request.Context(), &product.ListCouponsReq{
-		CommunityId:      communityID,
-		Status:           int32(status),
+		CommunityId:       communityID,
+		Status:            int32(status),
 		CenterVisibleOnly: true, // C 端领券中心仅展示已发布且进入领券中心的券
 	})
 	if err != nil {
@@ -250,8 +250,8 @@ func (h *ProductHandler) ListFlashSales(c *gin.Context) {
 		items := make([]gin.H, 0, len(detail.Items))
 		for _, it := range detail.Items {
 			items = append(items, gin.H{
-				"id":             it.Id,
-				"sku_id":         it.SkuId,
+				"id":     it.Id,
+				"sku_id": it.SkuId,
 				// product_id 由秒杀服务随 SKU 一并回填，无需逐行再查一次 SKU
 				"product_id":     it.ProductId,
 				"product_name":   it.ProductName,

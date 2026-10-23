@@ -383,7 +383,8 @@ func (h *OrderHandler) ListFrequentProducts(c *gin.Context) {
 
 // GetUserOrderStatusCounts 用户订单状态角标统计（C 端「我的-我的订单」红标）
 // 接口: GET /api/v1/orders/status-counts
-// 口径与订单列表 Tab 一致：待支付=1；待发货=2/3；待收货=4；退款/售后=7/8
+// 口径与订单列表 Tab 一致：待支付=1；待发货=2/3；待收货=4；
+// 退款/售后只统计存在待审核售后单（refunds.status=1）的订单，且排除用户已软删除的订单
 // 参数：
 //   - c: gin 上下文
 func (h *OrderHandler) GetUserOrderStatusCounts(c *gin.Context) {
@@ -809,13 +810,13 @@ func (h *OrderHandler) ListOrderRefunds(c *gin.Context) {
 			})
 		}
 		refunds = append(refunds, gin.H{
-			"id":            r.Id,
-			"refund_no":     r.RefundNo,
-			"amount":        r.Amount,
+			"id":             r.Id,
+			"refund_no":      r.RefundNo,
+			"amount":         r.Amount,
 			"freight_amount": r.FreightAmount,
 			// 退款类型：1整单退 2部分退 3仅金额退
-			"type":          r.Type,
-			"reason":        r.Reason,
+			"type":   r.Type,
+			"reason": r.Reason,
 			// 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
 			"status":        r.Status,
 			"reject_reason": r.RejectReason,

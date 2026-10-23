@@ -71,8 +71,8 @@ type RegionUpdateTask struct {
 	UpdatedJSON string `gorm:"column:updated_json;type:mediumtext;comment:更新明细 JSON" json:"-"`
 	RemovedJSON string `gorm:"column:removed_json;type:mediumtext;comment:删除明细 JSON" json:"-"`
 	// 失败原因
-	Error   string  `gorm:"column:error;type:varchar(500);comment:失败原因" json:"error"`
-	Applied bool    `gorm:"column:applied;type:tinyint(1);default:0;comment:差异是否已覆盖入库" json:"applied"`
+	Error   string `gorm:"column:error;type:varchar(500);comment:失败原因" json:"error"`
+	Applied bool   `gorm:"column:applied;type:tinyint(1);default:0;comment:差异是否已覆盖入库" json:"applied"`
 	// 任务结束时间（未结束时为 NULL；指针类型避免零值空串写入 datetime 报 1292）
 	CreatedAt  string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	FinishedAt *string `gorm:"column:finished_at;type:datetime;comment:完成时间" json:"finished_at"`

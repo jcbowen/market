@@ -467,7 +467,10 @@ message UpdateSkuReq {
   double cost_price = 5;
   int32 safety_stock = 6;
   string image = 7;
-  int32 status = 8;
+  // 目标状态：1 启用，0 禁用（SKU 口径 status 只有 0/1）。
+  // 必须声明为 optional：proto3 裸 int32 的「未传」与「传 0」都是 0，
+  // 服务端无法区分「不改状态」和「要禁用」，历史上因此永远改不出禁用态
+  optional int32 status = 8;
   string barcode = 9; // 商品条形码
   // 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区改价/改状态（超管传 0 放行）
   int64 community_id = 10;

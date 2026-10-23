@@ -415,7 +415,7 @@ message CreateSkuReq {
   int32 stock = 8;
   int32 safety_stock = 9;
   string image = 10;
-  string barcode = 11; // 商品条形码
+  string barcode = 11; // 商品条形码（口径同 UpdateSkuReq：先校验格式与社区内占用，再进事务写入）
 }
 
 message UpdateSkuReq {
@@ -426,8 +426,13 @@ message UpdateSkuReq {
   double cost_price = 5;
   int32 safety_stock = 6;
   string image = 7;
-  int32 status = 8;
-  string barcode = 9; // 商品条形码
+  // 目标状态：1 启用，0 禁用（SKU 口径 status 只有 0/1）。
+  // 必须声明为 optional：proto3 裸 int32 的「未传」与「传 0」都是 0，
+  // 服务端无法区分「不改状态」和「要禁用」，历史上因此永远改不出禁用态
+  optional int32 status = 8;
+  string barcode = 9; // 商品条形码（同社区内唯一，撞占用报 InvalidArgument 并点出持有该条码的商品；改码前置校验，校验失败不落库）
+  // 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区改价/改状态（超管传 0 放行）
+  int64 community_id = 10;
 }
 
 message SkuInfo {

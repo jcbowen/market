@@ -68,6 +68,12 @@ func (s *ProductService) saveSpecsAndSkus(tx *gorm.DB, p *model.Product, specs [
 	}
 
 	// 落 SKU 并统计汇总
+	// 先释放本次不保留的旧 SKU（禁用 → 让出其条码），再落新 SKU：
+	// 条码「存活」的唯一口径是 SKU status=1（应用层 ensureSkuBarcodeAvailable 与库级函数索引同构），
+	// 按「先插新、后禁用」的原顺序，把条码从被移除的规格挪到新规格会在插入/更新时撞 1062，商品保存被卡死
+	if err := s.releaseStaleSkus(tx, p, skuItems); err != nil {
+		return err
+	}
 	keepSkuIDs, minPrice, maxPrice, minOriginalPrice, totalStock, err := s.saveSkus(tx, p, skuItems, tempMap, specNameMap, valueNameMap, valueSpecMap)
 	if err != nil {
 		return err
@@ -234,12 +240,11 @@ func (s *ProductService) saveSkus(
 	// 单规格：定位现有默认 SKU（spec_value_ids 为空/NULL 且启用），避免重复创建
 	// 无论前端是否回传 SKU ID 都先查询，保证二次保存复用记录而非新建
 	if !p.IsMultiSpec {
-		var existing model.Sku
-		err := tx.Where("product_id = ? AND (spec_value_ids = '' OR spec_value_ids IS NULL) AND status = 1", p.ID).
-			Order("id asc").First(&existing).Error
-		if err == nil {
-			defaultSkuID = existing.ID
+		id, err := findDefaultSkuID(tx, p.ID)
+		if err != nil {
+			return nil, 0, 0, 0, 0, err
 		}
+		defaultSkuID = id
 	}
 
 	for i, item := range skuItems {
@@ -283,7 +288,7 @@ func (s *ProductService) saveSkus(
 					bizerr.New(codes.InvalidArgument, fmt.Sprintf("条形码 %s 在本商品内重复", barcode)))
 			}
 			seenBarcode[barcode] = true
-			if err := s.ensureBarcodeAvailable(tx, p.CommunityID, p.ID, barcode); err != nil {
+			if err := ensureSkuBarcodeAvailable(tx, p.CommunityID, p.ID, barcode); err != nil {
 				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
 			}
 		}
@@ -522,6 +527,70 @@ func (s *ProductService) softDeleteSkus(tx *gorm.DB, productID int64, now string
 	return db.Model(&model.Sku{}).Update("status", 0).Error
 }
 
+// findDefaultSkuID 定位单规格商品的现有默认 SKU（spec_value_ids 为空/NULL 且启用）
+// 保存复用与「旧 SKU 条码释放」两处都必须认同一个默认 SKU，口径收敛到本方法避免漂移
+//
+// 参数：
+//   - tx: GORM 事务对象
+//   - productID: 商品 ID
+//
+// 返回值：
+//   - int64: 默认 SKU ID（不存在返回 0，未命中不算错误）
+//   - error: 数据库错误
+func findDefaultSkuID(tx *gorm.DB, productID int64) (int64, error) {
+	var existing model.Sku
+	err := tx.Where("product_id = ? AND (spec_value_ids = '' OR spec_value_ids IS NULL) AND status = 1", productID).
+		Order("id asc").First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return existing.ID, nil
+}
+
+// releaseStaleSkus 在落新 SKU 之前，先禁用本次未提交且不再复用的旧 SKU，释放其占用的条码
+// 条码占用与库级唯一索引都以 SKU status=1 为存活口径，不先禁用就会在插入/更新新 SKU 时撞 1062；
+// 被本方法禁用的行与保存结束后 softDeleteSkus 的目标集一致，只是提前一步，终态不变。
+// 单规格商品的默认 SKU（前端可不回传 ID、由 saveSkus 复用原记录）不纳入禁用
+//
+// 参数：
+//   - tx: GORM 事务对象
+//   - p: 商品模型（需已包含 ID / IsMultiSpec）
+//   - skuItems: 本次提交的 SKU 项（取其中的既有 SKU ID 作为保留集）
+//
+// 返回值：
+//   - error: 落库错误信息
+//
+// 使用示例：
+//
+//	if err := s.releaseStaleSkus(tx, p, req.SkuItems); err != nil {
+//		return err
+//	}
+func (s *ProductService) releaseStaleSkus(tx *gorm.DB, p *model.Product, skuItems []*product.SkuItemReq) error {
+	keepIDs := make([]int64, 0, len(skuItems))
+	for _, item := range skuItems {
+		if item.Id > 0 {
+			keepIDs = append(keepIDs, item.Id)
+		}
+	}
+	db := tx.Where("product_id = ? AND status = 1", p.ID)
+	if len(keepIDs) > 0 {
+		db = db.Where("id NOT IN ?", keepIDs)
+	}
+	if !p.IsMultiSpec {
+		defaultSkuID, err := findDefaultSkuID(tx, p.ID)
+		if err != nil {
+			return err
+		}
+		if defaultSkuID > 0 {
+			db = db.Where("id <> ?", defaultSkuID)
+		}
+	}
+	return db.Model(&model.Sku{}).Update("status", 0).Error
+}
+
 // deleteNotIn 软删除表中未保留的记录（deleted_at 置为当前时间）
 // 参数：
 //   - tx: GORM 事务对象
@@ -634,9 +703,14 @@ func validateBarcode(barcode string) error {
 	return nil
 }
 
-// ensureBarcodeAvailable 校验条形码在本社区内未被其他在售商品的 SKU 占用
-// 仅校验启用（status=1）的 SKU：被移除规格的条码可回收复用；
-// 排除本商品自身（本商品内重复已在提交循环内校验，且本商品其他 SKU 若未保留将在同事务内被禁用）
+// ensureSkuBarcodeAvailable 校验条形码在本社区内未被其他在售商品的 SKU 占用
+// 存活口径与库级函数索引（main.go ensureSkuBarcodeUniqueIndex）严格同构，两条都满足才算占用：
+//   - SKU 启用（status=1）：被移除规格/商品软删连带禁用的条码可回收复用；
+//   - 所属商品未删除（status!=2）：DeleteProduct 已同事务禁用其 SKU，此处再判一层兜历史脏数据。
+//
+// 排除本商品自身（本商品内重复已在提交循环内校验，未保留的自有 SKU 会先被 releaseStaleSkus 禁用）
+// 收口为包级函数：商品保存链路（spec.go）与独立 SKU 接口（sku.go CreateSku/UpdateSku）
+// 必须共用同一份占用判定，否则一侧放行、另一侧落库撞 1062 把库级错误直接抛给调用方
 //
 // 参数：
 //   - tx: GORM 事务对象
@@ -646,9 +720,8 @@ func validateBarcode(barcode string) error {
 //
 // 返回值：
 //   - error: 条码被占用时的错误信息（含占用商品名）
-func (s *ProductService) ensureBarcodeAvailable(tx *gorm.DB, communityID, excludeProductID int64, barcode string) error {
+func ensureSkuBarcodeAvailable(tx *gorm.DB, communityID, excludeProductID int64, barcode string) error {
 	var sku model.Sku
-	// 仅统计未删除商品（status != 2）的 SKU：商品软删后其条码自动释放可复用
 	err := tx.Where("community_id = ? AND barcode = ? AND status = 1 AND product_id != ?"+
 		" AND product_id IN (?)", communityID, barcode, excludeProductID,
 		tx.Model(&model.Product{}).Select("id").Where("status != ?", 2)).

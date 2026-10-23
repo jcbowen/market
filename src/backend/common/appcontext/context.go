@@ -62,6 +62,7 @@ func SetUserContext(c *gin.Context, uc *UserContext) {
 // GetUserContext 从 gin 上下文读取用户信息
 // 参数：
 //   - c: gin 上下文
+//
 // 返回：
 //   - *UserContext: 用户信息，不存在返回零值
 func GetUserContext(c *gin.Context) *UserContext {
@@ -100,6 +101,7 @@ func GetUserContext(c *gin.Context) *UserContext {
 // 参数：
 //   - ctx: 标准上下文
 //   - traceID: 链路追踪 ID
+//
 // 返回：
 //   - context.Context: 带有 trace_id 的上下文
 func WithTraceID(ctx stdctx.Context, traceID string) stdctx.Context {
@@ -109,6 +111,7 @@ func WithTraceID(ctx stdctx.Context, traceID string) stdctx.Context {
 // GetTraceID 从标准 context 读取 trace_id
 // 参数：
 //   - ctx: 标准上下文
+//
 // 返回：
 //   - string: trace_id
 func GetTraceID(ctx stdctx.Context) string {

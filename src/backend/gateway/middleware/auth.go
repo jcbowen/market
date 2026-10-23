@@ -14,6 +14,7 @@ import (
 // 参数：
 //   - manager: JWT 管理器
 //   - allowedTypes: 允许的 token 类型，如 user、admin
+//
 // 返回：
 //   - gin.HandlerFunc: 鉴权中间件
 func AuthMiddleware(manager *jwt.Manager, allowedTypes ...string) gin.HandlerFunc {
@@ -71,6 +72,7 @@ func AuthMiddleware(manager *jwt.Manager, allowedTypes ...string) gin.HandlerFun
 // extractToken 从请求头中提取 Bearer token
 // 参数：
 //   - c: gin 上下文
+//
 // 返回：
 //   - string: token 字符串，不存在时返回空
 func extractToken(c *gin.Context) string {

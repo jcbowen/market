@@ -16,6 +16,9 @@ service OrderService {
   rpc CancelOrder(CancelOrderReq) returns (common.CommonResponse);
   // C 端用户删除订单（软删除）：仅终态订单可删，列表与角标统计排除，详情链路保留可达
   rpc DeleteOrder(DeleteOrderReq) returns (common.CommonResponse);
+  // 后台恢复被用户软删除的订单（客服场景「我删错了，帮我找回上次买的东西」）：
+  // 按 community_id 限定作用域，仅在该社区范围内把 user_deleted 复位
+  rpc RestoreOrder(RestoreOrderReq) returns (common.CommonResponse);
   rpc UpdateOrderStatus(UpdateOrderStatusReq) returns (common.CommonResponse);
   // 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
   rpc VerifyPickup(VerifyPickupReq) returns (VerifyPickupResp);
@@ -156,6 +159,20 @@ message ListOrdersReq {
   int32 source = 10;
   // 取货码精确查询（收银台核销 Tab 扫码/输码查单）
   string pickup_code = 11;
+  // 收银班次筛选（交班记录「查看班内订单」入口；0=全部）
+  int64 shift_id = 12;
+  // 是否包含被用户软删除的订单。
+  // 判定「调用方是谁」不能靠 user_id 是否非零——后台按会员查订单同样传 user_id，
+  // 若靠它推断会把已删单从客服视图一并抹掉。故：C 端列表不传（false=排除），
+  // 后台管理端显式传 true（含已删单，配合 OrderInfo.user_deleted 标记展示）
+  bool include_user_deleted = 13;
+}
+
+// RestoreOrderReq 后台恢复用户软删除订单
+message RestoreOrderReq {
+  int64 id = 1;
+  // 管理员可操作社区（0=不限，由网关按权限收敛后传入）
+  int64 community_id = 2;
 }
 
 message CancelOrderReq {
@@ -226,6 +243,8 @@ message OrderInfo {
   double manual_discount = 31;
   // 收银班次 ID（0=非收银单）
   int64 shift_id = 32;
+  // 用户软删除标记：1=该单已被用户在 C 端删除（仅从 C 端列表移除，后台与详情链路保留）
+  int32 user_deleted = 33;
 }
 
 message OrderItemInfo {
@@ -491,6 +510,12 @@ message GetUserFrequentProductsReq {
   int32 page = 3;
   // 每页条数（分页模式生效，默认 5）
   int32 page_size = 4;
+  // 操作者社区语境：>0 时仅统计/返回该社区的订单数据，防止跨社区读取会员消费记录（超管/C 端传 0）
+  int64 community_id = 5;
+  // 是否包含被用户软删除的订单（与 ListOrdersReq.include_user_deleted 同语义）：
+  // C 端购物车「常买商品」不传（用户删掉的历史不再推荐）；
+  // 后台会员订单弹窗传 true，与同弹窗「订单」Tab 能看到已删单保持一致
+  bool include_user_deleted = 6;
 }
 
 message FrequentProductItem {
@@ -743,7 +768,11 @@ message SaveAppPreferencesReq {
 - 订单号冲突重试：`CreateOrder` 生成订单号遇唯一约束冲突时自动换号重试，避免极小概率的号段碰撞导致下单失败。
 - 取消/超时关单后同步调用 payment 服务 `ClosePayments` 关闭待支付支付单（`status=5 已关闭`），防迟到回调误置已支付。
 
-**C 端用户删除订单（软删除，2026-10-23 新增）：** `DeleteOrder` 仅终态订单（`5已完成 6已取消 8已退款`）可删，删除为用户侧软删除（`orders.user_deleted=1`）——C 端 `ListOrders` 用户路径（`user_id>0`）与 `GetUserOrderStatusCounts` 角标统计均排除已删单，后台管理端路径（`user_id=0`）不受影响；存在进行中售后（`refunds.status IN (1待审核, 4退款中)`）时拒绝，避免删除后售后进度入口缺失；`GetOrder` 详情保留可达（售后进度/支付详情链路依赖）；不清理任何数据、不产生状态流转日志，条件更新 `WHERE user_deleted=0` 防并发重复删除。
+**C 端用户删除订单（软删除，2026-10-23 新增）：** `DeleteOrder` 仅终态订单（`5已完成 6已取消 8已退款`）可删，删除为用户侧软删除（`orders.user_deleted=1`）。可见性由 `include_user_deleted` 标志显式区分，**不能用 `user_id` 是否非零推断**——后台「按会员查订单」同样传 `user_id`，靠它推断会把已删单从客服视图一并抹掉：C 端 `ListOrders`、`GetUserOrderStatusCounts` 角标统计与 C 端购物车「常买商品」均走默认口径（`false`=排除已删单）；后台管理端 `ListAdminOrders` 与会员订单弹窗（订单 Tab + 常买 Tab）显式传 `true` 看全量，并透传 `OrderInfo.user_deleted` 供前端打标展示。`GetOrder` 详情对已删单保留可达（售后进度/支付详情链路依赖）。
+
+守卫与并发：`user_id<=0` 直接拒绝（否则命中收银台散客单 `user_id=0` 形成跨用户删除）；`FOR UPDATE` 锁行后校验归属；`source=2` 门店/收银台代客单拒绝（这类单允许商家代客退款，删掉后用户在等一笔钱却看不到售后进度入口）；存在进行中售后（`refunds.status IN (1待审核, 4退款中)`）时拒绝；条件更新 `WHERE user_deleted=0 AND status IN (5,6,8)` 防并发重复删除与状态竞态。重复删除幂等成功（不报错、不写状态流转日志、不清理任何数据）。
+
+**后台恢复（`RestoreOrder`）：** 客服场景「我删错了，帮我找回上次买的东西」，仅把 `user_deleted` 复位为 0，不改状态、不补状态日志。`community_id>0` 限定在该社区范围内操作（社区管理员不得跨社区恢复），`=0` 为超管不限；`RowsAffected==0` 统一返回 `NotFound`「未找到需恢复的订单」，不透露其他社区是否存在该单。
 
 **退款社区隔离强校验：** `ApproveRefund`/`RejectRefund`/`RetryRefund`（出款链路）与 `AdminCreateRefund` 的 `community_id` 由网关从当前社区语境注入，order 服务端校验退款单归属订单的社区，跨社区操作直接拒绝；调度器等内部系统调用传 0 跳过校验。退款申请在事务内先锁订单行（FOR UPDATE）再查 pending，串行化同订单重复申请。
 

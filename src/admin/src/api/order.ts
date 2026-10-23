@@ -296,6 +296,19 @@ export function completeOrder(id: number) {
 }
 
 /**
+ * 恢复被用户软删除的订单（客服场景：用户误删，请求找回）
+ * 软删只是把订单从用户自己的列表隐藏，后台始终全量可见；本接口把 user_deleted 置回 0
+ * @param id 订单 ID
+ * @returns 恢复后的订单
+ */
+export function restoreOrder(id: number) {
+  return request<ApiResult<Order>>({
+    url: `/api/v1/admin/orders/${id}/restore`,
+    method: 'POST',
+  })
+}
+
+/**
  * 后台代客退款（发起即执行，免审核）
  * @param id 订单 ID
  * @param data 退款参数（items 为空表示整单退；金额由服务端汇算，amount 仅允许调低）

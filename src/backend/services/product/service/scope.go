@@ -11,9 +11,10 @@ import (
 )
 
 // 管理端按 ID 操作的 RPC 统一采用「操作者社区语境」约定：
-// 网关对普通管理员下发其当前社区 ID，对超管下发 0（表示不设语境、放行跨社区操作），
-// 内部服务间调用（下单扣库存等）同样传 0。约定一旦遗漏即构成跨社区越权，
-// 因此所有写接口与按 ID 读接口都必须经本文件的方法收口。
+// 网关对普通管理员下发其当前社区 ID，对超管下发 0（表示不设语境、放行跨社区操作）。
+// 交易链路（下单/加购/收银）不适用「内部调用传 0」的旧约定：community_id 是成交社区，
+// 必须由调用方（订单服务）按下单社区原样传入，否则跨社区取用价格/库存/优惠无从拦截。
+// 约定一旦遗漏即构成跨社区越权，因此所有写接口与按 ID 读接口都必须经本文件的方法收口。
 
 // EnsureScope 校验操作者社区语境是否覆盖资源归属社区
 // scope<=0 放行；资源归属为 0（全平台共享数据，如全局 banner）时仅超管可操作
@@ -37,6 +38,55 @@ func EnsureScope(scope, owner int64, name string) error {
 		return nil
 	}
 	return bizerr.New(codes.PermissionDenied, "无权操作其他社区的"+name)
+}
+
+// EnsureTradeAccess 单行「取用/交易」统一判定：社区归属 + 可选的可售收口
+// 归属判定永远执行（scope>0 即逐条比对，与调用方是谁无关）；可售判定只在 requireSellable=true
+// 时执行，判定的具体实现仍分别留在 EnsureProductSellable（商品 status=1）与
+// EnsureSkuSellable（SKU status=1），本函数只负责「一次调用、口径不散落」。
+// 商品与 SKU 任一侧传 nil 表示该行只判另一侧（批量入口各自只加载一侧模型）；
+// 下单链路两个批量入口成对调用（BatchGetSkus + BatchGetProducts），
+// 因此必须传同一个 community_id，SKU 与商品归属漂移时也会被其中一侧拦下。
+//
+// 参数：
+//   - scope: 操作者/交易社区语境（<=0 跳过归属校验，见 EnsureScope）
+//   - p: 商品模型（可为 nil）
+//   - sku: SKU 模型（可为 nil）
+//   - requireSellable: 是否要求可售（交易入口传 true，管理端/展示口径传 false）
+//
+// 返回值：
+//   - error: 越权返回 PermissionDenied；不可售返回 FailedPrecondition
+//
+// 使用示例：
+//
+//	if err := EnsureTradeAccess(communityID, p, nil, requireSellable); err != nil {
+//		return nil, err
+//	}
+func EnsureTradeAccess(scope int64, p *model.Product, sku *model.Sku, requireSellable bool) error {
+	if p != nil {
+		if err := EnsureScope(scope, p.CommunityID, "商品"); err != nil {
+			return err
+		}
+	}
+	if sku != nil {
+		if err := EnsureScope(scope, sku.CommunityID, "SKU"); err != nil {
+			return err
+		}
+	}
+	if !requireSellable {
+		return nil
+	}
+	if p != nil {
+		if err := EnsureProductSellable(p); err != nil {
+			return err
+		}
+	}
+	if sku != nil {
+		if err := EnsureSkuSellable(sku); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureCategoryInCommunity 校验分类存在且归属指定社区

@@ -6,7 +6,7 @@ import (
 
 // Payment 支付记录模型
 // 对应支付记录表
-// 支付类型：1微信支付 2支付宝支付
+// 支付类型：1微信支付 2支付宝支付 3货到付款 4现金（收银台） 5微信付款码 6支付宝付款码
 // 状态：1待支付 2支付成功 3支付失败 4已退款 5已关闭（订单取消/超时后关闭，迟到回调由终态兜底忽略）
 //
 //nolint:lll
@@ -20,15 +20,18 @@ type Payment struct {
 	// 异常流水要能在后台读出可核对的订单号只能在此落库
 	OrderNo string `gorm:"column:order_no;type:varchar(50);not null;default:'';comment:订单号快照，供异常流水展示核对" json:"order_no"`
 	// PendingFlag 待支付占位键：status=1 时=order_id，离开待支付（2/3/4/5）即置 NULL。
-	// 配合唯一索引 uk_payments_order_pending 把「同一订单至多一笔可扣款待支付单」下沉为库级约束
+	// 配合该列的唯一索引把「同一订单至多一笔可扣款待支付单」下沉为库级约束
 	// （MySQL 无部分索引，用可空列表达；NULL 不参与唯一冲突）。写入约定见
-	// service.CreatePayment（置值）与 handlePaySuccess/ClosePayments/closePaymentLocally（清值）
-	PendingFlag *int64 `gorm:"column:pending_flag;type:bigint;uniqueIndex:uk_payments_order_pending;comment:待支付占位键，status=1 时=order_id 否则 NULL" json:"pending_flag"`
-	UserID  int64  `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
+	// service.CreatePayment（置值）与 handlePaySuccess/ClosePayments/closePaymentLocally（清值）。
+	// 索引名按本仓库约定由列级 unique tag 生成为 uni_payments_pending_flag；
+	// 历史上用 uniqueIndex:uk_payments_order_pending 命名的旧索引由启动迁移
+	// service.EnsurePaymentPendingFlagIndex 一次性删除（AutoMigrate 不会重命名既有索引）
+	PendingFlag *int64 `gorm:"column:pending_flag;type:bigint;unique;comment:待支付占位键，status=1 时=order_id 否则 NULL" json:"pending_flag"`
+	UserID      int64  `gorm:"column:user_id;type:bigint;not null;index;comment:用户 ID" json:"user_id"`
 	// CommunityID 订单所属社区（创建支付单时由网关从订单带入），支付异常队列按社区隔离的唯一依据——
 	// payment 服务不查 orders 表，跨服务归属只能在此落库
 	CommunityID   int64   `gorm:"column:community_id;type:bigint;not null;default:0;index;comment:订单所属社区 ID，0=未知（仅超管可见）" json:"community_id"`
-	PayType       int32   `gorm:"column:pay_type;type:tinyint;not null;comment:1微信支付 2支付宝支付 3货到付款 4现金（收银台）" json:"pay_type"`
+	PayType       int32   `gorm:"column:pay_type;type:tinyint;not null;comment:1微信支付 2支付宝支付 3货到付款 4现金（收银台） 5微信付款码 6支付宝付款码；可回查/可对账的渠道口径为 {1,2,5,6}" json:"pay_type"`
 	Amount        float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:支付金额" json:"amount"`
 	Status        int32   `gorm:"column:status;type:tinyint;default:1;index:idx_payments_status_created,priority:1;index:idx_payments_status_reconciled,priority:1;comment:1待支付 2支付成功 3支付失败 4已退款 5已关闭" json:"status"`
 	TransactionID string  `gorm:"column:transaction_id;type:varchar(100);comment:第三方交易号" json:"transaction_id"`
@@ -95,6 +98,9 @@ const (
 )
 
 // RefundPayment 退款记录模型
+// 渠道退款分两阶段落库：受理成功先写待退款(1)，渠道终态确认后置退款成功(2)/退款失败(3)；
+// 微信为异步受理语义（PROCESSING 是常态），终态由退款查单任务 reconcileRefunds 收敛，
+// 收敛过程用 RetryCount/Escalated 推进节流与转人工待办（见 service.scanPendingRefunds）
 //
 //nolint:lll
 //go:generate go tool gormgen -struct RefundPayment
@@ -103,13 +109,22 @@ type RefundPayment struct {
 	ID            int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	RefundNo      string  `gorm:"column:refund_no;type:varchar(50);not null;unique;comment:退款单号，唯一索引保证幂等" json:"refund_no"`
 	PaymentNo     string  `gorm:"column:payment_no;type:varchar(50);not null;index;comment:关联支付单号" json:"payment_no"`
-	OrderID       int64   `gorm:"column:order_id;type:bigint;not null;index;comment:订单 ID" json:"order_id"`
+	OrderID       int64   `gorm:"column:order_id;type:bigint;not null;index;comment:订单 ID（以支付单归属为准，不取请求传入值）" json:"order_id"`
 	Amount        float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:退款金额" json:"amount"`
-	Status        int32   `gorm:"column:status;type:tinyint;default:1;comment:1待退款 2退款成功 3退款失败" json:"status"`
+	Status        int32   `gorm:"column:status;type:tinyint;default:1;index:idx_refunds_status_updated,priority:1;comment:1待退款 2退款成功 3退款失败" json:"status"`
 	TransactionID string  `gorm:"column:transaction_id;type:varchar(100);comment:第三方退款交易号" json:"transaction_id"`
-	RefundTime    *string `gorm:"column:refund_time;type:datetime;comment:退款成功时间" json:"refund_time"`
-	CreatedAt     string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt     string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	// RetryCount 退款查单收敛的连续失败次数：渠道查单失败或本地落库失败时 +1 并刷新 updated_at（节流推进），
+	// 达到 service.refundQueryMaxRetry 即退出自动批次并转人工待办；渠道明确回答 PROCESSING 只刷新
+	// updated_at 不计数（见 service.scanPendingRefunds / retryRefundQuery）
+	RetryCount int32 `gorm:"column:retry_count;type:int;not null;default:0;comment:退款查单收敛失败次数，超上限放弃收敛并转人工待办" json:"retry_count"`
+	// Escalated 已转人工待办标记：0 未转办 1 已转办，仅作待办去重（一个流水只登记一条待办）。
+	// 收敛任务在「查单失败超 refundQueryMaxRetry」或「待退款停留超 24 小时」时置 1；
+	// 真正让流水退出自动批次的是 RetryCount 达上限（与支付侧「放弃对账」同口径），
+	// 超期转办的在途微信退款仍会继续被渠道终态收敛，见 service.scanPendingRefunds
+	Escalated  int32   `gorm:"column:escalated;type:tinyint;not null;default:0;comment:已转人工待办标记 0未转办 1已转办（待办去重）" json:"escalated"`
+	RefundTime *string `gorm:"column:refund_time;type:datetime;comment:退款成功时间" json:"refund_time"`
+	CreatedAt  string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt  string  `gorm:"column:updated_at;type:datetime;index:idx_refunds_status_updated,priority:2;comment:更新时间（退款查单节流指针）" json:"updated_at"`
 }
 
 // TableName 返回退款记录表名

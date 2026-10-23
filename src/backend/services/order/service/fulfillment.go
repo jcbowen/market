@@ -231,10 +231,10 @@ func (s *OrderService) CompleteDelivery(ctx context.Context, req *order.Complete
 		Model(&model.Order{}).
 		Where("id = ? AND status = ?", o.ID, int32(4)).
 		Updates(map[string]interface{}{
-			"status":                 int32(5),
-			"complete_time":          &now,
-			"delivery_proof_images":  string(proofJSON),
-			"updated_at":             now,
+			"status":                int32(5),
+			"complete_time":         &now,
+			"delivery_proof_images": string(proofJSON),
+			"updated_at":            now,
 		})
 	if res.Error != nil {
 		return res.Error

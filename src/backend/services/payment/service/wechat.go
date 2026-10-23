@@ -141,11 +141,46 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 // errRefundAccepted 渠道退款「已受理未到终态」哨兵（P0-2）
 // 微信申请退款受理成功返回 status=PROCESSING（常态），并非退款成功；
 // 调用方收到本哨兵必须保持退款流水待退款(1)，由退款查单任务按 RefundQuery 收敛
+// 响应缺 status（空串）同样按已受理处理：微信 V3 字段可空，不能把「没告诉我们结果」
+// 误读成「退款成功」，否则会在渠道未出款时把支付单置成已退款
 var errRefundAccepted = errors.New("退款已受理，等待渠道终态")
+
+// 微信退款查单以包级变量注入，单测直接替换为假渠道，无需真实商户配置
+// 参数与返回值语义见 defaultWechatRefundQuery
+var wechatRefundQuery = defaultWechatRefundQuery
+
+// defaultWechatRefundQuery 查询微信退款单终态（按商户退款单号 out_refund_no）
+// 参数：
+//   - ctx: 上下文
+//   - s: 支付服务（取配置热更新后的微信客户端）
+//   - refundNo: 商户退款单号（本系统退款流水号）
+//
+// 返回值：
+//   - status: 渠道退款状态原文（SUCCESS / PROCESSING / ABNORMAL / CLOSED，空串表示渠道未给出）
+//   - refundID: 渠道退款单号，写流水用；查询失败时为空
+//   - error: 客户端未配置或渠道调用失败；调用方不得据此改动本地流水状态
+//
+// 使用示例：
+//   - status, refundID, err := defaultWechatRefundQuery(ctx, s, "RF20261021001")
+func defaultWechatRefundQuery(ctx context.Context, s *PaymentService, refundNo string) (status, refundID string, err error) {
+	client := s.getWechatPayClient()
+	if client == nil {
+		return "", "", fmt.Errorf("微信支付未配置或配置不完整")
+	}
+	resp, err := client.RefundQuery(ctx, refundNo)
+	if err != nil {
+		return "", "", err
+	}
+	if resp == nil {
+		return "", "", fmt.Errorf("微信退款查单返回空响应 refund_no=%s", refundNo)
+	}
+	return resp.Status, resp.RefundID, nil
+}
 
 // wechatRefund 调用微信退款接口
 // P0-2：按响应 Status 分流——仅渠道明确 SUCCESS 才视为退款成功；
-// PROCESSING（受理常态）等非终态保持待退款(1)，返回 errRefundAccepted 由调用方分流
+// PROCESSING（受理常态）与空 status 等非确定终态保持待退款(1)，
+// 返回 errRefundAccepted 由调用方分流
 // 参数：
 //   - ctx: 上下文
 //   - p: 原支付记录
@@ -172,8 +207,9 @@ func (s *PaymentService) wechatRefund(ctx context.Context, p *model.Payment, ref
 	}
 
 	refund.TransactionID = resp.RefundID
-	if resp.Status != "" && resp.Status != "SUCCESS" {
-		log.Printf("[ProcessRefund] 微信退款已受理未到终态 refund_no=%s refund_id=%s status=%s，保持待退款由查单任务收敛",
+	if resp.Status != "SUCCESS" {
+		// 空 status 一并走本分支：渠道未给出结果不等于退款成功
+		log.Printf("[ProcessRefund] 微信退款已受理未到终态 refund_no=%s refund_id=%s status=%q，保持待退款由查单任务收敛",
 			refund.RefundNo, resp.RefundID, resp.Status)
 		return errRefundAccepted
 	}

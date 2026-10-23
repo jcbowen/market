@@ -13,6 +13,9 @@ service OrderService {
   rpc CancelOrder(CancelOrderReq) returns (common.CommonResponse);
   // C 端用户删除订单（软删除）：仅终态订单可删，列表与角标统计排除，详情链路保留可达
   rpc DeleteOrder(DeleteOrderReq) returns (common.CommonResponse);
+  // 后台恢复被用户软删除的订单（客服场景「我删错了，帮我找回上次买的东西」）：
+  // 按 community_id 限定作用域，仅在该社区范围内把 user_deleted 复位
+  rpc RestoreOrder(RestoreOrderReq) returns (common.CommonResponse);
   rpc UpdateOrderStatus(UpdateOrderStatusReq) returns (common.CommonResponse);
   // 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
   rpc VerifyPickup(VerifyPickupReq) returns (VerifyPickupResp);
@@ -154,6 +157,18 @@ message ListOrdersReq {
   string pickup_code = 11;
   // 收银班次筛选（交班记录「查看班内订单」入口；0=全部）
   int64 shift_id = 12;
+  // 是否包含被用户软删除的订单。
+  // 判定「调用方是谁」不能靠 user_id 是否非零——后台按会员查订单同样传 user_id，
+  // 若靠它推断会把已删单从客服视图一并抹掉。故：C 端列表不传（false=排除），
+  // 后台管理端显式传 true（含已删单，配合 OrderInfo.user_deleted 标记展示）
+  bool include_user_deleted = 13;
+}
+
+// RestoreOrderReq 后台恢复用户软删除订单
+message RestoreOrderReq {
+  int64 id = 1;
+  // 管理员可操作社区（0=不限，由网关按权限收敛后传入）
+  int64 community_id = 2;
 }
 
 message CancelOrderReq {
@@ -224,6 +239,8 @@ message OrderInfo {
   double manual_discount = 31;
   // 收银班次 ID（0=非收银单）
   int64 shift_id = 32;
+  // 用户软删除标记：1=该单已被用户在 C 端删除（仅从 C 端列表移除，后台与详情链路保留）
+  int32 user_deleted = 33;
 }
 
 message OrderItemInfo {
@@ -491,6 +508,10 @@ message GetUserFrequentProductsReq {
   int32 page_size = 4;
   // 操作者社区语境：>0 时仅统计/返回该社区的订单数据，防止跨社区读取会员消费记录（超管/C 端传 0）
   int64 community_id = 5;
+  // 是否包含被用户软删除的订单（与 ListOrdersReq.include_user_deleted 同语义）：
+  // C 端购物车「常买商品」不传（用户删掉的历史不再推荐）；
+  // 后台会员订单弹窗传 true，与同弹窗「订单」Tab 能看到已删单保持一致
+  bool include_user_deleted = 6;
 }
 
 message FrequentProductItem {

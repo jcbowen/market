@@ -222,6 +222,15 @@ services:
       # 只给 ENABLED 不给白名单时页面不注册 fail-closed）。用法见部署文档「临时开启请求日志排查」
       DEBUGGER_ENABLED: ${DEBUGGER_ENABLED:-}
       DEBUGGER_ALLOWED_IPS: ${DEBUGGER_ALLOWED_IPS:-}
+      # 运行环境标识：gateway 据此判定生产（IsProduction→EnsureSecureJWT 无视
+      # JWT_ALLOW_INSECURE_DEV 放行、fail-fast），后台「关于」页同源显示；留空 = 非生产
+      APP_ENV: ${APP_ENV:-}
+      # 后台版本检查源（gateway/handler/update.go 直读环境变量，不经配置文件）：
+      # 留空走内置默认（jcbowen/market + 官方 Docker Hub API），设 off/none/disable 关闭对应源；
+      # DOCKERHUB_API_BASE 国内网络不通时可指向 Registry 镜像代理基地址
+      DOCKERHUB_REPO: ${DOCKERHUB_REPO:-}
+      GHCR_REPO: ${GHCR_REPO:-}
+      DOCKERHUB_API_BASE: ${DOCKERHUB_API_BASE:-}
     depends_on:
       user-service:
         condition: service_healthy

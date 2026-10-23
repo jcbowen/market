@@ -31,6 +31,11 @@ func main() {
 	backfillProductSummary(db)
 	rds := bootstrap.InitRedis(cfg)
 
+	// 时钟口径体检：定时上架按 MySQL NOW() 判定，外部库时区不一致会静默整体偏移（只告警不阻断）
+	if err := service.WarnIfDBClockZoneMismatch(db.GetDb()); err != nil {
+		log.Printf("[WARN] 数据库时钟体检失败: %v", err)
+	}
+
 	srv := grpc.NewServer(
 		// 图片经 gateway 转发（本地上传模式）时单条消息可达数 MB，默认 4MB 上限不够用
 		grpc.MaxRecvMsgSize(10*1024*1024),
@@ -94,15 +99,63 @@ func autoMigrate(db *mysql.Instance) error {
 	); err != nil {
 		return err
 	}
+	// 存量数据对齐须在建索引之前：历史「商品软删但 SKU 仍启用」的行会占住条码，
+	// 让新口径索引因 1062 建不起来
+	disableSkusOfDeletedProducts(db)
 	return ensureSkuBarcodeUniqueIndex(db)
 }
 
-// ensureSkuBarcodeUniqueIndex 创建 SKU 条码「同社区唯一、空串不参与」的功能唯一索引
-// AutoMigrate 无法用 tag 表达函数式索引（把空条码归一化为 NULL 以放行多行未设置条码），
-// 故在 AutoMigrate 后幂等补建；应用层同社区查重校验（spec.go）仍是第一道防线，
-// 此索引把「查后写窗口内并发落同一条码」兜成库级拒绝（GetByBarcode 不再可能随机命中多行）
+// disableSkusOfDeletedProducts 一次性对齐存量数据：把已软删商品（products.status=2）下
+// 仍启用的 SKU 置为禁用，与 DeleteProduct 的连带禁用保持同一口径
+// 条码「存活」的唯一判定是 SKU status=1（应用层 spec.go ensureSkuBarcodeAvailable 排除已删商品的 SKU、
+// 库级函数索引同样只看 status=1），历史行不对齐会让删除过的商品条码既被索引占住又可被应用层复用，
+// 表现为商家复用旧条码时插入撞 1062。幂等条件更新，重复执行无副作用；失败只记日志不中断启动
 //
-// 依赖 MySQL 8.0.13+ 功能索引（部署镜像为 MySQL 8.0.x，满足）
+// 参数：
+//   - db: MySQL 实例
+func disableSkusOfDeletedProducts(db *mysql.Instance) {
+	const sql = `UPDATE product_skus s
+JOIN products p ON p.id = s.product_id
+SET s.status = 0
+WHERE p.status = 2 AND s.status = 1`
+
+	result := db.GetDb().Exec(sql)
+	if result.Error != nil {
+		log.Printf("对齐已删商品的 SKU 状态失败: %v", result.Error)
+		return
+	}
+	if result.RowsAffected > 0 {
+		log.Printf("已禁用 %d 条归属已删除商品的 SKU（释放其条码占用）", result.RowsAffected)
+	}
+}
+
+// SKU 条码库级唯一索引名：
+//   - skuBarcodeIndexName 现口径，仅「启用 SKU + 非空条码」参与唯一，
+//     与应用层查重（spec.go ensureSkuBarcodeAvailable）同构；
+//   - skuBarcodeIndexLegacy 旧口径（不含 status 条件），存在时按新表达式重建后删除。
+//
+// 换名而非原地改表达式的原因：MySQL 不支持 CREATE/DROP INDEX IF NOT EXISTS，
+// 表达式差异也无法从 information_schema 稳定识别，靠索引名区分新旧最直白、可幂等重跑
+const (
+	skuBarcodeIndexName   = "uk_skus_community_barcode_alive"
+	skuBarcodeIndexLegacy = "uk_skus_community_barcode"
+)
+
+// ensureSkuBarcodeUniqueIndex 创建 SKU 条码「同社区唯一、仅启用行参与」的功能唯一索引
+// AutoMigrate 无法用 tag 表达函数式索引（把未设置条码与禁用 SKU 归一化为 NULL 以放行），
+// 故在 AutoMigrate 后幂等补建；应用层同社区查重（spec.go）仍是第一道防线，
+// 此索引把「查后写窗口内并发落同一条码」兜成库级拒绝（GetByBarcode 不再可能随机命中多行）。
+//
+// 表达式必须与应用层存活口径一致：旧表达式不含 status 条件，导致「商品软删后条码自动释放可复用」
+// 的承诺在库级不成立（复用旧条码插入即 1062，商家编辑被卡死）。
+// 新表达式以「status = 1 且 barcode 非空」为存活条件，让禁用/软删行归一化为 NULL，
+// 多个 NULL 不参与唯一比较，因此被禁用的 SKU 不再占住条码。
+//
+// 存量库生效方式：启动时先按新表达式建 skuBarcodeIndexName，建成后再 DROP 旧的
+// skuBarcodeIndexLegacy（顺序保证任一时刻至少有一个索引在保护，中途失败也不会裸奔）；
+// 全程幂等，无需人工先删旧索引。
+//
+// 依赖 MySQL 8.0.13+ 功能索引（部署镜像为 MySQL 8.0.x，满足；函数索引键部分须双层括号）
 //
 // 参数：
 //   - db: MySQL 实例
@@ -110,33 +163,79 @@ func autoMigrate(db *mysql.Instance) error {
 // 返回值：
 //   - error: DDL 执行错误
 func ensureSkuBarcodeUniqueIndex(db *mysql.Instance) error {
-	// MySQL 8.0 不支持 CREATE INDEX IF NOT EXISTS（MariaDB 语法），先查 information_schema 再建；
-	// 并发双实例同时建索引撞 1061（duplicate key name）也按幂等成功处理
-	const indexName = "uk_skus_community_barcode"
-	var count int64
-	if err := db.GetDb().Raw(
-		"SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'product_skus' AND index_name = ?",
-		indexName).Scan(&count).Error; err != nil {
+	exists, err := skuIndexExists(db, skuBarcodeIndexName)
+	if err != nil {
 		return err
 	}
-	if count > 0 {
+	if !exists {
+		ddl := "CREATE UNIQUE INDEX " + skuBarcodeIndexName +
+			" ON product_skus ((IF(status = 1 AND barcode <> '', CONCAT(community_id, ':', barcode), NULL)))"
+		if err := db.GetDb().Exec(ddl).Error; err != nil {
+			// 1061 = 并发双实例同时建（MariaDB 的 IF NOT EXISTS 在 MySQL 8 不可用，只能按错误码认幂等）
+			if strings.Contains(err.Error(), "Duplicate key name") || strings.Contains(err.Error(), "1061") {
+				return dropLegacySkuBarcodeIndex(db)
+			}
+			// 1062 = 存量「启用行」里已有同社区重复条码（查后写窗口的历史产物）。
+			// 不阻断启动：条码唯一第一道防线在应用层（spec.go 社区查重），
+			// 库级索引待按下方指引清洗后重启自动补建
+			if strings.Contains(err.Error(), "Duplicate entry") || strings.Contains(err.Error(), "1062") {
+				log.Printf("警告: SKU 条码唯一索引 %s 创建失败（存量启用行存在同社区重复条码），应用层查重继续兜底。"+
+					"排查重复条码（保留 id 最小的一条，其余置 status=0 或清 barcode 后重启即自动补建）: "+
+					"SELECT community_id, barcode, COUNT(*) AS dup_cnt, GROUP_CONCAT(id ORDER BY id) AS sku_ids "+
+					"FROM product_skus WHERE status = 1 AND barcode <> '' "+
+					"GROUP BY community_id, barcode HAVING dup_cnt > 1; 原始错误: %v", skuBarcodeIndexName, err)
+				return nil
+			}
+			return err
+		}
+	}
+	return dropLegacySkuBarcodeIndex(db)
+}
+
+// skuIndexExists 判断 product_skus 表上是否已存在指定名字的索引
+// MySQL 8.0 不支持 CREATE/DROP INDEX IF NOT EXISTS，DDL 前一律先查 information_schema
+//
+// 参数：
+//   - db: MySQL 实例
+//   - indexName: 索引名
+//
+// 返回值：
+//   - bool: 索引是否存在
+//   - error: 查询错误
+func skuIndexExists(db *mysql.Instance, indexName string) (bool, error) {
+	var count int64
+	err := db.GetDb().Raw(
+		"SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'product_skus' AND index_name = ?",
+		indexName).Scan(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// dropLegacySkuBarcodeIndex 删除旧口径（不含 status 条件）的条码唯一索引
+// 只在新索引已建成后调用；不存在时直接返回，重复启动幂等
+//
+// 参数：
+//   - db: MySQL 实例
+//
+// 返回值：
+//   - error: DDL 执行错误
+func dropLegacySkuBarcodeIndex(db *mysql.Instance) error {
+	exists, err := skuIndexExists(db, skuBarcodeIndexLegacy)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return nil
 	}
-	ddl := "CREATE UNIQUE INDEX " + indexName +
-		" ON product_skus ((IF(barcode = '', NULL, CONCAT(community_id, ':', barcode))))"
-	if err := db.GetDb().Exec(ddl).Error; err != nil {
-		if strings.Contains(err.Error(), "Duplicate key name") || strings.Contains(err.Error(), "1061") {
-			return nil
-		}
-		// 1062 = 存量数据已存在同社区重复条码（查后写窗口的历史产物）。
-		// 不阻断启动：条码唯一第一道防线在应用层（spec.go 社区查重），
-		// 库级索引待数据清洗或重建数据库后重启即自动补上
-		if strings.Contains(err.Error(), "Duplicate entry") || strings.Contains(err.Error(), "1062") {
-			log.Printf("警告: SKU 条码唯一索引创建失败（存量数据存在同社区重复条码），应用层查重继续兜底，数据清洗后重启自动补建: %v", err)
-			return nil
-		}
-		return err
+	if err := db.GetDb().Exec("DROP INDEX " + skuBarcodeIndexLegacy + " ON product_skus").Error; err != nil {
+		log.Printf("警告: 旧 SKU 条码唯一索引 %s 删除失败（新索引 %s 已生效，可手工清理）: %v",
+			skuBarcodeIndexLegacy, skuBarcodeIndexName, err)
+		return nil
 	}
+	log.Printf("已删除旧 SKU 条码唯一索引 %s（口径改为仅启用行参与，由 %s 接管）",
+		skuBarcodeIndexLegacy, skuBarcodeIndexName)
 	return nil
 }
 

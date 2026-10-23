@@ -61,6 +61,7 @@ func (c *userStatusCache) set(id int64, st int32) {
 //
 // 参数：
 //   - userClient: user-service gRPC 客户端
+//
 // 返回：
 //   - gin.HandlerFunc: 会员状态拦截中间件
 func UserStatusMiddleware(userClient user.UserServiceClient) gin.HandlerFunc {

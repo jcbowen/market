@@ -196,6 +196,11 @@ func (i *htmlInjector) render(tpl *htmlTemplate, ctx context.Context, e htmlEntr
 
 	out := renderHTML(tpl.raw, snap, e)
 	i.mu.Lock()
+	// 写入新键前清空旧键（P1-14）：站点设置版本单调递增，旧版本的渲染结果永远不会再命中，
+	// 留着等于每次改配置都在进程里多攒一份完整 HTML 副本（长期运行只增不减）
+	for k := range tpl.rendered {
+		delete(tpl.rendered, k)
+	}
 	tpl.rendered[key] = out
 	i.mu.Unlock()
 	return out

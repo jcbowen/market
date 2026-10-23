@@ -29,9 +29,9 @@ type Product struct {
 	SalesCount       int32   `gorm:"column:sales_count;type:int;default:0;comment:累计销量，默认0" json:"sales_count"`
 	// OnSaleAt 定时上架时间：与 Status 组成复合索引 idx_products_status_on_sale，
 	// 调度器每分钟的到点扫描（WHERE status=0 AND on_sale_at<=NOW()）走索引，不再全表 UPDATE
-	OnSaleAt *string `gorm:"column:on_sale_at;type:datetime;index:idx_products_status_on_sale,priority:2;comment:定时上架时间，到点由调度器自动上架(NULL=不定时)" json:"on_sale_at"`
-	CreatedAt        string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt        string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	OnSaleAt  *string `gorm:"column:on_sale_at;type:datetime;index:idx_products_status_on_sale,priority:2;comment:定时上架时间，到点由调度器自动上架(NULL=不定时)" json:"on_sale_at"`
+	CreatedAt string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt string  `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回商品表名
