@@ -28,6 +28,7 @@ const (
 	PaymentService_HandleAlipayCallback_FullMethodName      = "/payment.PaymentService/HandleAlipayCallback"
 	PaymentService_ProcessRefund_FullMethodName             = "/payment.PaymentService/ProcessRefund"
 	PaymentService_QueryRefundResult_FullMethodName         = "/payment.PaymentService/QueryRefundResult"
+	PaymentService_ResetRefundFlow_FullMethodName           = "/payment.PaymentService/ResetRefundFlow"
 	PaymentService_GetPayConfig_FullMethodName              = "/payment.PaymentService/GetPayConfig"
 	PaymentService_SavePayConfig_FullMethodName             = "/payment.PaymentService/SavePayConfig"
 	PaymentService_UploadPayCert_FullMethodName             = "/payment.PaymentService/UploadPayCert"
@@ -59,6 +60,12 @@ type PaymentServiceClient interface {
 	ProcessRefund(ctx context.Context, in *ProcessRefundReq, opts ...grpc.CallOption) (*ProcessRefundResp, error)
 	// QueryRefundResult 查询渠道退款流水状态（order 侧卡单退款收敛用，读库不触渠道）
 	QueryRefundResult(ctx context.Context, in *QueryRefundResultReq, opts ...grpc.CallOption) (*QueryRefundResultResp, error)
+	// ResetRefundFlow 人工重置「待退款」流水的自动收敛预算（B2）
+	// 退款查单任务对同一笔流水连续失败达上限后会永久退出自动批次，
+	// 而微信退款允许 1-3 个工作日到账，渠道后续给出终态也没人再来收；
+	// 本方法把 retry_count/escalated 归零，让流水重新被查单任务看见，
+	// 只处理待退款(1)流水——已成功(2)/已失败(3)一律拒绝，避免对已出款流水重复触渠道
+	ResetRefundFlow(ctx context.Context, in *ResetRefundFlowReq, opts ...grpc.CallOption) (*ResetRefundFlowResp, error)
 	GetPayConfig(ctx context.Context, in *GetPayConfigReq, opts ...grpc.CallOption) (*PayConfig, error)
 	SavePayConfig(ctx context.Context, in *PayConfig, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	UploadPayCert(ctx context.Context, in *UploadPayCertReq, opts ...grpc.CallOption) (*UploadPayCertResp, error)
@@ -171,6 +178,16 @@ func (c *paymentServiceClient) QueryRefundResult(ctx context.Context, in *QueryR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(QueryRefundResultResp)
 	err := c.cc.Invoke(ctx, PaymentService_QueryRefundResult_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *paymentServiceClient) ResetRefundFlow(ctx context.Context, in *ResetRefundFlowReq, opts ...grpc.CallOption) (*ResetRefundFlowResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResetRefundFlowResp)
+	err := c.cc.Invoke(ctx, PaymentService_ResetRefundFlow_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +322,12 @@ type PaymentServiceServer interface {
 	ProcessRefund(context.Context, *ProcessRefundReq) (*ProcessRefundResp, error)
 	// QueryRefundResult 查询渠道退款流水状态（order 侧卡单退款收敛用，读库不触渠道）
 	QueryRefundResult(context.Context, *QueryRefundResultReq) (*QueryRefundResultResp, error)
+	// ResetRefundFlow 人工重置「待退款」流水的自动收敛预算（B2）
+	// 退款查单任务对同一笔流水连续失败达上限后会永久退出自动批次，
+	// 而微信退款允许 1-3 个工作日到账，渠道后续给出终态也没人再来收；
+	// 本方法把 retry_count/escalated 归零，让流水重新被查单任务看见，
+	// 只处理待退款(1)流水——已成功(2)/已失败(3)一律拒绝，避免对已出款流水重复触渠道
+	ResetRefundFlow(context.Context, *ResetRefundFlowReq) (*ResetRefundFlowResp, error)
 	GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error)
 	SavePayConfig(context.Context, *PayConfig) (*common.CommonResponse, error)
 	UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error)
@@ -366,6 +389,9 @@ func (UnimplementedPaymentServiceServer) ProcessRefund(context.Context, *Process
 }
 func (UnimplementedPaymentServiceServer) QueryRefundResult(context.Context, *QueryRefundResultReq) (*QueryRefundResultResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryRefundResult not implemented")
+}
+func (UnimplementedPaymentServiceServer) ResetRefundFlow(context.Context, *ResetRefundFlowReq) (*ResetRefundFlowResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetRefundFlow not implemented")
 }
 func (UnimplementedPaymentServiceServer) GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPayConfig not implemented")
@@ -561,6 +587,24 @@ func _PaymentService_QueryRefundResult_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PaymentServiceServer).QueryRefundResult(ctx, req.(*QueryRefundResultReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PaymentService_ResetRefundFlow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetRefundFlowReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).ResetRefundFlow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_ResetRefundFlow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).ResetRefundFlow(ctx, req.(*ResetRefundFlowReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -801,6 +845,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryRefundResult",
 			Handler:    _PaymentService_QueryRefundResult_Handler,
+		},
+		{
+			MethodName: "ResetRefundFlow",
+			Handler:    _PaymentService_ResetRefundFlow_Handler,
 		},
 		{
 			MethodName: "GetPayConfig",

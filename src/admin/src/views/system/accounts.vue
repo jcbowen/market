@@ -70,6 +70,7 @@ import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getAccountList, createAccount, updateAccountStatus, resetAccountPassword, getAccountAssignments } from '@/api/user'
 import type { Account, AccountAssignment } from '@/api/types'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 账号管理页面（系统管理空间，超管专用）
@@ -125,7 +126,7 @@ const columns: DataTableColumns<Account> = [
       )
     },
   },
-  { title: '最后登录', key: 'last_login_at', width: 160 },
+  { title: '最后登录', key: 'last_login_at', width: 160, render: (row) => formatDateTime(row.last_login_at) },
   {
     title: '操作',
     key: 'actions',

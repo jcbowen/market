@@ -45,6 +45,20 @@ var errOrderStateConflict = errors.New("订单状态已变更，跳过本轮调�
 // stuckRecoverAfter 处理中状态停留超过该时长视为进程异常中断，兜底恢复原状态
 const stuckRecoverAfter = 10 * time.Minute
 
+// 卡单退款自动重试的节流与预算（B1）
+// 此前扫描按 id asc 取 20 条，而「渠道受理中」的单本轮直接 continue、什么都不推进，
+// 于是队首这批卡单每轮都被重复取出、永久占住批次名额（还会反复打 payment 查单 RPC），
+// 后来卡住的单永远排不进批次——与 payment 侧修过的同类饿死问题同源
+const (
+	// refundRetryInterval 单笔卡单退款的核查间隔：每轮核查后推进 last_checked_at，到点才再次入批
+	refundRetryInterval = 10 * time.Minute
+	// refundRetryBatch 每轮最多核查的卡单退款数（沿用原 Limit(20)）
+	refundRetryBatch = 20
+	// refundMaxRetry 累计核查上限，达到即停止自动重试并转人工待办；
+	// 按 10min 一次折算约 4 小时，足以覆盖渠道异步退款的正常收敛窗口
+	refundMaxRetry = 24
+)
+
 // orderStat 单轮订单调度统计：debugger 进程记录的落库判定与摘要字段的唯一依据
 type orderStat struct {
 	recovered int // 兜底恢复的处理中订单数
@@ -223,6 +237,10 @@ func (s *Scheduler) recordRound(start time.Time, stat orderStat) {
 // retryStuckRefunds 自动重试卡在"退款中"(status=4) 超过阈值的退款单
 // 场景：同意退款后 ProcessRefund 失败/进程中断，退款单永久停留在 4 且库存未回补。
 // 重试以退款单自身的 payment_no 重新发起渠道退款，成功后走统一收尾逻辑。
+// 批次选取按 last_checked_at asc 做游标轮转（B1）：每轮取出后**无条件推进指针**，
+// 渠道受理中而跳过的单也一样推进，因此没有「队首反复取出、新单永久排不进」的饿死；
+// 累计核查达 refundMaxRetry 仍未收敛的单停止自动重试，落一条人工待办（处置入口在后台
+// 「恢复自动收敛」（ResetRefundRetry），把 retry_count 归零并重新起扫）。
 // 参数：
 //   - ctx: 上下文
 //
@@ -242,15 +260,25 @@ func (s *Scheduler) retryStuckRefunds(ctx context.Context) orderStat {
 
 	// 仅重试停留超过 stuckRecoverAfter 的退款单，避免与刚发起的退款竞态
 	deadline := time.Now().Add(-stuckRecoverAfter).Format("2006-01-02 15:04:05")
+	throttleBefore := time.Now().Add(-refundRetryInterval).Format("2006-01-02 15:04:05")
 	var refunds []*model.Refund
 	if err := s.db.GetDb().WithContext(ctx).
 		Where("status = ? AND updated_at < ?", 4, deadline).
-		Order("id asc").Limit(20).Find(&refunds).Error; err != nil {
+		Where("retry_count < ?", refundMaxRetry).
+		Where("(last_checked_at IS NULL OR last_checked_at < ?)", throttleBefore).
+		Order("last_checked_at asc").Limit(refundRetryBatch).Find(&refunds).Error; err != nil {
 		log.Printf("[order-scheduler] 查询卡单退款失败: %v", err)
 		stat.failed++
 		return stat
 	}
 	for _, r := range refunds {
+		// 指针必须先于动作推进：本体的三条 continue 分支（查单失败/渠道受理中/重试失败）
+		// 都不改状态，指针若不推进就等于把这批单钉在队首
+		if s.markRefundChecked(ctx, r) >= int32(refundMaxRetry) {
+			s.giveUpRefundRetry(ctx, r)
+			stat.failed++ // 转人工计为异常轮次，使本轮落入 debugger 的 failed 记录
+			continue
+		}
 		// P0-2：先问 payment 侧流水状态再决定动作——渠道受理中（PROCESSING）的单
 		// 不能盲目重发（ProcessRefund 幂等会拒绝「处理中」重复提交），查单确认成功
 		// 的直接收尾，失败/无流水的才重新发起
@@ -293,6 +321,54 @@ func (s *Scheduler) retryStuckRefunds(ctx context.Context) orderStat {
 		}
 	}
 	return stat
+}
+
+// markRefundChecked 无条件推进卡单退款的节流指针并累加核查次数
+// 刻意走 UpdateColumns：普通 Updates 会触发 base 模型的更新钩子把 updated_at 刷成当前时间，
+// 而 updated_at 正是「退款单停留退款中超过 stuckRecoverAfter」的起扫判据，
+// 被自己的扫描刷新一轮就把卡单时长清零，预算窗口也会跟着漂移
+// 参数：
+//   - ctx: 上下文
+//   - r: 本轮取出的退款单（成功后同步其内存字段）
+//
+// 返回值：
+//   - int32: 推进后的累计核查次数；写库失败返回推进前的值（该单下轮仍会入批，
+//     不会因指针没写进而被永久漏掉），失败只记日志不中断本轮处置
+//
+// 使用示例：
+//   - if s.markRefundChecked(ctx, r) >= int32(refundMaxRetry) { s.giveUpRefundRetry(ctx, r) }
+func (s *Scheduler) markRefundChecked(ctx context.Context, r *model.Refund) int32 {
+	now := time.Now().Format("2006-01-02 15:04:05")
+	res := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+		Where("id = ?", r.ID).
+		UpdateColumns(map[string]interface{}{
+			"last_checked_at": now,
+			"retry_count":     gorm.Expr("retry_count + 1"),
+		})
+	if res.Error != nil {
+		log.Printf("[order-scheduler] 推进卡单退款节流指针失败 refund_id=%d: %v", r.ID, res.Error)
+		return r.RetryCount
+	}
+	r.LastCheckedAt = &now
+	r.RetryCount++
+	return r.RetryCount
+}
+
+// giveUpRefundRetry 卡单退款自动重试用满预算：停止自动处理并留下人工可见的待办
+// 静默放弃会被读成「资金问题不存在」，所以三处都要留痕：stderr 的 [CRITICAL]（供日志告警）、
+// refund_logs 的 give_up 轨迹（后台退款详情时间线直接可见，与审批轨迹同一条）、
+// 本轮调度统计计为失败（debugger 进程记录留档）。
+// 扫描条件带 retry_count < 上限，用满的单不再入批，因此本函数对同一退款单只执行一次。
+// 参数：
+//   - ctx: 上下文
+//   - r: 已达上限的退款单
+func (s *Scheduler) giveUpRefundRetry(ctx context.Context, r *model.Refund) {
+	log.Printf("[CRITICAL] 退款单自动重试已达上限(%d次)仍未收敛，停止自动处理 refund_id=%d refund_no=%s order_id=%d",
+		refundMaxRetry, r.ID, r.RefundNo, r.OrderID)
+	if err := s.refundService.createRefundLog(ctx, r.ID, "give_up", "system", 0,
+		fmt.Sprintf("自动重试已核查 %d 次仍未收敛，已停止自动处理；请人工核实渠道退款状态，确认后在后台「恢复自动收敛」重新起扫", r.RetryCount)); err != nil {
+		log.Printf("[order-scheduler] 写入卡单退款放弃轨迹失败 refund_id=%d: %v", r.ID, err)
+	}
 }
 
 // recoverStuckOrders 兜底扫描：将停留在处理中状态超过阈值的订单批量恢复为原状态

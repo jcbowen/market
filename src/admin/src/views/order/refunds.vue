@@ -45,6 +45,28 @@
       </n-space>
     </template>
   </n-modal>
+
+  <!-- 恢复自动收敛弹窗：核实依据必填，落 refund_logs 供审计 -->
+  <n-modal v-model:show="resetVisible" preset="card" title="恢复自动收敛" style="width: 460px">
+    <n-form label-placement="left" label-width="80">
+      <n-form-item label="核实依据">
+        <n-input
+          v-model:value="resetRemark"
+          type="textarea"
+          :rows="3"
+          maxlength="200"
+          show-count
+          placeholder="请填写渠道侧看到的退款状态，如：微信商户平台显示退款处理中"
+        />
+      </n-form-item>
+    </n-form>
+    <template #footer>
+      <n-space justify="end">
+        <n-button @click="resetVisible = false">取消</n-button>
+        <n-button type="warning" :loading="resetSubmitting" @click="submitReset">确认恢复</n-button>
+      </n-space>
+    </template>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
@@ -54,7 +76,7 @@ import { ref, onActivated, onMounted, onUnmounted, computed, h } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, NDataTable, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { getRefundList, approveRefund, rejectRefund, retryRefund } from '@/api/order'
+import { getRefundList, approveRefund, rejectRefund, retryRefund, resetRefundRetry } from '@/api/order'
 import OrderDetailModal from './detail.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import type { Refund, RefundItem } from '@/api/types'
@@ -65,7 +87,8 @@ import { REFUND_STATUS, refundStatusMap } from '@/constants/order'
 /**
  * 售后管理页面（原退款管理）
  * 展示退款申请列表（订单号/类型/明细/金额），支持同意/拒绝操作；
- * 退款中(status=4) 的卡单提供「重试退款」出口；展开行展示审批日志
+ * 退款中(status=4) 的卡单提供两个出口：「重试退款」再次向渠道出款，
+ * 「恢复自动收敛」只归零两侧重试预算让系统重新核实渠道结果（不碰钱）；展开行展示审批日志
  */
 const dialog = useDialog()
 const route = useRoute()
@@ -94,6 +117,12 @@ const rejectVisible = ref(false)
 const rejectSubmitting = ref(false)
 const rejectId = ref(0)
 const rejectReason = ref('')
+
+// 恢复自动收敛弹窗（退款中卡单且自动重试已用满预算时）
+const resetVisible = ref(false)
+const resetSubmitting = ref(false)
+const resetId = ref(0)
+const resetRemark = ref('')
 
 const statusOptions = [
   { label: '待审核', value: 1 },
@@ -195,7 +224,12 @@ const columns: DataTableColumns<Refund> = [
       }
       // 退款中卡单：提供重试出口，避免只能改数据库
       if (row.status === REFUND_STATUS.PROCESSING) {
-        return h(NButton, { size: 'small', type: 'warning', onClick: () => confirmRetry(row) }, { default: () => '重试退款' })
+        return h(NSpace, { size: 8 }, {
+          default: () => [
+            h(NButton, { size: 'small', type: 'warning', onClick: () => confirmRetry(row) }, { default: () => '重试退款' }),
+            h(NButton, { size: 'small', onClick: () => openReset(row) }, { default: () => '恢复自动收敛' }),
+          ],
+        })
       }
       return null
     },
@@ -207,6 +241,10 @@ const actionTextMap: Record<string, string> = {
   approve: '同意退款',
   reject: '拒绝退款',
   retry: '重试退款',
+  // 卡单自动重试用满预算（调度器写入）：备注里给了人工处置路径，列表展开行原样展示
+  give_up: '停止自动重试（转人工）',
+  // 人工核实渠道后恢复自动收敛（不再次触渠道出款）
+  reset: '恢复自动收敛',
 }
 
 // --- 窄屏适配（<=768px，与全局布局断点一致）---
@@ -366,6 +404,38 @@ async function submitReject() {
     // 错误提示由请求拦截器统一弹出
   } finally {
     rejectSubmitting.value = false
+  }
+}
+
+/**
+ * 打开恢复自动收敛弹窗
+ * @param row 售后单行
+ */
+function openReset(row: Refund) {
+  resetId.value = row.id
+  resetRemark.value = ''
+  resetVisible.value = true
+}
+
+/**
+ * 提交恢复自动收敛
+ * 后端会把支付流水与退款单两侧的重试预算归零，调度器下一轮重新核实渠道终态；
+ * 本动作不向渠道重新发起出款，因此可与「重试退款」先后使用而不冲突
+ */
+async function submitReset() {
+  if (!resetRemark.value.trim()) {
+    dialog.error({ title: '提示', content: '请填写渠道核实依据', positiveText: '知道了' })
+    return
+  }
+  resetSubmitting.value = true
+  try {
+    await resetRefundRetry(resetId.value, resetRemark.value.trim())
+    resetVisible.value = false
+    loadData()
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    resetSubmitting.value = false
   }
 }
 

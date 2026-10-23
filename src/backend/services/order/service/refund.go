@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -1031,6 +1032,75 @@ func (s *RefundService) RetryRefund(ctx context.Context, req *order.RetryRefundR
 		return err
 	}
 	return s.createRefundLog(ctx, refund.ID, "retry", operatorType, req.OperatorId, "重试退款成功")
+}
+
+// ResetRefundRetry 恢复卡在「退款中」(status=4) 退款单的自动收敛（B2）
+// 与 RetryRefund 的分工：RetryRefund 再次向渠道发起出款，本方法只把两侧的「问结果」预算归零
+// ——payment 侧退款流水的 retry_count/escalated 与 order 侧 refunds 的 retry_count/last_checked_at，
+// 让调度器与退款查单任务重新把它当作在途单去核实渠道终态，全程不触渠道、不动钱。
+//
+// 顺序有讲究：先恢复 payment 侧再恢复本侧。支付侧拒绝（流水已终态成功/已失败）时直接返回错误、
+// 本侧预算保持原样，两侧要么一起恢复要么一起不动，不会出现「订单在起劲重试而流水已放弃收敛」的半截状态。
+//
+// 核实依据（remark）必填并落 refund_logs：本动作等于人工确认渠道还在处理这笔退款，
+// 没有依据就重置，事后无从判断是谁批准重新收敛的。
+//
+// 参数：
+//   - ctx: 上下文
+//   - req: 重置请求（id 退款单 ID + community_id 强校验 + remark 核实依据 + 操作人）
+//
+// 返回值：
+//   - error: 参数缺失、归属不符、状态不允许或支付侧拒绝时返回错误
+//
+// 使用示例：
+//   - err := svc.ResetRefundRetry(ctx, &order.ResetRefundRetryReq{Id: 8, CommunityId: 3, OperatorId: 1, Remark: "微信商户平台显示退款处理中"})
+func (s *RefundService) ResetRefundRetry(ctx context.Context, req *order.ResetRefundRetryReq) error {
+	if strings.TrimSpace(req.Remark) == "" {
+		return invalidArg("请填写渠道核实依据")
+	}
+	var refund model.Refund
+	if err := s.db.GetDb().WithContext(ctx).First(&refund, req.Id).Error; err != nil {
+		return err
+	}
+	// 社区隔离强校验：与 RetryRefund 同口径，跨社区退款单一律拒绝
+	if err := ensureOrderCommunity(s.db.GetDb().WithContext(ctx), refund.OrderID, req.CommunityId); err != nil {
+		return err
+	}
+	if refund.Status != 4 {
+		return invalidArg("仅退款中状态的退款单可恢复自动收敛")
+	}
+
+	if s.paymentClient != nil && refund.PaymentNo != "" {
+		if _, err := s.paymentClient.ResetRefundFlow(ctx, &payment.ResetRefundFlowReq{
+			OrderId:      refund.OrderID,
+			RefundNo:     refund.RefundNo,
+			Remark:       req.Remark,
+			OperatorId:   req.OperatorId,
+			OperatorName: req.OperatorName,
+		}); err != nil {
+			return fmt.Errorf("重置退款流水失败: %w", err)
+		}
+	}
+
+	// 复位本侧收敛预算。用 UpdateColumns 绕开 base 钩子：updated_at 同时是
+	// 「停留超过 stuckRecoverAfter 才算卡单」的起算列，被刷成当前时间会让刚重置的单
+	// 再等一整个停留阈值才重新被调度器看见；last_checked_at 置 NULL 在 asc 轮转里排最前，
+	// 下一轮立即优先核查
+	res := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+		Where("id = ? AND status = 4", refund.ID).
+		UpdateColumns(map[string]interface{}{"retry_count": int32(0), "last_checked_at": nil})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return invalidArg("退款单状态已变更，请刷新后重试")
+	}
+
+	operatorType := "admin"
+	if req.OperatorId == 0 {
+		operatorType = "system"
+	}
+	return s.createRefundLog(ctx, refund.ID, "reset", operatorType, req.OperatorId, req.Remark)
 }
 
 // processChannelRefund 调用 payment-service 以退款单记录的支付单号发起渠道退款

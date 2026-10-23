@@ -258,7 +258,7 @@
             <div class="held-sub">
               {{ h.items.map((i) => `${i.product_name}${i.spec_name ? `(${i.spec_name})` : ''}x${i.quantity}`).join('、') }}
             </div>
-            <div class="held-sub muted">挂单人 {{ h.operator_name || '-' }} · {{ h.created_at }}</div>
+            <div class="held-sub muted">挂单人 {{ h.operator_name || '-' }} · {{ formatDateTime(h.created_at) }}</div>
           </div>
           <n-space :size="8">
             <n-button size="small" type="primary" @click="onRestore(h)">恢复</n-button>
@@ -379,6 +379,7 @@ import { getCommunityProfile } from '@/api/user'
 import type { PosHeldOrder, Product, Sku, User } from '@/api/types'
 import UserPicker from '@/components/UserPicker.vue'
 import { DELIVERY_TYPE, PAY_TYPE, payTypeText } from '@/constants/order'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 商品下单 Tab（收银台核心，点单收银机风格）

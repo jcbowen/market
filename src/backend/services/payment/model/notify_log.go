@@ -17,8 +17,8 @@ import (
 type NotifyLog struct {
 	base.MysqlBaseModel
 	ID        int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	Kind      int32  `gorm:"column:kind;type:tinyint;not null;default:1;index:idx_notify_kind_result_created,priority:1;index:idx_notify_handled_created,priority:1;comment:1渠道回调 2对账补同步 3挂账检出 4渠道关单 5后台手动同步 6放弃对账" json:"kind"`
-	Result    int32  `gorm:"column:result;type:tinyint;not null;index:idx_notify_kind_result_created,priority:2;comment:1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败" json:"result"`
+	Kind      int32  `gorm:"column:kind;type:tinyint;not null;default:1;index:idx_notify_kind_result_created,priority:1;index:idx_notify_handled_created,priority:1;comment:1渠道回调 2对账补同步 3挂账检出(系统:回调/对账) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(后台人工核实)" json:"kind"`
+	Result    int32  `gorm:"column:result;type:tinyint;not null;index:idx_notify_kind_result_created,priority:2;comment:1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败 11人工恢复退款收敛" json:"result"`
 	Channel   int32  `gorm:"column:channel;type:tinyint;not null;comment:1微信 2支付宝" json:"channel"`
 	PaymentNo string `gorm:"column:payment_no;type:varchar(50);not null;default:'';index;comment:支付单号，验签失败时可能解析不出而为空" json:"payment_no"`
 	OrderID   int64  `gorm:"column:order_id;type:bigint;not null;default:0;index;comment:订单 ID，同上可为 0" json:"order_id"`
@@ -28,11 +28,15 @@ type NotifyLog struct {
 	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;default:0;index:idx_notify_community_handled,priority:1;comment:归属社区，0=未知（仅超管可见）" json:"community_id"`
 	Handled     int32  `gorm:"column:handled;type:tinyint;not null;default:0;index:idx_notify_handled_created,priority:2;index:idx_notify_community_handled,priority:2;comment:异常销账 0待处理 1已处理" json:"handled"`
 	ErrorMsg    string `gorm:"column:error_msg;type:varchar(500);comment:结果摘要或失败原因" json:"error_msg"`
-	Remark      string `gorm:"column:remark;type:varchar(255);comment:人工销账备注（核实依据）" json:"remark"`
-	RawBody     string `gorm:"column:raw_body;type:text;comment:原始通知报文，仅失败与挂账场景存储" json:"raw_body"`
-	Headers     string `gorm:"column:headers;type:text;comment:关键请求头 JSON（签名已掩码）" json:"headers"`
-	CreatedAt   string `gorm:"column:created_at;type:datetime;index:idx_notify_kind_result_created,priority:3;index:idx_notify_handled_created,priority:3;index:idx_notify_community_handled,priority:3;comment:创建时间" json:"created_at"`
-	UpdatedAt   string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	// DetectRemark 这条流水「是谁、在什么本地状态下」被登记（B3 审计留痕）：
+	// 与 Remark 严格分工——后者只属于人工销账，销账 SQL 会整列覆写；
+	// 若把检出时的操作人与原状态快照写进 Remark，销账一次就被抹掉，责任链断在销账那一刻
+	DetectRemark string `gorm:"column:detect_remark;type:varchar(255);comment:检出留痕：触发人与原状态快照（系统触发标注为系统）" json:"detect_remark"`
+	Remark       string `gorm:"column:remark;type:varchar(255);comment:人工销账备注（核实依据）" json:"remark"`
+	RawBody      string `gorm:"column:raw_body;type:text;comment:原始通知报文，仅失败与挂账场景存储" json:"raw_body"`
+	Headers      string `gorm:"column:headers;type:text;comment:关键请求头 JSON（签名已掩码）" json:"headers"`
+	CreatedAt    string `gorm:"column:created_at;type:datetime;index:idx_notify_kind_result_created,priority:3;index:idx_notify_handled_created,priority:3;index:idx_notify_community_handled,priority:3;comment:创建时间" json:"created_at"`
+	UpdatedAt    string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回支付通知流水表名
@@ -49,7 +53,7 @@ const (
 	NotifyKindCallback = 1
 	// NotifyKindReconcile 对账任务主动回查后补同步成功
 	NotifyKindReconcile = 2
-	// NotifyKindStuck 挂账检出（支付单已关闭但渠道已收款，需人工退款）
+	// NotifyKindStuck 挂账检出（支付单已关闭但渠道已收款，需人工退款）——系统自动检出（回调、对账调度器、关单前核实）
 	NotifyKindStuck = 3
 	// NotifyKindChannelClose 关闭渠道侧交易的结果
 	NotifyKindChannelClose = 4
@@ -57,6 +61,13 @@ const (
 	NotifyKindManualSync = 5
 	// NotifyKindGiveUp 回查次数超限，放弃对账
 	NotifyKindGiveUp = 6
+	// NotifyKindRefundReset 后台人工重置退款流水的收敛预算（留痕，不是待办）
+	NotifyKindRefundReset = 7
+	// NotifyKindManualStuckCheck 后台人工核实检出的挂账（B3）
+	// 与 NotifyKindStuck 是同一事实的两个检出来源：3 由系统自动扫出（回调、对账调度器、关单前核实），8 由管理员点「同步支付状态」核实出。
+	// 刻意拆开：待办里「谁先发现的」直接决定后续追查方向——系统检出说明回调/关单链路有洞，
+	// 人工检出说明那笔单早已超窗调度器不再覆盖，两者的处置与统计口径不能混在一张表里
+	NotifyKindManualStuckCheck = 8
 )
 
 // 流水结果（NotifyLog.Result）
@@ -81,6 +92,8 @@ const (
 	NotifyResultStuck = 9
 	// NotifyResultSyncFailed 支付已确认但订单状态同步失败（重试后仍失败），需人工触发同步
 	NotifyResultSyncFailed = 10
+	// NotifyResultRefundReset 人工重置退款流水收敛预算（操作留痕，不进待办队列）
+	NotifyResultRefundReset = 11
 )
 
 // 销账状态（NotifyLog.Handled）
@@ -112,7 +125,7 @@ func NeedsHandling(kind, result int32) bool {
 		return true
 	}
 	switch kind {
-	case NotifyKindStuck, NotifyKindGiveUp:
+	case NotifyKindStuck, NotifyKindManualStuckCheck, NotifyKindGiveUp:
 		return true
 	case NotifyKindCallback:
 		return result == NotifyResultVerifyFailed || result == NotifyResultError

@@ -35,6 +35,11 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: ci-mysql
           MYSQL_DATABASE: market
+          # 库容器时区与生产（MySQL 容器 TZ=Asia/Shanghai）及测试进程对齐：
+          # 库里 NOW() 与 Go 侧按进程时区写入的时间串比较（券过期、对账时间窗）
+          # 必须同一口径，否则整体偏移 8 小时。时钟一致性由
+          # services/product/service/db_clock_test.go 显式守卫并打印取证字段
+          TZ: Asia/Shanghai
         ports:
           - 3306:3306
         options: >-
@@ -213,6 +218,11 @@ jobs:
         env:
           MYSQL_ROOT_PASSWORD: ci-mysql
           MYSQL_DATABASE: market
+          # 库容器时区与生产（MySQL 容器 TZ=Asia/Shanghai）及测试进程对齐：
+          # 库里 NOW() 与 Go 侧按进程时区写入的时间串比较（券过期、对账时间窗）
+          # 必须同一口径，否则整体偏移 8 小时。时钟一致性由
+          # services/product/service/db_clock_test.go 显式守卫并打印取证字段
+          TZ: Asia/Shanghai
         ports:
           - 3306:3306
         options: >-

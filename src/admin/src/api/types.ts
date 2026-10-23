@@ -401,6 +401,10 @@ export interface PaymentAnomaly {
   pay_type: number
   amount: number
   error_msg: string
+  /** 检出留痕：这条流水由谁、在什么本地状态下登记（B3） */
+  detect_remark: string
+  /** 人工销账依据：销账时整列写入，与检出留痕分列存放以免被覆盖 */
+  remark: string
   handled: number
   created_at: string
   can_view_raw: boolean

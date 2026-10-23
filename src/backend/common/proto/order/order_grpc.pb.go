@@ -34,6 +34,7 @@ const (
 	OrderService_ApproveRefund_FullMethodName            = "/order.OrderService/ApproveRefund"
 	OrderService_RejectRefund_FullMethodName             = "/order.OrderService/RejectRefund"
 	OrderService_RetryRefund_FullMethodName              = "/order.OrderService/RetryRefund"
+	OrderService_ResetRefundRetry_FullMethodName         = "/order.OrderService/ResetRefundRetry"
 	OrderService_GetRefundConfig_FullMethodName          = "/order.OrderService/GetRefundConfig"
 	OrderService_SaveRefundConfig_FullMethodName         = "/order.OrderService/SaveRefundConfig"
 	OrderService_GetOrderStatistics_FullMethodName       = "/order.OrderService/GetOrderStatistics"
@@ -83,6 +84,11 @@ type OrderServiceClient interface {
 	RejectRefund(ctx context.Context, in *RejectRefundReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 重试卡在"退款中"(status=4) 的退款单：以退款单自身的 payment_no 重新发起渠道退款
 	RetryRefund(ctx context.Context, in *RetryRefundReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 恢复卡在"退款中"的退款单的自动收敛（B2）：
+	// 先把 payment 侧退款流水的重试预算归零（人工核实渠道结果后重新交系统收敛），
+	// 再把本侧 refunds.retry_count/last_checked_at 复位，使调度器下一轮立即重新核查。
+	// 与 RetryRefund 的区别：本方法不再次触渠道出款，只恢复「问渠道结果」的节奏
+	ResetRefundRetry(ctx context.Context, in *ResetRefundRetryReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	GetRefundConfig(ctx context.Context, in *GetRefundConfigReq, opts ...grpc.CallOption) (*RefundConfig, error)
 	SaveRefundConfig(ctx context.Context, in *SaveRefundConfigReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 统计
@@ -265,6 +271,16 @@ func (c *orderServiceClient) RetryRefund(ctx context.Context, in *RetryRefundReq
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.CommonResponse)
 	err := c.cc.Invoke(ctx, OrderService_RetryRefund_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) ResetRefundRetry(ctx context.Context, in *ResetRefundRetryReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_ResetRefundRetry_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -516,6 +532,11 @@ type OrderServiceServer interface {
 	RejectRefund(context.Context, *RejectRefundReq) (*common.CommonResponse, error)
 	// 重试卡在"退款中"(status=4) 的退款单：以退款单自身的 payment_no 重新发起渠道退款
 	RetryRefund(context.Context, *RetryRefundReq) (*common.CommonResponse, error)
+	// 恢复卡在"退款中"的退款单的自动收敛（B2）：
+	// 先把 payment 侧退款流水的重试预算归零（人工核实渠道结果后重新交系统收敛），
+	// 再把本侧 refunds.retry_count/last_checked_at 复位，使调度器下一轮立即重新核查。
+	// 与 RetryRefund 的区别：本方法不再次触渠道出款，只恢复「问渠道结果」的节奏
+	ResetRefundRetry(context.Context, *ResetRefundRetryReq) (*common.CommonResponse, error)
 	GetRefundConfig(context.Context, *GetRefundConfigReq) (*RefundConfig, error)
 	SaveRefundConfig(context.Context, *SaveRefundConfigReq) (*common.CommonResponse, error)
 	// 统计
@@ -605,6 +626,9 @@ func (UnimplementedOrderServiceServer) RejectRefund(context.Context, *RejectRefu
 }
 func (UnimplementedOrderServiceServer) RetryRefund(context.Context, *RetryRefundReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetryRefund not implemented")
+}
+func (UnimplementedOrderServiceServer) ResetRefundRetry(context.Context, *ResetRefundRetryReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetRefundRetry not implemented")
 }
 func (UnimplementedOrderServiceServer) GetRefundConfig(context.Context, *GetRefundConfigReq) (*RefundConfig, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetRefundConfig not implemented")
@@ -941,6 +965,24 @@ func _OrderService_RetryRefund_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OrderServiceServer).RetryRefund(ctx, req.(*RetryRefundReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_ResetRefundRetry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetRefundRetryReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).ResetRefundRetry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_ResetRefundRetry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).ResetRefundRetry(ctx, req.(*ResetRefundRetryReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1403,6 +1445,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetryRefund",
 			Handler:    _OrderService_RetryRefund_Handler,
+		},
+		{
+			MethodName: "ResetRefundRetry",
+			Handler:    _OrderService_ResetRefundRetry_Handler,
 		},
 		{
 			MethodName: "GetRefundConfig",

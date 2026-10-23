@@ -25,7 +25,7 @@
       <div class="summary-head">
         <div>
           <div class="order-no">{{ detail.order_no }}</div>
-          <div class="order-meta">{{ detail.user_name || '散客' }} · {{ detail.created_at }}</div>
+          <div class="order-meta">{{ detail.user_name || '散客' }} · {{ formatDateTime(detail.created_at) }}</div>
         </div>
         <n-tag :type="orderStatusTagType(detail.status)" size="medium">{{ detail.status_text }}</n-tag>
       </div>
@@ -69,6 +69,7 @@ import { getOrderDetail, getOrderList, verifyPickup } from '@/api/order'
 import type { OrderDetail } from '@/api/types'
 import { ORDER_STATUS, orderStatusTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 取货核销 Tab

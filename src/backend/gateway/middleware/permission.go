@@ -103,10 +103,10 @@ func HasPermission(c *gin.Context, permission string) bool {
 }
 
 // RequireCommunityAccess 校验请求头声明的当前社区是否对管理员合法
-// 实时口径优先（P1-6）：以 GetAdminContext 的 IsSuper/Bound 为准——JWT 快照里的
-// Role/CommunityIDs 是登录时绘制的，降权或解除任职后照抄快照等于把旧授权续到令牌过期。
-// 快照只在实时解析失败（user 服务抖动/不可用）时作为降级兜底放行，
-// 保证已授权的正常管理员不因瞬时故障被挡在门外；解析成功即完全以实时结果为准。
+// 一律以 GetAdminContext 的实时口径为准（P1-6）：JWT 快照里的 Role/CommunityIDs 是登录时
+// 绘制的，降权或解除任职后照抄快照等于把旧授权续到令牌过期。
+// 实时解析不可用（user 服务故障）时拒绝（fail-closed），与 RequirePermission 同口径——
+// 同一请求后续若挂了权限码在本场景本就 403，回退快照换不到可用性，只会留下越权面。
 //
 // 返回值：
 //   - gin.HandlerFunc: 社区访问校验中间件
@@ -121,32 +121,51 @@ func RequireCommunityAccess() gin.HandlerFunc {
 		}
 
 		ctxInfo := resolveAdminContext(c)
-		if ctxInfo != nil {
-			if ctxInfo.IsSuper || ctxInfo.Bound {
-				c.Next()
-				return
-			}
+		if ctxInfo == nil {
 			response.Error(c, errcode.NoPermission)
 			c.Abort()
 			return
 		}
-
-		// 实时解析不可用：回退登录快照（降级放行，口径见函数注释）
-		uc := appcontext.GetUserContext(c)
-		if uc.Role == RoleSuperAdmin || containsInt64(uc.CommunityIDs, id) {
+		if ctxInfo.IsSuper || ctxInfo.Bound {
 			c.Next()
 			return
 		}
-
 		response.Error(c, errcode.NoPermission)
 		c.Abort()
 	}
 }
 
+// IsSuperAdmin 判断当前请求的管理员账号是否为超级管理员（实时口径）
+// 取 GetAdminContext 的 IsSuper——它是账号级属性，与社区语境无关，停用与降权即时生效；
+// 实时解析不可用时按非超管处理（fail-closed），与 RequirePermission 一致。
+// 非管理员令牌一律返回 false：实时上下文以员工 ID 取数，会员令牌不得复用该判定。
+//
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - bool: true 表示当前账号是超管
+//
+// 使用示例：
+//   - if !gwMiddleware.IsSuperAdmin(c) {
+//     response.Error(c, errcode.NoPermission)
+//     return
+//     }
+func IsSuperAdmin(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if uc := appcontext.GetUserContext(c); uc == nil || uc.TokenType != jwt.TokenTypeAdmin {
+		return false
+	}
+	ctxInfo := resolveAdminContext(c)
+	return ctxInfo != nil && ctxInfo.IsSuper
+}
+
 // AdminCommunityAccessible 判断当前请求头（X-Community-Id）声明的社区对管理员是否合法（实时口径，P1-10）
 // 超管任意社区合法；普通管理员以 GetAdminContext 的 Bound（该社区有任职）为准——
-// JWT 快照里的 CommunityIDs 是登录时绘制的，授权变更（追加/撤销任职）后需重登才刷新，
-// 不能作为数据归属判定依据。与 RequireCommunityAccess 共用同一请求内记忆化的
+// JWT 快照里的 CommunityIDs 与 Role 都是登录时绘制的，授权变更（追加/撤销任职、降权）后
+// 需重登才刷新，不能作为数据归属判定依据。与 RequireCommunityAccess 共用同一请求内记忆化的
 // 实时上下文（gin context 记忆化，同一请求最多一次 RPC）
 // 未携带请求头时按默认社区解析——调用方（如 getAdminCommunityID）只在
 // 「请求头存在且合法」的分支里使用本函数，不会误用该语义
@@ -158,9 +177,6 @@ func RequireCommunityAccess() gin.HandlerFunc {
 //   - bool: 合法返回 true；实时上下文解析失败按不合法处理（调用方回退默认社区，
 //     最终的访问拒绝由 RequirePermission/RequireCommunityAccess 中间件负责）
 func AdminCommunityAccessible(c *gin.Context) bool {
-	if appcontext.GetUserContext(c).Role == RoleSuperAdmin {
-		return true
-	}
 	ctxInfo := resolveAdminContext(c)
 	return ctxInfo != nil && (ctxInfo.IsSuper || ctxInfo.Bound)
 }
@@ -183,6 +199,9 @@ func resolveAdminContext(c *gin.Context) *user.AdminContextInfo {
 		return nil
 	}
 	uc := appcontext.GetUserContext(c)
+	if uc == nil {
+		return nil
+	}
 	communityID := uc.CommunityID
 	if id, err := strconv.ParseInt(c.GetHeader(HeaderCommunityID), 10, 64); err == nil && id > 0 {
 		communityID = id
@@ -193,22 +212,6 @@ func resolveAdminContext(c *gin.Context) *user.AdminContextInfo {
 	}
 	c.Set("admin_context", info)
 	return info
-}
-
-// containsInt64 判断 int64 切片是否包含指定元素
-// 参数：
-//   - list: int64 切片
-//   - item: 目标元素
-//
-// 返回值：
-//   - bool: 是否包含
-func containsInt64(list []int64, item int64) bool {
-	for _, v := range list {
-		if v == item {
-			return true
-		}
-	}
-	return false
 }
 
 // contains 判断字符串切片是否包含指定元素

@@ -24,8 +24,9 @@ import (
  * 背景：社区访问校验与权限校验原先先读 JWT 登录快照，快照命中即放行。
  * 快照是登录那一刻绘制的——超管被降权、管理员被解除社区任职、账号被停用，
  * 都要等 access_token 自然过期或重登才生效，中间期内旧授权仍然可用。
- * 修法：实时上下文（GetAdminContext）优先，快照只在实时解析不可用时作为降级兜底；
- * 账号停用由 user 服务在 GetAdminContext 内直接判为「非超管、无权限、无任职」。
+ * 修法：一律以实时上下文（GetAdminContext）为准；账号停用由 user 服务在
+ * GetAdminContext 内直接判为「非超管、无权限、无任职」。实时解析不可用时拒绝（fail-closed），
+ * 不再回退快照——同一请求后续若挂了权限码在本场景本就 403，回退换不到可用性，只留下越权面。
  *
  * 运行方式：
  *   go test ./gateway/middleware/ -run TestRequire -v
@@ -34,7 +35,8 @@ import (
  *   - 停用/解除任职的实时结果（空权限、Bound=false）→ 权限校验与社区校验均 403；
  *   - 降权超管（快照 super_admin，实时 IsSuper=false）→ 社区校验 403，不再照抄快照；
  *   - 登录后追加授权（快照不含该社区，实时 Bound=true）→ 放行；
- *   - 实时解析故障（RPC 报错）→ 按快照降级放行，服务抖动不把管理员挡在门外。
+ *   - 实时解析故障（RPC 报错）→ 拒绝（fail-closed），快照内社区也不放行；
+ *   - 超管判定 IsSuperAdmin 取实时 IsSuper，故障与非管理员令牌按非超管处理。
  *
  * 使用示例：
  *   info := &user.AdminContextInfo{Permissions: []string{"order:update"}}
@@ -157,21 +159,58 @@ func TestRequireCommunityAccessAllowsNewAssignment(t *testing.T) {
 	}
 }
 
-// TestRequireCommunityAccessFallsBackToSnapshotOnRPCError 实时解析故障时按快照降级放行
-// user 服务抖动不能让全站管理员瞬间 403；降级口径与 refresh 黑名单的 fail-open 一致
-func TestRequireCommunityAccessFallsBackToSnapshotOnRPCError(t *testing.T) {
-	c, w := newPermissionTestContext(adminSnapshot("community_admin", []int64{1, 2}), "/api/v1/admin/orders", "2",
+// TestRequireCommunityAccessDeniesOnRPCError 实时解析故障时拒绝（fail-closed）
+// 旧口径按快照降级放行，等于 user 服务一抖动就把登录时的旧授权全部续期；
+// 快照内社区同样不放行——故障期间管理员重试即可，越权窗口不可接受
+func TestRequireCommunityAccessDeniesOnRPCError(t *testing.T) {
+	c, _ := newPermissionTestContext(adminSnapshot("community_admin", []int64{1, 2}), "/api/v1/admin/orders", "2",
 		nil, status.Error(codes.Unavailable, "user-service 不可用"))
 	RequireCommunityAccess()(c)
-	if c.IsAborted() {
-		t.Errorf("实时解析故障应按快照降级放行，code=%d", respCode(t, w))
+	if !c.IsAborted() {
+		t.Error("实时解析故障应拒绝，不得回退快照放行")
 	}
 
-	// 快照也不含该社区时仍然拒绝：降级只是放宽缓存口径，不是放开越权
-	c2, _ := newPermissionTestContext(adminSnapshot("community_admin", []int64{1}), "/api/v1/admin/orders", "2",
+	// 故障期间的超管快照同样不放行：超管身份也只看实时口径
+	c2, _ := newPermissionTestContext(adminSnapshot(RoleSuperAdmin, nil), "/api/v1/admin/orders", "2",
 		nil, status.Error(codes.Unavailable, "user-service 不可用"))
 	RequireCommunityAccess()(c2)
 	if !c2.IsAborted() {
-		t.Error("故障降级不得放行快照外的社区")
+		t.Error("故障降级不得放行快照超管")
 	}
+}
+
+// TestIsSuperAdminUsesLiveContext 超管判定只看实时口径，且解析故障按非超管处理
+func TestIsSuperAdminUsesLiveContext(t *testing.T) {
+	t.Run("实时超管", func(t *testing.T) {
+		c, _ := newPermissionTestContext(adminSnapshot("community_admin", []int64{1}), "/api/v1/admin/accounts", "1",
+			&user.AdminContextInfo{IsSuper: true}, nil)
+		if !IsSuperAdmin(c) {
+			t.Error("实时上下文 IsSuper=true 应判定为超管")
+		}
+	})
+
+	t.Run("降权超管", func(t *testing.T) {
+		c, _ := newPermissionTestContext(adminSnapshot(RoleSuperAdmin, nil), "/api/v1/admin/accounts", "1",
+			&user.AdminContextInfo{IsSuper: false, Permissions: []string{"account:read"}}, nil)
+		if IsSuperAdmin(c) {
+			t.Error("降权后不得再凭登录快照判定为超管")
+		}
+	})
+
+	t.Run("解析故障", func(t *testing.T) {
+		c, _ := newPermissionTestContext(adminSnapshot(RoleSuperAdmin, nil), "/api/v1/admin/accounts", "1",
+			nil, status.Error(codes.Unavailable, "user-service 不可用"))
+		if IsSuperAdmin(c) {
+			t.Error("实时解析不可用应按非超管处理")
+		}
+	})
+
+	t.Run("会员令牌", func(t *testing.T) {
+		member := &appcontext.UserContext{UserID: 1001, TokenType: jwt.TokenTypeUser, Role: RoleSuperAdmin}
+		c, _ := newPermissionTestContext(member, "/api/v1/admin/accounts", "1",
+			&user.AdminContextInfo{IsSuper: true}, nil)
+		if IsSuperAdmin(c) {
+			t.Error("非管理员令牌不得命中超管判定")
+		}
+	})
 }

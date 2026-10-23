@@ -269,7 +269,7 @@ export const PAYMENT_CONFIRM_SOURCE = {
   OFFLINE: 4,
 } as const
 
-/** 流水类别：1渠道回调 2对账补同步 3挂账检出 4渠道关单 5后台手动同步 6放弃对账 */
+/** 流水类别：1渠道回调 2对账补同步 3挂账检出(系统) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(人工核实) */
 export const NOTIFY_KIND = {
   CALLBACK: 1,
   RECONCILE: 2,
@@ -277,9 +277,11 @@ export const NOTIFY_KIND = {
   CHANNEL_CLOSE: 4,
   MANUAL_SYNC: 5,
   GIVE_UP: 6,
+  REFUND_RESET: 7,
+  MANUAL_STUCK_CHECK: 8,
 } as const
 
-/** 流水结果：1确认成功 2幂等忽略 3验签失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 */
+/** 流水结果：1确认成功 2幂等忽略 3验签失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败 11人工恢复退款收敛 */
 export const NOTIFY_RESULT = {
   SUCCESS: 1,
   IGNORED: 2,
@@ -290,6 +292,8 @@ export const NOTIFY_RESULT = {
   NOT_EXIST: 7,
   CLOSED: 8,
   STUCK: 9,
+  ORDER_SYNC_FAILED: 10,
+  REFUND_RESET: 11,
 } as const
 
 /** 渠道：1微信 2支付宝（支付流水只涉及在线渠道） */
@@ -373,10 +377,14 @@ export function notifyKindText(kind: number): string {
   const map: Record<number, string> = {
     1: '渠道回调',
     2: '对账补同步',
-    3: '资金挂账',
+    // 同一挂账事实的两个检出来源（B3）：系统扫出说明回调/关单链路有洞，
+    // 人工核实出说明该单早已超出调度窗口——追查漏径的方向不同，页面上必须分开显示
+    3: '资金挂账(系统)',
     4: '渠道关单',
     5: '后台同步',
     6: '放弃对账',
+    7: '人工恢复退款收敛',
+    8: '资金挂账(人工核实)',
   }
   return map[kind] || `类别${kind}`
 }
@@ -396,12 +404,14 @@ export function notifyResultText(result: number): string {
     7: '渠道无此交易',
     8: '已关单',
     9: '资金挂账',
+    10: '订单同步失败',
+    11: '人工恢复退款收敛',
   }
   return map[result] || `结果${result}`
 }
 
 /**
- * 流水结果标签颜色：验签失败、金额不符、处理异常、资金挂账是待办，其余是正常轨迹
+ * 流水结果标签颜色：验签失败、金额不符、处理异常、资金挂账、订单同步失败是待办，其余是正常轨迹
  * @param result 流水结果码
  */
 export function notifyResultTagType(result: number): TagType {
@@ -415,6 +425,8 @@ export function notifyResultTagType(result: number): TagType {
     7: 'info',
     8: 'info',
     9: 'error',
+    10: 'error',
+    11: 'default',
   }
   return map[result] || 'default'
 }

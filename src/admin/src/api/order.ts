@@ -370,6 +370,21 @@ export function retryRefund(id: number) {
 }
 
 /**
+ * 恢复退款单自动收敛（退款中卡单且自动重试已用满预算）
+ * 归零支付流水与退款单两侧的重试预算，让调度器重新核实渠道终态，不再次向渠道发起出款
+ * @param id 退款单 ID
+ * @param remark 渠道核实依据（必填）
+ * @returns 操作结果
+ */
+export function resetRefundRetry(id: number, remark: string) {
+  return request<ApiResult<null>>({
+    url: `/api/v1/admin/refunds/${id}/reset-retry`,
+    method: 'POST',
+    data: { remark },
+  })
+}
+
+/**
  * 拒绝退款
  * @param id 退款单 ID
  * @param reject_reason 拒绝原因

@@ -26,7 +26,13 @@
             <div class="app-name">{{ app.name }}</div>
             <div class="app-desc">{{ app.description }}</div>
           </div>
-          <n-button text size="small" class="star-btn starred" @click.stop="toggleFavorite(app)">
+          <n-button
+            v-if="canSaveFavorites"
+            text
+            size="small"
+            class="star-btn starred"
+            @click.stop="toggleFavorite(app)"
+          >
             <n-icon :size="18"><Star /></n-icon>
           </n-button>
         </div>
@@ -49,7 +55,13 @@
           <div class="app-name">{{ app.name }}</div>
           <div class="app-desc">{{ app.description }}</div>
         </div>
-        <n-button text size="small" class="star-btn" @click.stop="toggleFavorite(app)">
+        <n-button
+          v-if="canSaveFavorites"
+          text
+          size="small"
+          class="star-btn"
+          @click.stop="toggleFavorite(app)"
+        >
           <n-icon :size="18"><StarOutline /></n-icon>
         </n-button>
       </div>
@@ -75,6 +87,14 @@ const authStore = useAuthStore()
 const keyword = ref('')
 /** 常用应用 key 列表（有序，后端社区级存储） */
 const favoriteKeys = ref<string[]>([])
+
+/**
+ * 是否可维护常用应用：偏好按社区覆盖式共享存储，后端挂 community:config，
+ * 前端同样收窄星标，避免无权限账号点了才被 403
+ */
+const canSaveFavorites = computed(
+  () => authStore.isSuperAdmin || authStore.hasPermission('community:config'),
+)
 
 /**
  * 当前账号可见的应用：权限码缺省视为登录即可

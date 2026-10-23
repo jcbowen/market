@@ -32,6 +32,11 @@ service OrderService {
   rpc RejectRefund(RejectRefundReq) returns (common.CommonResponse);
   // 重试卡在"退款中"(status=4) 的退款单：以退款单自身的 payment_no 重新发起渠道退款
   rpc RetryRefund(RetryRefundReq) returns (common.CommonResponse);
+  // 恢复卡在"退款中"的退款单的自动收敛（B2）：
+  // 先把 payment 侧退款流水的重试预算归零（人工核实渠道结果后重新交系统收敛），
+  // 再把本侧 refunds.retry_count/last_checked_at 复位，使调度器下一轮立即重新核查。
+  // 与 RetryRefund 的区别：本方法不再次触渠道出款，只恢复「问渠道结果」的节奏
+  rpc ResetRefundRetry(ResetRefundRetryReq) returns (common.CommonResponse);
   rpc GetRefundConfig(GetRefundConfigReq) returns (RefundConfig);
   rpc SaveRefundConfig(SaveRefundConfigReq) returns (common.CommonResponse);
 
@@ -420,6 +425,20 @@ message RetryRefundReq {
   int64 community_id = 3;
 }
 
+// ResetRefundRetryReq 恢复自动收敛请求（B2）
+// 编排顺序：先调 payment.ResetRefundFlow 归零流水预算，成功后才复位本侧
+// refunds.retry_count/last_checked_at（UpdateColumns 绕开钩子，updated_at 不动），
+// 最后落 refund_logs(action=reset)；支付侧拒绝时本侧保持原样并回错，不留半截状态
+message ResetRefundRetryReq {
+  int64 id = 1;
+  int64 operator_id = 2;
+  // 社区隔离强校验：同 RetryRefundReq.community_id
+  int64 community_id = 3;
+  // 核实依据（必填）：在渠道商户平台看到的退款单状态/到账结论，落 refund_logs 供审计
+  string remark = 4;
+  string operator_name = 5;
+}
+
 message GetOrderStatisticsReq {
   int64 community_id = 1;
   string start_date = 2;
@@ -774,7 +793,7 @@ message SaveAppPreferencesReq {
 
 **后台恢复（`RestoreOrder`）：** 客服场景「我删错了，帮我找回上次买的东西」，仅把 `user_deleted` 复位为 0，不改状态、不补状态日志。`community_id>0` 限定在该社区范围内操作（社区管理员不得跨社区恢复），`=0` 为超管不限；`RowsAffected==0` 统一返回 `NotFound`「未找到需恢复的订单」，不透露其他社区是否存在该单。
 
-**退款社区隔离强校验：** `ApproveRefund`/`RejectRefund`/`RetryRefund`（出款链路）与 `AdminCreateRefund` 的 `community_id` 由网关从当前社区语境注入，order 服务端校验退款单归属订单的社区，跨社区操作直接拒绝；调度器等内部系统调用传 0 跳过校验。退款申请在事务内先锁订单行（FOR UPDATE）再查 pending，串行化同订单重复申请。
+**退款社区隔离强校验：** `ApproveRefund`/`RejectRefund`/`RetryRefund`（出款链路）/`ResetRefundRetry`（恢复收敛链路，2026-10-24 B2）与 `AdminCreateRefund` 的 `community_id` 由网关从当前社区语境注入，order 服务端校验退款单归属订单的社区，跨社区操作直接拒绝；调度器等内部系统调用传 0 跳过校验。退款申请在事务内先锁订单行（FOR UPDATE）再查 pending，串行化同订单重复申请。
 
 **后台代客退款模式与金额口径：** `AdminCreateRefund` 的 `mode` 区分两种退款：`0/1` 按商品退（`items` 为空即整单退，退款完成后调用 `ReleaseStock` 回补库存）；`2` 仅金额退（不退商品、不回补库存，`items` 必须为空，`amount` 必填且不超过订单剩余可退，落地为 `RefundInfo.type=3`，钱款全额退完时展示为 `1` 整单退）。金额一律以实付口径服务端汇算（含收银台手动优惠分摊），`amount` 仅允许在汇算值基础上调低；库存释放按 `refund_no` 作为幂等业务号，支持同一订单多笔部分退款各自独立生效。订单详情 `OrderDetail.refunds` 返回本单全部售后记录（金额/类型/状态/明细）供后台与 C 端展示。
 

@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"testing"
@@ -414,6 +416,49 @@ func TestEnsureTradeAccess(t *testing.T) {
 				t.Errorf("越权不应泄露可售状态文案, got %q", err.Error())
 			}
 		})
+	}
+}
+
+// TestEnsureTradeAccessWarnsOnMissingScope C5 观测期：交易入口缺社区语境要留下告警，管理端路径不得刷屏
+// 背景：scope<=0 对超管/内部调用是合法语义，但对交易侧（require_sellable=true）意味着
+// 「成交社区没传进来」，归属校验整体失效。硬拒会打死未知的内部调用方，故先落日志观测一轮
+// 断言：交易口径 + scope<=0 输出唯一一条含资源 ID 的告警；管理端口径与 scope>0 均无告警
+func TestEnsureTradeAccessWarnsOnMissingScope(t *testing.T) {
+	captureLog := func(requireSellable bool, scope int64) string {
+		var buf bytes.Buffer
+		flags := log.Flags()
+		log.SetFlags(0)
+		log.SetOutput(&buf)
+		defer func() {
+			log.SetOutput(os.Stderr)
+			log.SetFlags(flags)
+		}()
+		err := EnsureTradeAccess(scope,
+			&model.Product{ID: 91, CommunityID: sellableTestCommunityID, Name: "SELLABLETEST-观测", Status: 1},
+			&model.Sku{ID: 92, CommunityID: sellableTestCommunityID, SpecName: "观测规格", Status: SkuStatusEnabled},
+			requireSellable)
+		if err != nil {
+			t.Fatalf("观测告警不得改变放行结论: %v", err)
+		}
+		return buf.String()
+	}
+
+	got := captureLog(true, 0)
+	if !strings.Contains(got, "交易入口缺少社区语境") {
+		t.Errorf("交易口径缺 scope 应落告警, got %q", got)
+	}
+	// 资源 ID 是定位调用方的唯一线索，缺了就只能靠猜
+	if !strings.Contains(got, "product_id=91") || !strings.Contains(got, "sku_id=92") {
+		t.Errorf("告警应带商品与 SKU ID 便于定位调用方, got %q", got)
+	}
+	if n := strings.Count(got, "交易入口缺少社区语境"); n != 1 {
+		t.Errorf("单次调用只应落一条告警, got %d 条: %q", n, got)
+	}
+	if out := captureLog(false, 0); out != "" {
+		t.Errorf("管理端/展示口径（不要求可售）不该告警，超管跨社区是合法语义, got %q", out)
+	}
+	if out := captureLog(true, sellableTestCommunityID); out != "" {
+		t.Errorf("交易口径带社区语境不该告警, got %q", out)
 	}
 }
 

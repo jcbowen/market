@@ -150,6 +150,15 @@ func (s *server) QueryRefundResult(ctx stdctx.Context, req *payment.QueryRefundR
 	return resp, nil
 }
 
+// ResetRefundFlow 人工重置待退款流水的自动收敛预算（不再次触渠道）
+func (s *server) ResetRefundFlow(ctx stdctx.Context, req *payment.ResetRefundFlowReq) (*payment.ResetRefundFlowResp, error) {
+	resp, err := s.paymentService.ResetRefundFlow(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
+}
+
 // GetPayConfig 查询支付配置
 // 返回数据库中的支付渠道开关与微信/支付宝配置，并附渠道就绪状态
 func (s *server) GetPayConfig(ctx stdctx.Context, _ *payment.GetPayConfigReq) (*payment.PayConfig, error) {
@@ -180,12 +189,14 @@ func (s *server) UploadPayCert(ctx stdctx.Context, req *payment.UploadPayCertReq
 
 // SyncPaymentFromChannel 向渠道核实收款结果，已收款则补同步
 // 幂等可反复调用：渠道未收款时不改动任何本地状态，仅回传渠道事实
+// operator_* 只用于留痕（B3）：后台按钮由网关注入操作人，内部路径（订单取消前置）留空即系统口径
 func (s *server) SyncPaymentFromChannel(ctx stdctx.Context, req *payment.SyncPaymentReq) (*payment.SyncPaymentResp, error) {
 	reason := req.Reason
 	if reason == "" {
 		reason = model.ConfirmRefManualSync
 	}
-	outcome, err := s.paymentService.SyncPaymentFromChannel(ctx, req.OrderId, req.PaymentNo, reason)
+	outcome, err := s.paymentService.SyncPaymentFromChannel(ctx, req.OrderId, req.PaymentNo, reason,
+		service.SyncActorFromRequest(req.OperatorId, req.OperatorName))
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}

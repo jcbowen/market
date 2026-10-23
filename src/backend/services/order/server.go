@@ -397,6 +397,14 @@ func (s *server) RetryRefund(ctx stdctx.Context, req *order.RetryRefundReq) (*co
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// ResetRefundRetry 恢复卡在退款中的退款单自动收敛（归零两侧重试预算，不触渠道）
+func (s *server) ResetRefundRetry(ctx stdctx.Context, req *order.ResetRefundRetryReq) (*common.CommonResponse, error) {
+	if err := s.refundService.ResetRefundRetry(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // ToOrderInfo 将订单模型转换为 proto 信息
 // 参数：
 //   - o: 订单模型

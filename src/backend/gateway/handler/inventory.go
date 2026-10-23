@@ -11,6 +11,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/response"
+	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 )
 
 // ==================== 进销存重构：供应商 / 采购单 / 入库单 / 出库单 / 批次 / 报表 ====================
@@ -27,8 +28,7 @@ import (
 // 返回值：
 //   - error: 跨社区时返回错误
 func (h *AdminHandler) ensureBillInCommunity(c *gin.Context, communityID int64) error {
-	uc := appcontext.GetUserContext(c)
-	if uc.Role == "super_admin" {
+	if gwMiddleware.IsSuperAdmin(c) {
 		return nil
 	}
 	if communityID != h.getAdminCommunityID(c) {

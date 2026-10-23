@@ -216,8 +216,10 @@ func (h *AdminHandler) Info(c *gin.Context) {
 	}
 	permissions := h.getAdminPermissionsForCommunity(c.Request.Context(), uc.UserID, communityID)
 
+	// 角色编码取实时口径：前端据此决定系统管理菜单是否出现，
+	// 照抄登录快照会让降权/停用前的超管在令牌剩余有效期内继续看到入口
 	roleCode := "admin"
-	if uc.Role == "super_admin" {
+	if gwMiddleware.IsSuperAdmin(c) {
 		roleCode = "super_admin"
 	}
 
@@ -350,7 +352,7 @@ func (h *AdminHandler) checkOrderCommunity(c *gin.Context, o *order.OrderInfo) e
 	if o == nil || o.Id == 0 {
 		return errors.New("订单不存在")
 	}
-	if appcontext.GetUserContext(c).Role == "super_admin" {
+	if gwMiddleware.IsSuperAdmin(c) {
 		return nil
 	}
 	if o.CommunityId != h.getAdminCommunityID(c) {
@@ -392,7 +394,7 @@ func (h *AdminHandler) orderInCommunity(c *gin.Context, orderID int64) (*order.O
 //   - error: 订单不存在或跨社区时返回错误
 func (h *AdminHandler) ensureOrderInCommunity(c *gin.Context, orderID int64) error {
 	// 超管跨社区均合法，无需为校验多查一次订单
-	if appcontext.GetUserContext(c).Role == "super_admin" {
+	if gwMiddleware.IsSuperAdmin(c) {
 		return nil
 	}
 	resp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: orderID})
@@ -411,7 +413,7 @@ func (h *AdminHandler) ensureOrderInCommunity(c *gin.Context, orderID int64) err
 // 返回值：
 //   - int64: 用于社区校验的社区 ID，0 表示跳过
 func (h *AdminHandler) scopeCommunityID(c *gin.Context) int64 {
-	if appcontext.GetUserContext(c).Role == "super_admin" {
+	if gwMiddleware.IsSuperAdmin(c) {
 		return 0
 	}
 	return h.getAdminCommunityID(c)
@@ -477,7 +479,6 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		return
 	}
 
-	uc := appcontext.GetUserContext(c)
 	admin, err := h.userClient.CreateAdmin(c.Request.Context(), &user.CreateAdminReq{
 		Username:        req.Username,
 		Password:        req.Password,
@@ -486,7 +487,7 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		CommunityId:     h.getAdminCommunityID(c),
 		RoleIds:         req.RoleIDs,
 		UserId:          req.UserID,
-		OperatorIsSuper: uc.Role == "super_admin",
+		OperatorIsSuper: gwMiddleware.IsSuperAdmin(c),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -517,7 +518,9 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	}
 
 	ctx := appcontext.GetUserContext(c)
-	isSuper := ctx.Role == "super_admin"
+	// 超管判定取实时口径：本接口普通管理员也能改自己，若照抄登录快照，
+	// 被降权的人在任何拒绝生效前都能带着 role_ids 调一次 PUT 把角色改回去（自恢复权限）
+	isSuper := gwMiddleware.IsSuperAdmin(c)
 	if !isSuper && ctx.UserID != id {
 		response.Error(c, errcode.NoPermission)
 		return
@@ -646,7 +649,7 @@ type ListAllAccountsReq struct{}
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListAllAccounts(c *gin.Context) {
-	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -700,7 +703,7 @@ type CreateAccountReq struct {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) CreateAccount(c *gin.Context) {
-	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -738,7 +741,7 @@ type UpdateAccountStatusReq struct {
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateAccountStatus(c *gin.Context) {
 	uc := appcontext.GetUserContext(c)
-	if uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -784,7 +787,7 @@ type ResetAccountPasswordReq struct {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ResetAccountPassword(c *gin.Context) {
-	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -820,7 +823,7 @@ func (h *AdminHandler) ResetAccountPassword(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetAccountAssignments(c *gin.Context) {
-	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -860,7 +863,7 @@ func (h *AdminHandler) GetAccountAssignments(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListCommunityAdmins(c *gin.Context) {
-	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -917,7 +920,7 @@ type AddCommunityAdminReq struct {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) AddCommunityAdmin(c *gin.Context) {
-	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -954,7 +957,7 @@ func (h *AdminHandler) AddCommunityAdmin(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) RemoveCommunityAdmin(c *gin.Context) {
-	if uc := appcontext.GetUserContext(c); uc == nil || uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -1033,8 +1036,7 @@ func (h *AdminHandler) RemoveCommunityAdmin(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ListRoles(c *gin.Context) {
-	uc := appcontext.GetUserContext(c)
-	isSuper := uc.Role == "super_admin"
+	isSuper := gwMiddleware.IsSuperAdmin(c)
 
 	req := &user.ListRolesReq{CommunityId: h.getAdminCommunityID(c)}
 	switch c.Query("scope") {
@@ -1085,8 +1087,7 @@ func (h *AdminHandler) CreateRole(c *gin.Context) {
 		return
 	}
 
-	uc := appcontext.GetUserContext(c)
-	isSuper := uc.Role == "super_admin"
+	isSuper := gwMiddleware.IsSuperAdmin(c)
 	if !isSuper && req.CommunityID != 0 {
 		response.Error(c, errcode.ParamError, "只能为当前社区创建角色")
 		return
@@ -1148,7 +1149,7 @@ func (h *AdminHandler) UpdateRole(c *gin.Context) {
 	}
 
 	uc := appcontext.GetUserContext(c)
-	isSuper := uc.Role == "super_admin"
+	isSuper := gwMiddleware.IsSuperAdmin(c)
 
 	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
@@ -1203,8 +1204,7 @@ func (h *AdminHandler) DeleteRole(c *gin.Context) {
 		return
 	}
 
-	uc := appcontext.GetUserContext(c)
-	isSuper := uc.Role == "super_admin"
+	isSuper := gwMiddleware.IsSuperAdmin(c)
 
 	roleResp, err := h.userClient.GetRole(c.Request.Context(), &user.GetRoleReq{Id: id, CommunityId: h.scopeCommunityID(c)})
 	if err != nil {
@@ -1239,8 +1239,7 @@ func (h *AdminHandler) GetCommunityPermissions(c *gin.Context) {
 		return
 	}
 
-	uc := appcontext.GetUserContext(c)
-	if uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -1308,8 +1307,7 @@ func (h *AdminHandler) UpdateCommunityPermissions(c *gin.Context) {
 		return
 	}
 
-	uc := appcontext.GetUserContext(c)
-	if uc.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}
@@ -2205,7 +2203,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 
 	// 目标社区：默认当前社区语境；超管显式传 community_id 时以其为准（0=跨社区查全部）
 	communityID := h.getAdminCommunityID(c)
-	isSuper := appcontext.GetUserContext(c).Role == "super_admin"
+	isSuper := gwMiddleware.IsSuperAdmin(c)
 	if isSuper && c.Query("community_id") != "" {
 		if id, err := strconv.ParseInt(c.Query("community_id"), 10, 64); err == nil && id >= 0 {
 			communityID = id
@@ -2637,21 +2635,23 @@ func paymentLogRows(logs []*payment.PaymentAnomalyInfo, withRaw bool) []gin.H {
 //   - gin.H: 字段map
 func paymentAnomalyRow(row *payment.PaymentAnomalyInfo, withRaw bool) gin.H {
 	item := gin.H{
-		"id":           row.Id,
-		"kind":         row.Kind,
-		"result":       row.Result,
-		"channel":      row.Channel,
-		"payment_no":   row.PaymentNo,
-		"order_id":     row.OrderId,
-		"order_no":     row.OrderNo,
-		"community_id": row.CommunityId,
-		"pay_type":     row.PayType,
-		"amount":       row.Amount,
-		"error_msg":    row.ErrorMsg,
-		"handled":      row.Handled,
-		"created_at":   row.CreatedAt,
-		"can_view_raw": withRaw,
-		"has_raw":      row.RawBody != "" || row.Headers != "",
+		"id":            row.Id,
+		"kind":          row.Kind,
+		"result":        row.Result,
+		"channel":       row.Channel,
+		"payment_no":    row.PaymentNo,
+		"order_id":      row.OrderId,
+		"order_no":      row.OrderNo,
+		"community_id":  row.CommunityId,
+		"pay_type":      row.PayType,
+		"amount":        row.Amount,
+		"error_msg":     row.ErrorMsg,
+		"detect_remark": row.DetectRemark,
+		"remark":        row.Remark,
+		"handled":       row.Handled,
+		"created_at":    row.CreatedAt,
+		"can_view_raw":  withRaw,
+		"has_raw":       row.RawBody != "" || row.Headers != "",
 	}
 	if withRaw {
 		item["raw_body"] = row.RawBody
@@ -2810,9 +2810,13 @@ func (h *AdminHandler) SyncAdminOrderPayment(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	// reason 留空即由支付服务按 manual-sync 记入 payments.confirm_ref（区别于调度器的 cancel-guard）
+	// 操作人随请求下发（B3）：挂账待办与核实流水要能回答「谁点的按钮」
+	uc := appcontext.GetUserContext(c)
 	resp, err := h.paymentClient.SyncPaymentFromChannel(c.Request.Context(), &payment.SyncPaymentReq{
-		OrderId:   id,
-		PaymentNo: req.PaymentNo,
+		OrderId:      id,
+		PaymentNo:    req.PaymentNo,
+		OperatorId:   uc.UserID,
+		OperatorName: c.GetString("admin_username"),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -3189,8 +3193,7 @@ func (h *AdminHandler) GetDashboard(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) resolveStatsCommunityID(c *gin.Context) int64 {
-	uc := appcontext.GetUserContext(c)
-	if uc.Role == "super_admin" {
+	if gwMiddleware.IsSuperAdmin(c) {
 		if c.Query("scope") == "all" {
 			return 0
 		}
@@ -4111,7 +4114,7 @@ func toFreeShippingScopes(inputs []FreeShippingScopeInput) []*product.FreeShippi
 //   - c: gin 上下文
 func (h *AdminHandler) ListAdminBanners(c *gin.Context) {
 	communityID := h.getAdminCommunityID(c)
-	if v := c.Query("community_id"); v != "" && appcontext.GetUserContext(c).Role == "super_admin" {
+	if v := c.Query("community_id"); v != "" && gwMiddleware.IsSuperAdmin(c) {
 		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id >= 0 {
 			communityID = id
 		}
@@ -4155,7 +4158,7 @@ func (h *AdminHandler) CreateBanner(c *gin.Context) {
 
 	// 适用社区：默认当前社区语境；超管显式传 community_id 时以其为准（0=全部社区）
 	communityID := h.getAdminCommunityID(c)
-	if req.CommunityID != nil && appcontext.GetUserContext(c).Role == "super_admin" {
+	if req.CommunityID != nil && gwMiddleware.IsSuperAdmin(c) {
 		communityID = *req.CommunityID
 	}
 
@@ -4208,7 +4211,7 @@ func (h *AdminHandler) UpdateBanner(c *gin.Context) {
 
 	// 适用社区仅超管显式传参时透传（optional 语义：nil=不修改，0=全部社区）
 	var communityID *int64
-	if req.CommunityID != nil && appcontext.GetUserContext(c).Role == "super_admin" {
+	if req.CommunityID != nil && gwMiddleware.IsSuperAdmin(c) {
 		communityID = req.CommunityID
 	}
 
@@ -4258,9 +4261,11 @@ func (h *AdminHandler) DeleteBanner(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) MyCommunities(c *gin.Context) {
-	uc := appcontext.GetUserContext(c)
+	// 超管判定与任职均取实时口径：本接口只要求登录、不挂权限码，
+	// 照抄登录快照会把降权前的超管身份与已撤销的任职继续展示在community选择页
+	isSuper := gwMiddleware.IsSuperAdmin(c)
 	var boundIDs []int64
-	if uc != nil && uc.Role != "super_admin" {
+	if !isSuper {
 		// 任职关系可能较 token 签发时发生变化，按用户名实时反查
 		if username, ok := c.Get("admin_username"); ok {
 			if name, _ := username.(string); name != "" {
@@ -4268,9 +4273,6 @@ func (h *AdminHandler) MyCommunities(c *gin.Context) {
 					boundIDs = a.CommunityIds
 				}
 			}
-		}
-		if boundIDs == nil {
-			boundIDs = uc.CommunityIDs
 		}
 	}
 
@@ -4286,7 +4288,7 @@ func (h *AdminHandler) MyCommunities(c *gin.Context) {
 
 	list := make([]gin.H, 0, len(resp.List))
 	for _, cm := range resp.List {
-		if uc != nil && uc.Role != "super_admin" && !containsInt64(boundIDs, cm.Id) {
+		if !isSuper && !containsInt64(boundIDs, cm.Id) {
 			continue
 		}
 		list = append(list, gin.H{
@@ -4964,6 +4966,53 @@ func (h *AdminHandler) RetryRefund(c *gin.Context) {
 		Id:          id,
 		OperatorId:  uc.UserID,
 		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": id})
+}
+
+// ResetRefundRetryReq 恢复退款单自动收敛请求
+// remark 为渠道核实依据，必填：本动作把 payment/order 两侧的重试预算归零，
+// 没有依据无法审计「谁批准把一笔放弃收敛的退款重新交给系统处理」
+type ResetRefundRetryReq struct {
+	Remark string `json:"remark" binding:"required"`
+}
+
+// ResetRefundRetry 恢复退款单的自动收敛
+// 对卡在"退款中"(status=4) 且自动重试已用满上限的退款单，把支付流水与本侧退款单的重试预算归零，
+// 让调度器与退款查单任务重新核实渠道终态；与「重试退款」不同，本动作不再次向渠道发起出款
+//
+// 接口: POST /api/v1/admin/refunds/:id/reset-retry
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ResetRefundRetry(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req ResetRefundRetryReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	// binding:"required" 放得过空格串，核实依据必须是有内容的
+	if strings.TrimSpace(req.Remark) == "" {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	_, err = h.orderClient.ResetRefundRetry(c.Request.Context(), &order.ResetRefundRetryReq{
+		Id:           id,
+		OperatorId:   uc.UserID,
+		CommunityId:  h.getAdminCommunityID(c),
+		Remark:       req.Remark,
+		OperatorName: c.GetString("admin_username"),
 	})
 	if err != nil {
 		response.GRPCError(c, err)

@@ -48,7 +48,7 @@
 
         <template v-if="task && task.status === 4">
           <n-alert v-if="task.applied" type="success">
-            差异已于 {{ task.finished_at || '-' }} 覆盖入库。
+            差异已于 {{ formatDateTime(task.finished_at) }} 覆盖入库。
           </n-alert>
           <template v-else>
             <n-descriptions :column="4" size="small" bordered>
@@ -97,6 +97,7 @@ import { NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getAllRegionsFresh, clearAllRegionsCache, createRegionUpdateTask, getRegionUpdateTask, applyRegionUpdateTask } from '@/api/region'
 import type { Region, RegionDiffItem, RegionUpdateTask } from '@/api/region'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 行政区划管理页面（树形）

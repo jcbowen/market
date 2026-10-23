@@ -29,7 +29,7 @@ import (
  *   go test ./gateway/handler/ -run 'TestAdminCommunityScope' -v
  *
  * 覆盖：
- *   - 超管任意请求头社区均采用，且不触达 RPC；
+ *   - 超管采用请求头社区，但同样走实时口径（快照 super_admin 已降权则不采用）；
  *   - 普通管理员请求头社区实时 Bound=true → 采用（快照不含它也要采用——新授权即时生效）；
  *   - 普通管理员请求头社区实时 Bound=false 但快照仍含它（授权已撤销的陈旧快照）
  *     → 不采用，回退 JWT 默认社区（P1-10 核心回归）；
@@ -101,15 +101,27 @@ func TestAdminCommunityScopeResolution(t *testing.T) {
 	installAdminCtxResolver(t, stub)
 	h := &AdminHandler{}
 
-	t.Run("超管任意请求头社区均采用且不触达RPC", func(t *testing.T) {
+	t.Run("超管采用请求头社区但须实时确认", func(t *testing.T) {
 		stub.calls = 0
-		stub.info = nil // 即使实时上下文缺失，超管也直通
+		stub.err = nil
+		stub.info = &user.AdminContextInfo{IsSuper: true}
 		c := newCommunityScopeContext("super_admin", []int64{1}, 1, "999")
 		if got := h.getAdminCommunityID(c); got != 999 {
-			t.Errorf("超管应采用请求头社区 999，得到 %d", got)
+			t.Errorf("实时超管应采用请求头社区 999，得到 %d", got)
 		}
-		if stub.calls != 0 {
-			t.Errorf("超管直通不应触达 RPC，实际调用 %d 次", stub.calls)
+		if stub.calls != 1 {
+			t.Errorf("超管判定不再走快照直通，应触达一次 RPC，实际 %d 次", stub.calls)
+		}
+	})
+
+	t.Run("降权超管不得再任意切换社区", func(t *testing.T) {
+		// 快照仍是登录时绘制的 super_admin，实时口径 IsSuper=false 且该社区无任职 → 回退默认社区
+		stub.calls = 0
+		stub.err = nil
+		stub.info = &user.AdminContextInfo{IsSuper: false, Bound: false}
+		c := newCommunityScopeContext("super_admin", []int64{1}, 1, "999")
+		if got := h.getAdminCommunityID(c); got != 1 {
+			t.Errorf("降权超管应回退 JWT 默认社区 1，得到 %d", got)
 		}
 	})
 
@@ -202,13 +214,23 @@ func TestAdminCommunityAccessibleDirect(t *testing.T) {
 	stub := &stubAdminCtxClient{}
 	installAdminCtxResolver(t, stub)
 
-	// 超管：不触达 RPC 恒真
+	// 超管：同样以实时口径为准，快照直通已移除
+	stub.calls = 0
+	stub.info = &user.AdminContextInfo{IsSuper: true}
 	c := newCommunityScopeContext("super_admin", []int64{1}, 1, "42")
 	if !gwMiddleware.AdminCommunityAccessible(c) {
-		t.Error("超管应恒为合法")
+		t.Error("实时超管应判为合法")
 	}
-	if stub.calls != 0 {
-		t.Errorf("超管直通不应触达 RPC，实际 %d 次", stub.calls)
+	if stub.calls != 1 {
+		t.Errorf("超管判定应触达一次 RPC，实际 %d 次", stub.calls)
+	}
+
+	// 快照超管但实时已降权且无任职：不合法（P1-6 降权即时生效）
+	stub.calls = 0
+	stub.info = &user.AdminContextInfo{IsSuper: false, Bound: false}
+	c = newCommunityScopeContext("super_admin", []int64{1}, 1, "42")
+	if gwMiddleware.AdminCommunityAccessible(c) {
+		t.Error("降权超管不得凭登录快照判为合法")
 	}
 
 	// 普通管理员：Bound=false 不合法

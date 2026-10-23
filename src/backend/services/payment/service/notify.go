@@ -54,6 +54,7 @@ func (s *PaymentService) recordNotifyLog(ctx context.Context, entry *model.Notif
 	}
 	entry.UpdatedAt = now
 	entry.ErrorMsg = truncateRunes(entry.ErrorMsg, notifyErrorMsgMaxLen)
+	entry.DetectRemark = truncateRunes(entry.DetectRemark, notifyRemarkMaxLen)
 	entry.Remark = truncateRunes(entry.Remark, notifyRemarkMaxLen)
 	if model.NeedsHandling(entry.Kind, entry.Result) {
 		entry.Handled = model.NotifyPending
@@ -299,19 +300,21 @@ func (s *PaymentService) ListPaymentAnomalies(ctx context.Context, req *payment.
 	list := make([]*payment.PaymentAnomalyInfo, 0, len(rows))
 	for _, row := range rows {
 		info := &payment.PaymentAnomalyInfo{
-			Id:          row.ID,
-			Kind:        row.Kind,
-			Result:      row.Result,
-			Channel:     row.Channel,
-			PaymentNo:   row.PaymentNo,
-			OrderId:     row.OrderID,
-			OrderNo:     row.OrderNo,
-			CommunityId: row.CommunityID,
-			ErrorMsg:    row.ErrorMsg,
-			Handled:     row.Handled,
-			CreatedAt:   row.CreatedAt,
-			PayType:     enrich[row.PaymentNo].payType,
-			Amount:      enrich[row.PaymentNo].amount,
+			Id:           row.ID,
+			Kind:         row.Kind,
+			Result:       row.Result,
+			Channel:      row.Channel,
+			PaymentNo:    row.PaymentNo,
+			OrderId:      row.OrderID,
+			OrderNo:      row.OrderNo,
+			CommunityId:  row.CommunityID,
+			ErrorMsg:     row.ErrorMsg,
+			Handled:      row.Handled,
+			CreatedAt:    row.CreatedAt,
+			DetectRemark: row.DetectRemark,
+			Remark:       row.Remark,
+			PayType:      enrich[row.PaymentNo].payType,
+			Amount:       enrich[row.PaymentNo].amount,
 		}
 		if req.WithRaw {
 			info.RawBody = row.RawBody

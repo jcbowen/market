@@ -129,6 +129,30 @@ function typeText(type: number): string {
 }
 
 /**
+ * 退款状态 → 时间线已推进到第几步
+ * 0=只完成「提交申请」 1=商家审核出结论 2=进入渠道退款 3=已到账
+ * 刻意不用 `status >= N` 比序数：状态码是后端枚举而非进度计量，不保证随流程单调推进
+ * （3已拒绝 就是插在 2已同意 与 4退款中 之间的终止态），后端新增状态码时
+ * 「按数字猜进度」会让整条时间线错乱；改显式映射后新增状态只需在此表补一行
+ */
+const REFUND_STEP_BY_STATUS: Record<number, number> = {
+  1: 0, // 待审核
+  2: 1, // 已同意
+  3: 1, // 已拒绝（审核出结论后终止）
+  4: 2, // 退款中
+  5: 3, // 已到账
+}
+
+/**
+ * 取退款单当前推进到的时间线步数
+ * @param status 退款单状态
+ * @returns 步数；未知状态码返回 0——宁可只显示「已提交申请」，也不凭猜想把后续步骤画成已完成
+ */
+function refundStep(status: number): number {
+  return REFUND_STEP_BY_STATUS[status] ?? 0
+}
+
+/**
  * 构造退款单时间线步骤
  * 已拒绝单：申请 → 审核（拒绝，展示原因）终止；
  * 其余：申请 → 商家审核 → 退款中（已同意后）→ 已到账（有到账时间时）
@@ -136,13 +160,14 @@ function typeText(type: number): string {
  * @returns 时间线步骤数组
  */
 function timelineSteps(refund: RefundProgress) {
+  const step = refundStep(refund.status)
   const steps = [
     { title: '提交申请', desc: '', time: formatDate(refund.created_at), done: true, danger: false },
     {
       title: '商家审核',
       desc: refund.status === 3 && refund.reject_reason ? refund.reject_reason : '',
       time: '',
-      done: refund.status >= 2,
+      done: step >= 1,
       danger: refund.status === 3,
     },
   ]
@@ -153,14 +178,14 @@ function timelineSteps(refund: RefundProgress) {
     title: '退款处理',
     desc: '退款原路返回中',
     time: '',
-    done: refund.status >= 4,
+    done: step >= 2,
     danger: false,
   })
   steps.push({
     title: '已到账',
     desc: '',
     time: refund.refund_time ? formatDate(refund.refund_time) : '',
-    done: refund.status >= 5,
+    done: step >= 3,
     danger: false,
   })
   return steps

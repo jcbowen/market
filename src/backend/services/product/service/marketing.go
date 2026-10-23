@@ -559,29 +559,55 @@ func (s *MarketingService) UseCoupon(ctx context.Context, req *product.UseCoupon
 			return bizerr.New(codes.FailedPrecondition, "优惠券状态不可使用")
 		}
 		now := time.Now().Format("2006-01-02 15:04:05")
-		if uc.ExpireAt != nil && *uc.ExpireAt < now {
-			return bizerr.New(codes.FailedPrecondition, "优惠券已过期")
-		}
 
-		// 条件更新：仅未使用状态生效，并发核销时后到者 RowsAffected=0
-		res := tx.Model(&model.UserCoupon{}).Where("id = ? AND status = 1", uc.ID).Updates(map[string]interface{}{
-			"status":     int32(2),
-			"order_id":   req.OrderId,
-			"updated_at": now,
-		})
+		// 条件更新：仅未使用且未过期生效，并发核销时后到者 RowsAffected=0。
+		// 过期判定必须在库里比（expire_at > NOW()）：DSN parseTime=True 时 datetime 列读回
+		// 的 string 字段是 RFC3339 形态（2026-11-02T23:59:59+08:00），与 Go 侧
+		// "2006-01-02 15:04:05" 字典序比较时第 11 位 'T' 恒大于空格，判定永远不成立
+		res := tx.Model(&model.UserCoupon{}).
+			Where("id = ? AND status = 1 AND (expire_at IS NULL OR expire_at > NOW())", uc.ID).
+			Updates(map[string]interface{}{
+				"status":     int32(2),
+				"order_id":   req.OrderId,
+				"updated_at": now,
+			})
 		if res.Error != nil {
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			// 并发核销后到者：与函数开头的前置判定同口径（FailedPrecondition + 同文案），
-			// 用 fmt.Errorf 会被 ToStatus 归为 Internal，用户与网关都看到"系统错误"
-			return bizerr.New(codes.FailedPrecondition, "优惠券状态不可使用")
+			return couponUseReject(tx, uc.ID)
 		}
 
 		// UsedCount 原子自增，防并发丢失更新
 		return tx.Model(&model.Coupon{}).Where("id = ?", uc.CouponID).
 			Update("used_count", gorm.Expr("used_count + 1")).Error
 	})
+}
+
+// couponUseReject 复核优惠券核销被拒的具体原因
+// 核销的条件更新把「未使用」与「未过期」合并成一条 WHERE，失败时须回查才能给出准确文案；
+// 过期回查同样走库里比较（expire_at <= NOW()），不受 datetime 列读回形态影响。
+// 回查失败（事务已中止等）时按状态原因收口，不影响最终拒绝结论。
+//
+// 参数：
+//   - tx: 当前事务
+//   - id: 用户券 ID
+//
+// 返回值：
+//   - error: 恒为 FailedPrecondition 业务错误，文案「优惠券已过期」或「优惠券状态不可使用」
+//
+// 使用示例：
+//   - if res.RowsAffected == 0 { return couponUseReject(tx, uc.ID) }
+func couponUseReject(tx *gorm.DB, id int64) error {
+	var expired int64
+	if err := tx.Model(&model.UserCoupon{}).
+		Where("id = ? AND expire_at IS NOT NULL AND expire_at <= NOW()", id).
+		Count(&expired).Error; err == nil && expired > 0 {
+		return bizerr.New(codes.FailedPrecondition, "优惠券已过期")
+	}
+	// 与函数开头的前置判定同口径（FailedPrecondition + 同文案），
+	// 用 fmt.Errorf 会被 ToStatus 归为 Internal，用户与网关都看到"系统错误"
+	return bizerr.New(codes.FailedPrecondition, "优惠券状态不可使用")
 }
 
 // ReleaseCoupon 取消订单时回补用户券：

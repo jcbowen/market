@@ -129,10 +129,23 @@ type stubPaymentClient struct {
 	synced      []int64
 	syncReasons []string
 	closed      []int64
+	// refundFlow 退款单号 → 流水状态（0 无流水 1 受理中 2 成功 3 失败），未预置按受理中返回
+	refundFlow    map[string]int32
+	flowQueries   []string
+	flowQueryErrs map[string]bool
+	// refundResets 记录人工恢复收敛的入参；refundResetErrs 命中的单号返回拒绝
+	refundResets    []*payment.ResetRefundFlowReq
+	refundResetErrs map[string]bool
 }
 
 func newStubPaymentClient() *stubPaymentClient {
-	return &stubPaymentClient{paid: map[int64]bool{}, channelPaid: map[int64]bool{}}
+	return &stubPaymentClient{
+		paid:            map[int64]bool{},
+		channelPaid:     map[int64]bool{},
+		refundFlow:      map[string]int32{},
+		flowQueryErrs:   map[string]bool{},
+		refundResetErrs: map[string]bool{},
+	}
 }
 
 // markPaid 标记订单在渠道侧已收款成功
@@ -178,6 +191,65 @@ func (s *stubPaymentClient) ClosePayments(ctx context.Context, in *payment.Close
 	defer s.mu.Unlock()
 	s.closed = append(s.closed, in.OrderId)
 	return &common.CommonResponse{}, nil
+}
+
+// setRefundFlow 预置某退款单的流水状态（卡单重试的分支选择依据）
+// 参数：
+//   - refundNo: 退款单号
+//   - status: 0 无流水 / 1 渠道受理中 / 2 渠道已退款成功 / 3 渠道失败
+func (s *stubPaymentClient) setRefundFlow(refundNo string, status int32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refundFlow[refundNo] = status
+}
+
+// failRefundFlowQuery 预置某退款单的流水查询失败（模拟 payment 侧不可达）
+func (s *stubPaymentClient) failRefundFlowQuery(refundNo string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flowQueryErrs[refundNo] = true
+}
+
+// flowQueryCalls 返回流水查询的退款单号快照（证明某单本轮是否被核查）
+func (s *stubPaymentClient) flowQueryCalls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.flowQueries...)
+}
+
+// QueryRefundResult 退款流水状态桩：未预置的退款单一律按「渠道受理中」返回，
+// 让测试默认落在「本轮跳过、等 payment 侧收敛」分支，不会误触发 ProcessRefund 真实重发
+func (s *stubPaymentClient) QueryRefundResult(ctx context.Context, in *payment.QueryRefundResultReq, opts ...grpc.CallOption) (*payment.QueryRefundResultResp, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flowQueries = append(s.flowQueries, in.RefundNo)
+	if s.flowQueryErrs[in.RefundNo] {
+		return nil, status.Error(codes.Unavailable, "桩：退款流水查询不可达")
+	}
+	st, ok := s.refundFlow[in.RefundNo]
+	if !ok {
+		st = 1
+	}
+	return &payment.QueryRefundResultResp{Status: st}, nil
+}
+
+// ResetRefundFlow 人工恢复收敛桩：记录入参，预置失败号段返回 FailedPrecondition
+// （模拟支付侧对终态流水的拒绝，用于断言订单侧「支付侧拒绝则本侧预算不动」）
+func (s *stubPaymentClient) ResetRefundFlow(ctx context.Context, in *payment.ResetRefundFlowReq, opts ...grpc.CallOption) (*payment.ResetRefundFlowResp, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refundResets = append(s.refundResets, in)
+	if s.refundResetErrs[in.RefundNo] {
+		return nil, status.Error(codes.FailedPrecondition, "桩：退款流水已终态，拒绝重置")
+	}
+	return &payment.ResetRefundFlowResp{Recovered: true}, nil
+}
+
+// refundResetCalls 返回恢复收敛请求的入参快照
+func (s *stubPaymentClient) refundResetCalls() []*payment.ResetRefundFlowReq {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*payment.ResetRefundFlowReq(nil), s.refundResets...)
 }
 
 // SyncPaymentFromChannel 取消前置渠道确认桩：命中「渠道已收款」时模拟真实支付服务的补同步动作

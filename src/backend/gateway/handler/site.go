@@ -6,12 +6,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/jcbowen/market/src/backend/common/appcontext"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
 	"github.com/jcbowen/market/src/backend/gateway/brand"
+	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 )
 
 // 支付回调路径：固定在网关路由上，回调地址一律由部署域名派生，不再由人工填写
@@ -123,7 +123,7 @@ func (h *AdminHandler) GetSiteSetting(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateSiteSetting(c *gin.Context) {
-	if ctx := appcontext.GetUserContext(c); ctx.Role != "super_admin" {
+	if !gwMiddleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
 		return
 	}

@@ -407,9 +407,11 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/pos/shifts/mine", gwMiddleware.RequirePermission("order:create"), adminHandler.PosListShiftsMine)
 			authAdmin.GET("/pos/shifts", gwMiddleware.RequirePermission("order:view"), adminHandler.PosListShifts)
 
-			// 应用偏好（应用页「常用应用」，社区级共享）：仅要求登录，应用页对所有管理员可见
+			// 应用偏好（应用页「常用应用」，社区级共享）：读取仅要求登录，应用页对所有管理员可见；
+			// 保存是全社区覆盖式写入，挂 community:config——否则任何登录管理员（含收银员）
+			// 都能改掉本店所有人的常用应用列表
 			authAdmin.GET("/app-preferences", adminHandler.GetAppPreferences)
-			authAdmin.PUT("/app-preferences", adminHandler.SaveAppPreferences)
+			authAdmin.PUT("/app-preferences", gwMiddleware.RequirePermission("community:config"), adminHandler.SaveAppPreferences)
 
 			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetOrderStatistics)
 			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetSalesStatistics)
@@ -512,11 +514,13 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/users/:id/status", gwMiddleware.RequirePermission("user:update"), adminHandler.SetUserStatus)
 
 			// 全局账号管理（系统管理空间，处理器内强制超管）：仅管账号本身，任职走各社区员工管理
-			authAdmin.GET("/accounts", adminHandler.ListAllAccounts)
-			authAdmin.POST("/accounts", adminHandler.CreateAccount)
-			authAdmin.GET("/accounts/:id/assignments", adminHandler.GetAccountAssignments)
-			authAdmin.PUT("/accounts/:id/status", adminHandler.UpdateAccountStatus)
-			authAdmin.PUT("/accounts/:id/password", adminHandler.ResetAccountPassword)
+			// 路由级同样挂权限码：处理器内的超管判定是第二道闸，中间件先按权限码拦一轮，
+			// 避免「只要求登录」的写接口在超管判定被日后重构掉时静默变成全员可写
+			authAdmin.GET("/accounts", gwMiddleware.RequirePermission("admin:view"), adminHandler.ListAllAccounts)
+			authAdmin.POST("/accounts", gwMiddleware.RequirePermission("admin:create"), adminHandler.CreateAccount)
+			authAdmin.GET("/accounts/:id/assignments", gwMiddleware.RequirePermission("admin:view"), adminHandler.GetAccountAssignments)
+			authAdmin.PUT("/accounts/:id/status", gwMiddleware.RequirePermission("admin:update"), adminHandler.UpdateAccountStatus)
+			authAdmin.PUT("/accounts/:id/password", gwMiddleware.RequirePermission("admin:update"), adminHandler.ResetAccountPassword)
 
 			authAdmin.GET("/communities", gwMiddleware.RequirePermission("community:view"), adminHandler.ListAdminCommunities)
 			authAdmin.GET("/communities/:id", gwMiddleware.RequirePermission("community:view"), adminHandler.GetCommunity)
@@ -530,10 +534,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 社区权限分配：读写该社区权限上限（内置社区管理员角色权限集），处理器内强制超管
 			authAdmin.GET("/communities/:id/permissions", gwMiddleware.RequirePermission("community:view"), adminHandler.GetCommunityPermissions)
 			authAdmin.PUT("/communities/:id/permissions", gwMiddleware.RequirePermission("community:view"), adminHandler.UpdateCommunityPermissions)
-			// 社区管理员指定（社区编辑页，处理器内强制超管）
-			authAdmin.GET("/communities/:id/admins", adminHandler.ListCommunityAdmins)
-			authAdmin.POST("/communities/:id/admins", adminHandler.AddCommunityAdmin)
-			authAdmin.DELETE("/communities/:id/admins/:adminId", adminHandler.RemoveCommunityAdmin)
+			// 社区管理员指定（社区编辑页，处理器内强制超管；路由级同挂员工管理权限码）
+			authAdmin.GET("/communities/:id/admins", gwMiddleware.RequirePermission("admin:view"), adminHandler.ListCommunityAdmins)
+			authAdmin.POST("/communities/:id/admins", gwMiddleware.RequirePermission("admin:update"), adminHandler.AddCommunityAdmin)
+			authAdmin.DELETE("/communities/:id/admins/:adminId", gwMiddleware.RequirePermission("admin:update"), adminHandler.RemoveCommunityAdmin)
 
 			// 行政区划：列表查看 + 更新任务（检查 → 轮询差异 → 确认覆盖）
 			authAdmin.GET("/regions", gwMiddleware.RequirePermission("region:view"), regionHandler.ListRegions)
@@ -545,6 +549,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/refunds/:id/approve", gwMiddleware.RequirePermission("refund:update"), adminHandler.ApproveRefund)
 			authAdmin.POST("/refunds/:id/reject", gwMiddleware.RequirePermission("refund:update"), adminHandler.RejectRefund)
 			authAdmin.POST("/refunds/:id/retry", gwMiddleware.RequirePermission("refund:update"), adminHandler.RetryRefund)
+			// 恢复自动收敛：归零支付流水与退款单两侧的重试预算，不再次触渠道出款
+			authAdmin.POST("/refunds/:id/reset-retry", gwMiddleware.RequirePermission("refund:update"), adminHandler.ResetRefundRetry)
 		}
 	}
 

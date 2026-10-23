@@ -131,11 +131,15 @@ test.describe('用户与员工', () => {
   });
 
   test('应用偏好读写', async () => {
+    // 请求体字段是 app_keys（后端 SaveAppPreferences 只绑该字段）；
+    // 原先传 favorites 会被静默忽略，写进去的是空列表，用例等于只测了「接口不报错」
+    const keys = ['product'];
     const save = (await (
-      await api.put('/api/v1/admin/app-preferences', { data: { favorites: ['product'] } })
-    ).json()) as ApiResponse;
+      await api.put('/api/v1/admin/app-preferences', { data: { app_keys: keys } })
+    ).json()) as ApiResponse<{ app_keys: string[] }>;
     expect(save.code).toBe(0);
-    const read = (await (await api.get('/api/v1/admin/app-preferences')).json()) as ApiResponse;
+    const read = (await (await api.get('/api/v1/admin/app-preferences')).json()) as ApiResponse<{ app_keys: string[] }>;
     expect(read.code).toBe(0);
+    expect(read.data?.app_keys).toEqual(keys);
   });
 });

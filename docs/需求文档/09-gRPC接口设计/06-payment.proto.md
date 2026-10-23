@@ -21,7 +21,16 @@ service PaymentService {
   rpc BatchGetPayments(BatchGetPaymentsReq) returns (BatchGetPaymentsResp);
   rpc HandleWechatCallback(WechatCallbackReq) returns (common.CommonResponse);
   rpc HandleAlipayCallback(AlipayCallbackReq) returns (common.CommonResponse);
-  rpc ProcessRefund(ProcessRefundReq) returns (common.CommonResponse);
+  // ProcessRefund 发起渠道退款。completed=false 表示渠道已受理未到终态
+  // （微信受理常态 PROCESSING），调用方不得按成功收尾，由退款查单任务收敛
+  rpc ProcessRefund(ProcessRefundReq) returns (ProcessRefundResp);
+  // QueryRefundResult 查询渠道退款流水状态（order 侧卡单退款收敛用，读库不触渠道）
+  rpc QueryRefundResult(QueryRefundResultReq) returns (QueryRefundResultResp);
+  // ResetRefundFlow 人工重置「待退款」流水的自动收敛预算（B2）
+  // 退款查单任务对同一笔流水连续失败达上限后会永久退出自动批次，而微信退款允许 1-3 个工作日到账，
+  // 渠道后续给出终态也没人来收；本方法把 retry_count/escalated 归零让流水重新被查单任务看见，
+  // 只处理待退款(1)流水——已成功(2)/已失败(3)一律拒绝，避免对已出款流水重复触渠道
+  rpc ResetRefundFlow(ResetRefundFlowReq) returns (ResetRefundFlowResp);
   rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
   rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
   rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
@@ -29,6 +38,7 @@ service PaymentService {
   rpc ClosePayments(ClosePaymentsReq) returns (common.CommonResponse);
   // SyncPaymentFromChannel 主动向渠道查询收款结果并在已收款时补同步
   // 两个消费方：后台订单详情「同步支付状态」按钮；order 服务取消前置确认（order_id 单入参即查该单待支付单）
+  // 线下收款单（pay_type 3/4）没有渠道可问：命中后走本地口径补同步，不发起任何渠道调用
   rpc SyncPaymentFromChannel(SyncPaymentReq) returns (SyncPaymentResp);
   // ListOrderPayments 按订单取全部支付尝试（含未成功），供后台详情展示支付次数与状态
   // 与 BatchGetPayments 的区别：后者只回口径与 GetPayment 一致的成功单，无法反映失败/待支付记录
@@ -148,6 +158,41 @@ message ProcessRefundReq {
   string payment_no = 4;
 }
 
+// ProcessRefundResp completed=渠道退款是否已到成功终态（受理未到终态回 false，调用方不得走成功收尾）
+message ProcessRefundResp {
+  bool completed = 1;
+}
+
+// QueryRefundResultReq 渠道退款流水状态查询（order_id 做归属校验）
+message QueryRefundResultReq {
+  int64 order_id = 1;
+  string refund_no = 2;
+}
+
+// QueryRefundResultResp 渠道退款流水状态
+// status: 0=流水不存在 1=处理中（已受理待渠道终态） 2=退款成功 3=退款失败（可重新发起）
+message QueryRefundResultResp {
+  int32 status = 1;
+}
+
+// ResetRefundFlowReq 人工重置退款流水的自动收敛预算（B2）
+// remark 必填：本动作等于「人工核实渠道后重新交给系统收敛」，没有依据不许执行
+message ResetRefundFlowReq {
+  int64 order_id = 1;
+  string refund_no = 2;
+  string remark = 3;
+  int64 operator_id = 4;
+  string operator_name = 5;
+}
+
+// ResetRefundFlowResp 重置结果
+// recovered=false 表示无对应流水（失败流水在重新发起前会被清理），message 说明原因、不算错误
+// 字段名刻意不叫 reset：与 protobuf 消息自带的 Reset() 方法冲突，生成物会变成 Reset_
+message ResetRefundFlowResp {
+  bool recovered = 1;
+  string message = 2;
+}
+
 message ClosePaymentsReq {
   int64 order_id = 1;
 }
@@ -214,6 +259,11 @@ message SyncPaymentReq {
   // 触发场景，写入 payments.confirm_ref 便于区分「后台按钮」与「取消前置确认」：
   // manual-sync / cancel-guard；为空按 manual-sync
   string reason = 3;
+  // 操作人（2026-10-24 B3）：后台按钮由网关注入，内部路径（订单取消前置确认）留空即系统口径。
+  // 只用于流水留痕——挂账待办要能回答「谁核实的、当时本地是什么状态」，
+  // 否则事后只剩一条事实记录，责任链断在「反查不到人，也无从判断是人工检出还是调度器检出」
+  int64 operator_id = 4;
+  string operator_name = 5;
 }
 
 // SyncPaymentResp 渠道查询结果
@@ -241,9 +291,9 @@ message ListOrderPaymentsResp {
 // raw_body/headers 仅当请求 with_raw=true（网关校验 payment:raw:view 权限）时回填
 message PaymentAnomalyInfo {
   int64 id = 1;
-  // 1渠道回调 2对账补同步 3挂账检出 4渠道关单 5后台手动同步 6放弃对账
+  // 1渠道回调 2对账补同步 3挂账检出(系统) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(后台人工核实)
   int32 kind = 2;
-  // 1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账
+  // 1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败 11人工恢复退款收敛
   int32 result = 3;
   // 1微信 2支付宝
   int32 channel = 4;
@@ -260,6 +310,10 @@ message PaymentAnomalyInfo {
   int64 community_id = 14;
   // 订单号快照：支付单解析不出时（order_id=0）后台仍能按订单号定位
   string order_no = 15;
+  // 检出留痕（B3）：这条流水由谁、在什么本地状态下登记（后台操作人或系统口径）
+  string detect_remark = 16;
+  // 人工销账依据：销账 SQL 整列覆写本字段，故检出留痕不能写在这里
+  string remark = 17;
 }
 
 // ListPaymentAnomaliesReq 异常队列查询
@@ -324,12 +378,13 @@ message MarkPaymentPaidReq {
 
 | RPC | 用途 | 来源标记 |
 |---|---|---|
-| `SyncPaymentFromChannel` | 向渠道核实并补同步（后台按钮、取消前置确认共用） | `confirm_source=3`，`confirm_ref` 由 `reason` 决定 |
+| `SyncPaymentFromChannel` | 向渠道核实并补同步（后台按钮、取消前置确认共用）；线下收款单（`pay_type` 3/4）不发起渠道调用，以本地已确认支付单补同步；操作人身份随请求带入，决定挂账待办的 `kind` 与 `detect_remark` 留痕（B3） | `confirm_source=3`，`confirm_ref` 由 `reason` 决定 |
 | 对账调度器 | 定时回查待支付单（内部复用同一核实逻辑） | `confirm_source=2`，`confirm_ref=reconcile:支付单号` |
 | `MarkPaymentPaid` | 渠道查不到但线下已核实到账的人工确认 | `confirm_source=3`，`confirm_ref=manual-mark` |
 | 渠道回调 | 正常快速路径 | `confirm_source=1` |
 
 - `SyncPaymentReq.reason` 的作用即区分「后台按钮捞回」与「取消流程拦下」，异常页与详情时间线据此展示；网关调用不传（按 `manual-sync`），order 服务固定传 `cancel-guard`。
+- `SyncPaymentReq.operator_id`/`operator_name`（2026-10-24 B3）是**留痕身份**，与 `reason` 各管一件事：`reason` 说明场景，operator 说明是谁。身份判据刻意用「有没有操作人」而不是 `reason`——用场景反推身份会把取消前置这类系统调用记成人工。后台按钮由网关注入登录态（前端不传、也无法自称系统），order 侧取消前置与调度器留空即为系统口径。身份决定挂账待办的 `kind`（3 系统 / 8 人工核实）、`detect_remark` 内容，以及补同步时订单状态日志的 `operator_type`/`operator_id`（有 ID 落 `admin`，无 ID 保持 `system`，不猜身份）。
 - `SyncPaymentResp` 的 `changed` 只在本次真正发生状态补同步时为 true；`paid=true && changed=false` 表示支付单早已确认（重复点击），`channel_state=ERROR` 表示渠道查询失败，**调用方不得据此判定资金状态**。
 - 订单没有待同步的渠道支付单（从未发起支付，或只有现金/货到付款单）时返回 `NO_PAYMENT`，`paid=false`、零状态改动，因此该入口可安全重复点击，也不会凭空判定收款。
 - `MarkPaymentPaid` 服务端校验链：入参非空 → 支付单存在（`codes.NotFound`）→ 非现金/货到付款（`FailedPrecondition`）→ 状态为待支付 → 填写金额与应付金额分位一致（不一致提示改用退款）。`remark` 由网关追加操作人后再落库。

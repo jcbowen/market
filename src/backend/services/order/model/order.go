@@ -144,13 +144,23 @@ type Refund struct {
 	Type          int32   `gorm:"column:type;type:tinyint;not null;default:1;comment:1整单退 2部分退 3仅金额退（全额退完时升级为1）" json:"type"`
 	Reason        string  `gorm:"column:reason;type:varchar(255);comment:退款原因" json:"reason"`
 	// 状态参与调度器扫描索引：超时审批按 (status, created_at)、
-	// 卡单重试按 (status, updated_at)，此前 refunds 无任何 status 索引，两处均全表扫
-	Status       int32   `gorm:"column:status;type:tinyint;default:1;index:idx_refunds_status_created,priority:1;index:idx_refunds_status_updated,priority:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
+	// 卡单重试按 (status, last_checked_at)（B1 起改用节流指针排序），
+	// 此前 refunds 无任何 status 索引，两处均全表扫
+	// 注：旧的 idx_refunds_status_updated 已随卡单重试改轮转不再声明，AutoMigrate 不删索引，
+	// 存量库可按需手工 DROP INDEX refunds.idx_refunds_status_updated（不影响功能，非上线阻塞项）
+	Status       int32   `gorm:"column:status;type:tinyint;default:1;index:idx_refunds_status_created,priority:1;index:idx_refunds_status_checked,priority:1;comment:1待审核 2已同意 3已拒绝 4退款中 5已退款" json:"status"`
 	RejectReason string  `gorm:"column:reject_reason;type:varchar(255);comment:拒绝原因" json:"reject_reason"`
 	OperatorID   int64   `gorm:"column:operator_id;type:bigint;default:0;comment:审核操作人 ID" json:"operator_id"`
 	RefundTime   *string `gorm:"column:refund_time;type:datetime;comment:退款成功时间" json:"refund_time"`
-	CreatedAt    string  `gorm:"column:created_at;type:datetime;index:idx_refunds_status_created,priority:2;comment:创建时间" json:"created_at"`
-	UpdatedAt    string  `gorm:"column:updated_at;type:datetime;index:idx_refunds_status_updated,priority:2;comment:更新时间" json:"updated_at"`
+	// LastCheckedAt 卡单重试的节流指针：每轮核查后无条件推进（渠道受理中而跳过的单同样推进），
+	// 扫描按它 asc 做游标轮转，MySQL ASC 把 NULL 排最前，因此新卡住的单一定赢下批次；
+	// 后台「恢复自动收敛」（ResetRefundRetry）把它重新置 NULL，让重置的单排回队首
+	LastCheckedAt *string `gorm:"column:last_checked_at;type:datetime;index:idx_refunds_status_checked,priority:2;comment:卡单重试最近一次核查时间（调度器节流指针）" json:"last_checked_at"`
+	// RetryCount 卡单重试的累计核查次数：达 refundMaxRetry 上限即停止自动重试并转人工待办，
+	// 人工在渠道核实后可由后台「恢复自动收敛」归零重新起扫（不会再次触渠道出款）
+	RetryCount int32  `gorm:"column:retry_count;type:int;not null;default:0;comment:卡单重试累计核查次数，达上限转人工待办" json:"retry_count"`
+	CreatedAt  string `gorm:"column:created_at;type:datetime;index:idx_refunds_status_created,priority:2;comment:创建时间" json:"created_at"`
+	UpdatedAt  string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 
 	// OrderNo 关联订单号（非表字段，列表查询时填充）
 	OrderNo string `gorm:"-" json:"order_no"`

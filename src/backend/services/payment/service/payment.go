@@ -232,7 +232,10 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 // syncOfflineOrderPaid 线下收款（现金/货到付款）在支付单事务提交后同步订单状态
 // 三次重试与 handlePaySuccess 阶段二同参数同口径；仍失败时不回滚支付单——钱已在门店当面收到，
 // 否认既成事实比状态滞后更危险。此时登记一条 SyncFailed 异常流水进后台待办队列，
-// 由对账扫描 scanPaidMismatch（扫 status=2 支付单核对订单实态）或后台「同步支付状态」补同步
+// 由两条出口补同步（A4 起对线下单同样生效）：
+//   - 自动：对账扫描 scanPaidMismatch 逐笔核对 status=2 支付单与订单实态，不再按 pay_type 排除；
+//   - 人工：后台「同步支付状态」→ SyncPaymentFromChannel 对 3/4 走 syncOfflinePayment，
+//     本地单即事实、不问渠道
 //
 // 参数：
 //   - ctx: 上下文
@@ -796,6 +799,110 @@ func (s *PaymentService) QueryRefundResult(ctx context.Context, req *payment.Que
 	return &payment.QueryRefundResultResp{Status: flow.Status}, nil
 }
 
+// ResetRefundFlow 人工重置「待退款」退款流水的自动收敛预算（B2）
+// 退款查单任务对同一笔流水连续失败达 refundQueryMaxRetry 次后把它永久逐出自动批次，
+// 而微信退款允许 1-3 个工作日到账——渠道后来给出终态也没人来收了。本方法是这个死角的出口：
+// 管理员在渠道商户平台核实后把 retry_count/escalated 归零，流水重新被查单任务捞起继续收敛。
+//
+// 状态门禁（只有待退款(1)可重置）：
+//   - 退款成功(2) 拒绝：钱已出账，放开会让 order 侧「重试退款」再次触渠道出款；
+//   - 退款失败(3) 拒绝：失败态本就允许以同一退款单号重新发起，重置没有意义；
+//   - 查无流水 回 recovered=false 而非报错：失败流水在重新发起前会被清理，属正常窗口。
+//
+// 核实依据（remark）必填：本动作等于「人工确认渠道结果后重新交给系统收敛」，
+// 无依据的盲重置会把已经判定的挂账流水重新推回自动出款路径，且事后无从追溯谁批的。
+//
+// 参数：
+//   - ctx: 上下文
+//   - req: 重置请求（order_id 归属强校验 + refund_no 定位 + remark 核实依据 + 操作人）
+//
+// 返回值：
+//   - *payment.ResetRefundFlowResp: recovered=是否真正改写了流水
+//   - error: 参数缺失、状态不允许或并发下状态已变更时返回错误
+//
+// 使用示例：
+//   - resp, err := svc.ResetRefundFlow(ctx, &payment.ResetRefundFlowReq{OrderId: 12, RefundNo: "TK...", Remark: "微信商户平台显示退款处理中"})
+func (s *PaymentService) ResetRefundFlow(ctx context.Context, req *payment.ResetRefundFlowReq) (*payment.ResetRefundFlowResp, error) {
+	if req.OrderId <= 0 || req.RefundNo == "" {
+		return nil, bizerr.New(codes.InvalidArgument, "退款参数错误")
+	}
+	if strings.TrimSpace(req.Remark) == "" {
+		return nil, bizerr.New(codes.InvalidArgument, "请填写渠道核实依据")
+	}
+
+	var flow model.RefundPayment
+	err := s.db.GetDb().WithContext(ctx).
+		Where("refund_no = ? AND order_id = ?", req.RefundNo, req.OrderId).
+		First(&flow).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &payment.ResetRefundFlowResp{Message: "无对应退款流水（失败流水在重新发起前会被清理），本次未改动"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch flow.Status {
+	case 2:
+		return nil, bizerr.New(codes.FailedPrecondition, "退款流水已确认成功，无需重置；订单未收尾请用「重试退款」")
+	case 3:
+		return nil, bizerr.New(codes.FailedPrecondition, "退款流水已是失败态，可直接重新发起退款，无需重置")
+	}
+
+	// 条件更新防并发：仅当流水仍处于待退款(1)时生效。
+	// updated_at 是查单批次的轮转指针（Order updated_at asc），刷新为当前时间等于把它
+	// 排到队尾再回到批次视野，不会与正在跑的那一轮查单抢同一笔
+	now := time.Now().Format("2006-01-02 15:04:05")
+	res := s.db.GetDb().WithContext(ctx).Model(&model.RefundPayment{}).
+		Where("id = ? AND status = 1", flow.ID).
+		Updates(map[string]interface{}{
+			"retry_count": int32(0),
+			"escalated":   int32(0),
+			"updated_at":  now,
+		})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, bizerr.New(codes.FailedPrecondition, "退款流水状态已变更，请刷新后重试")
+	}
+
+	s.recordRefundResetTrace(ctx, &flow, req)
+	return &payment.ResetRefundFlowResp{Recovered: true, Message: "退款流水已重新纳入自动收敛"}, nil
+}
+
+// recordRefundResetTrace 记录人工重置留痕并销掉该退款单此前的转办待办
+// 两步都只是留痕，失败不影响重置结果（流水预算已归零，异常队列里多留一条待办的代价
+// 远小于把预算重新钉死）；留痕走 notify_logs 而非只打日志，后台异常页可回查谁在何时核实过什么
+//
+// 参数：
+//   - ctx: 上下文
+//   - flow: 已重置的退款流水
+//   - req: 重置请求（取核实依据与操作人）
+func (s *PaymentService) recordRefundResetTrace(ctx context.Context, flow *model.RefundPayment, req *payment.ResetRefundFlowReq) {
+	var p model.Payment
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("payment_no = ?", flow.PaymentNo).First(&p).Error; err != nil {
+		// 支付单查不到时仍按流水快照登记，保证动作留痕不丢
+		p = model.Payment{PaymentNo: flow.PaymentNo, OrderID: flow.OrderID}
+	}
+	remark := fmt.Sprintf("人工重置收敛预算：%s（操作人 %s/%d）", strings.TrimSpace(req.Remark), req.OperatorName, req.OperatorId)
+	entry := notifyEntryFrom(&p, model.NotifyKindRefundReset, model.NotifyResultRefundReset)
+	entry.ErrorMsg = remark
+	s.recordNotifyLog(ctx, entry)
+
+	// 销账此前为这笔流水登记的转办待办：按支付单号 + 待处理 + 退款单号匹配（待办原因里带单号），
+	// 只动这一笔退款相关的，同支付单其它待办不受影响
+	res := s.db.GetDb().WithContext(ctx).Model(&model.NotifyLog{}).
+		Where("payment_no = ? AND handled = ? AND result = ? AND error_msg LIKE ?",
+			flow.PaymentNo, model.NotifyPending, model.NotifyResultSyncFailed, "%"+flow.RefundNo+"%").
+		Updates(map[string]interface{}{
+			"handled": int32(model.NotifyHandled),
+			"remark":  truncateRunes(remark, notifyRemarkMaxLen),
+		})
+	if res.Error != nil {
+		log.Printf("[payment] 退款待办销账失败 refund_no=%s: %v", flow.RefundNo, res.Error)
+	}
+}
+
 // ClosePayments 关闭订单的全部待支付支付单（status 1→5）
 // 订单取消/超时取消后由 order 服务调用：支付单置已关闭后，迟到的支付回调
 // 会被 handlePaySuccess 的终态兜底忽略，避免已取消订单被误置为已支付
@@ -867,7 +974,8 @@ func (s *PaymentService) inspectForClose(ctx context.Context, p *model.Payment) 
 		return
 	}
 	if res.State == ChannelStatePaid {
-		s.recordStuckPayment(ctx, p, res)
+		// 关单前核实属系统自动路径：挂账待办按 kind=3 登记，不带操作人
+		s.recordStuckPayment(ctx, p, res, systemActor)
 		return
 	}
 	if res.State == ChannelStateNotExist {
@@ -1169,15 +1277,16 @@ func (s *PaymentService) writeCallbackLog(ctx context.Context, params *payCallba
 		kind = model.NotifyKindStuck
 	}
 	entry := &model.NotifyLog{
-		Kind:        kind,
-		Result:      result,
-		Channel:     params.Channel,
-		PaymentNo:   params.PaymentNo,
-		OrderID:     scope.orderID,
-		OrderNo:     scope.orderNo,
-		CommunityID: scope.communityID,
-		ErrorMsg:    msg,
-		Remark:      params.Remark,
+		Kind:         kind,
+		Result:       result,
+		Channel:      params.Channel,
+		PaymentNo:    params.PaymentNo,
+		OrderID:      scope.orderID,
+		OrderNo:      scope.orderNo,
+		CommunityID:  scope.communityID,
+		ErrorMsg:     msg,
+		Remark:       params.Remark,
+		DetectRemark: params.DetectRemark,
 	}
 	if result != model.NotifyResultSuccess && result != model.NotifyResultIgnored {
 		entry.RawBody = truncateRunes(params.RawBody, notifyRawBodyMaxLen)
@@ -1202,8 +1311,11 @@ type payCallbackParams struct {
 	Channel       int32
 	OrderID       int64
 	Remark        string
-	RawBody       string
-	Headers       string
+	// DetectRemark 检出留痕（谁触发、当时本地什么状态），B3；与 Remark 分工：
+	// Remark 属于人工核实依据/销账备注，会被销账整列覆写，留痕写这里才留得住
+	DetectRemark string
+	RawBody      string
+	Headers      string
 }
 
 // ToPaymentInfo 将支付模型转换为 proto 信息

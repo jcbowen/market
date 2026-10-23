@@ -314,8 +314,11 @@ func (s *Scheduler) scanPaidMismatch(ctx context.Context, stat *reconcileStat) {
 	throttleBefore := time.Now().Add(-time.Duration(config.ReconcileInt(r.ThrottleMinutes, 5)) * time.Minute).Format(timeLayout)
 
 	var rows []model.Payment
+	// 不按 pay_type 过滤（A4）：本任务只做「支付单已确认 vs 订单实态」的本地核对，不碰渠道，
+	// 现金/货到付款（3/4）同样会出现「钱当面收到、订单状态同步 RPC 失败」的悬空形态，
+	// 早先限定 (1,2,5,6) 让线下单一度完全没有自动出口
 	if err := s.payment.db.GetDb().WithContext(ctx).
-		Where("status = ? AND pay_type IN ? AND updated_at >= ?", model.PaymentStatusSuccess, []int32{1, 2, 5, 6}, updatedAfter).
+		Where("status = ? AND updated_at >= ?", model.PaymentStatusSuccess, updatedAfter).
 		Where("(last_reconciled_at IS NULL OR last_reconciled_at < ?)", throttleBefore).
 		Order("last_reconciled_at asc").
 		Limit(config.ReconcileInt(r.BatchSize, 100)).
@@ -347,7 +350,8 @@ func (s *Scheduler) repairPaidMismatch(ctx context.Context, p *model.Payment) re
 		log.Printf("[payment-scheduler] 核对订单状态失败 payment_no=%s order_id=%d: %v", p.PaymentNo, p.OrderID, err)
 		return outcomeFailed
 	}
-	return s.payment.repairPaidOrderSync(ctx, p, detail.Order.Status)
+	// 调度器路径没有操作人，挂账待办按系统检出（kind=3）登记
+	return s.payment.repairPaidOrderSync(ctx, p, detail.Order.Status, systemActor)
 }
 
 // scanStuck 挂账检出的任务本体
@@ -413,7 +417,7 @@ func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed b
 	case ChannelStatePaid:
 		if closed {
 			s.markReconciled(ctx, p)
-			s.payment.recordStuckPayment(ctx, p, res)
+			s.payment.recordStuckPayment(ctx, p, res, systemActor)
 			return outcomeStuck
 		}
 		err := s.payment.handlePaySuccess(ctx, &payCallbackParams{

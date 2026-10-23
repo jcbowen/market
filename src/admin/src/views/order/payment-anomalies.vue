@@ -69,7 +69,6 @@ import { formatDateTime } from '@/utils/datetime'
 import { reopenModal } from '@/utils/modal'
 import {
   NOTIFY_HANDLED,
-  NOTIFY_KIND,
   NOTIFY_RESULT,
   notifyKindText,
   notifyResultTagType,
@@ -171,6 +170,15 @@ const columns: DataTableColumns<PaymentAnomaly> = [
     render: (row) => (row.amount > 0 ? `￥${row.amount.toFixed(2)}` : '-'),
   },
   { title: '说明', key: 'error_msg', ellipsis: { tooltip: true }, render: (row) => row.error_msg || '-' },
+  {
+    title: '留痕/依据',
+    key: 'detect_remark',
+    width: 180,
+    ellipsis: { tooltip: true },
+    // 两列分开存（B3）：留痕是「谁检出的、当时什么状态」，依据是「谁凭什么销的账」。
+    // 合成一列显示，但检出留痕优先——销账之后仍要看得到当初是谁发现的
+    render: (row) => row.detect_remark || row.remark || '-',
+  },
   { title: '时间', key: 'created_at', width: 175, render: (row) => formatDateTime(row.created_at) },
   {
     title: '状态',
@@ -198,8 +206,10 @@ const columns: DataTableColumns<PaymentAnomaly> = [
         return null
       }
       const buttons = [h(NButton, { size: 'small', onClick: () => openHandle(row) }, { default: () => '销账' })]
-      // 资金挂账（钱已到账但订单已取消）只能退款，直接在队列里给入口，省一次找订单
-      if (row.kind === NOTIFY_KIND.STUCK && row.order_id > 0) {
+      // 资金挂账（钱已到账但订单已取消）只能退款，直接在队列里给入口，省一次找订单。
+      // 判据取 result 而非 kind：挂账事实现在有两个检出来源（3 系统 / 8 人工核实，B3），
+      // 按 kind 等值判断会让人工检出的那批丢掉「去退款」入口
+      if (row.result === NOTIFY_RESULT.STUCK && row.order_id > 0) {
         buttons.push(
           h(NButton, { size: 'small', type: 'error', onClick: () => openRefund(row) }, { default: () => '去退款' }),
         )
@@ -217,7 +227,7 @@ function updateNarrow() {
 }
 
 /**
- * 表格列：窄屏隐藏次要列（支付单号/金额/渠道），社区列仅超管全量时展示
+ * 表格列：窄屏隐藏次要列（支付单号/金额/渠道/留痕），社区列仅超管全量时展示
  */
 const tableColumns = computed<DataTableColumns<PaymentAnomaly>>(() => {
   const hidden = new Set<string>()
@@ -228,6 +238,7 @@ const tableColumns = computed<DataTableColumns<PaymentAnomaly>>(() => {
     hidden.add('payment_no')
     hidden.add('amount')
     hidden.add('channel')
+    hidden.add('detect_remark')
   }
   return columns.filter((col) => !hidden.has((col as { key?: string }).key ?? ''))
 })

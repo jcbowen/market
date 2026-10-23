@@ -38,6 +38,8 @@ type refundTestEnv struct {
 	svc     *RefundService
 	db      *mysql.Instance
 	product *stubProductClient
+	// sched 底层调度器测试环境句柄：卡单重试用例需要 Redis 锁与调度器实例本身
+	sched *schedTestEnv
 }
 
 // newRefundTestEnv 构建退款测试环境
@@ -55,6 +57,7 @@ func newRefundTestEnv(t *testing.T) *refundTestEnv {
 		svc:     NewRefundService(sched.db, sched.payment),
 		db:      sched.db,
 		product: sched.product,
+		sched:   sched,
 	}
 	// LIFO：本清理先于调度器环境的订单清理执行，此时 orders 行还在，可按前缀定位退款数据
 	t.Cleanup(func() {

@@ -49,6 +49,7 @@ import OrderDetailModal from '@/views/order/detail.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import type { Coupon, CouponRecord } from '@/api/types'
 import { reopenModal } from '@/utils/modal'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 优惠券领取/发放记录页（M②期）
@@ -188,8 +189,8 @@ const columns: DataTableColumns<CouponRecord> = [
     },
   },
   { title: '经手人', key: 'operator_name', width: 100, render: (row) => row.operator_name || '-' },
-  { title: '过期时间', key: 'expire_at', width: 160, render: (row) => row.expire_at || '-' },
-  { title: '领取/发放时间', key: 'created_at', width: 160 },
+  { title: '过期时间', key: 'expire_at', width: 160, render: (row) => formatDateTime(row.expire_at) },
+  { title: '领取/发放时间', key: 'created_at', width: 160, render: (row) => formatDateTime(row.created_at) },
 ]
 
 async function loadCoupons() {

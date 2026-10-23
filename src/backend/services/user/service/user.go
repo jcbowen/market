@@ -96,7 +96,7 @@ func (s *UserService) GetUserByOpenid(ctx context.Context, openid string) (*mode
 
 // CreateOrUpdateUser 创建或更新用户（登录链路共用）
 // 查找策略：有手机号按手机号查找（手机号登录/绑定场景）；
-// 无手机号按 openid 查找（微信登录场景）——禁止按 phone='' 兜底匹配，
+// 无手机号按 openid 查找（微信登录场景）——禁止按空手机号兜底匹配，
 // 否则第二个微信登录用户会命中首个未绑手机的存量用户并覆盖其 openid，造成账号串号
 // 昵称策略：仅在新用户/历史空昵称时按 defaultNickname 填充，登录链路不覆盖已有昵称
 // 参数：

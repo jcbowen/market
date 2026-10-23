@@ -29,6 +29,11 @@ service OrderService {
   rpc RejectRefund(RejectRefundReq) returns (common.CommonResponse);
   // 重试卡在"退款中"(status=4) 的退款单：以退款单自身的 payment_no 重新发起渠道退款
   rpc RetryRefund(RetryRefundReq) returns (common.CommonResponse);
+  // 恢复卡在"退款中"的退款单的自动收敛（B2）：
+  // 先把 payment 侧退款流水的重试预算归零（人工核实渠道结果后重新交系统收敛），
+  // 再把本侧 refunds.retry_count/last_checked_at 复位，使调度器下一轮立即重新核查。
+  // 与 RetryRefund 的区别：本方法不再次触渠道出款，只恢复「问渠道结果」的节奏
+  rpc ResetRefundRetry(ResetRefundRetryReq) returns (common.CommonResponse);
   rpc GetRefundConfig(GetRefundConfigReq) returns (RefundConfig);
   rpc SaveRefundConfig(SaveRefundConfigReq) returns (common.CommonResponse);
 
@@ -414,6 +419,16 @@ message RetryRefundReq {
   int64 operator_id = 2;
   // 社区隔离强校验：同 ApproveRefundReq.community_id
   int64 community_id = 3;
+}
+
+message ResetRefundRetryReq {
+  int64 id = 1;
+  int64 operator_id = 2;
+  // 社区隔离强校验：同 RetryRefundReq.community_id
+  int64 community_id = 3;
+  // 核实依据（必填）：在渠道商户平台看到的退款单状态/到账结论，落 refund_logs 供审计
+  string remark = 4;
+  string operator_name = 5;
 }
 
 message GetOrderStatisticsReq {

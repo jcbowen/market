@@ -78,7 +78,7 @@
             </div>
             <div class="detail-item"><span class="label">配送方式</span><span>{{ deliveryTypeText(detail.delivery_type) }}</span></div>
             <div class="detail-item"><span class="label">支付方式</span><span>{{ detail.pay_type_text || (detail.pay_type ? payTypeText(detail.pay_type) : '-') }}</span></div>
-            <div class="detail-item"><span class="label">下单时间</span><span>{{ detail.created_at }}</span></div>
+            <div class="detail-item"><span class="label">下单时间</span><span>{{ formatDateTime(detail.created_at) }}</span></div>
             <div class="detail-item"><span class="label">收银员</span><span>{{ detail.operator_name || '-' }}</span></div>
             <div class="detail-item"><span class="label">班次</span><span>{{ detail.shift_id ? `#${detail.shift_id}` : '-' }}</span></div>
             <div v-if="detail.pickup_code" class="detail-item"><span class="label">取货码</span><span class="pickup-code">{{ detail.pickup_code }}</span></div>
@@ -121,7 +121,7 @@
                 <n-tag size="tiny" :type="refundTypeTagType(refund.type)" :bordered="false">{{ refundTypeText(refund.type) }}</n-tag>
                 <span class="refund-amount">￥{{ refund.amount.toFixed(2) }}</span>
                 <n-tag size="tiny" :type="refundStatusTagType(refund.status)" :bordered="false">{{ refundStatusText(refund.status) }}</n-tag>
-                <span class="refund-time">{{ refund.refund_time || refund.created_at }}</span>
+                <span class="refund-time">{{ formatDateTime(refund.refund_time || refund.created_at) }}</span>
               </div>
             </div>
           </template>
@@ -193,6 +193,7 @@ import { cancelOrder, getOrderDetail, getOrderList, verifyPickup } from '@/api/o
 import type { Order, OrderDetail } from '@/api/types'
 import { ORDER_STATUS, QUERY_STATUS, canAdminRefund, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
+import { formatDateTime } from '@/utils/datetime'
 import RefundModal from '@/views/order/components/RefundModal.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import OrderDetailModal from '@/views/order/detail.vue'
@@ -448,7 +449,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
     render: (row) => orderSourceText(row.source ?? 1),
   },
   { title: '取货码', key: 'pickup_code', width: 90, render: (row) => row.pickup_code || '-' },
-  { title: '下单时间', key: 'created_at', width: 165, ellipsis: { tooltip: true } },
+  { title: '下单时间', key: 'created_at', width: 165, ellipsis: { tooltip: true }, render: (row) => formatDateTime(row.created_at) },
   {
     title: '操作',
     key: 'actions',

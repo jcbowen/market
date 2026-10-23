@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
@@ -48,6 +49,11 @@ func EnsureScope(scope, owner int64, name string) error {
 // 下单链路两个批量入口成对调用（BatchGetSkus + BatchGetProducts），
 // 因此必须传同一个 community_id，SKU 与商品归属漂移时也会被其中一侧拦下。
 //
+// scope<=0 在管理端是合法语义（超管跨社区、内部调用不设语境），但在交易侧（requireSellable=true）
+// 意味着「成交社区没传进来」——此时归属校验整体失效，本应只在本社区可售的商品可被跨社区取用。
+// 现网调用方是否都补齐了 community_id 无从静态证明，硬拒会打死未知的内部调用方，
+// 故先落告警观测一轮（C5）：日志按「交易入口 + 无社区语境」这一唯一可疑组合打，不打在管理端路径上。
+//
 // 参数：
 //   - scope: 操作者/交易社区语境（<=0 跳过归属校验，见 EnsureScope）
 //   - p: 商品模型（可为 nil）
@@ -63,6 +69,9 @@ func EnsureScope(scope, owner int64, name string) error {
 //		return nil, err
 //	}
 func EnsureTradeAccess(scope int64, p *model.Product, sku *model.Sku, requireSellable bool) error {
+	if requireSellable && scope <= 0 {
+		log.Printf("[WARN] 交易入口缺少社区语境，商品归属校验已跳过 product_id=%d sku_id=%d", productIDOf(p), skuIDOf(sku))
+	}
 	if p != nil {
 		if err := EnsureScope(scope, p.CommunityID, "商品"); err != nil {
 			return err
@@ -87,6 +96,34 @@ func EnsureTradeAccess(scope int64, p *model.Product, sku *model.Sku, requireSel
 		}
 	}
 	return nil
+}
+
+// productIDOf 取商品 ID 供告警定位（nil 安全，批量入口可能只加载 SKU 一侧）
+//
+// 参数：
+//   - p: 商品模型，可为 nil
+//
+// 返回值：
+//   - int64: 商品 ID；nil 时为 0
+func productIDOf(p *model.Product) int64 {
+	if p == nil {
+		return 0
+	}
+	return p.ID
+}
+
+// skuIDOf 取 SKU ID 供告警定位（nil 安全，批量入口可能只加载商品一侧）
+//
+// 参数：
+//   - sku: SKU 模型，可为 nil
+//
+// 返回值：
+//   - int64: SKU ID；nil 时为 0
+func skuIDOf(sku *model.Sku) int64 {
+	if sku == nil {
+		return 0
+	}
+	return sku.ID
 }
 
 // ensureCategoryInCommunity 校验分类存在且归属指定社区

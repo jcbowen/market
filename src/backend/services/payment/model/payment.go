@@ -115,7 +115,8 @@ type RefundPayment struct {
 	TransactionID string  `gorm:"column:transaction_id;type:varchar(100);comment:第三方退款交易号" json:"transaction_id"`
 	// RetryCount 退款查单收敛的连续失败次数：渠道查单失败或本地落库失败时 +1 并刷新 updated_at（节流推进），
 	// 达到 service.refundQueryMaxRetry 即退出自动批次并转人工待办；渠道明确回答 PROCESSING 只刷新
-	// updated_at 不计数（见 service.scanPendingRefunds / retryRefundQuery）
+	// updated_at 不计数（见 service.scanPendingRefunds / retryRefundQuery）。
+	// 达上限后唯一的出路是后台人工核实渠道结果后调 ResetRefundFlow 归零（B2），流水重新被捞起继续收敛
 	RetryCount int32 `gorm:"column:retry_count;type:int;not null;default:0;comment:退款查单收敛失败次数，超上限放弃收敛并转人工待办" json:"retry_count"`
 	// Escalated 已转人工待办标记：0 未转办 1 已转办，仅作待办去重（一个流水只登记一条待办）。
 	// 收敛任务在「查单失败超 refundQueryMaxRetry」或「待退款停留超 24 小时」时置 1；
