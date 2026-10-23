@@ -58,6 +58,10 @@ jobs:
       TEST_MYSQL_PASSWORD: ci-mysql
       TEST_MYSQL_DBNAME: market
       TEST_REDIS_ADDR: 127.0.0.1:6379
+      # 测试进程时区与生产（容器 TZ=Asia/Shanghai）对齐：DSN parseTime=True 下
+      # driver 读回的 time.Time 挂进程时区，「读回实体再 Save 全量写回」经 RFC3339
+      # 转换时 UTC 会产生 MySQL DATETIME 不接受的 Z 后缀（Error 1292），+08:00 偏移则可被接受
+      TZ: Asia/Shanghai
     defaults:
       run:
         working-directory: src/backend
@@ -232,6 +236,8 @@ jobs:
       TEST_MYSQL_PASSWORD: ci-mysql
       TEST_MYSQL_DBNAME: market
       TEST_REDIS_ADDR: 127.0.0.1:6379
+      # 与 backend job 同理：进程时区对齐生产，避免 RFC3339 Z 后缀写回 DATETIME 报 Error 1292
+      TZ: Asia/Shanghai
     steps:
       - uses: actions/checkout@v5
 
