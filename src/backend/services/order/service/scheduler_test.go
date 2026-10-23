@@ -243,7 +243,8 @@ func newSchedulerTestEnv(t *testing.T) *schedTestEnv {
 	// 表结构演进统一走 AutoMigrate（与 services/order/main.go 同一模型清单）
 	if err := dbInst.GetDb().AutoMigrate(
 		&model.Order{}, &model.OrderItem{}, &model.OrderStatusLog{},
-		&model.Refund{}, &model.RefundItem{}, &model.SchedulerFailure{},
+		&model.Refund{}, &model.RefundItem{}, &model.RefundConfig{}, &model.RefundLog{},
+		&model.SchedulerFailure{}, &model.PosHeldOrder{}, &model.PosShift{}, &model.AppPreference{},
 	); err != nil {
 		t.Fatalf("测试库迁移失败: %v", err)
 	}

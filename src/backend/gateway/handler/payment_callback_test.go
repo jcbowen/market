@@ -367,25 +367,28 @@ func (s *stubWechatCallbackClient) HandleWechatCallback(ctx context.Context, in 
 	return &common.CommonResponse{}, nil
 }
 
-// doWechatCallback 投递一次微信回调
+// doWechatCallback 经完整 gin 引擎投递一次微信回调
+// 不能直接调 handler：gin responseWriter 的 WriteHeader 延迟到首次 Write 才落状态码，
+// 成功应答（204 空体）绕过 engine 收尾的 WriteHeaderNow 会退化为默认 200
 // 参数：
 //   - t: 测试对象
 //   - stub: 回调 gRPC 桩
 //   - body: 原始请求体（V3 为渠道密文）
 //
 // 返回值：
-//   - string: 网关返回给微信的 XML 响应体
-func doWechatCallback(t *testing.T, stub *stubWechatCallbackClient, body string) string {
+//   - int: HTTP 状态码（V3 规范：成功 204、失败 5xx）
+//   - string: 响应体（成功为空体，失败为 {"code":"FAIL",...}）
+func doWechatCallback(t *testing.T, stub *stubWechatCallbackClient, body string) (int, string) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/payment/callback/wechat", strings.NewReader(body))
-	c.Request.Header.Set("Content-Type", "application/json")
+	r := gin.New()
+	r.POST("/api/v1/payments/callback/wechat", (&PaymentHandler{paymentClient: stub}).WechatCallback)
 
-	h := &PaymentHandler{paymentClient: stub}
-	h.WechatCallback(c)
-	return recorder.Body.String()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments/callback/wechat", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	r.ServeHTTP(recorder, req)
+	return recorder.Code, recorder.Body.String()
 }
 
 // TestWechatCallbackRecordsProcessLog 微信回调受理情况记入 debugger 进程级日志
@@ -400,8 +403,9 @@ func TestWechatCallbackRecordsProcessLog(t *testing.T) {
 		debuglog.SetInstance(dbg)
 		t.Cleanup(func() { debuglog.SetInstance(nil) })
 
-		if got := doWechatCallback(t, &stubWechatCallbackClient{}, ciphertext); !strings.Contains(got, "SUCCESS") {
-			t.Fatalf("响应 = %q, 期望含 SUCCESS", got)
+		// V3 规范成功应答：HTTP 204 空体（wego NotificationSuccess），不回 V2 XML 的 SUCCESS
+		if code, got := doWechatCallback(t, &stubWechatCallbackClient{}, ciphertext); code != http.StatusNoContent || got != "" {
+			t.Fatalf("响应 = (%d, %q), 期望 204 空体", code, got)
 		}
 
 		entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
@@ -449,8 +453,9 @@ func TestWechatCallbackRecordsProcessLog(t *testing.T) {
 		t.Cleanup(func() { debuglog.SetInstance(nil) })
 
 		stub := &stubWechatCallbackClient{err: errors.New("微信回调解密失败")}
-		if got := doWechatCallback(t, stub, ciphertext); !strings.Contains(got, "FAIL") {
-			t.Fatalf("响应 = %q, 期望含 FAIL", got)
+		// V3 规范失败应答：5xx + {"code":"FAIL","message":"..."}，微信按间隔重试
+		if code, got := doWechatCallback(t, stub, ciphertext); code != http.StatusInternalServerError || !strings.Contains(got, "FAIL") {
+			t.Fatalf("响应 = (%d, %q), 期望 5xx + FAIL", code, got)
 		}
 
 		entries, total, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"})
@@ -470,8 +475,9 @@ func TestWechatCallbackRecordsProcessLog(t *testing.T) {
 		debuglog.SetInstance(nil)
 		t.Cleanup(func() { debuglog.SetInstance(nil) })
 
-		if got := doWechatCallback(t, &stubWechatCallbackClient{}, ciphertext); !strings.Contains(got, "SUCCESS") {
-			t.Fatalf("响应 = %q, 期望含 SUCCESS（记录缺失不影响受理）", got)
+		// 记录缺失不影响受理，仍按 V3 规范回 204 空体
+		if code, got := doWechatCallback(t, &stubWechatCallbackClient{}, ciphertext); code != http.StatusNoContent || got != "" {
+			t.Fatalf("响应 = (%d, %q), 期望 204 空体（记录缺失不影响受理）", code, got)
 		}
 	})
 }
