@@ -1,5 +1,36 @@
-# Shell 脚本强制 LF：entrypoint.sh 打包进 Linux 镜像执行，
+# 全仓统一 LF：仓库内与三台开发机（Win10 / macOS / Win11）checkout 均为 LF。
+# 避免 CRLF 造成的 gofmt/linter 全量假阳性、Shell 脚本在 Linux 容器内 /bin/bash^M 解析失败、
+# 以及跨机器提交时整文件换行符 diff。
+# 前置：core.autocrlf 须为 false（本属性文件优先级高于它，显式声明避免依赖个人 git 配置）。
+* text=auto eol=lf
+
+# Shell/Dockerfile 强制 LF：entrypoint.sh 等打包进 Linux 镜像执行，
 # Windows checkout 经 autocrlf 转 CRLF 会导致容器内 /bin/bash^M 解析失败
 *.sh text eol=lf
 *.dockerfile text eol=lf
 Dockerfile* text eol=lf
+
+# 二进制：禁止任何换行符与编码转换（git 的 text=auto 靠内容启发式判定，
+# 显式声明避免小概率误判损坏资源文件）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.bmp binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+*.mp3 binary
+*.mp4 binary
+*.zip binary
+*.gz binary
+*.br binary
+*.xlsx binary
+*.xls binary
+*.db binary
+*.mmdb binary
+*.mmdb.gz binary
+*.pdf binary
