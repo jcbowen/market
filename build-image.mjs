@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// market 一体化镜像（all-in-one）构建与发布脚本
+// market 镜像构建与发布脚本（一体化 all-in-one + 多容器应用镜像）
 //
-// 镜像内容：MySQL 8.0 + Redis 7 + gateway + 五个微服务 + 前端静态资源
-// （见 src/backend/deploy/Dockerfile.allinone），支持多架构（linux amd64/arm64）。
+// 两类镜像消费同一份 bin/ 产物（见 src/backend/deploy/）：
+//   默认      —— Dockerfile.allinone：MySQL 8.0 + Redis 7 + 全部服务 + 前端，单容器一键起全栈
+//   --app     —— Dockerfile.app：alpine 底座不含 MySQL/Redis，单镜像多容器部署
+//                （compose 示例见 docker-compose.prod.yml），支持多架构（linux amd64/arm64）
 //
 // 使用方法：
 //   # 本机架构构建并载入本地 Docker（默认，用于本地验证）
@@ -23,6 +25,12 @@
 //   # containerd 镜像存储）
 //   node build-image.mjs --build-base
 //
+//   # 构建多容器部署应用镜像（单镜像多容器，alpine 底座不含 MySQL/Redis，
+//   # 见 src/backend/deploy/Dockerfile.app 与 docker-compose.prod.yml）；
+//   # 与一体化镜像消费同一份 bin/ 产物，不依赖 market-base
+//   node build-image.mjs --app
+//   node build-image.mjs --app --tag <registry>/market-app:1.0.0 --push
+//
 // 基础镜像：Dockerfile.allinone 的 ubuntu + mysql/redis + appuser 层已固化为
 // market-base 镜像（见 src/backend/deploy/Dockerfile.base）。本脚本按该文件的
 // 内容 sha256 生成 tag（sha-<前12位>），先检测仓库是否已存在该 tag：
@@ -37,6 +45,7 @@
 //   --platforms <list>    逗号分隔，默认本机架构单平台（本地 load 不支持多架构）
 //   --no-cache            不使用构建缓存
 //   --build-base          构建（多架构）并推送 market-base 基础镜像
+//   --app                 构建应用镜像（Dockerfile.app，多容器部署）而非一体化镜像
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,6 +63,7 @@ let tag = '';
 let push = false;
 let noCache = false;
 let buildBase = false;
+let appMode = false;
 let platformsArg = '';
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
@@ -61,11 +71,17 @@ for (let i = 0; i < argv.length; i++) {
   else if (argv[i] === '--push') push = true;
   else if (argv[i] === '--no-cache') noCache = true;
   else if (argv[i] === '--build-base') buildBase = true;
+  else if (argv[i] === '--app') appMode = true;
   else if (argv[i] === '--platforms') platformsArg = argv[++i] ?? '';
   else {
     console.error(`未知参数: ${argv[i]}`);
     process.exit(1);
   }
+}
+
+if (buildBase && appMode) {
+  console.error('错误: --build-base 与 --app 互斥（前者构建基础镜像，后者构建应用镜像）');
+  process.exit(1);
 }
 
 if (push && !tag) {
@@ -142,9 +158,13 @@ if (buildBase) {
 
 // ---------- 产物预检 ----------
 
-const DOCKERFILE = path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'Dockerfile.allinone');
-// 镜像直接 COPY 预编译产物（见 Dockerfile.allinone COPY 列表），构建期不编译：
-// 缺一个或旧于最新源码都会让 `docker compose up --build` / 本地 load 静默跑旧二进制
+// 一体化镜像与 app 镜像消费同一份 bin/ 产物，Dockerfile/配置模板/入口脚本不同
+const DOCKERFILE = appMode
+  ? path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'Dockerfile.app')
+  : path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'Dockerfile.allinone');
+// 镜像直接 COPY 预编译产物（见 Dockerfile.allinone / Dockerfile.app COPY 列表），
+// 构建期不编译：缺一个或旧于最新源码都会让 `docker compose up --build` /
+// 本地 load 静默跑旧二进制
 const IMAGE_BINARIES = [
   'gateway',
   'user-service',
@@ -156,11 +176,15 @@ const IMAGE_BINARIES = [
   'geoip-download',
 ];
 const required = [
-  { file: DOCKERFILE, hint: '缺失 Dockerfile.allinone' },
+  { file: DOCKERFILE, hint: appMode ? '缺失 Dockerfile.app' : '缺失 Dockerfile.allinone' },
   { file: path.join(ROOT_DIR, 'bin', 'static', 'admin'), hint: '缺失前端产物 bin/static/admin，请先执行构建' },
   { file: path.join(ROOT_DIR, 'bin', 'static', 'h5'), hint: '缺失前端产物 bin/static/h5，请先执行构建' },
-  { file: path.join(ROOT_DIR, 'bin', 'config.allinone.yaml'), hint: '缺失 bin/config.allinone.yaml 配置模板' },
-  { file: path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'entrypoint.sh'), hint: '缺失 entrypoint.sh' },
+  appMode
+    ? { file: path.join(ROOT_DIR, 'bin', 'config.docker.yaml'), hint: '缺失 bin/config.docker.yaml 配置模板' }
+    : { file: path.join(ROOT_DIR, 'bin', 'config.allinone.yaml'), hint: '缺失 bin/config.allinone.yaml 配置模板' },
+  appMode
+    ? { file: path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'entrypoint-app.sh'), hint: '缺失 entrypoint-app.sh' }
+    : { file: path.join(ROOT_DIR, 'src', 'backend', 'deploy', 'entrypoint.sh'), hint: '缺失 entrypoint.sh' },
 ];
 for (const p of platforms) {
   const arch = p.split('/')[1];
@@ -215,28 +239,30 @@ for (const p of platforms) {
   }
 }
 
-if (!tag) tag = 'market:dev';
+if (!tag) tag = appMode ? 'market-app:dev' : 'market:dev';
 
 // ---------- buildx 构建 ----------
 
-// 基础镜像存在性检查：缺失则明确报错（Dockerfile.allinone 的 FROM 依赖它，
-// 静默回退 latest 会跑旧基础层）
-if (!baseImageExists()) {
-  console.error(`错误: 基础镜像 ${BASE_IMAGE} 尚不存在（Dockerfile.base 已变更且未构建）`);
-  console.error('       处理方式二选一：');
-  console.error('       1. 推荐：提交并推送 v* tag，由 CI 的 release-base job 自动构建后再发业务镜像');
-  console.error('       2. 本地执行：node build-image.mjs --build-base');
-  process.exit(1);
+// 基础镜像存在性检查（仅一体化镜像：FROM market-base；app 镜像基于 alpine
+// 官方多架构镜像，无此依赖）：缺失则明确报错，静默回退 latest 会跑旧基础层
+if (!appMode) {
+  if (!baseImageExists()) {
+    console.error(`错误: 基础镜像 ${BASE_IMAGE} 尚不存在（Dockerfile.base 已变更且未构建）`);
+    console.error('       处理方式二选一：');
+    console.error('       1. 推荐：提交并推送 v* tag，由 CI 的 release-base job 自动构建后再发业务镜像');
+    console.error('       2. 本地执行：node build-image.mjs --build-base');
+    process.exit(1);
+  }
+  console.log(`==> 基础镜像: ${BASE_IMAGE}`);
 }
-console.log(`==> 基础镜像: ${BASE_IMAGE}`);
 
 const args = ['buildx', 'build', '--platform', platforms.join(','), '-f', DOCKERFILE, '-t', tag];
-args.push('--build-arg', `BASE_IMAGE=${BASE_IMAGE}`);
+if (!appMode) args.push('--build-arg', `BASE_IMAGE=${BASE_IMAGE}`);
 if (noCache) args.push('--no-cache');
 args.push(push ? '--push' : '--load');
 args.push('.');
 
-console.log(`==> 构建一体化镜像: ${tag}`);
+console.log(`==> 构建${appMode ? '应用' : '一体化'}镜像: ${tag}`);
 console.log(`==> 平台: ${platforms.join(', ')}  模式: ${push ? 'push（发布）' : 'load（本地载入）'}`);
 const r = spawnSync('docker', args, { stdio: 'inherit', cwd: ROOT_DIR, shell: needsShell('docker') });
 if (r.status !== 0) {

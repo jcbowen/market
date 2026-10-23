@@ -1,5 +1,7 @@
 # CI 流水线：后端（vet/test/build/lint）+ 前端（admin/client 构建）+ tag 触发自动发布 Release
-# Release 产物：linux/darwin/windows × amd64/arm64 共 6 平台包（tar.gz，Windows 为 zip），内含 6 个服务二进制 + 前端产物 + config.yaml
+# Release 产物：linux/darwin/windows × amd64/arm64 共 6 平台包（tar.gz，Windows 为 zip），内含 6 个服务二进制 + 前端产物 + config.yaml；
+# 镜像产物：allinone 一体化镜像（单容器全栈）+ market-app 应用镜像（多容器部署，单镜像多容器），
+# 均为 linux amd64/arm64 双架构，GHCR + Docker Hub 双发
 # 说明：后端 Go module 位于 src/backend，前端位于 src/admin 与 src/client
 # Gitea Actions 与 GitHub Actions 语法兼容，本文件在 GitHub 与 Gitea（act_runner）上均可运行；
 # 注意 checkout v5 与 docker 三件套（setup-qemu/setup-buildx/login v4 起）的 Action
@@ -188,8 +190,8 @@ jobs:
   # ================= tag 发布流水线（并行化，2026-10-23 改造） =================
   # 依赖关系与墙钟时间：
   #   release-test（回归）──> release-backend（matrix 6 平台并行编译）──┐
-  #   release-frontend（管理端 + H5，独立并行）──────────────────────┼──> release-image（多架构镜像）
-  #   release-base（按 Dockerfile.base 内容哈希按需构建基础镜像）─────┘
+  #   release-frontend（管理端 + H5，独立并行）──────────────────────┼──> release-image（多架构镜像：
+  #   release-base（按 Dockerfile.base 内容哈希按需构建基础镜像）─────┘     allinone 一体化 + app 多容器两份）
   #   release-backend + release-frontend ──> release-packages（Release 压缩包）
   # 各 job 产物经 upload/download-artifact 传递（无共享文件系统）；
   # 慢的 apt/QEMU 仅存在于 release-base（低频触发），镜像构建降为秒级 COPY。
@@ -461,7 +463,7 @@ jobs:
             --push .
 
   release-image:
-    name: 多架构一体化镜像
+    name: 多架构镜像（allinone + app）
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [release-backend, release-frontend, release-base]
@@ -493,9 +495,16 @@ jobs:
           test -d bin/static/admin
           test -d bin/static/h5
           test -f bin/config.allinone.yaml
+          # app 镜像（多容器部署）依赖的配置模板与入口脚本（后者随 checkout 提供）
+          test -f bin/config.docker.yaml
+          test -f src/backend/deploy/entrypoint-app.sh
           chmod +x bin/linux-amd64/* bin/linux-arm64/*
 
-      # FROM market-base（apt 层已固化），本 job 无需 QEMU，仅 COPY 产物 + 推送
+      # FROM market-base（apt 层已固化）仅 COPY 无需 QEMU；但 app 镜像基于
+      # alpine 且有 RUN apk 步骤，arm64 侧需 QEMU 模拟执行
+      - name: 设置 QEMU（app 镜像 arm64 构建）
+        uses: docker/setup-qemu-action@v4
+
       - name: 设置 Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -543,6 +552,37 @@ jobs:
             --platform linux/amd64,linux/arm64 \
             -f src/backend/deploy/Dockerfile.allinone \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            ${TAGS} \
+            ${CACHE_ARGS} \
+            --push .
+
+      # 多容器部署应用镜像（单镜像多容器，alpine 底座不含 MySQL/Redis，
+      # 见 src/backend/deploy/Dockerfile.app 与 docker-compose.prod.yml）。
+      # 与 allinone 消费同一份 bin/ 产物；tag/预发布/latest 口径与上方一致
+      - name: 构建并推送多架构应用镜像
+        env:
+          BASE_TAG: ${{ needs.release-base.outputs.base_tag }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}-app"
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "预发布 tag：不打 :latest，仅推 ${GITHUB_REF_NAME}"
+            TAGS="-t ${IMAGE}:${GITHUB_REF_NAME}"
+            if [ -n "${DOCKERHUB_USERNAME}" ]; then
+              TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market-app:${GITHUB_REF_NAME}"
+            fi
+          else
+            TAGS="-t ${IMAGE}:${GITHUB_REF_NAME} -t ${IMAGE}:latest"
+            if [ -n "${DOCKERHUB_USERNAME}" ]; then
+              TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market-app:${GITHUB_REF_NAME} -t docker.io/${DOCKERHUB_USERNAME}/market-app:latest"
+            fi
+          fi
+          CACHE_ARGS=""
+          if [ -n "${DOCKERHUB_USERNAME}" ]; then
+            CACHE_ARGS="--cache-from type=registry,ref=docker.io/${DOCKERHUB_USERNAME}/market-app:buildcache --cache-to type=registry,mode=max,ref=docker.io/${DOCKERHUB_USERNAME}/market-app:buildcache"
+          fi
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -f src/backend/deploy/Dockerfile.app \
             ${TAGS} \
             ${CACHE_ARGS} \
             --push .
