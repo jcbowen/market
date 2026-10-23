@@ -193,6 +193,7 @@ jobs:
   #   release-backend + release-frontend ──> release-packages（Release 压缩包）
   # 各 job 产物经 upload/download-artifact 传递（无共享文件系统）；
   # 慢的 apt/QEMU 仅存在于 release-base（低频触发），镜像构建降为秒级 COPY。
+  # 预发布 tag（含 '-'，如 v0.4.0-test / v1.0.0-rc.1）：镜像不打 :latest、Release 标 prerelease。
 
   release-test:
     name: 发布前回归测试
@@ -502,9 +503,19 @@ jobs:
           BASE_IMAGE: ${{ needs.release-base.outputs.base_image }}
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
-          TAGS="-t ${IMAGE}:${GITHUB_REF_NAME} -t ${IMAGE}:latest"
-          if [ -n "${DOCKERHUB_USERNAME}" ]; then
-            TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market:${GITHUB_REF_NAME} -t docker.io/${DOCKERHUB_USERNAME}/market:latest"
+          # 预发布 tag（semver 含 '-'，如 v0.4.0-test / v1.0.0-rc.1）不打 latest：
+          # 避免测试版本覆盖 :latest，导致生产机 docker compose pull 拉到 test 版
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "预发布 tag：不打 :latest，仅推 ${GITHUB_REF_NAME}"
+            TAGS="-t ${IMAGE}:${GITHUB_REF_NAME}"
+            if [ -n "${DOCKERHUB_USERNAME}" ]; then
+              TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market:${GITHUB_REF_NAME}"
+            fi
+          else
+            TAGS="-t ${IMAGE}:${GITHUB_REF_NAME} -t ${IMAGE}:latest"
+            if [ -n "${DOCKERHUB_USERNAME}" ]; then
+              TAGS="$TAGS -t docker.io/${DOCKERHUB_USERNAME}/market:${GITHUB_REF_NAME} -t docker.io/${DOCKERHUB_USERNAME}/market:latest"
+            fi
           fi
           # 构建缓存改存 registry（与镜像同仓库，不再受 GHA 缓存 10GB 上限约束；
           # base 拆分后剩余层很小，此缓存仅为加速重复产物层上传）
@@ -583,10 +594,15 @@ jobs:
           AUTH="Authorization: token ${GITHUB_TOKEN}"
           REPO="repos/${GITHUB_REPOSITORY}"
 
+          # 预发布 tag（semver 含 '-'，如 v0.4.0-test）在 Release 页标记为 prerelease，
+          # GitHub/Gitea API 均支持该字段，不进正式版本列表
+          PRE_FLAG="false"
+          if [[ "${VERSION}" == *-* ]]; then PRE_FLAG="true"; fi
+
           # 创建 Release；捕获响应体以便失败时从日志定位（如 token 权限、重复 tag）
           CREATE_RESP=$(curl -sS -X POST "${API}/${REPO}/releases" \
             -H "$AUTH" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\",\"body\":\"自动发布：${VERSION}\"}") || true
+            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\",\"prerelease\":${PRE_FLAG},\"body\":\"自动发布：${VERSION}\"}") || true
           RELEASE_ID=$(echo "${CREATE_RESP}" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
 
           # 该 tag 已有 Release（重复触发）时改为获取并复用
