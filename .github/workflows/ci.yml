@@ -318,11 +318,14 @@ jobs:
           '
           ls -lh "${OUT_DIR}"
 
+      # 注意：path 单目录会被 v4 剥掉目录名层（root=目录内容）。matrix job 的 bin/ 下
+      # 只有本平台一个目录，上传 `bin` 使 artifact 根=bin 内容（即 linux-amd64/...），
+      # merge 下载到 bin/ 后恰好恢复 bin/<platform>/ 结构
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.platform }}
-          path: bin/${{ matrix.platform }}/
+          path: bin
 
   release-frontend:
     name: 前端构建（admin + H5）
@@ -364,11 +367,13 @@ jobs:
           done
           npm run build:h5
 
+      # 同上：单目录 path 剥掉目录名层。前端 job 的 bin/ 下只有 static/，
+      # 上传 `bin` → artifact 根=static/admin、static/h5 → merge 后恢复 bin/static/
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: bin-static
-          path: bin/static/
+          path: bin
 
   release-base:
     name: 基础镜像（按需构建）
@@ -403,6 +408,9 @@ jobs:
           # GHCR 双发（与 release-image 的 GHCR 命名口径一致：<repo> + "-base" 后缀）
           GHCR_IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}-base"
           echo "base_image=${BASE_IMAGE}" >> "$GITHUB_OUTPUT"
+          # BASE_TAG 经 GITHUB_ENV 传给后续构建步骤（普通 shell 变量跨步骤不保留，
+          # 首跑曾因缺失导致 invalid tag "ghcr.io/.../market-base:"）
+          echo "BASE_TAG=${BASE_TAG}" >> "$GITHUB_ENV"
           echo "BASE_IMAGE=${BASE_IMAGE}" >> "$GITHUB_ENV"
           echo "BASE_LATEST=${BASE_LATEST}" >> "$GITHUB_ENV"
           echo "GHCR_IMAGE=${GHCR_IMAGE}" >> "$GITHUB_ENV"
@@ -474,6 +482,7 @@ jobs:
 
       - name: 产物完整性校验
         run: |
+          ls -la bin/
           test -f bin/linux-amd64/gateway
           test -f bin/linux-amd64/payment-service
           test -f bin/linux-arm64/gateway
@@ -550,11 +559,14 @@ jobs:
 
       - name: 产物完整性校验
         run: |
-          chmod +x bin/linux-*/* bin/darwin-*/*
+          # 先断言后 chmod：断言失败时保留完整目录信息便于定位
+          ls -la bin/
           test -f bin/windows-amd64/gateway.exe
-          test -f bin/config.yaml
+          test -f bin/linux-amd64/gateway
           test -d bin/static/admin
           test -d bin/static/h5
+          test -f bin/config.yaml
+          chmod +x bin/linux-*/* bin/darwin-*/*
 
       # 打包：解压后得到 market-{ver}-{os}-{arch}/ 目录，布局对齐部署文档 9.3.5 的 /opt/market；
       # linux/darwin 打 tar.gz，windows 打 zip（ubuntu runner 自带 zip 命令）
