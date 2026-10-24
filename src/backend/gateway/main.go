@@ -362,6 +362,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/products/:id/name", gwMiddleware.RequirePermission("product:update"), adminHandler.UpdateProductName)
 
 			authAdmin.GET("/orders", gwMiddleware.RequirePermission("order:view"), adminHandler.ListAdminOrders)
+			// 订单导出（下载中心）：创建任务/列表/角标与订单同域（order:view），下载含留痕校验，删除仅超管
+			authAdmin.POST("/orders/export-tasks", gwMiddleware.RequirePermission("order:view"), adminHandler.CreateOrderExportTask)
+			authAdmin.GET("/orders/export-tasks", gwMiddleware.RequirePermission("order:view"), adminHandler.ListOrderExportTasks)
+			authAdmin.GET("/orders/export-tasks/undownloaded-count", gwMiddleware.RequirePermission("order:view"), adminHandler.CountOrderExportUndownloaded)
+			authAdmin.GET("/orders/export-tasks/:id/download", gwMiddleware.RequirePermission("order:view"), adminHandler.DownloadOrderExportTask)
+			authAdmin.DELETE("/orders/export-tasks/:id", gwMiddleware.RequirePermission("order:view"), adminHandler.DeleteOrderExportTask)
 			authAdmin.GET("/orders/:id", gwMiddleware.RequirePermission("order:view"), adminHandler.GetAdminOrder)
 			authAdmin.PUT("/orders/:id/status", gwMiddleware.RequirePermission("order:update"), adminHandler.UpdateOrderStatus)
 			authAdmin.POST("/orders/:id/cancel", gwMiddleware.RequirePermission("order:update"), adminHandler.AdminCancelOrder)

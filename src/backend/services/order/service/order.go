@@ -587,6 +587,28 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 		pageSize = int(req.Pagination.PageSize)
 	}
 
+	db := s.applyOrderListFilters(ctx, req)
+
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * pageSize
+	var list []*model.Order
+	err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error
+	return list, int(total), err
+}
+
+// applyOrderListFilters 构建订单列表查询过滤条件（列表查询与后台导出共用单一事实源，
+// 导出按查询快照还原 ListOrdersReq 后复用，保证「所见即所导」）
+// 参数：
+//   - ctx: 上下文
+//   - req: 查询请求（仅过滤字段生效，分页由调用方自行处理）
+//
+// 返回值：
+//   - *gorm.DB: 已挂过滤条件的查询链
+func (s *OrderService) applyOrderListFilters(ctx context.Context, req *order.ListOrdersReq) *gorm.DB {
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Order{})
 	// 用户软删除过滤：靠 include_user_deleted 显式区分调用方，不能拿 user_id 是否非零推断——
 	// 后台「按会员查订单」（UserOrdersModal）同样传 user_id，靠它推断会把已删单从客服视图
@@ -634,6 +656,31 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	if req.ShiftId > 0 {
 		db = db.Where("shift_id = ?", req.ShiftId)
 	}
+	// 支付单号/渠道交易号反查命中集（gateway 先经 payment 服务反查订单号，再传集合精确匹配；
+	// has_pay_no=true 且集合为空表示反查无命中，挂恒假集合返回空结果）
+	if req.HasPayNo {
+		nos := req.PayOrderNos
+		if len(nos) == 0 {
+			// 反查无命中：挂恒假集合返回空结果（不修改入参，req 可能被调用方复用）
+			nos = []string{"__no_match__"}
+		}
+		db = db.Where("order_no IN ?", nos)
+	}
+	// 商品过滤（含全部规格）：order_items.product_id 索引定位订单，量级可控
+	if req.ProductId > 0 {
+		var orderIds []int64
+		if err := s.db.GetDb().WithContext(ctx).Model(&model.OrderItem{}).
+			Where("product_id = ?", req.ProductId).
+			Distinct().Pluck("order_id", &orderIds).Error; err != nil {
+			// 过滤查询失败时挂恒假条件返回空列表，与 ListOrders 错误返回语义解耦：
+			// 导出链路同样走本方法，空结果优于整个任务失败
+			db = db.Where("id IN ?", []int64{-1})
+		} else if len(orderIds) == 0 {
+			db = db.Where("id IN ?", []int64{-1})
+		} else {
+			db = db.Where("id IN ?", orderIds)
+		}
+	}
 	switch {
 	case req.Status == queryStatusRefundAggregate:
 		db = db.Where("status IN ?", []int32{7, 8})
@@ -642,16 +689,7 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	case req.Status > 0:
 		db = db.Where("status = ?", req.Status)
 	}
-
-	var total int64
-	if err := db.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	offset := (page - 1) * pageSize
-	var list []*model.Order
-	err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error
-	return list, int(total), err
+	return db
 }
 
 // GetUserOrderStatusCounts 用户订单状态角标统计（C 端「我的-我的订单」红标）

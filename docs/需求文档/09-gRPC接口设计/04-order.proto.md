@@ -171,6 +171,100 @@ message ListOrdersReq {
   // 若靠它推断会把已删单从客服视图一并抹掉。故：C 端列表不传（false=排除），
   // 后台管理端显式传 true（含已删单，配合 OrderInfo.user_deleted 标记展示）
   bool include_user_deleted = 13;
+  // 支付单号/渠道交易号反查命中集（2026-10-24 新增，后台订单搜索）：
+  // gateway 先经 payment 服务 FindOrdersByPayNo 反查订单号，再传集合到 order 服务精确匹配；
+  // has_pay_no=true 区分「没传」与「传了但没查到」（后者挂恒假集合返回空结果）
+  bool has_pay_no = 14;
+  repeated string pay_order_nos = 15;
+  // 商品过滤（2026-10-24 新增，含全部规格）：命中含该商品任意规格（order_items.product_id）的订单
+  int64 product_id = 16;
+}
+
+// --- 后台导出任务（下载中心，2026-10-24 新增） ---
+
+// ExportTaskInfo 导出任务信息（下载中心列表行）
+// status: 1待处理 2生成中 3已完成 4失败；downloaders 下载留痕 JSON（完整名单仅超管可见）；
+// error_msg 失败原因（完成态复用为超限截断提示）；expires_at 文件过期时间（生成后 3 天）
+message ExportTaskInfo {
+  int64 id = 1;
+  string export_type = 2;
+  int32 status = 3;
+  string query_desc = 4;
+  string file_name = 5;
+  int64 file_size = 6;
+  int64 row_count = 7;
+  int64 admin_id = 8;
+  string admin_name = 9;
+  int64 community_id = 10;
+  int32 download_count = 11;
+  string downloaders = 12;
+  string error_msg = 13;
+  string created_at = 14;
+  string expires_at = 15;
+  // 查询条件 JSON 快照：失败任务「重新导出」时前端解析还原为创建参数，按原条件重发
+  string query_cond = 16;
+}
+
+// CreateExportTaskReq 创建导出任务：query_json 查询条件快照（与 ListOrdersReq 过滤字段对齐）；
+// pay_order_nos 支付单号反查命中集（order 服务无法反查 payment，由 gateway 反查后随快照下发）
+message CreateExportTaskReq {
+  string export_type = 1;
+  string query_json = 2;
+  string query_desc = 3;
+  int64 admin_id = 4;
+  string admin_name = 5;
+  int64 community_id = 6;
+  repeated string pay_order_nos = 7;
+}
+
+message CreateExportTaskResp {
+  int64 id = 1;
+}
+
+// ListExportTasksReq 任务列表：admin_id>0 仅查该管理员创建的（普通管理员）；
+// super_admin=true 时查全部；community_id>0 时超管语境限定该社区（跨社区任务 0 仍全部可见）
+message ListExportTasksReq {
+  int64 admin_id = 1;
+  bool super_admin = 2;
+  int64 community_id = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+message ListExportTasksResp {
+  repeated ExportTaskInfo list = 1;
+  int32 total = 2;
+  // 已完成且未下载的任务数（右上角下载图标角标）
+  int32 undownloaded = 3;
+}
+
+message GetExportTaskFileReq {
+  int64 id = 1;
+  int64 admin_id = 2;
+  string admin_name = 3;
+  bool super_admin = 4;
+  // 下载人社区（普通管理员社区隔离校验用；0=跨社区/超管）
+  int64 community_id = 5;
+}
+
+message GetExportTaskFileResp {
+  // 文件绝对路径（服务端 attachment 目录下，gateway 凭此流式读取）
+  string file_path = 1;
+  string file_name = 2;
+}
+
+message DeleteExportTaskReq {
+  int64 id = 1;
+}
+
+message CountUndownloadedReq {
+  int64 admin_id = 1;
+  bool super_admin = 2;
+  int64 community_id = 3;
+}
+
+message CountUndownloadedResp {
+  int32 count = 1;
 }
 
 // RestoreOrderReq 后台恢复用户软删除订单

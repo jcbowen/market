@@ -20,7 +20,8 @@ import type {
 
 /**
  * 获取订单列表
- * @param params 查询参数（order_no/receiver_name/receiver_phone 模糊；start_time/end_time 下单日期 YYYY-MM-DD）
+ * @param params 查询参数（order_no/receiver_name/receiver_phone 模糊；start_time/end_time 下单日期 YYYY-MM-DD；
+ *               pay_no 支付单号/渠道交易号精确（支付宝商家订单号/交易号单框双号）；product_id 按商品过滤含全部规格）
  * @returns 分页订单列表
  */
 export function getOrderList(
@@ -31,7 +32,7 @@ export function getOrderList(
     end_time?: string
     receiver_name?: string
     receiver_phone?: string
-    /** 按会员过滤（会员列表弹窗查订单） */
+    /** 按会员过滤（会员选择器） */
     user_id?: number
     /** 按收银班次过滤（交班记录「查看班内订单」入口） */
     shift_id?: number
@@ -39,6 +40,10 @@ export function getOrderList(
     source?: number
     /** 按取货码精确过滤（收银台核销/订单 Tab 扫码查询） */
     pickup_code?: string
+    /** 支付单号/渠道交易号精确过滤（支付宝商家订单号或交易号均可，单框双号） */
+    pay_no?: string
+    /** 按商品过滤（含全部规格，命中含该商品任意规格的订单） */
+    product_id?: number
     /** 目标社区：仅超管可传，0=跨社区查全部；不传=当前社区语境 */
     community_id?: number
   },
@@ -47,6 +52,135 @@ export function getOrderList(
     url: '/api/v1/admin/orders',
     method: 'GET',
     params,
+  })
+}
+
+// --- 导出任务（下载中心） ---
+
+/** 导出任务状态：1待处理 2生成中 3已完成 4失败 */
+export type ExportTaskStatus = 1 | 2 | 3 | 4
+
+/** 导出任务（下载中心列表行） */
+export interface ExportTask {
+  id: number
+  export_type: string
+  /** 1待处理 2生成中 3已完成 4失败 */
+  status: ExportTaskStatus
+  /** 查询条件人读摘要 */
+  query_desc: string
+  file_name: string
+  /** 文件大小（字节） */
+  file_size: number
+  /** 导出数据行数 */
+  row_count: number
+  admin_id: number
+  admin_name: string
+  /** 累计下载次数（>0 即已下载过） */
+  download_count: number
+  /** 下载留痕 JSON（[{admin_id,admin_name,at}]，仅超管可见） */
+  downloaders?: string
+  /** 失败原因；完成态下复用为截断提示（已达单次导出上限） */
+  error_msg: string
+  created_at: string
+  /** 文件过期时间（生成后 3 天） */
+  expires_at: string
+  /** 查询条件 JSON 快照（失败任务「重新导出」时解析还原为创建参数） */
+  query_cond?: string
+}
+
+/**
+ * 创建订单导出任务（后台异步生成，创建即返回）
+ * @param params 查询参数：复用列表筛选字段；query_desc 查询条件人读摘要（下载中心展示）
+ * @returns 任务 ID
+ */
+export function createOrderExportTask(
+  params: {
+    order_no?: string
+    status?: number
+    start_time?: string
+    end_time?: string
+    receiver_name?: string
+    receiver_phone?: string
+    user_id?: number
+    shift_id?: number
+    source?: number
+    pickup_code?: string
+    pay_no?: string
+    product_id?: number
+    community_id?: number
+    /** 查询条件摘要，如「今天 · 待发货」 */
+    query_desc?: string
+  },
+) {
+  return request<ApiResult<{ id: number }>>({
+    url: '/api/v1/admin/orders/export-tasks',
+    method: 'POST',
+    params,
+  })
+}
+
+/**
+ * 下载中心任务列表（普通管理员仅见自己的，超管见全部）
+ * @param params 分页参数
+ * @returns 任务列表 + 未下载完成数（角标）
+ */
+export function listOrderExportTasks(params?: PageParams) {
+  return request<ApiResult<{ list: ExportTask[]; total: number; undownloaded: number }>>({
+    url: '/api/v1/admin/orders/export-tasks',
+    method: 'GET',
+    params,
+  })
+}
+
+/**
+ * 未下载导出任务数（右上角下载图标角标）
+ * @returns count 未下载数
+ */
+export function countUndownloadedExports() {
+  return request<ApiResult<{ count: number }>>({
+    url: '/api/v1/admin/orders/export-tasks/undownloaded-count',
+    method: 'GET',
+  })
+}
+
+/**
+ * 下载导出文件：blob 请求（携带 Authorization 头）后触发浏览器保存
+ * 不能用 <a href> 原生导航——浏览器直链 GET 不带鉴权头，会被 authAdmin 中间件拒为 11001；
+ * 下载留痕仍由后端 download 接口记录
+ * @param id 任务 ID
+ * @param fileName 保存到本地的文件名（取任务行 file_name）
+ * @throws Error 后端返回业务错误（含认证过期 11001）时抛出 message
+ */
+export async function downloadOrderExportTask(id: number, fileName: string) {
+  const res = await request<Blob>({
+    url: `/api/v1/admin/orders/export-tasks/${id}/download`,
+    method: 'GET',
+    responseType: 'blob',
+  })
+  const blob = res.data
+  // 后端出错时返回的是 HTTP 200 + JSON（blob 形态），解析后按业务错误抛出
+  if (blob instanceof Blob && blob.type.includes('application/json')) {
+    const result = JSON.parse(await blob.text()) as ApiResult<unknown>
+    throw new Error(result.message || '下载失败')
+  }
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * 删除导出任务（仅超管，文件一并删除）
+ * @param id 任务 ID
+ */
+export function deleteOrderExportTask(id: number) {
+  return request<ApiResult<{ success: boolean }>>({
+    url: `/api/v1/admin/orders/export-tasks/${id}`,
+    method: 'DELETE',
   })
 }
 

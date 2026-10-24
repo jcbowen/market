@@ -13,58 +13,131 @@
         </n-gi>
       </n-grid>
 
-      <!-- 筛选区：窄屏允许换行，避免横向溢出 -->
-      <n-space align="center" :size="12" class="filter-bar">
-        <!-- 窄屏用下拉替代状态按钮组，避免 6 个按钮横向溢出 -->
-        <n-select
-          v-if="isNarrow"
-          v-model:value="statusFilter"
-          :options="statusFilterOptions"
-          class="status-select"
-          @update:value="onStatusChange"
-        />
-        <n-radio-group v-else v-model:value="statusFilter" @update:value="onStatusChange">
-          <n-radio-button :value="0">全部订单</n-radio-button>
-          <n-radio-button v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</n-radio-button>
-        </n-radio-group>
-        <n-input
-          v-model:value="filters.order_no"
-          placeholder="订单号搜索"
-          clearable
-          class="search-input"
-          @keyup.enter="onSearch"
-          @clear="onSearch"
-        />
-        <n-input
-          v-model:value="filters.receiver_name"
-          placeholder="收货人姓名"
-          clearable
-          class="search-input"
-          @keyup.enter="onSearch"
-          @clear="onSearch"
-        />
-        <n-input
-          v-model:value="filters.receiver_phone"
-          placeholder="收货人电话"
-          clearable
-          class="search-input"
-          @keyup.enter="onSearch"
-          @clear="onSearch"
-        />
-        <n-date-picker v-model:value="dateRange" type="daterange" clearable class="date-picker" />
-        <n-select
-          v-model:value="sourceFilter"
-          :options="orderSourceFilterOptions"
-          class="source-select"
-          @update:value="onSearch"
-        />
-        <!-- 班次预筛标签（交班记录「查看班内订单」直达），可关闭清除 -->
-        <n-tag v-if="shiftFilter > 0" closable size="small" type="info" @close="clearShiftFilter">
-          班次 #{{ shiftFilter }}
-        </n-tag>
-        <n-button type="primary" @click="onSearch">查询</n-button>
-        <n-button :loading="exporting" @click="exportCsv">导出 CSV</n-button>
-      </n-space>
+      <!-- 筛选区：状态行 / 带标签条件行 / 折叠筛选区（浅色底）/ 操作行，分层对齐 -->
+      <div class="filter-card">
+        <div class="filter-row">
+          <!-- 窄屏用下拉替代状态按钮组，避免 6 个按钮横向溢出 -->
+          <n-select
+            v-if="isNarrow"
+            v-model:value="statusFilter"
+            :options="statusFilterOptions"
+            class="status-select"
+            @update:value="onStatusChange"
+          />
+          <n-radio-group v-else v-model:value="statusFilter" size="small" @update:value="onStatusChange">
+            <n-radio-button :value="0">全部订单</n-radio-button>
+            <n-radio-button v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</n-radio-button>
+          </n-radio-group>
+          <!-- 班次预筛标签（交班记录「查看班内订单」直达），可关闭清除 -->
+          <n-tag v-if="shiftFilter > 0" closable size="small" type="info" @close="clearShiftFilter">
+            班次 #{{ shiftFilter }}
+          </n-tag>
+        </div>
+
+        <div class="filter-row conditions">
+          <div class="filter-item">
+            <span class="f-label">订单号</span>
+            <n-input
+              v-model:value="filters.order_no"
+              placeholder="模糊匹配"
+              clearable
+              class="w-order"
+              @keyup.enter="onSearch"
+              @clear="onSearch"
+            />
+          </div>
+          <div class="filter-item">
+            <span class="f-label">账单号</span>
+            <n-input
+              v-model:value="filters.pay_no"
+              placeholder="支付单号 / 渠道交易号"
+              clearable
+              class="w-pay"
+              @keyup.enter="onSearch"
+              @clear="onSearch"
+            />
+          </div>
+          <div class="filter-item">
+            <span class="f-label">下单时间</span>
+            <div class="f-inline">
+              <n-date-picker v-model:value="dateRange" type="daterange" clearable class="date-picker" @update:value="onDateRangeChange" />
+              <div class="quick-chips">
+                <n-button
+                  v-for="q in dateQuickOptions"
+                  :key="q.key"
+                  size="tiny"
+                  :secondary="dateQuick !== q.key"
+                  :type="dateQuick === q.key ? 'primary' : 'default'"
+                  @click="applyDateQuick(q.key)"
+                >
+                  {{ q.label }}
+                </n-button>
+              </div>
+            </div>
+          </div>
+          <div class="filter-item">
+            <span class="f-label">来源</span>
+            <n-select
+              v-model:value="sourceFilter"
+              :options="orderSourceFilterOptions"
+              class="source-select"
+              @update:value="onSearch"
+            />
+          </div>
+        </div>
+
+        <!-- 折叠筛选区：会员/商品选择器与低频文本项，浅色底与主条件区分 -->
+        <div v-if="showMoreFilters" class="filter-row more-area">
+          <div class="filter-item">
+            <span class="f-label">会员</span>
+            <n-button v-if="!filters.user_id" dashed size="small" @click="userPickerVisible = true">+ 选择会员</n-button>
+            <n-tag v-else closable size="small" type="primary" @close="clearUserFilter">{{ filters.user_name }}</n-tag>
+          </div>
+          <div class="filter-item">
+            <span class="f-label">商品</span>
+            <n-button v-if="!filters.product_id" dashed size="small" @click="productPickerVisible = true">+ 选择商品</n-button>
+            <n-tag v-else closable size="small" type="primary" @close="clearProductFilter">{{ filters.product_name }}</n-tag>
+          </div>
+          <div class="filter-item">
+            <span class="f-label">收货人</span>
+            <n-input
+              v-model:value="filters.receiver_name"
+              placeholder="姓名模糊"
+              clearable
+              class="w-order"
+              @keyup.enter="onSearch"
+              @clear="onSearch"
+            />
+          </div>
+          <div class="filter-item">
+            <span class="f-label">电话</span>
+            <n-input
+              v-model:value="filters.receiver_phone"
+              placeholder="手机号"
+              clearable
+              class="w-order"
+              @keyup.enter="onSearch"
+              @clear="onSearch"
+            />
+          </div>
+        </div>
+
+        <div class="filter-row actions">
+          <n-button quaternary size="small" @click="toggleMoreFilters">
+            {{ showMoreFilters ? '收起筛选' : '更多筛选' }}
+            <template v-if="moreFilterCount > 0 && !showMoreFilters">（{{ moreFilterCount }}）</template>
+          </n-button>
+          <div class="flex-spacer" />
+          <n-tooltip trigger="hover" placement="top">
+            <template #trigger>
+              <n-button size="small" :loading="exporting" @click="createExport">导出 CSV</n-button>
+            </template>
+            后台生成，完成后在右上角「下载中心」取文件
+          </n-tooltip>
+          <n-button size="small" @click="resetFilters">重置</n-button>
+          <n-button type="primary" size="small" @click="onSearch">查询</n-button>
+        </div>
+      </div>
 
       <!-- 批量操作条 -->
       <n-space v-if="selectedRows.length > 0" align="center">
@@ -161,24 +234,65 @@
       </n-spin>
     </n-space>
   </n-modal>
+
+  <!-- 会员选择器（筛选用，单选；复用公共 UserPicker 组件） -->
+  <user-picker v-model:show="userPickerVisible" title="按会员筛选订单" @select="onUserPicked" />
+
+  <!-- 商品选择器（筛选用，单选；按商品过滤含全部规格） -->
+  <n-modal
+    v-model:show="productPickerVisible"
+    preset="card"
+    title="按商品筛选订单"
+    style="width: 520px; max-width: 92vw"
+  >
+    <n-input
+      v-model:value="productKeyword"
+      placeholder="按商品名搜索"
+      clearable
+      style="margin-bottom: 12px"
+    />
+    <n-spin :show="productLoading">
+      <n-empty v-if="!productOptions.length && !productLoading" description="暂无商品" style="padding: 40px 0" />
+      <div v-else class="product-list">
+        <div
+          v-for="p in productOptions"
+          :key="p.id"
+          class="product-row"
+          @click="onProductPicked(p)"
+        >
+          <span class="name">{{ p.name }}</span>
+          <span class="meta">{{ p.min_price !== undefined ? `¥${p.min_price} 起` : '' }}</span>
+        </div>
+      </div>
+    </n-spin>
+    <n-pagination
+      v-model:page="productPage"
+      :item-count="productTotal"
+      :page-size="10"
+      style="margin-top: 12px; justify-content: flex-end"
+      @update:page="loadProductOptions"
+    />
+  </n-modal>
 </template>
 
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'OrderList' })
-import { computed, h, onActivated, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, h, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { completeOrder, getOrderList, verifyPickup, assignDelivery, restoreOrder } from '@/api/order'
+import { createOrderExportTask, completeOrder, getOrderList, verifyPickup, assignDelivery, restoreOrder } from '@/api/order'
 import { getFulfillers } from '@/api/user'
+import { getProductList } from '@/api/product'
 import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
 import OrderDetailModal from './detail.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
+import UserPicker from '@/components/UserPicker.vue'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
 import RefundModal from './components/RefundModal.vue'
-import type { Order } from '@/api/types'
+import type { Order, Product, User } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import { reopenModal } from '@/utils/modal'
 import {
@@ -198,7 +312,8 @@ import {
 
 /**
  * 订单列表页面
- * 状态概览卡片、状态/订单号/收货人/时间筛选、批量发货与核销、CSV 导出
+ * 状态概览卡片、平铺筛选（状态/订单号/支付单号/时间快捷）+ 折叠筛选（会员/商品选择器、收货人）、
+ * 批量发货与核销、后台异步导出（下载中心取文件）
  */
 
 const dialog = useDialog()
@@ -212,12 +327,24 @@ const loadError = ref(false)
 const exporting = ref(false)
 const pagination = ref({ page: 1, pageSize: 20, itemCount: 0, pageSizes: [10, 20, 50, 100], showSizePicker: true })
 
-const filters = reactive({ order_no: '', receiver_name: '', receiver_phone: '' })
+const filters = reactive({ order_no: '', receiver_name: '', receiver_phone: '', pay_no: '', user_id: 0, user_name: '', product_id: 0, product_name: '' })
 const dateRange = ref<[number, number] | null>(null)
+// 时间快捷档：today/yesterday/7d/30d；null 表示当前是手选日期
+type DateQuickKey = 'today' | 'yesterday' | '7d' | '30d'
+const dateQuick = ref<DateQuickKey | null>(null)
+/** 时间快捷选项（与手选日期范围互斥联动） */
+const dateQuickOptions: Array<{ key: DateQuickKey; label: string }> = [
+  { key: 'today', label: '今天' },
+  { key: 'yesterday', label: '昨天' },
+  { key: '7d', label: '近7天' },
+  { key: '30d', label: '近30天' },
+]
 // 来源筛选：0=全部 1=C端 2=收银台
 const sourceFilter = ref(0)
 // 班次筛选：>0 时仅看该收银班次订单（交班记录「查看班内订单」直达）
 const shiftFilter = ref(0)
+// 折叠筛选区展开态
+const showMoreFilters = ref(false)
 
 const detailVisible = ref(false)
 const detailId = ref<number | null>(null)
@@ -337,6 +464,188 @@ function applyQueryShift(): boolean {
  */
 function clearShiftFilter() {
   shiftFilter.value = 0
+  pagination.value.page = 1
+  loadData()
+}
+
+// --- 时间快捷按钮 ---
+
+/**
+ * 应用时间快捷档：填充日期范围并刷新（再点同档取消）
+ * @param key 快捷档 today/yesterday/7d/30d
+ */
+function applyDateQuick(key: DateQuickKey) {
+  if (dateQuick.value === key) {
+    // 再点同档：取消快捷并清空日期
+    dateQuick.value = null
+    dateRange.value = null
+  } else {
+    dateQuick.value = key
+    const now = new Date()
+    const start = new Date(now)
+    const end = new Date(now)
+    if (key === 'today') {
+      // start=end=now
+    } else if (key === 'yesterday') {
+      start.setDate(start.getDate() - 1)
+      end.setTime(start.getTime())
+    } else if (key === '7d') {
+      start.setDate(start.getDate() - 6)
+    } else {
+      start.setDate(start.getDate() - 29)
+    }
+    dateRange.value = [start.getTime(), end.getTime()]
+  }
+  pagination.value.page = 1
+  loadData()
+}
+
+/**
+ * 手选日期变化：清除快捷档标记（互斥联动），并触发刷新
+ * @param value 新日期范围（null=已清空）
+ */
+function onDateRangeChange(value: [number, number] | null) {
+  dateQuick.value = null
+  pagination.value.page = 1
+  // 手动选完范围才刷新；value=null 是清除操作，同样刷新回到全量
+  void value
+  loadData()
+}
+
+// --- 折叠筛选区 ---
+
+/** 折叠区已设置的条件数（「更多筛选」按钮计数角标） */
+const moreFilterCount = computed(
+  () =>
+    (filters.user_id > 0 ? 1 : 0) +
+    (filters.product_id > 0 ? 1 : 0) +
+    (filters.receiver_name ? 1 : 0) +
+    (filters.receiver_phone ? 1 : 0),
+)
+
+/**
+ * 展开/收起折叠筛选区
+ */
+function toggleMoreFilters() {
+  showMoreFilters.value = !showMoreFilters.value
+}
+
+// --- 会员/商品选择器（筛选用） ---
+
+const userPickerVisible = ref(false)
+
+/**
+ * 会员选择器回调：写入筛选条件并刷新（单选）
+ * @param user 选中的会员
+ */
+function onUserPicked(user: User) {
+  filters.user_id = user.id
+  filters.user_name = user.nickname || user.phone || `用户${user.id}`
+  showMoreFilters.value = true
+  pagination.value.page = 1
+  loadData()
+}
+
+/**
+ * 清除会员筛选并刷新
+ */
+function clearUserFilter() {
+  filters.user_id = 0
+  filters.user_name = ''
+  pagination.value.page = 1
+  loadData()
+}
+
+const productPickerVisible = ref(false)
+const productKeyword = ref('')
+const productOptions = ref<Product[]>([])
+const productTotal = ref(0)
+const productPage = ref(1)
+const productLoading = ref(false)
+
+let productSearchTimer: ReturnType<typeof setTimeout> | null = null
+
+// 商品关键字 300ms 防抖搜索
+watch(productKeyword, () => {
+  if (productSearchTimer) clearTimeout(productSearchTimer)
+  productSearchTimer = setTimeout(() => {
+    productSearchTimer = null
+    productPage.value = 1
+    void loadProductOptions()
+  }, 300)
+})
+
+/**
+ * 打开商品选择器时加载第一页
+ */
+watch(productPickerVisible, (v) => {
+  if (v) {
+    productKeyword.value = ''
+    productPage.value = 1
+    void loadProductOptions()
+  }
+})
+
+/**
+ * 加载商品分页列表（仅上架商品，供筛选选择）
+ */
+async function loadProductOptions() {
+  productLoading.value = true
+  try {
+    const res = await getProductList({
+      page: productPage.value,
+      page_size: 10,
+      status: 1,
+      keyword: productKeyword.value.trim() || undefined,
+    })
+    if (res.data.code === 0) {
+      productOptions.value = res.data.data.list || []
+      productTotal.value = res.data.data.total || 0
+    }
+  } finally {
+    productLoading.value = false
+  }
+}
+
+/**
+ * 商品选择器回调：写入筛选条件并刷新（按商品含全部规格）
+ * @param p 选中的商品
+ */
+function onProductPicked(p: Product) {
+  filters.product_id = p.id
+  filters.product_name = p.name
+  productPickerVisible.value = false
+  pagination.value.page = 1
+  loadData()
+}
+
+/**
+ * 清除商品筛选并刷新
+ */
+function clearProductFilter() {
+  filters.product_id = 0
+  filters.product_name = ''
+  pagination.value.page = 1
+  loadData()
+}
+
+/**
+ * 重置全部筛选条件并刷新（回到「全部订单 · 无条件」初始态）
+ */
+function resetFilters() {
+  filters.order_no = ''
+  filters.receiver_name = ''
+  filters.receiver_phone = ''
+  filters.pay_no = ''
+  filters.user_id = 0
+  filters.user_name = ''
+  filters.product_id = 0
+  filters.product_name = ''
+  dateRange.value = null
+  dateQuick.value = null
+  sourceFilter.value = 0
+  shiftFilter.value = 0
+  statusFilter.value = 0
   pagination.value.page = 1
   loadData()
 }
@@ -556,7 +865,7 @@ function onPageSizeChange(pageSize: number) {
 }
 
 /**
- * 组装当前筛选条件（列表查询与导出共用）
+ * 组装当前筛选条件（列表查询与导出共用，保证「所见即所导」）
  */
 function buildQuery() {
   const [start, end] = dateRange.value ?? []
@@ -572,12 +881,35 @@ function buildQuery() {
     order_no: filters.order_no || undefined,
     receiver_name: filters.receiver_name || undefined,
     receiver_phone: filters.receiver_phone || undefined,
+    pay_no: filters.pay_no || undefined,
+    user_id: filters.user_id > 0 ? filters.user_id : undefined,
+    product_id: filters.product_id > 0 ? filters.product_id : undefined,
     start_time: start ? fmt(start) : undefined,
     end_time: end ? fmt(end) : undefined,
     status: statusFilter.value > 0 ? statusFilter.value : undefined,
     source: sourceFilter.value > 0 ? sourceFilter.value : undefined,
     shift_id: shiftFilter.value > 0 ? shiftFilter.value : undefined,
   }
+}
+
+/**
+ * 组装查询条件的人读摘要（导出任务展示用），如「今天 · 待发货 · 会员张三」
+ */
+function buildQueryDesc() {
+  const parts: string[] = []
+  if (dateQuick.value) {
+    parts.push(dateQuickOptions.find((q) => q.key === dateQuick.value)?.label ?? '')
+  } else if (dateRange.value) {
+    parts.push('自定义时间段')
+  }
+  const statusLabel = statusOptions.find((s) => s.value === statusFilter.value)?.label
+  if (statusLabel) parts.push(statusLabel)
+  if (filters.user_id > 0) parts.push(`会员${filters.user_name}`)
+  if (filters.product_id > 0) parts.push(`商品${filters.product_name}`)
+  if (filters.order_no) parts.push(`单号${filters.order_no}`)
+  if (filters.pay_no) parts.push('账单号')
+  if (sourceFilter.value > 0) parts.push(orderSourceFilterOptions.find((o) => o.value === sourceFilter.value)?.label ?? '')
+  return parts.filter(Boolean).join(' · ') || '全部订单'
 }
 
 /**
@@ -807,48 +1139,30 @@ function onActionSuccess() {
 }
 
 /**
- * 导出当前筛选条件下的订单 CSV（逐页拉取，上限 2000 条）
+ * 创建后台导出任务（异步生成，创建即返回）
+ * 文件生成完成后在右上角「下载中心」取文件，不再前端逐页拉取拼 CSV
  */
-async function exportCsv() {
+async function createExport() {
   exporting.value = true
   try {
-    const baseQuery = { ...buildQuery(), page: 1, page_size: 100 }
-    const all: Order[] = []
-    for (let page = 1; page <= 20; page++) {
-      const res = await getOrderList({ ...baseQuery, page })
-      if (res.data.code !== 0) break
-      all.push(...res.data.data.list)
-      if (all.length >= res.data.data.total) break
-    }
-    if (all.length === 0) {
-      message.info('当前筛选条件下没有可导出的订单')
-      return
-    }
-    const header = ['订单号', '用户', '配送方式', '来源', '经手人', '订单金额', '实付金额', '状态', '创建时间']
-    const rows = all.map((row) => [
-      row.order_no,
-      row.user_name,
-      deliveryTypeText(row.delivery_type),
-      orderSourceText(row.source ?? ORDER_SOURCE.USER),
-      row.operator_name || '',
-      (row.total_amount ?? 0).toFixed(2),
-      (row.pay_amount ?? 0).toFixed(2),
-      row.status_text,
-      formatDateTime(row.created_at),
-    ])
-    // BOM 保证 Excel 正确识别 UTF-8
-    const csv =
-      '\ufeff' +
-      [header, ...rows]
-        .map((cells) => cells.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-        .join('\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+    const query = buildQuery()
+    await createOrderExportTask({
+      order_no: query.order_no,
+      status: query.status,
+      start_time: query.start_time,
+      end_time: query.end_time,
+      receiver_name: query.receiver_name,
+      receiver_phone: query.receiver_phone,
+      user_id: query.user_id,
+      product_id: query.product_id,
+      pay_no: query.pay_no,
+      shift_id: query.shift_id,
+      source: query.source,
+      query_desc: buildQueryDesc(),
+    })
+    message.success('导出任务已创建，生成完成后可在右上角「下载中心」下载')
+  } catch {
+    // 错误提示由请求拦截器统一弹出（含在途任务超限）
   } finally {
     exporting.value = false
   }
@@ -898,13 +1212,68 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 筛选区允许换行后,窄屏下搜索框自适应宽度,避免固定宽度挤压 */
-.search-input {
-  width: 160px;
+/* --- 筛选区（filter-card 分层布局） --- */
+
+/* 筛选卡片：整体包一层浅描边，与统计卡片、表格视觉分区 */
+.filter-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #efeff5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* 通用行：允许换行，行内控件纵向居中 */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+/* 单个条件项：label + 控件横排，保证同一行标签与输入框对齐 */
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 条件标签 */
+.f-label {
+  font-size: 13px;
+  color: #666;
+  white-space: nowrap;
+}
+
+/* 下单时间项内部：日期选择器 + 快捷按钮组合 */
+.f-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 时间快捷按钮组 */
+.quick-chips {
+  display: flex;
+  gap: 4px;
+}
+
+/* 订单号/收货人/电话输入框宽度 */
+.w-order {
+  width: 150px;
+}
+
+/* 账单号（支付单号/渠道交易号）稍宽，容纳支付宝交易号长度 */
+.w-pay {
+  width: 200px;
 }
 
 .date-picker {
-  width: 260px;
+  width: 280px;
 }
 
 .status-select {
@@ -912,13 +1281,31 @@ onUnmounted(() => {
 }
 
 .source-select {
-  width: 120px;
+  width: 110px;
+}
+
+/* 折叠筛选区：浅色底与主条件行区分 */
+.more-area {
+  background: #fafafc;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+/* 操作行右端对齐：查询/重置/导出靠右，更多筛选靠左 */
+.actions .flex-spacer {
+  flex: 1;
 }
 
 @media (max-width: 768px) {
-  .search-input,
-  .date-picker {
+  .w-order,
+  .w-pay,
+  .date-picker,
+  .source-select {
     width: 100%;
+  }
+
+  .filter-item {
+    flex: 1 1 100%;
   }
 }
 
@@ -939,5 +1326,46 @@ onUnmounted(() => {
 .stat-label {
   font-size: 12px;
   color: #999;
+}
+
+/* 商品选择器列表（弹窗内）：行式布局，点击行即选中 */
+.product-list {
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid #efeff5;
+  border-radius: 6px;
+}
+
+.product-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #f3f3f7;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.product-row:last-child {
+  border-bottom: none;
+}
+
+.product-row:hover {
+  background: #f7f9fa;
+}
+
+.product-row .name {
+  font-size: 14px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-row .meta {
+  font-size: 12px;
+  color: #888;
+  white-space: nowrap;
 }
 </style>

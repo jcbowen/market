@@ -146,7 +146,7 @@ func TestSchedulerRefundRetryRotation(t *testing.T) {
 		a := seedStuckRefund(t, env.db, refundSeed{No: "SCHEDTEST-RF-B1-A", OrderID: orderID, CheckedAgo: time.Minute})
 		b := seedStuckRefund(t, env.db, refundSeed{No: "SCHEDTEST-RF-B1-B", OrderID: orderID})
 
-		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil)
+		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil, nil)
 		sched.retryStuckRefunds(ctx)
 
 		calls := env.sched.payment.flowQueryCalls()
@@ -169,7 +169,7 @@ func TestSchedulerRefundRetryRotation(t *testing.T) {
 		env.sched.payment.setRefundFlow(c.RefundNo, 1)
 		_, _, updatedAtBefore, _ := refundCheckRow(t, env.db, c.ID)
 
-		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil)
+		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil, nil)
 		stat := sched.retryStuckRefunds(ctx)
 
 		checked, retry, updatedAt, status := refundCheckRow(t, env.db, c.ID)
@@ -203,7 +203,7 @@ func TestSchedulerRefundRetryRotation(t *testing.T) {
 		// 若本轮没被判为用满，这里会走重发分支；预置受理中确保只可能命中 give_up
 		env.sched.payment.setRefundFlow(d.RefundNo, 1)
 
-		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil)
+		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil, nil)
 		stat := sched.retryStuckRefunds(ctx)
 
 		if _, retry, _, _ := refundCheckRow(t, env.db, d.ID); retry != int32(refundMaxRetry) {
@@ -238,7 +238,7 @@ func TestSchedulerRefundRetryRotation(t *testing.T) {
 		e := seedStuckRefund(t, env.db, refundSeed{No: "SCHEDTEST-RF-B1-E", OrderID: orderID})
 		env.sched.payment.failRefundFlowQuery(e.RefundNo)
 
-		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil)
+		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil, nil)
 		stat := sched.retryStuckRefunds(ctx)
 
 		if stat.failed != 1 {

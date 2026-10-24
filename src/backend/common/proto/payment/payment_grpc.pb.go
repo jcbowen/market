@@ -40,6 +40,7 @@ const (
 	PaymentService_MarkPaymentPaid_FullMethodName           = "/payment.PaymentService/MarkPaymentPaid"
 	PaymentService_GetPaymentStatus_FullMethodName          = "/payment.PaymentService/GetPaymentStatus"
 	PaymentService_GetAlipayPayUrl_FullMethodName           = "/payment.PaymentService/GetAlipayPayUrl"
+	PaymentService_FindOrdersByPayNo_FullMethodName         = "/payment.PaymentService/FindOrdersByPayNo"
 )
 
 // PaymentServiceClient is the client API for PaymentService service.
@@ -94,6 +95,11 @@ type PaymentServiceClient interface {
 	// （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
 	// 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
 	GetAlipayPayUrl(ctx context.Context, in *GetAlipayPayUrlReq, opts ...grpc.CallOption) (*GetAlipayPayUrlResp, error)
+	// FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（后台订单列表「支付单号/渠道交易号」搜索用）
+	// 单框双号，字段渠道无关：payment_no 即渠道账单的「商家订单号」（out_trade_no），
+	// transaction_id 即渠道交易号（支付宝 trade_no / 微信 transaction_id）。
+	// 精确匹配；同一订单可能有多笔支付尝试，命中后去重回传订单号
+	FindOrdersByPayNo(ctx context.Context, in *FindOrdersByPayNoReq, opts ...grpc.CallOption) (*FindOrdersByPayNoResp, error)
 }
 
 type paymentServiceClient struct {
@@ -304,6 +310,16 @@ func (c *paymentServiceClient) GetAlipayPayUrl(ctx context.Context, in *GetAlipa
 	return out, nil
 }
 
+func (c *paymentServiceClient) FindOrdersByPayNo(ctx context.Context, in *FindOrdersByPayNoReq, opts ...grpc.CallOption) (*FindOrdersByPayNoResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FindOrdersByPayNoResp)
+	err := c.cc.Invoke(ctx, PaymentService_FindOrdersByPayNo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaymentServiceServer is the server API for PaymentService service.
 // All implementations must embed UnimplementedPaymentServiceServer
 // for forward compatibility.
@@ -356,6 +372,11 @@ type PaymentServiceServer interface {
 	// （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
 	// 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
 	GetAlipayPayUrl(context.Context, *GetAlipayPayUrlReq) (*GetAlipayPayUrlResp, error)
+	// FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（后台订单列表「支付单号/渠道交易号」搜索用）
+	// 单框双号，字段渠道无关：payment_no 即渠道账单的「商家订单号」（out_trade_no），
+	// transaction_id 即渠道交易号（支付宝 trade_no / 微信 transaction_id）。
+	// 精确匹配；同一订单可能有多笔支付尝试，命中后去重回传订单号
+	FindOrdersByPayNo(context.Context, *FindOrdersByPayNoReq) (*FindOrdersByPayNoResp, error)
 	mustEmbedUnimplementedPaymentServiceServer()
 }
 
@@ -425,6 +446,9 @@ func (UnimplementedPaymentServiceServer) GetPaymentStatus(context.Context, *GetP
 }
 func (UnimplementedPaymentServiceServer) GetAlipayPayUrl(context.Context, *GetAlipayPayUrlReq) (*GetAlipayPayUrlResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetAlipayPayUrl not implemented")
+}
+func (UnimplementedPaymentServiceServer) FindOrdersByPayNo(context.Context, *FindOrdersByPayNoReq) (*FindOrdersByPayNoResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method FindOrdersByPayNo not implemented")
 }
 func (UnimplementedPaymentServiceServer) mustEmbedUnimplementedPaymentServiceServer() {}
 func (UnimplementedPaymentServiceServer) testEmbeddedByValue()                        {}
@@ -807,6 +831,24 @@ func _PaymentService_GetAlipayPayUrl_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PaymentService_FindOrdersByPayNo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FindOrdersByPayNoReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).FindOrdersByPayNo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_FindOrdersByPayNo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).FindOrdersByPayNo(ctx, req.(*FindOrdersByPayNoReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PaymentService_ServiceDesc is the grpc.ServiceDesc for PaymentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -893,6 +935,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetAlipayPayUrl",
 			Handler:    _PaymentService_GetAlipayPayUrl_Handler,
+		},
+		{
+			MethodName: "FindOrdersByPayNo",
+			Handler:    _PaymentService_FindOrdersByPayNo_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

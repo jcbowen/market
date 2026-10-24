@@ -53,6 +53,8 @@
           </n-breadcrumb>
         </div>
         <div class="header-right">
+          <!-- 下载中心：后台异步导出的任务列表入口，有未下载文件时图标带角标 -->
+          <download-center />
           <!-- 当前社区：点击进入社区选择页（多社区账号切换入口） -->
           <n-button v-if="showCommunitySwitch" text class="community-trigger" @click="goSelectCommunity">
             <n-icon size="16" class="community-trigger-icon">
@@ -116,6 +118,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useTabsStore } from '@/stores/tabs'
 import { useBrandingStore } from '@/stores/branding'
+import DownloadCenter from '@/components/DownloadCenter.vue'
 import { resolveHomePath } from '@/router'
 import { getCommunityList } from '@/api/user'
 

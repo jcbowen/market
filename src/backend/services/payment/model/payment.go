@@ -34,7 +34,9 @@ type Payment struct {
 	PayType       int32   `gorm:"column:pay_type;type:tinyint;not null;comment:1微信支付 2支付宝支付 3货到付款 4现金（收银台） 5微信付款码 6支付宝付款码；可回查/可对账的渠道口径为 {1,2,5,6}" json:"pay_type"`
 	Amount        float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:支付金额" json:"amount"`
 	Status        int32   `gorm:"column:status;type:tinyint;default:1;index:idx_payments_status_created,priority:1;index:idx_payments_status_reconciled,priority:1;comment:1待支付 2支付成功 3支付失败 4已退款 5已关闭" json:"status"`
-	TransactionID string  `gorm:"column:transaction_id;type:varchar(100);comment:第三方交易号" json:"transaction_id"`
+	// TransactionID 渠道交易号（支付宝 trade_no / 微信 transaction_id），渠道无关同列存放。
+	// 后台「支付单号/渠道交易号」单框搜索按本列精确匹配，加普通索引（允许空串重复，不能 unique）
+	TransactionID string  `gorm:"column:transaction_id;type:varchar(100);index;comment:第三方交易号" json:"transaction_id"`
 	PayParams     string  `gorm:"column:pay_params;type:text;comment:第三方支付调起参数 JSON" json:"pay_params"`
 	PayTime       *string `gorm:"column:pay_time;type:datetime;comment:支付时间" json:"pay_time"`
 	// ConfirmSource 支付确认的来源渠道：区分「渠道回调正常确认」与「对账补偿/人工同步捞回」，

@@ -346,6 +346,36 @@ func (s *PaymentService) GetPaymentStatusByNo(ctx context.Context, paymentNo str
 	return &p, nil
 }
 
+// FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（后台订单列表「支付单号/渠道交易号」搜索用）
+// 单框双号，字段渠道无关：pay_no 同时精确匹配 payment_no（渠道账单「商家订单号」out_trade_no）
+// 与 transaction_id（渠道交易号，支付宝 trade_no / 微信 transaction_id），后续接入新渠道无需改动本查询。
+// 同一订单可能有多笔支付尝试（失败重试复用同一支付单号），命中后按订单号去重，
+// 供 gateway 拿订单号集合继续到 order 服务查订单
+// 参数：
+//   - ctx: 上下文
+//   - payNo: 支付单号或渠道交易号（精确匹配）
+//
+// 返回值：
+//   - []string: 关联订单号去重列表（未命中返回空切片，不视为错误）
+//   - error: 参数为空返回 InvalidArgument；查询失败返回 Internal
+//
+// 使用示例：
+//	orderNos, err := svc.FindOrdersByPayNo(ctx, "PAY202601010001")
+func (s *PaymentService) FindOrdersByPayNo(ctx context.Context, payNo string) ([]string, error) {
+	payNo = strings.TrimSpace(payNo)
+	if payNo == "" {
+		return nil, bizerr.New(codes.InvalidArgument, "支付单号不能为空")
+	}
+	var orderNos []string
+	err := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
+		Where("payment_no = ? OR transaction_id = ?", payNo, payNo).
+		Distinct().Pluck("order_no", &orderNos).Error
+	if err != nil {
+		return nil, bizerr.New(codes.Internal, "查询支付单失败")
+	}
+	return orderNos, nil
+}
+
 // GetAlipayPayUrl 凭支付单号重新生成支付宝手机网站支付收银台链接（H5 支付引导页免登录换取用）
 // 引导页 URL 只携带不可枚举的支付单号，在系统浏览器打开后凭单号实时换取新签名的收银台链接，
 // 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题；

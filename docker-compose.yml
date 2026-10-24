@@ -132,6 +132,10 @@ services:
         condition: service_healthy
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
+      # 本地附件共享目录：order 导出 CSV 落盘与 gateway 下载流式下发共用同一宿主目录，
+      # 与 product-service 的挂载保持一致；缺此挂载时导出文件写进容器临时层，
+      # gateway 侧 c.File 找不到文件，下载恒 404（2026-10-24 下载中心联调实测）
+      - ./bin/attachment:/app/attachment
     command: >
       sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
 

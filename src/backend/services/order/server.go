@@ -23,7 +23,9 @@ type server struct {
 	posHeldService *service.PosHeldService
 	shiftService   *service.ShiftService
 	prefService    *service.AppPreferenceService
-	paymentClient  payment.PaymentServiceClient
+	// exportTaskService 后台导出任务服务（下载中心）
+	exportTaskService *service.ExportTaskService
+	paymentClient     payment.PaymentServiceClient
 }
 
 // newServer 创建订单服务 gRPC 实现
@@ -35,13 +37,15 @@ type server struct {
 // 返回值：
 //   - *server: gRPC 服务实现
 func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient, cfg *config.Config) *server {
+	orderSvc := service.NewOrderService(db, cfg)
 	return &server{
-		orderService:   service.NewOrderService(db, cfg),
+		orderService:   orderSvc,
 		refundService:  service.NewRefundService(db, paymentClient),
 		posHeldService: service.NewPosHeldService(db),
 		shiftService:   service.NewShiftService(db),
 		prefService:    service.NewAppPreferenceService(db),
-		paymentClient:  paymentClient,
+		exportTaskService: service.NewExportTaskService(db, orderSvc),
+		paymentClient:     paymentClient,
 	}
 }
 
@@ -327,6 +331,54 @@ func (s *server) SaveAppPreferences(ctx stdctx.Context, req *order.SaveAppPrefer
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// CreateExportTask 创建后台导出任务（异步生成 CSV，创建即返回）
+func (s *server) CreateExportTask(ctx stdctx.Context, req *order.CreateExportTaskReq) (*order.CreateExportTaskResp, error) {
+	id, err := s.exportTaskService.CreateExportTask(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &order.CreateExportTaskResp{Id: id}, nil
+}
+
+// ListExportTasks 下载中心任务列表（普通管理员仅见自己的，超管见全部）
+func (s *server) ListExportTasks(ctx stdctx.Context, req *order.ListExportTasksReq) (*order.ListExportTasksResp, error) {
+	list, total, undownloaded, err := s.exportTaskService.ListExportTasks(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &order.ListExportTasksResp{
+		List:        list,
+		Total:       total,
+		Undownloaded: undownloaded,
+	}, nil
+}
+
+// GetExportTaskFile 取导出文件（校验可见性 + 记录下载留痕，gateway 凭路径流式下发）
+func (s *server) GetExportTaskFile(ctx stdctx.Context, req *order.GetExportTaskFileReq) (*order.GetExportTaskFileResp, error) {
+	path, name, err := s.exportTaskService.GetExportTaskFile(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &order.GetExportTaskFileResp{FilePath: path, FileName: name}, nil
+}
+
+// DeleteExportTask 删除导出任务（仅超管，文件一并删除）
+func (s *server) DeleteExportTask(ctx stdctx.Context, req *order.DeleteExportTaskReq) (*common.CommonResponse, error) {
+	if err := s.exportTaskService.DeleteExportTask(ctx, req.Id); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
+// CountUndownloaded 未下载任务数（下载中心角标）
+func (s *server) CountUndownloaded(ctx stdctx.Context, req *order.CountUndownloadedReq) (*order.CountUndownloadedResp, error) {
+	count, err := s.exportTaskService.CountUndownloaded(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &order.CountUndownloadedResp{Count: count}, nil
 }
 
 // ApplyRefund 申请退款

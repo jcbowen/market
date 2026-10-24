@@ -2,9 +2,12 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -2215,6 +2218,21 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 	source, _ := strconv.Atoi(c.DefaultQuery("source", "0"))
 	// 收银班次过滤（交班记录「查看班内订单」入口）
 	shiftID, _ := strconv.ParseInt(c.DefaultQuery("shift_id", "0"), 10, 64)
+	// 商品过滤（含全部规格）
+	productID, _ := strconv.ParseInt(c.DefaultQuery("product_id", "0"), 10, 64)
+	// 支付单号/渠道交易号（支付宝商家订单号/交易号，单框双号）
+	payNo := c.Query("pay_no")
+	// 反查命中集：携带 pay_no 才先经 payment 服务反查订单号，再以集合到 order 服务精确匹配
+	//（has_pay_no 区分「没传」与「传了但没查到」，后者直接返回空列表）
+	var payOrderNos []string
+	if payNo != "" {
+		found, err := h.paymentClient.FindOrdersByPayNo(c.Request.Context(), &payment.FindOrdersByPayNoReq{PayNo: payNo})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		payOrderNos = found.GetOrderNos()
+	}
 
 	resp, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
 		CommunityId: communityID,
@@ -2224,6 +2242,9 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 		Source:             int32(source),
 		Status:             int32(status),
 		ShiftId:            shiftID,
+		ProductId:          productID,
+		HasPayNo:           payNo != "",
+		PayOrderNos:        payOrderNos,
 		OrderNo:            c.Query("order_no"),
 		StartTime:          c.Query("start_time"),
 		EndTime:            c.Query("end_time"),
@@ -2292,6 +2313,192 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 		})
 	}
 	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
+}
+
+// CreateOrderExportTask 创建订单导出任务（下载中心）
+// 把当前列表筛选条件打包成 JSON 快照落库，后台异步生成 CSV 后在下载中心取文件；
+// 创建即返回任务 ID，不再阻塞页面逐页拉数据
+// 参数：
+//   - c: gin 上下文（body: export_type/query_desc + query 参数复用列表筛选字段）
+func (h *AdminHandler) CreateOrderExportTask(c *gin.Context) {
+	// 目标社区：与列表同一口径（超管可显式传 community_id）
+	communityID := h.getAdminCommunityID(c)
+	isSuper := gwMiddleware.IsSuperAdmin(c)
+	if isSuper && c.Query("community_id") != "" {
+		if id, err := strconv.ParseInt(c.Query("community_id"), 10, 64); err == nil && id >= 0 {
+			communityID = id
+		}
+	}
+	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
+	source, _ := strconv.Atoi(c.DefaultQuery("source", "0"))
+	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
+	shiftID, _ := strconv.ParseInt(c.DefaultQuery("shift_id", "0"), 10, 64)
+	productID, _ := strconv.ParseInt(c.DefaultQuery("product_id", "0"), 10, 64)
+
+	// 支付单号反查：与列表一致先经 payment 服务反查订单号集合，随快照下发
+	payNo := c.Query("pay_no")
+	var payOrderNos []string
+	if payNo != "" {
+		found, err := h.paymentClient.FindOrdersByPayNo(c.Request.Context(), &payment.FindOrdersByPayNoReq{PayNo: payNo})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		payOrderNos = found.GetOrderNos()
+	}
+
+	// 查询条件快照：与 order 服务 exportQuery 结构对齐（所见即所导）
+	cond := map[string]interface{}{
+		"community_id":    communityID,
+		"user_id":         userID,
+		"source":          source,
+		"status":          status,
+		"shift_id":        shiftID,
+		"product_id":      productID,
+		"order_no":        c.Query("order_no"),
+		"start_time":      c.Query("start_time"),
+		"end_time":        c.Query("end_time"),
+		"receiver_name":   c.Query("receiver_name"),
+		"receiver_phone":  c.Query("receiver_phone"),
+		"pickup_code":     c.Query("pickup_code"),
+		// pay_no 原始入参留档：失败任务「重新导出」时前端按快照原样重发，不丢账单号筛选
+		"pay_no":          payNo,
+		"include_deleted": true,
+	}
+	condJSON, err := json.Marshal(cond)
+	if err != nil {
+		response.Error(c, errcode.InternalServerError, "打包查询条件失败")
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.orderClient.CreateExportTask(c.Request.Context(), &order.CreateExportTaskReq{
+		ExportType:  "orders",
+		QueryJson:   string(condJSON),
+		QueryDesc:   c.Query("query_desc"),
+		AdminId:     uc.UserID,
+		AdminName:   c.GetString("admin_username"),
+		CommunityId: communityID,
+		PayOrderNos: payOrderNos,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"id": resp.Id})
+}
+
+// ListOrderExportTasks 下载中心任务列表
+// 普通管理员仅见自己创建的；超管见全部（可按 community_id 限定语境）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) ListOrderExportTasks(c *gin.Context) {
+	page, pageSize := parsePageParams(c)
+	isSuper := gwMiddleware.IsSuperAdmin(c)
+	resp, err := h.orderClient.ListExportTasks(c.Request.Context(), &order.ListExportTasksReq{
+		AdminId:     appcontext.GetUserContext(c).UserID,
+		SuperAdmin:  isSuper,
+		CommunityId: h.getAdminCommunityID(c),
+		Page:        int32(page),
+		PageSize:    int32(pageSize),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	list := make([]gin.H, 0, len(resp.List))
+	for _, t := range resp.List {
+		item := gin.H{
+			"id":             t.Id,
+			"export_type":    t.ExportType,
+			"status":         t.Status,
+			"query_desc":     t.QueryDesc,
+			"file_name":      t.FileName,
+			"file_size":      t.FileSize,
+			"row_count":      t.RowCount,
+			"admin_id":       t.AdminId,
+			"admin_name":     t.AdminName,
+			"download_count": t.DownloadCount,
+			"error_msg":      t.ErrorMsg,
+			"created_at":     t.CreatedAt,
+			"expires_at":     t.ExpiresAt,
+		}
+		// 下载留痕名单仅超管可见（普通管理员只见自己的记录，名单即自己，无需回传）
+		if isSuper {
+			item["downloaders"] = t.Downloaders
+		}
+		list = append(list, item)
+	}
+	response.Success(c, gin.H{
+		"list":         list,
+		"total":        resp.Total,
+		"undownloaded": resp.Undownloaded,
+	})
+}
+
+// DownloadOrderExportTask 下载导出文件
+// 校验可见性（order 服务）后由 gateway 凭服务端路径流式下发，不经公开静态目录；
+// 下载留痕（下载人/次数）在 order 服务 GetExportTaskFile 内记录
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) DownloadOrderExportTask(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError, "任务 ID 无效")
+		return
+	}
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.orderClient.GetExportTaskFile(c.Request.Context(), &order.GetExportTaskFileReq{
+		Id:          id,
+		AdminId:     uc.UserID,
+		AdminName:   c.GetString("admin_username"),
+		SuperAdmin:  gwMiddleware.IsSuperAdmin(c),
+		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", url.PathEscape(resp.FileName)))
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.File(resp.FilePath)
+}
+
+// DeleteOrderExportTask 删除导出任务（仅超管，文件一并删除）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) DeleteOrderExportTask(c *gin.Context) {
+	// 前端仅给超管渲染删除入口，此处服务端再兜底一层（越权直接拒绝）
+	if !gwMiddleware.IsSuperAdmin(c) {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError, "任务 ID 无效")
+		return
+	}
+	if _, err := h.orderClient.DeleteExportTask(c.Request.Context(), &order.DeleteExportTaskReq{Id: id}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"success": true})
+}
+
+// CountOrderExportUndownloaded 未下载任务数（右上角下载图标角标）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) CountOrderExportUndownloaded(c *gin.Context) {
+	resp, err := h.orderClient.CountUndownloaded(c.Request.Context(), &order.CountUndownloadedReq{
+		AdminId:     appcontext.GetUserContext(c).UserID,
+		SuperAdmin:  gwMiddleware.IsSuperAdmin(c),
+		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"count": resp.Count})
 }
 
 // batchUserNames 批量取订单列表涉及的会员展示名（昵称优先，回落手机号）

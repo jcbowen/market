@@ -76,6 +76,106 @@ service OrderService {
   rpc StartDelivery(StartDeliveryReq) returns (common.CommonResponse);
   // 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
   rpc CompleteDelivery(CompleteDeliveryReq) returns (common.CommonResponse);
+
+  // --- 后台导出任务（下载中心） ---
+  // 创建导出任务：落库后由 order 服务异步分批生成 CSV，创建接口立即返回
+  rpc CreateExportTask(CreateExportTaskReq) returns (CreateExportTaskResp);
+  // 下载中心任务列表（普通管理员仅见自己创建的，超管见全部；同时返回未下载数供角标）
+  rpc ListExportTasks(ListExportTasksReq) returns (ListExportTasksResp);
+  // 取导出文件：校验可见性后返回文件路径并记录下载人（gateway 凭路径流式下发）
+  rpc GetExportTaskFile(GetExportTaskFileReq) returns (GetExportTaskFileResp);
+  // 删除导出任务：仅超管，记录与文件一并删除
+  rpc DeleteExportTask(DeleteExportTaskReq) returns (common.CommonResponse);
+  // 未下载任务数（右上角下载图标角标）
+  rpc CountUndownloaded(CountUndownloadedReq) returns (CountUndownloadedResp);
+}
+
+// --- 后台导出任务（下载中心） ---
+
+// ExportTaskInfo 导出任务信息（下载中心列表行）
+message ExportTaskInfo {
+  int64 id = 1;
+  string export_type = 2;    // 导出类型，当前仅 orders
+  int32 status = 3;          // 1待处理 2生成中 3已完成 4失败
+  string query_desc = 4;     // 查询条件人读摘要（列表展示）
+  string file_name = 5;      // 下载文件名
+  int64 file_size = 6;       // 文件大小（字节）
+  int64 row_count = 7;       // 导出数据行数
+  int64 admin_id = 8;        // 创建人管理员 ID
+  string admin_name = 9;     // 创建人姓名
+  int64 community_id = 10;   // 创建人社区（0=超管跨社区）
+  int32 download_count = 11; // 累计下载次数（>0 即已下载过）
+  string downloaders = 12;   // 下载留痕 JSON [{admin_id,admin_name,at}]（完整名单仅超管可见）
+  string error_msg = 13;     // 失败原因
+  string created_at = 14;
+  string expires_at = 15;    // 文件过期时间（生成后 3 天）
+  // 查询条件 JSON 快照：失败任务「重新导出」时前端解析还原为创建参数，按原条件重发
+  string query_cond = 16;
+}
+
+message CreateExportTaskReq {
+  string export_type = 1;
+  // 查询条件 JSON 快照（与 ListOrdersReq 过滤字段对齐，后台异步执行时原样还原）
+  string query_json = 2;
+  // 查询条件人读摘要，如「今天 · 待发货」
+  string query_desc = 3;
+  int64 admin_id = 4;
+  string admin_name = 5;
+  int64 community_id = 6;
+  // 支付单号/渠道交易号反查命中的订单号集合：order 服务无法反查 payment，
+  // 由 gateway 先反查后随快照下发，生成时按集合过滤
+  repeated string pay_order_nos = 7;
+}
+
+message CreateExportTaskResp {
+  int64 id = 1;
+}
+
+message ListExportTasksReq {
+  // admin_id > 0 仅查该管理员创建的（普通管理员）；super_admin=true 时忽略
+  int64 admin_id = 1;
+  bool super_admin = 2;
+  // 社区隔离：>0 时仅返回该社区创建人的任务（与订单列表隔离口径一致）
+  int64 community_id = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+message ListExportTasksResp {
+  repeated ExportTaskInfo list = 1;
+  int32 total = 2;
+  // 已完成且未下载的任务数（右上角图标角标）
+  int32 undownloaded = 3;
+}
+
+message GetExportTaskFileReq {
+  int64 id = 1;
+  // 下载人（留痕）
+  int64 admin_id = 2;
+  string admin_name = 3;
+  bool super_admin = 4;
+  // 下载人社区（普通管理员社区隔离校验用；0=跨社区/超管）
+  int64 community_id = 5;
+}
+
+message GetExportTaskFileResp {
+  // 文件绝对路径（服务端 <exe>/attachment 下，gateway 凭此流式读取）
+  string file_path = 1;
+  string file_name = 2;
+}
+
+message DeleteExportTaskReq {
+  int64 id = 1;
+}
+
+message CountUndownloadedReq {
+  int64 admin_id = 1;
+  bool super_admin = 2;
+  int64 community_id = 3;
+}
+
+message CountUndownloadedResp {
+  int32 count = 1;
 }
 
 message OrderItem {
@@ -167,6 +267,12 @@ message ListOrdersReq {
   // 若靠它推断会把已删单从客服视图一并抹掉。故：C 端列表不传（false=排除），
   // 后台管理端显式传 true（含已删单，配合 OrderInfo.user_deleted 标记展示）
   bool include_user_deleted = 13;
+  // 支付单号/渠道交易号反查命中的订单号集合（gateway 先经 payment 服务反查，再按订单号精确匹配；
+  // 空集合表示该搜索条件未命中任何支付单，配合 has_pay_no=true 区分「没传」与「没查到」）
+  bool has_pay_no = 14;
+  repeated string pay_order_nos = 15;
+  // 商品过滤（含全部规格）：命中含该商品任意规格（order_items.product_id）的订单
+  int64 product_id = 16;
 }
 
 // RestoreOrderReq 后台恢复用户软删除订单

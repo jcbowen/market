@@ -55,6 +55,21 @@ service PaymentService {
   // （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
   // 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
   rpc GetAlipayPayUrl(GetAlipayPayUrlReq) returns (GetAlipayPayUrlResp);
+  // FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（后台订单列表「支付单号/渠道交易号」搜索用）
+  // 单框双号，字段渠道无关：payment_no 即渠道账单的「商家订单号」（out_trade_no），
+  // transaction_id 即渠道交易号（支付宝 trade_no / 微信 transaction_id）。
+  // 精确匹配；同一订单可能有多笔支付尝试，命中后去重回传订单号
+  rpc FindOrdersByPayNo(FindOrdersByPayNoReq) returns (FindOrdersByPayNoResp);
+}
+
+// FindOrdersByPayNoReq 按支付单号/渠道交易号反查订单
+message FindOrdersByPayNoReq {
+  string pay_no = 1;
+}
+
+// FindOrdersByPayNoResp 反查结果：关联订单号去重列表
+message FindOrdersByPayNoResp {
+  repeated string order_nos = 1;
 }
 
 // GetPaymentStatusReq 按支付单号查询支付状态

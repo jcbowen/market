@@ -57,6 +57,11 @@ const (
 	OrderService_ListFulfillmentOrders_FullMethodName    = "/order.OrderService/ListFulfillmentOrders"
 	OrderService_StartDelivery_FullMethodName            = "/order.OrderService/StartDelivery"
 	OrderService_CompleteDelivery_FullMethodName         = "/order.OrderService/CompleteDelivery"
+	OrderService_CreateExportTask_FullMethodName         = "/order.OrderService/CreateExportTask"
+	OrderService_ListExportTasks_FullMethodName          = "/order.OrderService/ListExportTasks"
+	OrderService_GetExportTaskFile_FullMethodName        = "/order.OrderService/GetExportTaskFile"
+	OrderService_DeleteExportTask_FullMethodName         = "/order.OrderService/DeleteExportTask"
+	OrderService_CountUndownloaded_FullMethodName        = "/order.OrderService/CountUndownloaded"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -127,6 +132,17 @@ type OrderServiceClient interface {
 	StartDelivery(ctx context.Context, in *StartDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
 	CompleteDelivery(ctx context.Context, in *CompleteDeliveryReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// --- 后台导出任务（下载中心） ---
+	// 创建导出任务：落库后由 order 服务异步分批生成 CSV，创建接口立即返回
+	CreateExportTask(ctx context.Context, in *CreateExportTaskReq, opts ...grpc.CallOption) (*CreateExportTaskResp, error)
+	// 下载中心任务列表（普通管理员仅见自己创建的，超管见全部；同时返回未下载数供角标）
+	ListExportTasks(ctx context.Context, in *ListExportTasksReq, opts ...grpc.CallOption) (*ListExportTasksResp, error)
+	// 取导出文件：校验可见性后返回文件路径并记录下载人（gateway 凭路径流式下发）
+	GetExportTaskFile(ctx context.Context, in *GetExportTaskFileReq, opts ...grpc.CallOption) (*GetExportTaskFileResp, error)
+	// 删除导出任务：仅超管，记录与文件一并删除
+	DeleteExportTask(ctx context.Context, in *DeleteExportTaskReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// 未下载任务数（右上角下载图标角标）
+	CountUndownloaded(ctx context.Context, in *CountUndownloadedReq, opts ...grpc.CallOption) (*CountUndownloadedResp, error)
 }
 
 type orderServiceClient struct {
@@ -507,6 +523,56 @@ func (c *orderServiceClient) CompleteDelivery(ctx context.Context, in *CompleteD
 	return out, nil
 }
 
+func (c *orderServiceClient) CreateExportTask(ctx context.Context, in *CreateExportTaskReq, opts ...grpc.CallOption) (*CreateExportTaskResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateExportTaskResp)
+	err := c.cc.Invoke(ctx, OrderService_CreateExportTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) ListExportTasks(ctx context.Context, in *ListExportTasksReq, opts ...grpc.CallOption) (*ListExportTasksResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListExportTasksResp)
+	err := c.cc.Invoke(ctx, OrderService_ListExportTasks_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) GetExportTaskFile(ctx context.Context, in *GetExportTaskFileReq, opts ...grpc.CallOption) (*GetExportTaskFileResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetExportTaskFileResp)
+	err := c.cc.Invoke(ctx, OrderService_GetExportTaskFile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) DeleteExportTask(ctx context.Context, in *DeleteExportTaskReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_DeleteExportTask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) CountUndownloaded(ctx context.Context, in *CountUndownloadedReq, opts ...grpc.CallOption) (*CountUndownloadedResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CountUndownloadedResp)
+	err := c.cc.Invoke(ctx, OrderService_CountUndownloaded_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrderServiceServer is the server API for OrderService service.
 // All implementations must embed UnimplementedOrderServiceServer
 // for forward compatibility.
@@ -575,6 +641,17 @@ type OrderServiceServer interface {
 	StartDelivery(context.Context, *StartDeliveryReq) (*common.CommonResponse, error)
 	// 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
 	CompleteDelivery(context.Context, *CompleteDeliveryReq) (*common.CommonResponse, error)
+	// --- 后台导出任务（下载中心） ---
+	// 创建导出任务：落库后由 order 服务异步分批生成 CSV，创建接口立即返回
+	CreateExportTask(context.Context, *CreateExportTaskReq) (*CreateExportTaskResp, error)
+	// 下载中心任务列表（普通管理员仅见自己创建的，超管见全部；同时返回未下载数供角标）
+	ListExportTasks(context.Context, *ListExportTasksReq) (*ListExportTasksResp, error)
+	// 取导出文件：校验可见性后返回文件路径并记录下载人（gateway 凭路径流式下发）
+	GetExportTaskFile(context.Context, *GetExportTaskFileReq) (*GetExportTaskFileResp, error)
+	// 删除导出任务：仅超管，记录与文件一并删除
+	DeleteExportTask(context.Context, *DeleteExportTaskReq) (*common.CommonResponse, error)
+	// 未下载任务数（右上角下载图标角标）
+	CountUndownloaded(context.Context, *CountUndownloadedReq) (*CountUndownloadedResp, error)
 	mustEmbedUnimplementedOrderServiceServer()
 }
 
@@ -695,6 +772,21 @@ func (UnimplementedOrderServiceServer) StartDelivery(context.Context, *StartDeli
 }
 func (UnimplementedOrderServiceServer) CompleteDelivery(context.Context, *CompleteDeliveryReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CompleteDelivery not implemented")
+}
+func (UnimplementedOrderServiceServer) CreateExportTask(context.Context, *CreateExportTaskReq) (*CreateExportTaskResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateExportTask not implemented")
+}
+func (UnimplementedOrderServiceServer) ListExportTasks(context.Context, *ListExportTasksReq) (*ListExportTasksResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListExportTasks not implemented")
+}
+func (UnimplementedOrderServiceServer) GetExportTaskFile(context.Context, *GetExportTaskFileReq) (*GetExportTaskFileResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetExportTaskFile not implemented")
+}
+func (UnimplementedOrderServiceServer) DeleteExportTask(context.Context, *DeleteExportTaskReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteExportTask not implemented")
+}
+func (UnimplementedOrderServiceServer) CountUndownloaded(context.Context, *CountUndownloadedReq) (*CountUndownloadedResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method CountUndownloaded not implemented")
 }
 func (UnimplementedOrderServiceServer) mustEmbedUnimplementedOrderServiceServer() {}
 func (UnimplementedOrderServiceServer) testEmbeddedByValue()                      {}
@@ -1383,6 +1475,96 @@ func _OrderService_CompleteDelivery_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_CreateExportTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateExportTaskReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).CreateExportTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_CreateExportTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).CreateExportTask(ctx, req.(*CreateExportTaskReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_ListExportTasks_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListExportTasksReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).ListExportTasks(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_ListExportTasks_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).ListExportTasks(ctx, req.(*ListExportTasksReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_GetExportTaskFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetExportTaskFileReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).GetExportTaskFile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_GetExportTaskFile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).GetExportTaskFile(ctx, req.(*GetExportTaskFileReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_DeleteExportTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteExportTaskReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).DeleteExportTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_DeleteExportTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).DeleteExportTask(ctx, req.(*DeleteExportTaskReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_CountUndownloaded_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CountUndownloadedReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).CountUndownloaded(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_CountUndownloaded_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).CountUndownloaded(ctx, req.(*CountUndownloadedReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrderService_ServiceDesc is the grpc.ServiceDesc for OrderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1537,6 +1719,26 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CompleteDelivery",
 			Handler:    _OrderService_CompleteDelivery_Handler,
+		},
+		{
+			MethodName: "CreateExportTask",
+			Handler:    _OrderService_CreateExportTask_Handler,
+		},
+		{
+			MethodName: "ListExportTasks",
+			Handler:    _OrderService_ListExportTasks_Handler,
+		},
+		{
+			MethodName: "GetExportTaskFile",
+			Handler:    _OrderService_GetExportTaskFile_Handler,
+		},
+		{
+			MethodName: "DeleteExportTask",
+			Handler:    _OrderService_DeleteExportTask_Handler,
+		},
+		{
+			MethodName: "CountUndownloaded",
+			Handler:    _OrderService_CountUndownloaded_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

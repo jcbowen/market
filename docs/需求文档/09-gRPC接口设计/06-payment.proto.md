@@ -50,6 +50,21 @@ service PaymentService {
   // MarkPaymentPaid 人工把指定待支付单标记为已支付（渠道查询失效但钱确实到账时的最后出路）
   // 必填渠道交易号与实际收款金额，仅对待支付订单开放，与「同步支付状态」形成分工：后者问渠道，前者凭人工核实
   rpc MarkPaymentPaid(MarkPaymentPaidReq) returns (common.CommonResponse);
+  // FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（2026-10-24 新增，后台订单搜索）
+  // 单框双号，字段渠道无关：payment_no 即渠道账单「商家订单号」（out_trade_no），
+  // transaction_id 即渠道交易号（支付宝 trade_no / 微信 transaction_id）。
+  // 精确匹配（两列均有索引），同一订单多笔支付尝试命中后按订单号去重；未命中返回空列表非错误
+  rpc FindOrdersByPayNo(FindOrdersByPayNoReq) returns (FindOrdersByPayNoResp);
+}
+
+// FindOrdersByPayNoReq 按支付单号/渠道交易号反查订单
+message FindOrdersByPayNoReq {
+  string pay_no = 1;
+}
+
+// FindOrdersByPayNoResp 反查结果：关联订单号去重列表
+message FindOrdersByPayNoResp {
+  repeated string order_nos = 1;
 }
 
 message CreatePaymentReq {

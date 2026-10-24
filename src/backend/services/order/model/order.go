@@ -81,7 +81,8 @@ type OrderItem struct {
 	base.MysqlBaseModel
 	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	OrderID      int64   `gorm:"column:order_id;type:bigint;not null;index;comment:订单 ID" json:"order_id"`
-	ProductID    int64   `gorm:"column:product_id;type:bigint;not null;comment:商品 ID" json:"product_id"`
+	// ProductID 后台「按商品搜订单」经本列反查订单（含全部规格），加普通索引加速定位
+	ProductID    int64   `gorm:"column:product_id;type:bigint;not null;index;comment:商品 ID" json:"product_id"`
 	SkuID        int64   `gorm:"column:sku_id;type:bigint;not null;index;comment:SKU ID" json:"sku_id"`
 	ProductName  string  `gorm:"column:product_name;type:varchar(100);not null;comment:商品名称快照" json:"product_name"`
 	SpecName     string  `gorm:"column:spec_name;type:varchar(100);comment:规格名称快照" json:"spec_name"`

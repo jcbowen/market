@@ -70,7 +70,7 @@ func main() {
 	defer stopDebugger()
 	debuglog.SetInstance(dbg)
 
-	go service.NewScheduler(db, rds.GetClient(), svc.refundService, cfg).Start(
+	go service.NewScheduler(db, rds.GetClient(), svc.refundService, svc.exportTaskService, cfg).Start(
 		schedulerCtx,
 		cfg.Business.OrderTimeout,
 		cfg.Business.AutoCompleteDays,
@@ -135,5 +135,6 @@ func autoMigrate(db *mysql.Instance) error {
 		&model.PosHeldOrder{},
 		&model.PosShift{},
 		&model.AppPreference{},
+		&model.ExportTask{},
 	)
 }

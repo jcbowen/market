@@ -115,7 +115,7 @@ func TestResetRefundRetryReopensBudget(t *testing.T) {
 	}
 
 	// 重置后调度器当轮即可重新核查：last_checked_at 为 NULL 在 asc 轮转里排最前
-	stat := NewScheduler(env.db, env.sched.redis, env.svc, nil).retryStuckRefunds(ctx)
+	stat := NewScheduler(env.db, env.sched.redis, env.svc, nil, nil).retryStuckRefunds(ctx)
 	if stat.failed != 0 {
 		t.Errorf("重置后重试轮次不应异常, failed=%d", stat.failed)
 	}

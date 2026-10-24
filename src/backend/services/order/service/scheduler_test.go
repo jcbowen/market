@@ -341,7 +341,7 @@ func newSchedulerTestEnv(t *testing.T) *schedTestEnv {
 	ordersSvc := NewOrderService(dbInst, nil)
 	grpcclient.OrderClient = &inProcessOrderClient{svc: ordersSvc}
 
-	sched := NewScheduler(dbInst, rdb, nil, nil)
+	sched := NewScheduler(dbInst, rdb, nil, nil, nil)
 	t.Cleanup(func() {
 		grpcclient.ProductClient = origProduct
 		grpcclient.PaymentClient = origPayment

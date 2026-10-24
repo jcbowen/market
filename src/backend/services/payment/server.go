@@ -101,6 +101,16 @@ func (s *server) GetAlipayPayUrl(ctx stdctx.Context, req *payment.GetAlipayPayUr
 	}, nil
 }
 
+// FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（后台订单列表搜索用）
+// 未命中返回空列表而非错误，gateway 以入参是否携带 pay_no 区分「没传」与「没查到」
+func (s *server) FindOrdersByPayNo(ctx stdctx.Context, req *payment.FindOrdersByPayNoReq) (*payment.FindOrdersByPayNoResp, error) {
+	orderNos, err := s.paymentService.FindOrdersByPayNo(ctx, req.GetPayNo())
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &payment.FindOrdersByPayNoResp{OrderNos: orderNos}, nil
+}
+
 // BatchGetPayments 按订单批量查询成功支付记录（后台订单列表一次往返取回整页支付方式）
 func (s *server) BatchGetPayments(ctx stdctx.Context, req *payment.BatchGetPaymentsReq) (*payment.BatchGetPaymentsResp, error) {
 	list, err := s.paymentService.BatchGetPayments(ctx, req.OrderIds)

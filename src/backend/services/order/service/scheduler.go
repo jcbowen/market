@@ -61,14 +61,15 @@ const (
 
 // orderStat 单轮订单调度统计：debugger 进程记录的落库判定与摘要字段的唯一依据
 type orderStat struct {
-	recovered int // 兜底恢复的处理中订单数
-	cancelled int // 超时未支付自动取消
-	completed int // 配送单发货超时自动完成
-	pickup    int // 自提单支付超时自动完成
-	refundOK  int // 卡单退款重试成功
-	approved  int // 超时退款自动审批
-	failed    int // 本轮失败（含扫描/抢占/事务/重试/审批出错）
-	panics    int // 本轮被 runOnce 恢复的 panic 次数（正常为 0 或 1）
+	recovered     int // 兜底恢复的处理中订单数
+	cancelled     int // 超时未支付自动取消
+	completed     int // 配送单发货超时自动完成
+	pickup        int // 自提单支付超时自动完成
+	refundOK      int // 卡单退款重试成功
+	approved      int // 超时退款自动审批
+	exportCleaned int // 过期导出任务清理数（文件 + 记录）
+	failed        int // 本轮失败（含扫描/抢占/事务/重试/审批出错）
+	panics        int // 本轮被 runOnce 恢复的 panic 次数（正常为 0 或 1）
 }
 
 // hasAction 本轮是否发生了实质动作或失败
@@ -77,7 +78,7 @@ type orderStat struct {
 // 返回值：
 //   - bool: true 表示有实质动作
 func (s orderStat) hasAction() bool {
-	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.failed+s.panics > 0
+	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.exportCleaned+s.failed+s.panics > 0
 }
 
 // merge 把另一份统计并入本轮（子任务结果汇总）
@@ -90,6 +91,7 @@ func (s *orderStat) merge(other orderStat) {
 	s.pickup += other.pickup
 	s.refundOK += other.refundOK
 	s.approved += other.approved
+	s.exportCleaned += other.exportCleaned
 	s.failed += other.failed
 	s.panics += other.panics
 }
@@ -107,12 +109,14 @@ func shouldRecordOrder(stat orderStat) bool {
 }
 
 // Scheduler 订单定时任务调度器
-// 负责超时未支付订单自动取消、发货后超时自动完成、卡单退款自动重试
+// 负责超时未支付订单自动取消、发货后超时自动完成、卡单退款自动重试、过期导出任务清理
 // 采用 Redis 分布式锁 + 数据库原子抢占 + 失败回滚重试机制
 type Scheduler struct {
 	db            *mysql.Instance
 	redisClient   *redis.Client
 	refundService *RefundService
+	// exportTaskService 导出任务服务（过期文件与记录清理；可为 nil，测试环境跳过）
+	exportTaskService *ExportTaskService
 	// cfg 全局配置：取消前置渠道确认开关（business.payment_reconcile）
 	cfg *config.Config
 }
@@ -123,16 +127,18 @@ type Scheduler struct {
 //   - db: MySQL 实例
 //   - redisClient: Redis 客户端，用于分布式锁
 //   - refundService: 退款服务，用于卡单退款自动重试
+//   - exportTaskService: 导出任务服务，用于过期导出清理（可为 nil）
 //   - cfg: 全局配置（可为 nil，按默认口径处理）
 //
 // 返回值：
 //   - *Scheduler: 调度器实例
-func NewScheduler(db *mysql.Instance, redisClient *redis.Client, refundService *RefundService, cfg *config.Config) *Scheduler {
+func NewScheduler(db *mysql.Instance, redisClient *redis.Client, refundService *RefundService, exportTaskService *ExportTaskService, cfg *config.Config) *Scheduler {
 	return &Scheduler{
-		db:            db,
-		redisClient:   redisClient,
-		refundService: refundService,
-		cfg:           cfg,
+		db:                db,
+		redisClient:       redisClient,
+		refundService:     refundService,
+		exportTaskService: exportTaskService,
+		cfg:               cfg,
 	}
 }
 
@@ -200,6 +206,7 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 	stat.merge(s.autoCompletePickupOrders(ctx, autoCompleteDays))
 	stat.merge(s.retryStuckRefunds(ctx))
 	stat.merge(s.autoApproveStaleRefunds(ctx))
+	stat.merge(s.cleanupExportTasks(ctx))
 }
 
 // recordRound 把本轮统计落一条 debugger 进程记录；空转轮次只打标准日志不落库
@@ -215,15 +222,16 @@ func (s *Scheduler) recordRound(start time.Time, stat orderStat) {
 		return
 	}
 	fields := map[string]interface{}{
-		"recovered":   stat.recovered,
-		"cancelled":   stat.cancelled,
-		"completed":   stat.completed,
-		"pickup":      stat.pickup,
-		"refund_ok":   stat.refundOK,
-		"approved":    stat.approved,
-		"failed":      stat.failed,
-		"panics":      stat.panics,
-		"duration_ms": time.Since(start).Milliseconds(),
+		"recovered":      stat.recovered,
+		"cancelled":      stat.cancelled,
+		"completed":      stat.completed,
+		"pickup":         stat.pickup,
+		"refund_ok":      stat.refundOK,
+		"approved":       stat.approved,
+		"export_cleaned": stat.exportCleaned,
+		"failed":         stat.failed,
+		"panics":         stat.panics,
+		"duration_ms":    time.Since(start).Milliseconds(),
 	}
 	if stat.failed > 0 || stat.panics > 0 {
 		rec.Error("本轮订单调度存在失败", fields)
@@ -926,6 +934,26 @@ func (s *Scheduler) autoCompletePickupOrders(ctx context.Context, autoCompleteDa
 			log.Printf("[order-scheduler] 自提单 %d 支付超过 %d 天未核销，已自动完成", o.ID, autoCompleteDays)
 			stat.pickup++
 		}
+	}
+	return stat
+}
+
+// cleanupExportTasks 清理过期导出任务（文件保留 3 天，到期删文件 + 删记录）
+// 每轮最多清 200 条（CleanupExpired 内部限额），扫描走 expires_at 索引，量级极小；
+// 服务未注入（测试环境）时跳过
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) cleanupExportTasks(ctx context.Context) orderStat {
+	var stat orderStat
+	if s.exportTaskService == nil {
+		return stat
+	}
+	if n := s.exportTaskService.CleanupExpired(ctx); n > 0 {
+		log.Printf("[order-scheduler] 已清理 %d 个过期导出任务", n)
+		stat.exportCleaned = n
 	}
 	return stat
 }
