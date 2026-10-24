@@ -57,7 +57,7 @@
           <n-button v-if="hasTodo" quaternary size="tiny" type="primary" @click="goFirstTodo">处理最紧急</n-button>
         </div>
       </template>
-      <n-grid cols="2 s:3 m:3 l:6 xl:6" :x-gap="12" :y-gap="12" responsive="screen">
+      <n-grid cols="2 s:3 m:4 l:7 xl:7" :x-gap="12" :y-gap="12" responsive="screen">
         <n-grid-item v-for="todo in todoItems" :key="todo.key">
           <div :class="['todo-item', { urgent: todo.count > 0 }]" @click="go(todo.path)">
             <n-badge :value="todo.count" :show="todo.count > 0" :max="99" :color="todo.color">
@@ -172,9 +172,10 @@ import {
   StorefrontOutline,
   SyncOutline,
   TimeOutline,
+  WarningOutline,
 } from '@vicons/ionicons5'
 import { getDashboardStatistics, getOrderStatistics, getProductRankings, getRevenueReport } from '@/api/statistics'
-import { getRefundList } from '@/api/order'
+import { getPaymentAnomalies, getRefundList } from '@/api/order'
 import { getStockWarnings } from '@/api/inventory'
 import type { ProductRankingItem, RevenueReportItem } from '@/api/statistics'
 import { useAuthStore } from '@/stores/auth'
@@ -182,7 +183,7 @@ import { useAuthStore } from '@/stores/auth'
 /**
  * 工作台首页
  * - 核心指标：今日订单/销售额/用户/商品（数据来自 dashboard 聚合接口）
- * - 待办中心：订单状态统计 + 售后单分页 total + 库存预警列表，点击带 status 参数直达列表页
+ * - 待办中心：订单状态统计 + 售后单分页 total + 支付异常待处理数 + 库存预警列表，点击直达处理页
  * - 近 7 日营收趋势 / 热销 TOP5：复用统计报表接口
  * - 快捷入口：按当前管理员权限过滤
  */
@@ -300,6 +301,8 @@ const orderStats = reactive({ pending_pay: 0, pending_ship: 0, pending_receive: 
 /** 售后待审核（退款单 status=1）与退款中（status=4） */
 const refundPending = ref(0)
 const refundProcessing = ref(0)
+/** 支付异常待处理数（社区范围内，接口 pending 字段不随筛选变化） */
+const paymentAnomalyCount = ref(0)
 /** 库存预警 SKU 数 */
 const stockWarningCount = ref(0)
 
@@ -330,6 +333,16 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: StorefrontOutline,
     color: '#10aeff',
     bg: 'rgba(16, 174, 255, 0.12)',
+  },
+  {
+    // 资金安全类待办：回调失败/对账不符/资金挂账等需人工核实，数据取异常队列 pending
+    key: 'payment_anomaly',
+    label: '支付异常',
+    count: paymentAnomalyCount.value,
+    path: '/payment-anomalies',
+    icon: WarningOutline,
+    color: '#fa5151',
+    bg: 'rgba(250, 81, 81, 0.08)',
   },
   {
     key: 'refund_pending',
@@ -468,11 +481,13 @@ async function loadAll() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })()
 
-  const [dashRes, orderRes, refundPendingRes, refundProcessingRes, stockRes, revenueRes, rankRes] = await Promise.allSettled([
+  const [dashRes, orderRes, refundPendingRes, refundProcessingRes, anomalyRes, stockRes, revenueRes, rankRes] = await Promise.allSettled([
     getDashboardStatistics(),
     getOrderStatistics({}),
     getRefundList({ page: 1, page_size: 1, status: 1 }),
     getRefundList({ page: 1, page_size: 1, status: 4 }),
+    // 只取 1 条最小化开销：待办计数用响应的 pending（社区范围内待处理总数，不随筛选变化）
+    getPaymentAnomalies({ page: 1, page_size: 1 }),
     getStockWarnings(),
     getRevenueReport({ start_date: sevenDaysAgo, end_date: today, group_by: 'day' }),
     getProductRankings({ start_date: sevenDaysAgo, end_date: today, limit: 5 }),
@@ -491,6 +506,9 @@ async function loadAll() {
   }
   if (refundProcessingRes.status === 'fulfilled' && refundProcessingRes.value.data.code === 0) {
     refundProcessing.value = refundProcessingRes.value.data.data.total
+  }
+  if (anomalyRes.status === 'fulfilled' && anomalyRes.value.data.code === 0) {
+    paymentAnomalyCount.value = anomalyRes.value.data.data.pending
   }
   if (stockRes.status === 'fulfilled' && stockRes.value.data.code === 0) {
     stockWarningCount.value = stockRes.value.data.data?.length ?? 0

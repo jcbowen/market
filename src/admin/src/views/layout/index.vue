@@ -9,10 +9,11 @@
       :collapsed="collapsed"
       :native-scrollbar="false"
     >
+      <!-- 折叠态（64px）只显示 logo 图放不下文字；未配置 logo 图时降级显示短名首字 -->
       <div class="logo">
-        <img v-if="branding.logoURL" :src="branding.logoURL" alt="站点 Logo" class="logo-img" />
+        <img v-if="branding.logoURL" :src="branding.logoURL" alt="站点 Logo" :class="['logo-img', { 'is-collapsed': collapsed }]" />
         <span v-if="!collapsed">{{ isSystemSpace ? '管理后台' : branding.siteName }}</span>
-        <span v-else>{{ isSystemSpace ? '系统' : branding.siteNameShort }}</span>
+        <span v-else-if="!branding.logoURL" class="logo-fallback">{{ (isSystemSpace ? '系统' : branding.siteNameShort).charAt(0) }}</span>
       </div>
       <!-- 系统空间：提供返回业务后台的出口，保证两套菜单完全隔离互不混排 -->
       <div v-if="isSystemSpace" class="sider-back">
@@ -646,6 +647,23 @@ function onUserAction(key: string) {
 .logo-img {
   height: 24px;
   margin-right: 8px;
+}
+/* 折叠态无文字跟随，去掉右边距让 logo 精确居中 */
+.logo-img.is-collapsed {
+  margin-right: 0;
+}
+/* 折叠态未配置 logo 图时的降级块：短名首字居中，避免空白 */
+.logo-fallback {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(7, 193, 96, 0.12);
+  color: #07c160;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: bold;
 }
 .sider-foot {
   padding: 12px 16px;
