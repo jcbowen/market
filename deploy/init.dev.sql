@@ -9,17 +9,23 @@
 --
 -- 覆盖范围（与 2026-10 代码口径对齐）：
 --   双社区 + 多社区管理员绑定（admin_communities）
+--   会员-社区关联（user_communities，会员列表按社区过滤与拉黑校验依赖；
+--   必须显式插入——启动回填 BackfillUserCommunities 早于种子导入，覆盖不到种子用户）
 --   商品划线价（product_skus.original_price + products.min_original_price）、
 --   虚拟销量（virtual_sales）、汇总价格区间（min_price/max_price）、汇总库存（stock）
 --   多规格商品链路（product_specs / product_spec_values / sku.spec_value_ids）
 --   Banner 轮播、满减活动、优惠券（含水果分类范围 + 两张用户券：一张可用一张已用）
 --   满免邮活动（含排除商品 scope）、购物车（含一条未选中）
+--   秒杀活动一场进行中（flash_sales / flash_sale_items，NOW() 相对时间窗 + 独立库存口径）
+--   站点设置（site_configs 单行演示配置：站名/页脚/SEO，base_url 留空按请求现推；
+--   该表读取时若无行会惰性创建空默认行，种子行仅为开箱即见品牌位，非必需）
 --   供应商、在途采购单、已交班历史班次（仅历史，无进行中班次）
 --   订单全状态样本（待支付/备货中/配送中/已完成/已取消 × 自提/配送/到店 × C端/收银台来源）
 --   + 对应支付单（payments，admin 订单详情的支付方式来源）
 --   行政区划 regions 演示子集（北京 + 广东/深圳/广州，仅供开发联调；
 --   全量 ~3400 条请登录 admin 后台「行政区划 → 检查更新」自动同步）
---   注意：pay_config / refund_config 由服务启动时自举（id=1 默认行），勿在此插入
+--   注意：pay_config / refund_config / client_channels 由服务启动时自举（幂等种子行），
+--   勿在此插入
 --
 -- 数据口径注意：
 --   待支付订单的 created_at 取 NOW() 附近（订单超时自动取消为 30 分钟，
@@ -115,6 +121,14 @@ INSERT INTO `user_addresses` (`id`, `user_id`, `contact_name`, `contact_phone`, 
 VALUES
   (1, 1, '张三', '13800138000', '北京市', '北京市', '朝阳区', '11', '', '110105', '幸福路 1 号 2 单元 301', '家', 1, 1, NOW(), NOW()),
   (2, 2, '李四', '13900139000', '广东省', '深圳市', '南山区', '44', '4403', '440305', '阳光路 8 号 5 栋 1201', '家', 2, 1, NOW(), NOW());
+
+-- 会员-社区关联（多社区会员模型）：会员列表按社区过滤与拉黑校验均依赖此表。
+-- 必须显式插入：启动回填 BackfillUserCommunities 在 user 服务启动时执行，早于种子导入，
+-- 种子用户永远轮不到回填；source 取值演示两种真实来源（order 下单 / address 收货地址）
+INSERT INTO `user_communities` (`id`, `user_id`, `community_id`, `source`, `created_at`, `updated_at`)
+VALUES
+  (1, 1, 1, 'order', NOW(), NOW()),
+  (2, 2, 2, 'address', NOW(), NOW());
 
 -- ============ 商品分类 ============
 INSERT INTO `categories` (`id`, `community_id`, `parent_id`, `name`, `icon`, `sort`, `status`, `created_at`, `updated_at`)
@@ -224,6 +238,20 @@ INSERT INTO `free_shipping_scopes` (`id`, `activity_id`, `scope_type`, `category
 VALUES
   (1, 1, 5, 0, 3, NOW());
 
+-- ============ 秒杀活动（社区1：一场进行中，C 端 /flash-sales 与管理端列表演示） ============
+-- 时间窗必须用 NOW() 相对时间：活动按时间窗展示，固定日期会过期失效、NULL 会永不开始；
+-- flash_sale_items.stock 为秒杀独立库存，下单直接扣减此处（库存流水 op_type 3/4），
+-- 与 stock_batches / product_skus.stock 无对齐关系，不存在批次约束
+INSERT INTO `flash_sales` (`id`, `community_id`, `name`, `start_time`, `end_time`, `status`, `created_at`, `updated_at`)
+VALUES
+  (1, 1, '限时秒杀·生鲜特惠', DATE_SUB(NOW(), INTERVAL 1 HOUR), DATE_ADD(NOW(), INTERVAL 2 DAY), 1, NOW(), NOW());
+
+-- 秒杀价低于 SKU 原价演示抢购场景：西红柿500g 3.50→2.99、苹果 2.00→1.69
+INSERT INTO `flash_sale_items` (`id`, `flash_sale_id`, `sku_id`, `flash_price`, `stock`, `sold_count`, `limit_per_user`, `status`, `created_at`, `updated_at`)
+VALUES
+  (1, 1, 1, 2.99, 50, 3, 2, 1, NOW(), NOW()),
+  (2, 1, 3, 1.69, 100, 12, 5, 1, NOW(), NOW());
+
 -- ============ 供应商（社区1） ============
 INSERT INTO `suppliers` (`id`, `community_id`, `name`, `contact_name`, `phone`, `address`, `remark`, `status`, `created_at`, `updated_at`)
 VALUES
@@ -325,5 +353,13 @@ VALUES
   (18, 8, 0, 1, 'admin', 1, '收银台代客下单', '2026-10-18 10:02:00'),
   (19, 8, 1, 2, 'admin', 1, '收银台现金收款（改价 6.50→6.00）', '2026-10-18 10:05:00'),
   (20, 8, 2, 5, 'system', 0, '到店订单收款完成，自动完结', '2026-10-18 10:05:00');
+
+-- ============ 站点设置（平台级单行配置，id 固定 1，见 model.SiteConfigID） ============
+-- base_url 留空：空值时网关按请求现推派生回调与外链，避免种子写死部署域名；
+-- footer_html 仅白名单标签（a/b/i/u/p/br），与管理端富文本消毒口径一致；
+-- logo/favicon 留空：为空时前端使用内置默认图
+INSERT INTO `site_configs` (`id`, `base_url`, `site_name`, `logo_url`, `favicon_url`, `footer_html`, `seo_description`, `seo_keywords`, `version`, `created_at`, `updated_at`)
+VALUES
+  (1, '', '社区集市', '', '', '<p>© 2026 社区集市 · 演示环境</p>', '社区团购，新鲜到家', '社区团购,生鲜,果蔬', 0, NOW(), NOW());
 
 SET FOREIGN_KEY_CHECKS = 1;
