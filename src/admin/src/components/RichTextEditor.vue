@@ -102,4 +102,10 @@ onBeforeUnmount(() => {
 .rich-editor {
   width: 100%;
 }
+
+/* 编辑态链接去下划线：与展示端视觉一致（展示端链接样式由服务端注入内联 style 统一）；
+   Quill 动态生成的 DOM 无 scoped 属性，须 :deep 穿透，且选择器特异性需压过 quill.snow.css 的下划线规则 */
+.rich-editor :deep(.ql-snow .ql-editor a) {
+  text-decoration: none;
+}
 </style>
