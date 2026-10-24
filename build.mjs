@@ -8,12 +8,16 @@
 //      bin/windows-amd64/ bin/windows-arm64/ Windows（.exe 后缀）
 // 2. 编译完成后，自动将与本机环境一致的二进制复制一份到 bin/ 根目录，便于直接运行。
 //
-// 平台与架构在下方 PLATFORMS 列表中维护，无需在编译时传递环境参数。
+// 平台与架构在下方 PLATFORMS 列表中维护；指定 --fast 时仅编译当前宿主架构
+// 对应的 Linux 平台（容器实际运行架构），无需显式传递平台参数。
 //
 // 依赖不全（go.sum 缺行、模块未下载）会在编译前预检并自动 go mod tidy 修复，
 // 指定 --no-auto-fix 时只检查提示、不改动 go.mod / go.sum。
 //
-// 使用方法：node build.mjs [--no-auto-fix]
+// 使用方法：node build.mjs [--fast] [--no-auto-fix]
+//   --fast  快速模式：只编译当前宿主架构对应的 Linux 平台
+//           （x64 → linux-amd64，arm64 → linux-arm64），供本地改码后
+//           快速重建容器镜像做验证；其余平台跳过，已有产物不受影响
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,6 +53,10 @@ const LDFLAGS = `-X ${VERSION_VAR_PATH}=${APP_VERSION}`;
 
 const ctx = createContext({ rootDir: ROOT_DIR, autoFix: parseAutoFix(process.argv.slice(2)) });
 
+// --fast 快速模式开关：本地改码后快速重建容器镜像用，
+// 只编译当前宿主架构对应的 Linux 平台，其余平台跳过
+const FAST = process.argv.slice(2).includes('--fast');
+
 // 目标平台列表（OS/ARCH）：每个组合对应 bin/{os}-{arch}/ 一个目录，
 // 覆盖 Linux/macOS/Windows × amd64/arm64，供 CI Release 打包与多架构 Docker 镜像构建取用
 const PLATFORMS = [
@@ -59,6 +67,15 @@ const PLATFORMS = [
   ['windows', 'amd64'],
   ['windows', 'arm64'],
 ];
+
+// 实际编译的平台：--fast 时按宿主架构过滤出对应 Linux 平台——
+// Docker Desktop/服务器容器运行的就是宿主同架构 Linux 产物
+// （x64 → linux-amd64，Apple Silicon → linux-arm64），镜像构建的
+// TARGETARCH 只会取该目录；普通模式编译全部平台。
+// localPlatform 为函数声明（提升可用），定义见下方。
+const TARGET_PLATFORMS = FAST
+  ? PLATFORMS.filter(([o, a]) => o === 'linux' && a === localPlatform()[1])
+  : PLATFORMS;
 
 // 服务列表：二进制名（geoip-download 为 GeoIP 数据库下载工具，非服务，
 // 编译进产物供 allinone 镜像 entrypoint 与服务器 crontab 直接使用）
@@ -162,7 +179,10 @@ await preflightGoModules(ctx);
 console.log(`==> 注入版本号: ${APP_VERSION}`);
 
 // 逐平台组合编译（平台间串行——各平台编译缓存互不相通；平台内服务并行）
-for (const [goos, arch] of PLATFORMS) {
+if (FAST) {
+  console.log(`==> 快速模式（--fast）：仅编译 ${TARGET_PLATFORMS.map(([o, a]) => `${o}/${a}`).join('、')} ...`);
+}
+for (const [goos, arch] of TARGET_PLATFORMS) {
   console.log(`==> 构建 ${goos}/${arch} ...`);
   safeCleanDir(path.join(BUILD_DIR, `${goos}-${arch}`));
   fs.mkdirSync(path.join(BUILD_DIR, `${goos}-${arch}`), { recursive: true });
@@ -190,9 +210,10 @@ for (const [goos, arch] of PLATFORMS) {
   }
 }
 
-// 复制本机对应的二进制到 bin/ 根目录
+// 复制本机对应的二进制到 bin/ 根目录（仅在本次实际编译的平台中查找：
+// --fast 只产出 Linux 容器平台二进制，本机平台未编译时不应拿旧产物冒充新构建）
 const [LOCAL_OS, LOCAL_ARCH] = localPlatform();
-const localMatch = PLATFORMS.find(([o, a]) => o === LOCAL_OS && a === LOCAL_ARCH);
+const localMatch = TARGET_PLATFORMS.find(([o, a]) => o === LOCAL_OS && a === LOCAL_ARCH);
 
 if (localMatch) {
   const ext = LOCAL_OS === 'windows' ? '.exe' : '';
@@ -203,6 +224,8 @@ if (localMatch) {
       path.join(BUILD_DIR, svc + ext),
     );
   }
+} else if (FAST) {
+  console.log(`==> 快速模式仅编译容器平台产物，本机（${LOCAL_OS}/${LOCAL_ARCH}）二进制未更新，跳过复制`);
 } else {
   console.log(`==> 本机环境（${LOCAL_OS}/${LOCAL_ARCH}）不在构建列表中，跳过复制`);
 }

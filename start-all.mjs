@@ -6,6 +6,8 @@
 //   node start-all.mjs              # 常规启动（保留已有数据）
 //   node start-all.mjs --clean      # 清理 MySQL/Redis 数据后重新启动
 //   node start-all.mjs --skip-build # 跳过构建，直接使用已有镜像/二进制
+//   node start-all.mjs --fast       # 快速模式：后端只编译当前宿主对应的容器平台（x64→linux-amd64、
+//                                   #   arm64→linux-arm64），前端与镜像照常重建，容器代码同步更新
 //   node start-all.mjs --no-cache   # 构建镜像时不使用 Docker 缓存
 //   node start-all.mjs --no-auto-fix # 依赖不全时只提示原因，不自动执行 go mod tidy / npm install
 //
@@ -33,11 +35,13 @@ const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 let CLEAN = false;
 let SKIP_BUILD = false;
 let NO_CACHE = false;
+let FAST = false;
 let AUTO_FIX = true;
 for (const arg of process.argv.slice(2)) {
   if (arg === '--clean') CLEAN = true;
   else if (arg === '--skip-build') SKIP_BUILD = true;
   else if (arg === '--no-cache') NO_CACHE = true;
+  else if (arg === '--fast') FAST = true;
   else if (arg === '--no-auto-fix') AUTO_FIX = false;
   else {
     console.error(`未知参数: ${arg}`);
@@ -221,9 +225,17 @@ if (!SKIP_BUILD) {
   await runWithRepair(ctx, 'npm', ['run', 'build:h5'], { cwd: CLIENT_DIR, step: '构建 C 端 H5' });
   FRONTEND_REBUILT = true;
 
-  console.log('==> 构建后端二进制（Linux arm64）...');
+  // 常规模式全平台交叉编译（历史文案仅写 arm64 与实际不符，已修正）；
+  // --fast 只编译当前宿主对应的容器平台，改码后快速更新容器验证
+  console.log(FAST
+    ? '==> 构建后端二进制（快速模式：仅当前宿主对应的容器平台）...'
+    : '==> 构建后端二进制（全平台交叉编译）...');
   // 依赖预检与 go mod tidy 自愈在 build.mjs 内部完成，这里透传开关保持一致
-  const backendArgs = [path.join(ROOT_DIR, 'build.mjs'), ...(AUTO_FIX ? [] : ['--no-auto-fix'])];
+  const backendArgs = [
+    path.join(ROOT_DIR, 'build.mjs'),
+    ...(FAST ? ['--fast'] : []),
+    ...(AUTO_FIX ? [] : ['--no-auto-fix']),
+  ];
   await runWithRepair(ctx, process.execPath, backendArgs, { step: '构建后端二进制', allowRepair: false });
 
   console.log('==> 构建 Docker 镜像...');

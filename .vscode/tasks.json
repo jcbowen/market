@@ -20,6 +20,10 @@
 					"value": "--skip-build"
 				},
 				{
+					"label": "快速模式：后端仅编译当前容器平台（--fast）",
+					"value": "--fast"
+				},
+				{
 					"label": "构建镜像不使用 Docker 缓存（--no-cache）",
 					"value": "--no-cache"
 				}
