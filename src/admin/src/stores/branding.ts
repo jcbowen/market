@@ -17,8 +17,7 @@ export const useBrandingStore = defineStore('branding', () => {
     site_name: '',
     logo_url: '',
     favicon_url: '',
-    copyright_text: '',
-    icp_number: '',
+    footer_html: '',
     seo_description: '',
     seo_keywords: '',
     base_url: '',
@@ -29,11 +28,8 @@ export const useBrandingStore = defineStore('branding', () => {
   const siteName = computed(() => brand.value.site_name || DEFAULT_SITE_NAME)
   const siteNameShort = computed(() => (brand.value.site_name ? brand.value.site_name.slice(0, 2) : DEFAULT_SITE_NAME_SHORT))
   const logoURL = computed(() => brand.value.logo_url)
-  /** 页脚文案：版权 + 备案号，任一为空时只展示已配置部分 */
-  const footerText = computed(() => {
-    const parts = [brand.value.copyright_text, brand.value.icp_number].filter(Boolean)
-    return parts.join(' · ')
-  })
+  /** 页脚富文本：版权与备案号合并编辑，服务端已消毒，仅供 v-html 渲染 */
+  const footerHTML = computed(() => brand.value.footer_html)
 
   /**
    * 加载站点品牌信息
@@ -53,5 +49,5 @@ export const useBrandingStore = defineStore('branding', () => {
     }
   }
 
-  return { brand, siteName, siteNameShort, logoURL, footerText, load }
+  return { brand, siteName, siteNameShort, logoURL, footerHTML, load }
 })

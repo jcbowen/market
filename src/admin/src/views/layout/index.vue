@@ -34,8 +34,8 @@
         @update:value="onMenuChange"
         @update:expanded-keys="onExpandedKeysChange"
       />
-      <!-- 页脚：版权与备案号取自站点设置，未配置时整块不占位 -->
-      <div v-if="!collapsed && branding.footerText" class="sider-foot">{{ branding.footerText }}</div>
+      <!-- 页脚：版权与备案号富文本取自站点设置（服务端已消毒），未配置时整块不占位 -->
+      <div v-if="!collapsed && branding.footerHTML" class="sider-foot" v-html="branding.footerHTML"></div>
     </n-layout-sider>
 
     <!-- 主内容区 -->

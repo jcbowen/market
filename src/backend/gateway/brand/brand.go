@@ -30,8 +30,7 @@ type Snapshot struct {
 	SiteName        string
 	LogoURL         string
 	FaviconURL      string
-	CopyrightText   string
-	ICPNumber       string
+	FooterHTML      string
 	SEODescription  string
 	SEOKeywords     string
 	Version         int64
@@ -143,8 +142,7 @@ func (c *Cache) refresh(ctx context.Context) {
 		SiteName:       cfg.SiteName,
 		LogoURL:        cfg.LogoUrl,
 		FaviconURL:     cfg.FaviconUrl,
-		CopyrightText:  cfg.CopyrightText,
-		ICPNumber:      cfg.IcpNumber,
+		FooterHTML:     cfg.FooterHtml,
 		SEODescription: cfg.SeoDescription,
 		SEOKeywords:    cfg.SeoKeywords,
 		Version:        cfg.Version,

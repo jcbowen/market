@@ -724,7 +724,7 @@ message CheckFulfillerResp {
 ```
 
 - `GetSiteConfig`：读取 `site_configs` 单行配置（固定主键 id=1），行不存在时惰性创建后返回，调用方恒能拿到非 nil 结果；并发创建靠主键冲突后重读兜底，不会产生多行。
-- `SaveSiteConfig`：覆盖式写入，**传空串即清空该项**（与 `SaveClientChannel` 的「留空保留原值」口径不同，品牌字段需要能主动清空）。服务端校验：`base_url` 归一为 `scheme://host[:port]`（小写协议、去尾斜杠，缺协议/带路径参数/非 http(s) 返回 `InvalidArgument`）、`site_name` ≤32 字、`seo_description`/`seo_keywords`/`copyright_text` ≤200 字、`icp_number` ≤64 字、`logo_url`/`favicon_url` 须为站内绝对路径或 http(s) 外链。
-- `SiteConfigInfo`：八个配置项 + `version`（每次保存 +1）+ `updated_at`。`version` 是网关内存快照与 favicon 长缓存的失效依据，故必须每次保存递增，不随内容是否变化而定。
+- `SaveSiteConfig`：覆盖式写入，**传空串即清空该项**（与 `SaveClientChannel` 的「留空保留原值」口径不同，品牌字段需要能主动清空）。服务端校验：`base_url` 归一为 `scheme://host[:port]`（小写协议、去尾斜杠，缺协议/带路径参数/非 http(s) 返回 `InvalidArgument`）、`site_name` ≤32 字、`seo_description`/`seo_keywords` ≤200 字、`footer_html` 白名单消毒后 ≤2000 字符（仅放行 a/b/strong/i/em/u/p/br/span 与合规 href，脚本/事件属性/危险协议一律剥除）、`logo_url`/`favicon_url` 须为站内绝对路径或 http(s) 外链。
+- `SiteConfigInfo`：七个配置项（含 `footer_html`，原 `copyright_text`/`icp_number` 两字段已合并，proto 字段号不复用）+ `version`（每次保存 +1）+ `updated_at`。`version` 是网关内存快照与 favicon 长缓存的失效依据，故必须每次保存递增，不随内容是否变化而定。
 - 服务归属说明：与 `client_channels` 同理——表放在 user 服务（平台级单行配置、与社区无隔离关系），消费方几乎全在网关（品牌快照、回调地址派生、附件外链基址、HTML 注入），payment 侧只被动接收派生结果，不新增 payment 侧配置入口。
 

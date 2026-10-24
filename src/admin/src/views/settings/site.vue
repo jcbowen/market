@@ -59,12 +59,13 @@
           </n-form-item>
 
           <n-divider title-placement="left">页脚与备案</n-divider>
-          <n-form-item label="版权文字">
-            <n-input v-model:value="form.copyright_text" placeholder="例：© 2026 社区商超" clearable />
+          <n-form-item label="页脚文案">
+            <RichTextEditor v-model:value="form.footer_html" :readonly="!isSuperAdmin" />
           </n-form-item>
-          <n-form-item label="ICP 备案号">
-            <n-input v-model:value="form.icp_number" placeholder="例：京ICP备00000000号" clearable />
-          </n-form-item>
+          <n-alert type="default" :show-icon="false" class="mb-16" style="font-size: 12px">
+            版权与 ICP 备案号在此合并编辑；备案号建议做成链接指向 https://beian.miit.gov.cn。
+            仅支持加粗、斜体、下划线、链接与换行，其它格式保存时会被过滤。
+          </n-alert>
 
           <n-divider title-placement="left">搜索优化</n-divider>
           <n-form-item label="页面描述">
@@ -105,6 +106,7 @@ import { useMessage } from 'naive-ui'
 import { getSiteSetting, updateSiteSetting } from '@/api/admin'
 import type { SiteSetting } from '@/api/admin'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
+import RichTextEditor from '@/components/RichTextEditor.vue'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -123,8 +125,7 @@ const emptySetting = (): SiteSetting => ({
   site_name: '',
   logo_url: '',
   favicon_url: '',
-  copyright_text: '',
-  icp_number: '',
+  footer_html: '',
   seo_description: '',
   seo_keywords: '',
   updated_at: '',
@@ -142,8 +143,7 @@ const form = reactive({
   site_name: '',
   logo_url: '',
   favicon_url: '',
-  copyright_text: '',
-  icp_number: '',
+  footer_html: '',
   seo_description: '',
   seo_keywords: '',
 })
@@ -184,8 +184,7 @@ async function load() {
         site_name: s.site_name,
         logo_url: s.logo_url,
         favicon_url: s.favicon_url,
-        copyright_text: s.copyright_text,
-        icp_number: s.icp_number,
+        footer_html: s.footer_html,
         seo_description: s.seo_description,
         seo_keywords: s.seo_keywords,
       })

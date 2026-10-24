@@ -1,6 +1,7 @@
 <template>
-  <view v-if="footerText" class="site-footer">
-    <text class="site-footer-text">{{ footerText }}</text>
+  <view v-if="footerHTML" class="site-footer">
+    <!-- 富文本渲染（服务端白名单消毒）：版权与备案号合并，链接经 target/rel 处理 -->
+    <rich-text class="site-footer-text" :nodes="footerHTML"></rich-text>
   </view>
 </template>
 
@@ -26,16 +27,12 @@ import { onShow } from '@dcloudio/uni-app'
 import { getSiteInfo } from '@/api/site'
 
 /**
- * 站点页脚（版权与备案号）
+ * 站点页脚（版权与备案号富文本）
  * 文案取自「站点设置」，未配置时整块不渲染、不占位；
  * 状态机语义见文件头模块级状态：仅 success 回显，failed 在下次 onShow 重试
  * （tab 页常驻内存不会重新 onMounted，onShow 覆盖切 tab、返回与 App 回前台三种重试时机）
  */
-const footerText = computed(() => {
-  const b = brand.value
-  if (!b) return ''
-  return [b.copyright_text, b.icp_number].filter(Boolean).join(' · ')
-})
+const footerHTML = computed(() => brand.value?.footer_html || '')
 
 /**
  * 加载站点品牌信息：success 直接复用，loading 合并并发，failed/idle 发起请求

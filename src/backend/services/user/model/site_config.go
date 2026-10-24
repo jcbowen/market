@@ -23,9 +23,8 @@ type SiteConfig struct {
 	// 站点 logo 与 favicon 均存附件外链 URL，为空时前端使用内置默认图
 	LogoURL    string `gorm:"column:logo_url;type:varchar(512);comment:站点 logo 外链 URL" json:"logo_url"`
 	FaviconURL string `gorm:"column:favicon_url;type:varchar(512);comment:favicon 外链 URL" json:"favicon_url"`
-	// 页脚展示文案
-	CopyrightText string `gorm:"column:copyright_text;type:varchar(255);comment:版权文字" json:"copyright_text"`
-	ICPNumber     string `gorm:"column:icp_number;type:varchar(64);comment:ICP 备案号" json:"icp_number"`
+	// 页脚富文本：版权与 ICP 备案号合并编辑（管理端富文本编辑器产出，服务端白名单消毒后落库）
+	FooterHTML string `gorm:"column:footer_html;type:text;comment:页脚富文本，版权与备案号（仅 a/b/i/u/p/br 等白名单标签）" json:"footer_html"`
 	// SEO 元信息，由网关写入 H5 HTML 入口
 	SeoDescription string `gorm:"column:seo_description;type:varchar(255);comment:SEO 描述" json:"seo_description"`
 	SeoKeywords    string `gorm:"column:seo_keywords;type:varchar(255);comment:SEO 关键词，逗号分隔" json:"seo_keywords"`

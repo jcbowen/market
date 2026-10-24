@@ -31,8 +31,7 @@ type SiteSetting struct {
 	SiteName         string `json:"site_name"`
 	LogoURL          string `json:"logo_url"`
 	FaviconURL       string `json:"favicon_url"`
-	CopyrightText    string `json:"copyright_text"`
-	ICPNumber        string `json:"icp_number"`
+	FooterHTML       string `json:"footer_html"`
 	SEODescription   string `json:"seo_description"`
 	SEOKeywords      string `json:"seo_keywords"`
 	UpdatedAt        string `json:"updated_at"`
@@ -101,8 +100,7 @@ func (h *AdminHandler) GetSiteSetting(c *gin.Context) {
 		SiteName:         cfg.SiteName,
 		LogoURL:          cfg.LogoUrl,
 		FaviconURL:       cfg.FaviconUrl,
-		CopyrightText:    cfg.CopyrightText,
-		ICPNumber:        cfg.IcpNumber,
+		FooterHTML:       cfg.FooterHtml,
 		SEODescription:   cfg.SeoDescription,
 		SEOKeywords:      cfg.SeoKeywords,
 		UpdatedAt:        cfg.UpdatedAt,
@@ -139,8 +137,7 @@ func (h *AdminHandler) UpdateSiteSetting(c *gin.Context) {
 		SiteName:       req.SiteName,
 		LogoUrl:        req.LogoURL,
 		FaviconUrl:     req.FaviconURL,
-		CopyrightText:  req.CopyrightText,
-		IcpNumber:      req.ICPNumber,
+		FooterHtml:     req.FooterHTML,
 		SeoDescription: req.SEODescription,
 		SeoKeywords:    req.SEOKeywords,
 	})
@@ -170,8 +167,7 @@ func (h *AdminHandler) GetPublicSiteInfo(c *gin.Context) {
 		"site_name":       snap.SiteName,
 		"logo_url":        snap.LogoURL,
 		"favicon_url":     snap.FaviconURL,
-		"copyright_text":  snap.CopyrightText,
-		"icp_number":      snap.ICPNumber,
+		"footer_html":     snap.FooterHTML,
 		"seo_description": snap.SEODescription,
 		"seo_keywords":    snap.SEOKeywords,
 		"base_url":        snap.BaseURL,

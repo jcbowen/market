@@ -35,6 +35,22 @@ func main() {
 			log.Printf("清理 user_communities.is_fulfiller 废弃列失败（不阻塞启动）: %v", err)
 		}
 	}
+	// 一次性迁移：版权文字与 ICP 备案号两列合并为页脚富文本 footer_html（HasColumn 守卫跑完一次后即为空操作）；
+	// 迁移成功才清理旧列，失败时旧列保留、下次启动重试
+	if db.GetDb().Migrator().HasColumn(&model.SiteConfig{}, "copyright_text") ||
+		db.GetDb().Migrator().HasColumn(&model.SiteConfig{}, "icp_number") {
+		if err := service.MigrateFooterHTML(db); err != nil {
+			log.Printf("页脚富文本存量迁移失败（不阻塞启动，旧列保留待重试）: %v", err)
+		} else {
+			for _, col := range []string{"copyright_text", "icp_number"} {
+				if db.GetDb().Migrator().HasColumn(&model.SiteConfig{}, col) {
+					if err := db.GetDb().Migrator().DropColumn(&model.SiteConfig{}, col); err != nil {
+						log.Printf("清理 site_configs.%s 废弃列失败（不阻塞启动）: %v", col, err)
+					}
+				}
+			}
+		}
+	}
 	// 存量会员-社区关联幂等回填（users.community_id > 0 且无关联记录的会员）
 	if err := service.NewUserService(db).BackfillUserCommunities(stdctx.Background()); err != nil {
 		log.Printf("会员-社区关联回填失败（不阻塞启动）: %v", err)

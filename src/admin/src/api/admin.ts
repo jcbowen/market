@@ -362,8 +362,7 @@ export interface SiteSetting {
   site_name: string
   logo_url: string
   favicon_url: string
-  copyright_text: string
-  icp_number: string
+  footer_html: string
   seo_description: string
   seo_keywords: string
   updated_at: string
@@ -395,7 +394,7 @@ export function getSiteSetting() {
  * @param data 站点设置数据（仅品牌字段）
  * @returns 保存结果与新版本号
  */
-export function updateSiteSetting(data: Pick<SiteSetting, 'base_url' | 'site_name' | 'logo_url' | 'favicon_url' | 'copyright_text' | 'icp_number' | 'seo_description' | 'seo_keywords'>) {
+export function updateSiteSetting(data: Pick<SiteSetting, 'base_url' | 'site_name' | 'logo_url' | 'favicon_url' | 'footer_html' | 'seo_description' | 'seo_keywords'>) {
   return request<ApiResult<{ success: boolean; version: number }>>({
     url: '/api/v1/admin/settings/site',
     method: 'PUT',

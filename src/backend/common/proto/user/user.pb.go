@@ -5676,10 +5676,8 @@ type SiteConfigInfo struct {
 	LogoUrl string `protobuf:"bytes,4,opt,name=logo_url,json=logoUrl,proto3" json:"logo_url,omitempty"`
 	// favicon（附件外链 URL），为空时不注入 icon 链接
 	FaviconUrl string `protobuf:"bytes,5,opt,name=favicon_url,json=faviconUrl,proto3" json:"favicon_url,omitempty"`
-	// 版权文字（C 端页脚与后台登录页展示）
-	CopyrightText string `protobuf:"bytes,6,opt,name=copyright_text,json=copyrightText,proto3" json:"copyright_text,omitempty"`
-	// ICP 备案号
-	IcpNumber string `protobuf:"bytes,7,opt,name=icp_number,json=icpNumber,proto3" json:"icp_number,omitempty"`
+	// 页脚富文本：版权与 ICP 备案号合并编辑，仅含白名单标签的 HTML（服务端消毒后落库）
+	FooterHtml string `protobuf:"bytes,12,opt,name=footer_html,json=footerHtml,proto3" json:"footer_html,omitempty"`
 	// SEO 描述（H5 <meta name=description> 与 og:description）
 	SeoDescription string `protobuf:"bytes,8,opt,name=seo_description,json=seoDescription,proto3" json:"seo_description,omitempty"`
 	// SEO 关键词，逗号分隔
@@ -5756,16 +5754,9 @@ func (x *SiteConfigInfo) GetFaviconUrl() string {
 	return ""
 }
 
-func (x *SiteConfigInfo) GetCopyrightText() string {
+func (x *SiteConfigInfo) GetFooterHtml() string {
 	if x != nil {
-		return x.CopyrightText
-	}
-	return ""
-}
-
-func (x *SiteConfigInfo) GetIcpNumber() string {
-	if x != nil {
-		return x.IcpNumber
+		return x.FooterHtml
 	}
 	return ""
 }
@@ -5837,15 +5828,15 @@ func (*GetSiteConfigReq) Descriptor() ([]byte, []int) {
 // SaveSiteConfigReq 保存站点设置
 // 覆盖式写入：各字段以请求值为准，传空串即清空该配置
 type SaveSiteConfigReq struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	BaseUrl        string                 `protobuf:"bytes,1,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
-	SiteName       string                 `protobuf:"bytes,2,opt,name=site_name,json=siteName,proto3" json:"site_name,omitempty"`
-	LogoUrl        string                 `protobuf:"bytes,3,opt,name=logo_url,json=logoUrl,proto3" json:"logo_url,omitempty"`
-	FaviconUrl     string                 `protobuf:"bytes,4,opt,name=favicon_url,json=faviconUrl,proto3" json:"favicon_url,omitempty"`
-	CopyrightText  string                 `protobuf:"bytes,5,opt,name=copyright_text,json=copyrightText,proto3" json:"copyright_text,omitempty"`
-	IcpNumber      string                 `protobuf:"bytes,6,opt,name=icp_number,json=icpNumber,proto3" json:"icp_number,omitempty"`
-	SeoDescription string                 `protobuf:"bytes,7,opt,name=seo_description,json=seoDescription,proto3" json:"seo_description,omitempty"`
-	SeoKeywords    string                 `protobuf:"bytes,8,opt,name=seo_keywords,json=seoKeywords,proto3" json:"seo_keywords,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	BaseUrl    string                 `protobuf:"bytes,1,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	SiteName   string                 `protobuf:"bytes,2,opt,name=site_name,json=siteName,proto3" json:"site_name,omitempty"`
+	LogoUrl    string                 `protobuf:"bytes,3,opt,name=logo_url,json=logoUrl,proto3" json:"logo_url,omitempty"`
+	FaviconUrl string                 `protobuf:"bytes,4,opt,name=favicon_url,json=faviconUrl,proto3" json:"favicon_url,omitempty"`
+	// 页脚富文本：版权与 ICP 备案号合并编辑，服务端消毒后落库
+	FooterHtml     string `protobuf:"bytes,9,opt,name=footer_html,json=footerHtml,proto3" json:"footer_html,omitempty"`
+	SeoDescription string `protobuf:"bytes,7,opt,name=seo_description,json=seoDescription,proto3" json:"seo_description,omitempty"`
+	SeoKeywords    string `protobuf:"bytes,8,opt,name=seo_keywords,json=seoKeywords,proto3" json:"seo_keywords,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -5908,16 +5899,9 @@ func (x *SaveSiteConfigReq) GetFaviconUrl() string {
 	return ""
 }
 
-func (x *SaveSiteConfigReq) GetCopyrightText() string {
+func (x *SaveSiteConfigReq) GetFooterHtml() string {
 	if x != nil {
-		return x.CopyrightText
-	}
-	return ""
-}
-
-func (x *SaveSiteConfigReq) GetIcpNumber() string {
-	if x != nil {
-		return x.IcpNumber
+		return x.FooterHtml
 	}
 	return ""
 }
@@ -6418,33 +6402,31 @@ const file_user_user_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
 	"\fchannel_code\x18\x02 \x01(\tR\vchannelCode\x12\x16\n" +
 	"\x06openid\x18\x03 \x01(\tR\x06openid\x12\x18\n" +
-	"\aunionid\x18\x04 \x01(\tR\aunionid\"\xdf\x02\n" +
+	"\aunionid\x18\x04 \x01(\tR\aunionid\"\xba\x02\n" +
 	"\x0eSiteConfigInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x19\n" +
 	"\bbase_url\x18\x02 \x01(\tR\abaseUrl\x12\x1b\n" +
 	"\tsite_name\x18\x03 \x01(\tR\bsiteName\x12\x19\n" +
 	"\blogo_url\x18\x04 \x01(\tR\alogoUrl\x12\x1f\n" +
 	"\vfavicon_url\x18\x05 \x01(\tR\n" +
-	"faviconUrl\x12%\n" +
-	"\x0ecopyright_text\x18\x06 \x01(\tR\rcopyrightText\x12\x1d\n" +
-	"\n" +
-	"icp_number\x18\a \x01(\tR\ticpNumber\x12'\n" +
+	"faviconUrl\x12\x1f\n" +
+	"\vfooter_html\x18\f \x01(\tR\n" +
+	"footerHtml\x12'\n" +
 	"\x0fseo_description\x18\b \x01(\tR\x0eseoDescription\x12!\n" +
 	"\fseo_keywords\x18\t \x01(\tR\vseoKeywords\x12\x18\n" +
 	"\aversion\x18\n" +
 	" \x01(\x03R\aversion\x12\x1d\n" +
 	"\n" +
 	"updated_at\x18\v \x01(\tR\tupdatedAt\"\x12\n" +
-	"\x10GetSiteConfigReq\"\x99\x02\n" +
+	"\x10GetSiteConfigReq\"\xf4\x01\n" +
 	"\x11SaveSiteConfigReq\x12\x19\n" +
 	"\bbase_url\x18\x01 \x01(\tR\abaseUrl\x12\x1b\n" +
 	"\tsite_name\x18\x02 \x01(\tR\bsiteName\x12\x19\n" +
 	"\blogo_url\x18\x03 \x01(\tR\alogoUrl\x12\x1f\n" +
 	"\vfavicon_url\x18\x04 \x01(\tR\n" +
-	"faviconUrl\x12%\n" +
-	"\x0ecopyright_text\x18\x05 \x01(\tR\rcopyrightText\x12\x1d\n" +
-	"\n" +
-	"icp_number\x18\x06 \x01(\tR\ticpNumber\x12'\n" +
+	"faviconUrl\x12\x1f\n" +
+	"\vfooter_html\x18\t \x01(\tR\n" +
+	"footerHtml\x12'\n" +
 	"\x0fseo_description\x18\a \x01(\tR\x0eseoDescription\x12!\n" +
 	"\fseo_keywords\x18\b \x01(\tR\vseoKeywords2\xd5\x1a\n" +
 	"\vUserService\x123\n" +

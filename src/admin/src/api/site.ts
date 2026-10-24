@@ -11,8 +11,7 @@ export interface SiteBrand {
   site_name: string
   logo_url: string
   favicon_url: string
-  copyright_text: string
-  icp_number: string
+  footer_html: string
   seo_description: string
   seo_keywords: string
   base_url: string

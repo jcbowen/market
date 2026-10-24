@@ -82,13 +82,14 @@
 
     <div class="about-footer">
       {{ branding.siteName }} · 让社区生意更简单
-      <template v-if="branding.footerText"> · {{ branding.footerText }}</template>
+      <!-- 富文本页脚（服务端已消毒）以纯文本形式拼接展示，避免多行破坏单行版式 -->
+      <template v-if="branding.footerHTML"> · {{ footerPlain }}</template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { GitNetworkOutline, LogoDocker, MailOutline, ServerOutline, StorefrontOutline } from '@vicons/ionicons5'
 import { getAbout, getUpdateCheck, type SystemAbout, type UpdateCheck } from '@/api/about'
@@ -102,6 +103,14 @@ import { useBrandingStore } from '@/stores/branding'
  */
 const message = useMessage()
 const branding = useBrandingStore()
+
+/** 页脚富文本转纯文本：DOM 解析取 textContent，供单行页脚拼接（HTML 来自服务端消毒输出） */
+const footerPlain = computed(() => {
+  if (!branding.footerHTML) return ''
+  const el = document.createElement('div')
+  el.innerHTML = branding.footerHTML
+  return el.textContent?.replace(/\s+/g, ' ').trim() || ''
+})
 
 /** 技术支持邮箱（页面静态常量） */
 const SUPPORT_EMAIL = 'jiuqi@jiuchet.com'

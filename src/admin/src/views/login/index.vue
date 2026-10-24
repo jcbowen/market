@@ -81,7 +81,7 @@
             @click="onLogin"
           >登 录</n-button>
         </n-form>
-        <p class="form-foot">{{ footText }}</p>
+        <p class="form-foot" v-html="footHTML"></p>
       </div>
     </section>
   </div>
@@ -109,8 +109,8 @@ const formRef = ref<FormInst | null>(null)
 const loading = ref(false)
 /** 版权年份 */
 const year = new Date().getFullYear()
-/** 页脚文案：优先展示站点设置里的版权与备案号，未配置时回落默认署名 */
-const footText = computed(() => branding.footerText || `© ${year} ${branding.siteName}管理平台`)
+/** 页脚内容：优先展示站点设置里的页脚富文本（服务端已消毒），未配置时回落默认署名 */
+const footHTML = computed(() => branding.footerHTML || `© ${year} ${branding.siteName}管理平台`)
 
 onMounted(() => branding.load())
 

@@ -21,8 +21,7 @@ interface SiteSetting {
   site_name: string;
   logo_url: string;
   favicon_url: string;
-  copyright_text: string;
-  icp_number: string;
+  footer_html: string;
   seo_description: string;
   seo_keywords: string;
   updated_at: string;
@@ -120,7 +119,7 @@ test.describe.serial('站点设置读写与品牌注入', () => {
   test('1. GET 返回完整字段，域名来源与派生回调地址齐备', async () => {
     const data = await readSite();
     original = data;
-    for (const key of ['base_url', 'site_name', 'logo_url', 'favicon_url', 'copyright_text', 'icp_number', 'seo_description', 'seo_keywords']) {
+    for (const key of ['base_url', 'site_name', 'logo_url', 'favicon_url', 'footer_html', 'seo_description', 'seo_keywords']) {
       expect(typeof data[key as keyof SiteSetting], `${key} 应为字符串`).toBe('string');
     }
     expect(typeof data.version, '应返回配置版本号').toBe('number');
@@ -138,8 +137,7 @@ test.describe.serial('站点设置读写与品牌注入', () => {
       site_name: autoName('站点'),
       logo_url: '/uploads/auto-test-logo.png',
       favicon_url: '/uploads/auto-test-favicon.ico',
-      copyright_text: '© AUTO-TEST 社区商超 版权所有',
-      icp_number: `京ICP备${uniqueSuffix()}号`,
+      footer_html: `<p><b>© AUTO-TEST 社区商超 版权所有</b></p><p><a href="https://beian.miit.gov.cn/">京ICP备${uniqueSuffix()}号</a></p>`,
       seo_description: 'AUTO-TEST 社区商超：就近自提与配送到家的社区电商',
       seo_keywords: '社区团购,商超,自提',
     };
@@ -147,27 +145,46 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(body.code, `保存站点设置失败: ${body.message}`).toBe(0);
 
     const saved = await readSite();
-    expect(saved, '八个字段应逐项回读一致').toMatchObject(brand);
+    expect(saved, '品牌与 SEO 字段应逐项回读一致').toMatchObject(brand);
     expect(saved.version, `版本号应在 ${before} 基础上递增`).toBeGreaterThan(before);
     expect(saved.updated_at, '更新时间应刷新').not.toBe(original?.updated_at);
   });
 
-  test('3. 公开接口免登录，且不泄露配置类字段', async ({ request }) => {
+  test('3. 页脚富文本消毒：脚本/事件属性/危险链接被清洗后落库', async () => {
+    const evil =
+      '<p onclick="alert(1)" onmouseover="alert(1)">© AUTO-TEST 消毒用例</p>' +
+      '<script>alert(2)</script><iframe src="https://evil.example.com"></iframe>' +
+      '<a href="javascript:alert(3)" style="color:red">链接文字</a>' +
+      '<a href="https://beian.miit.gov.cn/">正常链接</a>';
+    const body = await saveSite({ footer_html: evil });
+    expect(body.code, `保存站点设置失败: ${body.message}`).toBe(0);
+
+    const saved = await readSite();
+    expect(saved.footer_html, '不应残留脚本标签').not.toContain('script');
+    expect(saved.footer_html, '不应残留内联框架').not.toContain('iframe');
+    expect(saved.footer_html, '不应残留事件属性').not.toContain('onclick');
+    expect(saved.footer_html, '不应残留事件属性').not.toContain('onmouseover');
+    expect(saved.footer_html, '不应残留 javascript 协议').not.toContain('javascript');
+    expect(saved.footer_html, '文本内容应保留').toContain('© AUTO-TEST 消毒用例');
+    expect(saved.footer_html, '合法链接应保留').toContain('https://beian.miit.gov.cn/');
+    expect(saved.footer_html, 'href 被剔除后链接文字应保留').toContain('链接文字');
+  });
+
+  test('4. 公开接口免登录，且不泄露配置类字段', async ({ request }) => {
     const current = await readSite();
     const resp = await request.get('/api/v1/site-info');
     expect(resp.status(), '免登录接口不应要求鉴权').toBe(200);
     const body = (await resp.json()) as ApiResponse<Record<string, unknown>>;
     const data = assertOk(body, '公开站点信息');
     expect(data.site_name).toBe(current.site_name);
-    expect(data.copyright_text).toBe(current.copyright_text);
-    expect(data.icp_number).toBe(current.icp_number);
+    expect(data.footer_html).toBe(current.footer_html);
     // 公开面只给品牌字段：支付渠道与密钥类配置不得出现在这里
     for (const key of ['wechat', 'alipay', 'enabled_channels']) {
       expect(data[key], `公开接口不应返回 ${key}`).toBeUndefined();
     }
   });
 
-  test('4. HTML 入口注入品牌：标题与 meta 取站点设置，后台禁止收录', async ({ request }) => {
+  test('5. HTML 入口注入品牌：标题与 meta 取站点设置，后台禁止收录', async ({ request }) => {
     const current = await readSite();
     expect(current.site_name, '前置：站点名称已配置').toBeTruthy();
 
@@ -189,7 +206,7 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(h5Html, '注入锚点应被替换').not.toContain('name="brand-head"');
   });
 
-  test('5. 非法入参整行拒绝且不落库', async () => {
+  test('6. 非法入参整行拒绝且不落库', async () => {
     const before = await readSite();
 
     const cases: { label: string; patch: Partial<SiteSetting>; hint: string }[] = [
@@ -209,7 +226,7 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect({ ...after, version: 0, updated_at: '' }, '拒绝后配置不应被改写').toEqual({ ...before, version: 0, updated_at: '' });
   });
 
-  test('6. 部署域名生效：来源标记为站点设置，回调地址按配置域名派生', async () => {
+  test('7. 部署域名生效：来源标记为站点设置，回调地址按配置域名派生', async () => {
     const body = await saveSite({ base_url: TEST_DOMAIN });
     expect(body.code, `保存部署域名失败: ${body.message}`).toBe(0);
 
@@ -224,7 +241,7 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(data.alipay_return_url).toBe(`${eff}${ALIPAY_RETURN_PATH}`);
   });
 
-  test('7. 支付配置页回调地址只读派生，前端入参被忽略', async () => {
+  test('8. 支付配置页回调地址只读派生，前端入参被忽略', async () => {
     const current = await readSite();
     const eff = current.effective_base_url;
 
@@ -260,7 +277,7 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(saved.alipay?.return_url, '支付宝回跳地址不得被前端改写').toBe(`${eff}${ALIPAY_RETURN_PATH}`);
   });
 
-  test('8. 非超管即便有 settings:update 权限也不得写入站点设置', async ({ playwright }) => {
+  test('9. 非超管即便有 settings:update 权限也不得写入站点设置', async ({ playwright }) => {
     const role = assertOk(
       (await (
         await adminApi.post('/api/v1/admin/roles', {
