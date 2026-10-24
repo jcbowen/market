@@ -24,8 +24,9 @@ func TestSanitizeFooterHTML(t *testing.T) {
 		{"危险标签连子树丢弃", `<p>a</p><script>alert(1)</script><p>b</p>`, `<p>a</p><p>b</p>`},
 		{"iframe 整体丢弃", `<p>a</p><iframe src="https://evil.example.com"></iframe><p>b</p>`, `<p>a</p><p>b</p>`},
 		{"非白名单标签解包保留子内容", `<div><span>内容</span></div>`, `<span>内容</span>`},
-		{"javascript 链接剔 href 保留文字并加固", `<a href="javascript:alert(1)">链接</a>`, `<a target="_blank" rel="noopener noreferrer">链接</a>`},
-		{"合法外链保留并加固", `<a href="https://beian.miit.gov.cn/">备案</a>`, `<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">备案</a>`},
+		{"javascript 链接剔 href 保留文字并加固", `<a href="javascript:alert(1)">链接</a>`, `<a target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none">链接</a>`},
+		{"合法外链保留并加固", `<a href="https://beian.miit.gov.cn/">备案</a>`, `<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none">备案</a>`},
+		{"用户提供的 style 被剥除后重注入固定样式", `<a href="https://beian.miit.gov.cn/" style="color:red;font-weight:bold">备案</a>`, `<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none">备案</a>`},
 		{"文本特殊字符转义", `<p>1 < 2 & "引用"</p>`, `<p>1 &lt; 2 &amp; &#34;引用&#34;</p>`},
 	}
 	for _, c := range cases {

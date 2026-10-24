@@ -299,8 +299,10 @@ func writeFooterNodes(buf *bytes.Buffer, n *html.Node) {
 }
 
 // footerSafeAttrs 提取节点白名单内的安全属性
-// 链接统一追加 target="_blank" 与 rel="noopener noreferrer"（备案号等外链新窗口打开，
-// 且不带走当前商城会话）；href 不合规时静默剔除该属性
+// 链接统一追加 target="_blank"、rel="noopener noreferrer"（备案号等外链新窗口打开，
+// 且不带走当前商城会话）与固定内联样式（颜色继承页脚、去下划线，覆盖 <a> 的
+// 浏览器默认蓝色样式，C 端 rich-text 与管理端 v-html 展示一致）；
+// href 不合规时静默剔除该属性
 //
 // 参数：
 //   - n: 元素节点
@@ -330,6 +332,7 @@ func footerSafeAttrs(n *html.Node) ([]html.Attribute, bool) {
 		out = append(out,
 			html.Attribute{Key: "target", Val: "_blank"},
 			html.Attribute{Key: "rel", Val: "noopener noreferrer"},
+			html.Attribute{Key: "style", Val: "color:inherit;text-decoration:none"},
 		)
 	}
 	return out, true
