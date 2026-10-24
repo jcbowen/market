@@ -227,7 +227,8 @@ func (h *AdminHandler) GetPasswordPubkey(c *gin.Context) {
 }
 
 // decryptPwdField 按请求声明解密密码字段（原地覆写）
-// 请求未声明 pwd_alg/pwd_key 时原样返回（明文兼容通道，存量脚本与未迁移测试不受影响）；
+// 请求未声明 pwd_alg/pwd_key 时按明文兼容处理（存量脚本与未迁移测试不受影响），
+// 但同样约束字节上限 190（防明文通道设出加密通道无法登录的超长密码，账号锁死）；
 // 已声明时校验算法与 key_id → base64 解码 → RSA-OAEP-SHA256 解密 → 覆写目标字段。
 // 任一环节失败直接写响应（11010）并返回 false，调用方立即 return。
 // 密码字段本身为空时跳过（对应 CreateAdmin 的「复用账号可不传密码」场景）
@@ -245,6 +246,14 @@ func (h *AdminHandler) decryptPwdField(c *gin.Context, field *string, alg, keyID
 	// 每次记录 WARN 观测降级流量——正常前端已全走加密链路，持续出现说明存在未迁移的
 	// 第三方脚本，或 pubkey 接口被干扰导致前端降级（后者属攻击信号，需结合限流排查）
 	if alg == "" && keyID == "" {
+		// 明文兼容通道同样约束字节上限：与加密通道解密后校验对齐，堵死
+		// 「明文通道设超长密码 → 加密通道受 RSA 单块上限永远解不出来 → 账号锁死」的路径。
+		// 用 ParamError 而非 11010——后者语义是密文无效，会触发前端重拉公钥重试，徒劳一轮
+		if l := len(*field); l > maxRSAPasswordLen {
+			response.Error(c, errcode.ParamError,
+				fmt.Sprintf("密码过长：以 UTF-8 编码后不能超过 %d 字节", maxRSAPasswordLen))
+			return false
+		}
 		log.Printf("警告: 密码接口收到未声明加密的明文请求 client_ip=%s path=%s（明文兼容通道）",
 			c.ClientIP(), c.FullPath())
 		return true
