@@ -216,9 +216,8 @@ func TestSchedulerRefundRetryRotation(t *testing.T) {
 		if stat.failed != 1 {
 			t.Errorf("转人工应计为异常轮次以便 debugger 留档, failed=%d", stat.failed)
 		}
-		if d.RetryCount < int32(refundMaxRetry) {
-			t.Errorf("内存态计数应随指针推进同步, in-memory=%d", d.RetryCount)
-		}
+		// 注：不断言测试侧 d 对象的内存字段——调度器内部 Find 加载的是独立副本，
+		// markRefundChecked 推进的是该副本的计数，与测试侧引用无关；落库语义已由上方 DB 回查覆盖
 
 		// 再跑两轮：用满的单不再入批（既不打扰渠道，也不会重复写待办）
 		sched.retryStuckRefunds(ctx)

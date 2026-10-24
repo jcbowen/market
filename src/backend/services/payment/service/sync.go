@@ -278,7 +278,8 @@ func (s *PaymentService) syncOfflinePayment(ctx context.Context, p *model.Paymen
 func (s *PaymentService) recordOfflineSyncTrace(ctx context.Context, p *model.Payment, outcome *syncOutcome, result int32, actor syncActor) {
 	entry := notifyEntryFrom(p, model.NotifyKindManualSync, result)
 	entry.ErrorMsg = fmt.Sprintf("线下收款单（支付方式 %d）本地核实：%s", p.PayType, outcome.Message)
-	entry.Remark = actor.trace()
+	// 操作人写 detect_remark（检出留痕列）；remark 是销账依据列，会被销账覆写，不得占用
+	entry.DetectRemark = actor.trace()
 	s.recordNotifyLog(ctx, entry)
 }
 

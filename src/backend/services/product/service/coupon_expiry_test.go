@@ -58,7 +58,8 @@ func newCouponExpiryTestDB(t *testing.T) *mysql.Instance {
 	if err != nil {
 		t.Fatalf("连接测试 MySQL 失败: %v", err)
 	}
-	if err := dbInst.GetDb().AutoMigrate(&model.UserCoupon{}); err != nil {
+	// Coupon 也要迁移：UseCoupon 核销会 UPDATE coupons.used_count，CI 干净库缺该表必报 1146
+	if err := dbInst.GetDb().AutoMigrate(&model.UserCoupon{}, &model.Coupon{}); err != nil {
 		t.Fatalf("测试库迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
