@@ -118,7 +118,7 @@ const rejectSubmitting = ref(false)
 const rejectId = ref(0)
 const rejectReason = ref('')
 
-// 恢复自动收敛弹窗（退款中卡单且自动重试已用满预算时）
+// 恢复自动收敛弹窗（所有退款中卡单均可用：新卡单归零等效恢复，用满预算的单借此重新起扫）
 const resetVisible = ref(false)
 const resetSubmitting = ref(false)
 const resetId = ref(0)

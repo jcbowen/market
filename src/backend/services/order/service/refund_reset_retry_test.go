@@ -143,6 +143,34 @@ func TestResetRefundRetryPaymentSideRefuses(t *testing.T) {
 	}
 }
 
+// TestResetRefundRetryFreshStuck 新卡单（预算本就是目标值）：重置应成功而非误报状态已变更
+// 回归背景：MySQL 默认 changed-rows 语义（DSN 未开 clientFoundRows）下，retry_count=0 且
+// last_checked_at=NULL 的退款单执行重置时 UPDATE 无值变化、affected=0，旧实现直接报
+// 「退款单状态已变更，请刷新后重试」且反复重试永远失败；修复后回查确认仍是退款中且预算
+// 已是目标值即视为等效已恢复
+func TestResetRefundRetryFreshStuck(t *testing.T) {
+	env := newRefundTestEnv(t)
+	ctx := context.Background()
+	orderID := seedSchedOrder(t, env.db, "B2-FRESH", 7, schedTimeAgo(time.Hour), schedTimeAgo(time.Hour))
+	// CheckedAgo 省略（0）= 从未被核查（last_checked_at NULL），RetryCount 零值 = 预算未动过
+	r := seedStuckRefund(t, env.db, refundSeed{No: "B2-FRESH", OrderID: orderID, UpdatedAgo: time.Hour})
+
+	if err := env.svc.ResetRefundRetry(ctx, resetReq(r.ID, "微信商户平台显示退款处理中")); err != nil {
+		t.Fatalf("新卡单重置应成功（旧实现误报状态已变更）: %v", err)
+	}
+
+	checked, retry, _, status := refundCheckRow(t, env.db, r.ID)
+	if retry != 0 || checked != nil || status != 4 {
+		t.Errorf("新卡单预算与指针应保持目标值, retry=%d checked=%v status=%d", retry, checked, status)
+	}
+	if got := len(env.sched.payment.refundResetCalls()); got != 1 {
+		t.Errorf("应恰好调用一次支付侧重置, got %d 次", got)
+	}
+	if got := countAction(refundLogActions(t, env.db, r.ID), "reset"); got != 1 {
+		t.Errorf("应落一条 reset 轨迹, got %d 条", got)
+	}
+}
+
 // TestResetRefundRetryGuards 状态与社区门禁：非退款中拒绝，跨社区拒绝
 func TestResetRefundRetryGuards(t *testing.T) {
 	env := newRefundTestEnv(t)

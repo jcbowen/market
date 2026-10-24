@@ -1040,7 +1040,9 @@ func (s *RefundService) RetryRefund(ctx context.Context, req *order.RetryRefundR
 // 让调度器与退款查单任务重新把它当作在途单去核实渠道终态，全程不触渠道、不动钱。
 //
 // 顺序有讲究：先恢复 payment 侧再恢复本侧。支付侧拒绝（流水已终态成功/已失败）时直接返回错误、
-// 本侧预算保持原样，两侧要么一起恢复要么一起不动，不会出现「订单在起劲重试而流水已放弃收敛」的半截状态。
+// 本侧预算保持原样；支付侧成功后本侧才复位，复位要么生效、要么命中「预算本就是目标值」的
+// 新卡单（等效已恢复）——两种结局里两侧最终状态一致，不会出现「订单在起劲重试而流水已放弃
+// 收敛」的半截状态（并发下状态已变的拦截见下方 RowsAffected==0 分支）。
 //
 // 核实依据（remark）必填并落 refund_logs：本动作等于人工确认渠道还在处理这笔退款，
 // 没有依据就重置，事后无从判断是谁批准重新收敛的。
@@ -1093,7 +1095,18 @@ func (s *RefundService) ResetRefundRetry(ctx context.Context, req *order.ResetRe
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return invalidArg("退款单状态已变更，请刷新后重试")
+		// MySQL 默认 changed-rows 语义（DSN 未开 clientFoundRows）：新卡单的预算本就是目标值
+		// （retry_count=0 且 last_checked_at=NULL），UPDATE 无值变化时 affected=0，不代表并发冲突；
+		// 回查确认仍是退款中且预算已是目标值则视为等效已恢复，真正已变更（收敛/重试过）才拦截报错
+		var cur model.Refund
+		if err := s.db.GetDb().WithContext(ctx).
+			Select("status", "retry_count", "last_checked_at").
+			First(&cur, refund.ID).Error; err != nil {
+			return err
+		}
+		if cur.Status != 4 || cur.RetryCount != 0 || cur.LastCheckedAt != nil {
+			return invalidArg("退款单状态已变更，请刷新后重试")
+		}
 	}
 
 	operatorType := "admin"
