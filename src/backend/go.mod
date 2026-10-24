@@ -13,7 +13,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/jcbowen/alipay-sdk-go-all v0.0.6
+	github.com/jcbowen/alipay-sdk-go-all v0.0.7
 	github.com/jcbowen/jcbaseGo v0.16.8
 	github.com/jcbowen/wego v0.2.0
 	github.com/oschwald/geoip2-golang/v2 v2.5.0
