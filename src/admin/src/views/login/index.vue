@@ -8,11 +8,11 @@
           <div v-else class="logo-badge" aria-hidden="true">
             <n-icon :component="CartOutline" :size="24" />
           </div>
-          <span class="brand-name">{{ branding.siteName }}管理平台</span>
+          <span class="brand-name">{{ branding.siteName }}系统</span>
         </div>
         <div class="brand-hero">
-          <h1 class="brand-slogan">让社区生意，管得更简单</h1>
-          <p class="brand-sub">商品 · 库存 · 订单 · 营销 · 收银，一站式管理</p>
+          <h1 class="brand-slogan">让社区生意，变得更简单</h1>
+          <p class="brand-sub">商品 · 库存 · 订单 · 营销 · 收银，一站式经营</p>
         </div>
         <ul class="brand-feats">
           <li v-for="feat in feats" :key="feat" class="feat">
