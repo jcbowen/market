@@ -49,15 +49,16 @@
               @click="onPickProduct(p)"
             >
               <!-- 禁用预览：收银场景点击即加购，弹大图预览属误触 -->
+              <!-- 无封面图时与 C 端口径一致，兜底显示默认商品图 -->
               <n-image
-                :src="p.cover_image"
+                :src="p.cover_image || defaultProductImage"
                 object-fit="cover"
                 class="cover"
                 :preview-disabled="true"
                 :img-props="{ referrerpolicy: 'no-referrer' }"
               >
                 <template #error>
-                  <div class="cover-fallback"><n-icon :size="26"><CubeOutline /></n-icon></div>
+                  <img :src="defaultProductImage" alt="默认商品图" />
                 </template>
               </n-image>
               <div class="p-name">{{ p.name }}</div>
@@ -370,7 +371,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDialog, useMessage } from 'naive-ui'
-import { CreateOutline, CubeOutline, SearchOutline } from '@vicons/ionicons5'
+import { CreateOutline, SearchOutline } from '@vicons/ionicons5'
+import defaultProductImage from '@/assets/logo.png'
 import { pinyin } from 'pinyin-pro'
 import { createPosHeldOrder, createPosOrder, deletePosHeldOrder, getPosOrderPayStatus, getPosHeldOrders, listPosPayMethods, payPosOrderCode } from '@/api/order'
 import { getCouponRecords } from '@/api/marketing'
@@ -1464,14 +1466,6 @@ onMounted(() => {
       object-fit: cover;
       display: block;
     }
-  }
-  .cover-fallback {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #ccc;
   }
   .p-name {
     font-size: 15px;
