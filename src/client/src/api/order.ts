@@ -217,3 +217,28 @@ export function previewFreeShipping(
 ) {
   return post<FreeShippingPreview>('/orders/free-shipping/preview', { items, community_id: communityId })
 }
+
+/** 再来一单时未能加入购物车的商品项 */
+export interface ReorderSkippedItem {
+  product_name: string
+  spec_name: string
+  /** 跳过原因（如"商品已下架"、"规格已失效"） */
+  reason: string
+}
+
+/** 再来一单结果 */
+export interface ReorderResult {
+  /** 成功加入购物车的商品项数 */
+  added: number
+  /** 未能加入购物车的商品及原因 */
+  skipped: ReorderSkippedItem[]
+}
+
+/**
+ * 再来一单：把订单内商品按原数量重新加入订单所属社区的购物车
+ * 仅用户本人的终态订单（已完成5/已取消6/已退款8）可用，门店单不可用
+ * @param id 订单 ID
+ */
+export function reorderOrder(id: number) {
+  return post<ReorderResult>(`/orders/${id}/reorder`)
+}

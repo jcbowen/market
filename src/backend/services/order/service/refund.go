@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"github.com/go-redis/redis/v8"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -95,6 +97,8 @@ func adminRefundable(o *model.Order) bool {
 type RefundService struct {
 	db            *mysql.Instance
 	paymentClient payment.PaymentServiceClient
+	// redisClient 可选：退款事件经 Redis 发布到事件总线（WS 语音通知），未注入时静默跳过
+	redisClient *redis.Client
 }
 
 // NewRefundService 创建退款业务服务
@@ -106,6 +110,18 @@ type RefundService struct {
 //   - *RefundService: 退款业务服务实例
 func NewRefundService(db *mysql.Instance, paymentClient payment.PaymentServiceClient) *RefundService {
 	return &RefundService{db: db, paymentClient: paymentClient}
+}
+
+// WithRedis 注入 Redis 客户端（可选，用于退款事件发布）
+//
+// 参数：
+//   - client: Redis 客户端
+//
+// 返回值：
+//   - *RefundService: 链式返回自身
+func (s *RefundService) WithRedis(client *redis.Client) *RefundService {
+	s.redisClient = client
+	return s
 }
 
 // refundLine 汇算后的退款行
@@ -230,6 +246,8 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 	}); err != nil {
 		return nil, err
 	}
+	// 事务提交后尽力而为发布退款申请事件（WS 通知后台处理，失败不影响申请）
+	s.publishRefundEvent(ctx, req.OrderId, refund.RefundNo, refund.Amount, eventbus.RefundActionApply, "user", req.Reason)
 	return refund, nil
 }
 
@@ -1294,6 +1312,8 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 	// 按退款明细回退销量（仅金额退无商品明细自然跳过）；
 	// AdjustSalesCount 无幂等键，放事务内重试会重复回退
 	s.adjustRefundSales(ctx, refund.ID, items)
+	// 退款成功事件（尽力而为）：覆盖后台代客/审批同意/重试/调度器同步全部完成路径
+	s.publishRefundEvent(ctx, refund.OrderID, refund.RefundNo, refund.Amount, eventbus.RefundActionCompleted, operatorType, "")
 	return nil
 }
 

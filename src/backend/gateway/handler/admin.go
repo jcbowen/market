@@ -177,15 +177,18 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		},
 	}
 	// 新版后台/H5 前端带 X-Refresh-Cookie: 1，refresh_token 改由 httpOnly cookie 下发，
-	// 响应体清空；未带该头（旧前端缓存、POS 未更新）时保持原行为，避免登录直接不可用
+	// 响应体清空；未带该头（旧前端缓存、POS 未更新）时保持原行为，避免登录直接不可用。
+	// 同一声明下顺带下发 access_token 的 httpOnly cookie（WS 握手承载用）：
+	// 浏览器 WebSocket 无法自定义请求头，凭 cookie 鉴权可让握手 URL 不再明文携带令牌
 	if wantsRefreshCookie(c) {
 		setRefreshTokenCookie(c, refreshToken, int64(refreshExpire.Sub(now).Seconds()))
+		setAccessTokenCookie(c, accessToken, int64(accessExpire.Sub(now).Seconds()))
 		resp.RefreshToken = ""
 	}
 	response.Success(c, resp)
 }
 
-// AdminLogout 后台登出：清除 refresh_token 的 httpOnly cookie 并吊销该令牌
+// AdminLogout 后台登出：清除 refresh_token 与 access_token 的 httpOnly cookie 并吊销 refresh 令牌
 // 前端本地 access_token 由 JS 自行删除，JS 删不掉的 cookie 必须由后端下发过期值清除；
 // 吊销黑名单（P1-5）让服务端也不再认这枚 refresh 令牌——否则登出只是前端表演，
 // 令牌在剩余有效期内仍可刷新出新 access_token
@@ -193,6 +196,7 @@ func (h *AdminHandler) Login(c *gin.Context) {
 //   - c: gin 上下文
 func (h *AdminHandler) AdminLogout(c *gin.Context) {
 	clearRefreshTokenCookie(c)
+	clearAccessTokenCookie(c)
 	// 吊销当前 refresh 令牌：解析失败（过期/伪造）时无需处理，令牌本就不可用
 	if token := firstNonEmptyRefreshToken(c, ""); token != "" {
 		if claims, err := h.jwtManager.ParseToken(token); err == nil &&
@@ -1510,6 +1514,9 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	}
 	if wantsRefreshCookie(c) {
 		setRefreshTokenCookie(c, newRefresh, int64(refreshExpire.Sub(now).Seconds()))
+		// access cookie 随新签发的 access_token 同步轮换，否则旧令牌过期后
+		// WS 握手仍拿 cookie 里的失效 token 去鉴权
+		setAccessTokenCookie(c, accessToken, int64(accessExpire.Sub(now).Seconds()))
 	} else {
 		// 旧前端/POS 从响应体取 refresh_token：轮转后必须回传新值，
 		// 否则客户端继续持有已吊销的旧令牌，下次刷新即失败

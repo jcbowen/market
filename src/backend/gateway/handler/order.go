@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
+	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
 )
@@ -90,6 +92,8 @@ type OrderHandler struct {
 	userClient    user.UserServiceClient
 	paymentClient payment.PaymentServiceClient
 	cartClient    cart.CartServiceClient
+	// productClient 商品服务客户端：再来一单按商品/SKU 的实时状态筛选可售商品
+	productClient product.ProductServiceClient
 	// orderTimeoutSec 订单超时未支付时间（秒），与 order-service 读同一份配置，
 	// 用于详情响应生成待支付订单的 expire_at
 	orderTimeoutSec int
@@ -101,11 +105,12 @@ type OrderHandler struct {
 //   - userClient: user-service gRPC 客户端
 //   - paymentClient: payment-service gRPC 客户端，用于订单详情展示支付方式
 //   - cartClient: cart-service gRPC 客户端，用于下单后清理购物车
+//   - productClient: product-service gRPC 客户端，用于再来一单校验商品/SKU 可售状态
 //   - orderTimeoutSec: 订单超时未支付时间（秒）
 //
 // 返回值：
 //   - *OrderHandler: 订单处理器实例
-func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient, paymentClient payment.PaymentServiceClient, cartClient cart.CartServiceClient, orderTimeoutSec int) *OrderHandler {
+func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserServiceClient, paymentClient payment.PaymentServiceClient, cartClient cart.CartServiceClient, productClient product.ProductServiceClient, orderTimeoutSec int) *OrderHandler {
 	if orderTimeoutSec <= 0 {
 		orderTimeoutSec = 1800
 	}
@@ -114,6 +119,7 @@ func NewOrderHandler(orderClient order.OrderServiceClient, userClient user.UserS
 		userClient:      userClient,
 		paymentClient:   paymentClient,
 		cartClient:      cartClient,
+		productClient:   productClient,
 		orderTimeoutSec: orderTimeoutSec,
 	}
 }
@@ -711,6 +717,157 @@ func (h *OrderHandler) DeleteOrder(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"id": id})
+}
+
+// Reorder 再来一单
+// 把订单内商品按原数量重新加入该订单所属社区的购物车（C 端订单详情页入口）。
+// 仅用户本人的终态订单（已完成 5 / 已取消 6 / 已退款 8）可复购；
+// 门店单（收银台代客 source=2）在 C 端只读，不提供复购入口；
+// 商品下架/规格失效/SKU 删除等逐项跳过，不阻断其余商品加购。
+// 参数：
+//   - c: gin 上下文（路径参数 id 为订单 ID）
+//
+// 异常：
+//   - ParamError: id 非法 / 门店单 / 订单状态不支持
+//   - NotFound: 订单不存在或非本人订单
+//   - OperationNotAllowed: 全部商品均无法加入购物车（消息为失败原因汇总）
+//   - GRPCError: 订单查询失败
+func (h *OrderHandler) Reorder(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	uc := appcontext.GetUserContext(c)
+	orderResp, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{Id: id, UserId: uc.UserID})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	// GetOrder 对非本人订单按不存在处理，此处兜底空响应
+	if orderResp.Order == nil {
+		response.Error(c, errcode.NotFound, "订单不存在")
+		return
+	}
+	o := orderResp.Order
+	if o.Source == 2 {
+		response.Error(c, errcode.ParamError, "门店订单请在门店购买")
+		return
+	}
+	// 仅终态订单可复购：进行中订单重复加购易造成误下单
+	if o.Status != 5 && o.Status != 6 && o.Status != 8 {
+		response.Error(c, errcode.OrderStatusNotAllowed, "订单当前状态不支持再来一单")
+		return
+	}
+	if len(orderResp.Items) == 0 {
+		response.Error(c, errcode.NotFound, "订单商品不存在")
+		return
+	}
+
+	// 加购社区取订单所属社区：AddItem 会校验 SKU 归属社区，
+	// 用户切换到其他社区后仍可复购原社区商品（购物车支持跨社区展示）
+	// AddItem 只校验商品/SKU 的存在与归属，不校验上架/停售/库存，
+	// 因此复购前批量拉取实时状态，失效项逐项跳过并给出原因
+	productIDs := make([]int64, 0, len(orderResp.Items))
+	skuIDs := make([]int64, 0, len(orderResp.Items))
+	for _, item := range orderResp.Items {
+		productIDs = append(productIDs, item.ProductId)
+		skuIDs = append(skuIDs, item.SkuId)
+	}
+	productsResp, err := h.productClient.BatchGetProducts(c.Request.Context(), &product.BatchGetProductsReq{
+		Ids:         productIDs,
+		CommunityId: o.CommunityId,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	skusResp, err := h.productClient.BatchGetSkus(c.Request.Context(), &product.BatchGetSkusReq{
+		Ids:         skuIDs,
+		CommunityId: o.CommunityId,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	productByID := make(map[int64]*product.ProductInfo, len(productsResp.List))
+	for _, p := range productsResp.List {
+		productByID[p.Id] = p
+	}
+	skuByID := make(map[int64]*product.SkuInfo, len(skusResp.List))
+	for _, s := range skusResp.List {
+		skuByID[s.Id] = s
+	}
+
+	added := 0
+	skipped := make([]gin.H, 0, len(orderResp.Items))
+	for _, item := range orderResp.Items {
+		// 先按实时可售状态过滤：下架/停售/库存不足的商品不再加入购物车
+		if reason := reorderSkipReason(item, productByID[item.ProductId], skuByID[item.SkuId]); reason != "" {
+			skipped = append(skipped, gin.H{
+				"product_name": item.ProductName,
+				"spec_name":    item.SpecName,
+				"reason":       reason,
+			})
+			continue
+		}
+		_, addErr := h.cartClient.AddItem(c.Request.Context(), &cart.AddItemReq{
+			UserId:      uc.UserID,
+			CommunityId: o.CommunityId,
+			ProductId:   item.ProductId,
+			SkuId:       item.SkuId,
+			Quantity:    item.Quantity,
+		})
+		if addErr == nil {
+			added++
+			continue
+		}
+		// 复用统一翻译：剥离 rpc error 前缀，拿到服务端的业务文案（已下架/规格失效等）
+		_, reason := response.TranslateGRPCError(addErr)
+		skipped = append(skipped, gin.H{
+			"product_name": item.ProductName,
+			"spec_name":    item.SpecName,
+			"reason":       reason,
+		})
+	}
+
+	// 全部失败：直接返回业务错误并汇总原因，前端不跳转购物车
+	if added == 0 {
+		reasons := make([]string, 0, len(skipped))
+		for _, s := range skipped {
+			reasons = append(reasons, fmt.Sprintf("%v（%v）", s["product_name"], s["reason"]))
+		}
+		response.Error(c, errcode.OperationNotAllowed, "商品均已无法购买："+strings.Join(reasons, "、"))
+		return
+	}
+
+	response.Success(c, gin.H{"added": added, "skipped": skipped})
+}
+
+// reorderSkipReason 判断订单明细商品当前是否仍可购买
+// 可售口径与 C 端下单一致：商品上架(status=1)、SKU 启用(status=1)、库存不小于购买数量
+// 参数：
+//   - item: 订单明细（取购买数量）
+//   - p: 商品实时信息，nil 表示商品已删除
+//   - s: SKU 实时信息，nil 表示规格已删除
+//
+// 返回值：
+//   - string: 跳过原因；空串表示可购买
+func reorderSkipReason(item *order.OrderItemInfo, p *product.ProductInfo, s *product.SkuInfo) string {
+	if p == nil || p.Status != 1 {
+		return "商品已下架"
+	}
+	if s == nil {
+		return "规格已失效"
+	}
+	if s.Status != 1 {
+		return "规格已停售"
+	}
+	if s.Stock < item.Quantity {
+		return fmt.Sprintf("库存不足，仅剩 %d 件", s.Stock)
+	}
+	return ""
 }
 
 // ConfirmReceive 确认收货

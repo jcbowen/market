@@ -57,13 +57,16 @@
                 <view v-if="item.stock_hint" class="item-stock-hint">{{ item.stock_hint }}</view>
                 <view class="item-bottom">
                   <text class="item-price">{{ formatPrice(item.price) }}</text>
+                  <!-- 不用 v-model + @change：u-number-box 的 change 同步触发、v-model 回写在
+                       nextTick 之后，change 回调里读 item.quantity 会拿到旧值，导致提交旧数量被弹回；
+                       改用 @update:modelValue 显式接收新值（与 category.vue 弹层同模式） -->
                   <u-number-box
                     v-if="!item.invalid"
-                    v-model="item.quantity"
+                    :modelValue="item.quantity"
                     :min="item.min_buy || 1"
                     :max="item.stock"
                     integer
-                    @change="onQuantityChange(item)"
+                    @update:modelValue="(val: number) => onQuantityChange(item, val)"
                     @overlimit="onQuantityOverlimit(item, $event)"
                   />
                 </view>
@@ -345,20 +348,24 @@ async function onGroupSelectChange(group: { community_id: number; items: CartIte
 
 /**
  * 数量变化，最低数量受 min_buy 限制
+ * 数值由组件 @update:modelValue 显式传入：u-number-box 的 change 事件先于
+ * v-model 回写触发，此处不能读 item.quantity（旧值），否则提交旧数量后会被 loadCart 弹回
  * @param item 购物车项
+ * @param val 变更后的数量
  */
-async function onQuantityChange(item: CartItem) {
+async function onQuantityChange(item: CartItem, val: number) {
   const minBuy = item.min_buy || 1
-  if (item.quantity < minBuy) {
+  if (val < minBuy) {
     uni.showToast({ title: `最低购买 ${minBuy} 份`, icon: 'none' })
     item.quantity = minBuy
     return
   }
+  item.quantity = val
   try {
-    await updateCartItem(item.id, { quantity: item.quantity })
+    await updateCartItem(item.id, { quantity: val })
     loadCart()
   } catch {
-    // ignore
+    // 请求失败时本地临时值会在下次 loadCart 时与服务端状态对齐
   }
 }
 

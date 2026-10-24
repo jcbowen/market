@@ -1228,6 +1228,8 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 		case 2:
 			// 支付成功累加销量（含到店单收款即完结路径；调度器补同步同走此处）
 			s.adjustOrderSales(ctx, req.Id, 1)
+			// 支付成功事件：全部支付路径的收口，尽力而为发布供后台 WS 语音通知
+			s.publishOrderPaidEvent(ctx, req.Id)
 		case 6:
 			// 取消成功后关闭待支付支付单，防迟到回调误置已支付
 			closePendingPayments(ctx, req.Id)

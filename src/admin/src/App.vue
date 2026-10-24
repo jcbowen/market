@@ -9,8 +9,32 @@
 </template>
 
 <script setup lang="ts">
+import { onUnmounted, watch } from 'vue'
 import { zhCN, dateZhCN } from 'naive-ui'
+import { storeToRefs } from 'pinia'
 import type { GlobalThemeOverrides } from 'naive-ui'
+import { useAuthStore } from '@/stores/auth'
+import { connectOrderNotify, disconnectOrderNotify } from '@/utils/orderNotify'
+
+/**
+ * 新订单语音通知连接管理
+ * 登录就绪、已选定社区且具备 order:view 权限时建立后台 WS 连接；
+ * 登出、权限丧失或社区切换（推送范围随握手声明变化，须重连刷新）时断开
+ */
+const authStore = useAuthStore()
+const { isReady, currentCommunityId } = storeToRefs(authStore)
+watch(
+  [isReady, currentCommunityId],
+  ([ready, communityId]) => {
+    if (ready && communityId > 0 && authStore.hasPermission('order:view')) {
+      connectOrderNotify()
+    } else {
+      disconnectOrderNotify()
+    }
+  },
+  { immediate: true },
+)
+onUnmounted(() => disconnectOrderNotify())
 
 /**
  * 全局主题配置

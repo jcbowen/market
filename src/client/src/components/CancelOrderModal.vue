@@ -14,11 +14,10 @@
           class="reason-item"
           @click="selectedReason = reason"
         >
-          <u-icon
-            :name="selectedReason === reason ? 'radio-mark' : 'circle'"
-            size="18"
-            :color="selectedReason === reason ? '#07c160' : '#cccccc'"
-          />
+          <!-- uview-plus 无 radio-mark/circle 图标，改自绘单选圈（与 RefundModal 勾选样式统一） -->
+          <view :class="['check-circle', selectedReason === reason ? 'checked' : '']">
+            <u-icon v-if="selectedReason === reason" name="checkmark" size="12" color="#ffffff" />
+          </view>
           <text class="reason-text">{{ reason }}</text>
         </view>
       </view>
@@ -30,6 +29,7 @@
       <view class="cancel-footer">
         <u-button
           type="success"
+          size="large"
           text="确认取消"
           :loading="submitting"
           @click="onSubmit"
@@ -134,6 +134,24 @@ async function onSubmit() {
   padding: 20rpx 10rpx;
 }
 
+/* 自绘单选圈：未选中灰边空心，选中绿色填充（与 RefundModal 勾选样式统一） */
+.check-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36rpx;
+  height: 36rpx;
+  border: 2rpx solid #dddddd;
+  border-radius: 50%;
+  background-color: #ffffff;
+}
+
+.check-circle.checked {
+  border-color: #07c160;
+  background-color: #07c160;
+}
+
 .reason-text {
   font-size: 28rpx;
   color: #333333;
@@ -141,9 +159,5 @@ async function onSubmit() {
 
 .reason-input {
   margin: 10rpx 0 20rpx;
-}
-
-.cancel-footer .u-button {
-  width: 100%;
 }
 </style>

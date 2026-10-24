@@ -90,6 +90,18 @@ export function canDelete(o: OrderActionTarget): boolean {
 }
 
 /**
+ * 判断订单是否可「再来一单」
+ * 与后端 gateway OrderHandler.Reorder 口径一致：仅用户本人的终态订单
+ * （已完成 5 / 已取消 6 / 已退款 8）可复购；门店单（收银台代客）C 端只读，不提供入口
+ * @param o 订单
+ * @returns 是否可再来一单
+ */
+export function canReorder(o: OrderActionTarget): boolean {
+  if (isStoreOrder(o)) return false
+  return [5, 6, 8].includes(o.status)
+}
+
+/**
  * 确认收货按钮文案：自提单为"确认自提"，配送单为"确认收货"
  * @param o 订单
  * @returns 按钮文案

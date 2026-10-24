@@ -136,7 +136,9 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 
 // UpdateItem 更新购物车项
 // 按 user_id + sku_id 定位记录，sku_id 由 gateway 通过 req.Id 传入。
-// 仅当 quantity > 0 时更新数量，始终更新 selected 状态。
+// quantity > 0 时更新数量；selected 仅在纯选中操作（quantity <= 0）或勾选（selected=true）时更新，
+// 纯改数量（quantity > 0 且 selected 未传，bool 零值 false）不影响选中态，
+// 避免"改一次数量勾选被静默清掉"（再来一单后改数量即复现）
 //
 // 参数：
 //   - ctx: 上下文
@@ -468,6 +470,9 @@ func (s *server) upsertCartItem(ctx stdctx.Context, userID, communityID, product
 }
 
 // updateCartItem 按 user_id + sku_id 更新购物车记录
+// selected 更新条件：quantity <= 0（纯选中/取消操作）或 selected == true。
+// proto UpdateItemReq.selected 为 bool 无法区分"未传"与"false"，
+// 前端改数量只传 quantity（selected 落为 false），无条件写入会把已勾选项静默置为未选中
 //
 // 参数：
 //   - ctx: 上下文
@@ -492,11 +497,13 @@ func (s *server) updateCartItem(ctx stdctx.Context, userID, skuID int64, quantit
 	}
 
 	updates := map[string]interface{}{
-		"selected":   selected,
 		"updated_at": now,
 	}
 	if quantity > 0 {
 		updates["quantity"] = quantity
+	}
+	if quantity <= 0 || selected {
+		updates["selected"] = selected
 	}
 
 	if err := s.db.GetDb().WithContext(ctx).Model(&model.Cart{}).

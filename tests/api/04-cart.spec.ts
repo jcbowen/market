@@ -43,9 +43,10 @@ test.describe.serial('购物车', () => {
     const resp = await api.post('/api/v1/cart/items', {
       data: { product_id: productId, sku_id: skuId, quantity: 1 },
     });
-    const body = (await resp.json()) as ApiResponse<CartItem>;
+    const body = (await resp.json()) as ApiResponse<{ items: CartItem[] }>;
     expect(body.code).toBe(0);
-    addedId = body.data?.id ?? 0;
+    // 响应为 CartResp（items 数组），行 ID 取 sku_id 匹配项（UpdateItem/RemoveItem 的 :id 即 sku_id）
+    addedId = body.data?.items?.find((i) => i.sku_id === skuId)?.id ?? 0;
 
     const cart = (await (await api.get('/api/v1/cart')).json()) as ApiResponse<{ items: CartItem[] }>;
     expect(cart.data?.items.some((i) => i.sku_id === skuId)).toBe(true);
@@ -70,6 +71,34 @@ test.describe.serial('购物车', () => {
     const cart = (await (await api.get('/api/v1/cart')).json()) as ApiResponse<{ items: CartItem[] }>;
     const item = cart.data!.items.find((i) => i.id === addedId);
     expect(item?.quantity).toBe(2);
+  });
+
+  test('纯改数量不影响选中态', async () => {
+    // 独立加购一个 SKU：加购默认选中
+    const sku = await pickSku(api, undefined, communityId);
+    const add = (await (
+      await api.post('/api/v1/cart/items', {
+        data: { product_id: sku.product_id, sku_id: sku.id, quantity: 1 },
+      })
+    ).json()) as ApiResponse;
+    expect(add.code).toBe(0);
+
+    // 选中态改数量：selected 保持 true
+    // （回归 2026-10-24 修复：UpdateItem 曾无条件写 selected，改一次数量勾选被静默清掉）
+    await api.put(`/api/v1/cart/items/${sku.id}`, { data: { quantity: 2 } });
+    let cart = (await (await api.get('/api/v1/cart')).json()) as ApiResponse<{ items: CartItem[] }>;
+    expect(cart.data!.items.find((i) => i.sku_id === sku.id)?.selected).toBe(true);
+
+    // 未选中态改数量：selected 保持 false，数量正常更新
+    await api.put(`/api/v1/cart/items/${sku.id}`, { data: { selected: false } });
+    await api.put(`/api/v1/cart/items/${sku.id}`, { data: { quantity: 3 } });
+    cart = (await (await api.get('/api/v1/cart')).json()) as ApiResponse<{ items: CartItem[] }>;
+    const item = cart.data!.items.find((i) => i.sku_id === sku.id);
+    expect(item?.quantity).toBe(3);
+    expect(item?.selected).toBe(false);
+
+    // 清理测试项，不影响后续用例
+    await api.delete(`/api/v1/cart/items/${sku.id}`);
   });
 
   test('全选/取消全选切换', async () => {

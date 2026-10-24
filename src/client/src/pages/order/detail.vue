@@ -110,6 +110,12 @@
       >
         <u-button plain type="info" text="退款进度" @click="onShowRefundProgress" />
       </view>
+      <view
+        v-if="canReorder(order)"
+        class="action-btn"
+      >
+        <u-button plain type="success" text="再来一单" :loading="reordering" @click="onReorder" />
+      </view>
     </view>
 
     <!-- 申请退款弹窗 -->
@@ -124,13 +130,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { onLoad, onUnload, onHide, onShow } from '@dcloudio/uni-app'
-import { getOrderDetail, confirmReceive } from '@/api/order'
+import { getOrderDetail, confirmReceive, reorderOrder } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, onReturnToSite, payOrder } from '@/utils/pay'
 import { goOrderList, goProductDetail } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
-import { canReceive, receiveButtonText, canCancel, canRefund, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
+import { canReceive, receiveButtonText, canCancel, canRefund, canReorder, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
 import RefundModal from '@/components/RefundModal.vue'
 import RefundProgressModal from '@/components/RefundProgressModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
@@ -140,6 +146,8 @@ const orderId = ref(0)
 const refundVisible = ref(false)
 const refundProgressVisible = ref(false)
 const cancelVisible = ref(false)
+/** 再来一单请求中标记（防止重复点击重复加购） */
+const reordering = ref(false)
 /** 倒计时当前时间（每秒刷新，页面隐藏时暂停避免后台计时偏差） */
 const nowTick = ref(Date.now())
 let countdownTimer: ReturnType<typeof setInterval> | null = null
@@ -409,6 +417,41 @@ function onRefund() {
  */
 function onShowRefundProgress() {
   refundProgressVisible.value = true
+}
+
+/**
+ * 再来一单：把订单商品按原数量重新加入订单所属社区的购物车
+ * 全部/部分成功均跳转购物车页；部分商品下架或规格失效时先弹窗列出未加入清单；
+ * 全部失败由后端返回业务错误，request 统一提示且停留当前页
+ */
+async function onReorder() {
+  if (reordering.value) return
+  reordering.value = true
+  try {
+    const res = await reorderOrder(order.value.id)
+    const result = res.data
+    const skipped = result?.skipped || []
+    if (skipped.length) {
+      const lines = skipped.map(
+        (item) => `${item.product_name}${item.spec_name ? `（${item.spec_name}）` : ''}：${item.reason}`,
+      )
+      await new Promise<void>((resolve) => {
+        uni.showModal({
+          title: `已加入 ${result?.added || 0} 件商品`,
+          content: `以下商品暂时无法购买：\n${lines.join('\n')}`,
+          showCancel: false,
+          success: () => resolve(),
+          fail: () => resolve(),
+        })
+      })
+    }
+    // 购物车是 tabBar 页面，只能 switchTab；进入后 onShow 自动刷新购物车数据
+    uni.switchTab({ url: '/pages/cart/cart' })
+  } catch {
+    // request 已统一提示错误
+  } finally {
+    reordering.value = false
+  }
 }
 </script>
 

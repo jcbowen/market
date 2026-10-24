@@ -30,6 +30,9 @@ message AddItemReq {
   int32 quantity = 5;
 }
 
+// 更新购物车项。
+// selected 为 bool 无法区分"未传"与"false"：quantity > 0 且 selected == false
+// 视为纯改数量，服务端不更新选中态；纯选中/取消操作传 quantity = 0
 message UpdateItemReq {
   int64 id = 1;
   int64 user_id = 2;

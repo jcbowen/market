@@ -51,6 +51,7 @@ func main() {
 	srv := grpc.NewServer()
 	svc := newServer(db, grpcclient.PaymentClient, cfg)
 	svc.orderService.WithRedis(rds.GetClient())
+	svc.refundService.WithRedis(rds.GetClient())
 	order.RegisterOrderServiceServer(srv, svc)
 	bootstrap.RegisterHealth(srv)
 

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 )
 
 // refresh 令牌的浏览器端承载方式（F2）：
@@ -147,4 +149,35 @@ func firstNonEmptyRefreshToken(c *gin.Context, bodyToken string) string {
 		return v
 	}
 	return bodyToken
+}
+
+// setAccessTokenCookie 下发后台 access_token 的 httpOnly cookie（WS 握手承载用）
+// 浏览器 WebSocket 握手无法自定义请求头，token 原经查询参数传递会落入浏览器历史
+// 与网关/代理访问日志；改为 cookie 承载后握手 URL 不再出现令牌。
+// 仅在后台登录/刷新且前端声明 cookie 模式（X-Refresh-Cookie: 1，同源浏览器场景）时下发，
+// 与 refresh cookie 同一承载口径：同域同路径（/api/v1/admin，恰好覆盖 /api/v1/admin/ws），
+// Secure/SameSite 属性沿用同一判定；cookie 名常量定义在 middleware 包
+// （gwMiddleware.CookieAdminAccessToken，WSAuthMiddleware 读同一枚），
+// handler 包依赖 middleware 包，反向会循环依赖
+//
+// 参数：
+//   - c: gin 上下文
+//   - token: 已签发的 access_token
+//   - maxAgeSeconds: 存活秒数，取 access_token 的有效期
+func setAccessTokenCookie(c *gin.Context, token string, maxAgeSeconds int64) {
+	if token == "" {
+		return
+	}
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(gwMiddleware.CookieAdminAccessToken, token, int(maxAgeSeconds), adminCookiePath, "", requestIsHTTPS(c), true)
+}
+
+// clearAccessTokenCookie 清除后台 access_token cookie（登出用）
+// 属性需与下发时一致（名、路径、Secure），否则浏览器不认这枚待删除的 cookie
+//
+// 参数：
+//   - c: gin 上下文
+func clearAccessTokenCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(gwMiddleware.CookieAdminAccessToken, "", -1, adminCookiePath, "", requestIsHTTPS(c), true)
 }

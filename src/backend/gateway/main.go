@@ -24,6 +24,7 @@ import (
 	"github.com/jcbowen/market/src/backend/gateway/client"
 	"github.com/jcbowen/market/src/backend/gateway/handler"
 	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
+	"github.com/jcbowen/market/src/backend/gateway/ws"
 )
 
 /**
@@ -77,7 +78,14 @@ func main() {
 	r.Use(baseMw.SetGPC(r))
 	r.Use(staticCacheMiddleware())
 
-	registerRoutes(r, jwtManager, clients, cfg)
+	// 后台 WebSocket 推送（新订单语音通知）：hub 管理在线连接，
+	// 订阅器接收 order 服务的支付成功事件按社区转发；订阅失败不阻断启动（自动重试）
+	hub := ws.NewHub()
+	subCtx, subCancel := context.WithCancel(context.Background())
+	defer subCancel()
+	go ws.RunOrderEventSubscriber(subCtx, cfg, hub)
+
+	registerRoutes(r, jwtManager, clients, cfg, hub)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.WebServer.Port),
@@ -174,7 +182,8 @@ func getConfigPath() string {
 //   - jwtManager: JWT 管理器
 //   - clients: gRPC 服务客户端集合
 //   - cfg: 全局配置
-func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.ServiceClients, cfg *config.Config) {
+//   - hub: 后台 WebSocket 集线器
+func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.ServiceClients, cfg *config.Config, hub *ws.Hub) {
 	// HTML 品牌注入须先于路由注册：中间件在路由前命中前端入口页，
 	// 既避免与 r.Static 的 /b/*filepath 通配路由冲突，也让 SPA 深链兜底同样带上品牌
 	h5Path := filepath.Join(getBinDir(), "static", "h5")
@@ -192,7 +201,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	userHandler := handler.NewUserHandler(clients.UserClient)
 	productHandler := handler.NewProductHandler(clients.ProductClient)
 	cartHandler := handler.NewCartHandler(clients.CartClient)
-	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient, clients.CartClient, cfg.Business.OrderTimeout)
+	orderHandler := handler.NewOrderHandler(clients.OrderClient, clients.UserClient, clients.PaymentClient, clients.CartClient, clients.ProductClient, cfg.Business.OrderTimeout)
 	// C 端上传（履约签收照片等）：独立 handler 持有 product 客户端，IsDisplay=false
 	fulfillmentUploadHandler := handler.NewFulfillmentUploadHandler(clients.ProductClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
@@ -277,6 +286,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.GET("/orders/:id", orderHandler.GetOrder)
 			authUser.PUT("/orders/:id/cancel", orderHandler.CancelOrder)
 			authUser.DELETE("/orders/:id", orderHandler.DeleteOrder)
+			authUser.POST("/orders/:id/reorder", orderHandler.Reorder)
 			authUser.POST("/orders/:id/receive", orderHandler.ConfirmReceive)
 			authUser.POST("/orders/:id/refund", orderHandler.ApplyRefund)
 			authUser.GET("/orders/:id/refunds", orderHandler.ListOrderRefunds)
@@ -315,6 +325,16 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		admin.POST("/auth/refresh", adminAuthLimiter, adminHandler.RefreshToken)
 		// 登出仅需清除 httpOnly refresh cookie，无需登录态（access 已过期也要能登出）
 		admin.POST("/auth/logout", adminAuthLimiter, adminHandler.AdminLogout)
+
+		// 后台 WS（新订单语音通知）：浏览器 WebSocket 握手无法自定义请求头，
+		// token（httpOnly cookie 优先、查询参数兜底）与社区声明经 WSAuthMiddleware
+		// 映射进标准请求头，社区校验与权限校验复用既有链（order:view 才能接收支付成功事件推送）。
+		// 不挂在 authAdmin 组内：该组的 AuthMiddleware 只认请求头，会先于参数映射拒绝握手
+		admin.GET("/ws",
+			gwMiddleware.WSAuthMiddleware(jwtManager),
+			gwMiddleware.RequireCommunityAccess(),
+			gwMiddleware.RequirePermission("order:view"),
+			handler.NewWSHandler(hub).Handle)
 
 		authAdmin := admin.Group("")
 		authAdmin.Use(gwMiddleware.AuthMiddleware(jwtManager, jwt.TokenTypeAdmin))
