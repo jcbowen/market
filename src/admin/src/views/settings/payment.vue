@@ -568,13 +568,13 @@ const ALIPAY_CERT_ITEMS = [
     type: 'app_cert',
     key: 'alipay_app_cert_uploaded',
     label: '应用公钥证书',
-    hint: '开放平台「应用公钥证书」页签下载，文件名形如 appPublicCert.crt',
+    hint: '开放平台「应用公钥证书」页签下载，文件名形如 appCertPublicKey_你的AppID.crt',
   },
   {
     type: 'alipay_public_cert',
     key: 'alipay_public_cert_uploaded',
     label: '支付宝公钥证书',
-    hint: '开放平台「支付宝公钥证书」页签下载，文件名形如 alipayPublicCert.crt，用于回调验签',
+    hint: '开放平台「支付宝公钥证书」页签下载，文件名形如 alipayCertPublicKey_RSA2.crt，用于回调验签',
   },
   {
     type: 'root_cert',
