@@ -51,6 +51,15 @@ security:
     # 阿里云 CDN 填 Ali-CDN-Real-IP，Cloudflare 填 CF-Connecting-IP；头缺失时回落直连/代理网段逻辑。
     # 也可不改本文件、改由 compose 的 TRUSTED_PLATFORM 环境变量注入，留空不启用
     trusted_platform: ""
+    # 登录密码传输加密的 RSA 私钥文件路径（推荐方式，仅 gateway 读取；协议见 docs 06-接口设计「密码传输加密约定」）。
+    # 容器内路径由 docker-compose.yml 挂载 ./bin/data/ssl 提供：文件不存在时启动自动生成并落盘（0600），
+    # 容器重建 key_id 不变；多实例/负载均衡部署挂载同一宿主文件即共享同一密钥对
+    # （建议预生成：openssl genrsa -out bin/data/ssl/pwd_rsa.pem 2048，避免多实例同时首启的生成竞争）。
+    # Linux 宿主需 chown -R 10001:10001 bin/data/ssl；也可经 PASSWORD_RSA_PRIVATE_KEY_FILE 环境变量注入路径
+    password_rsa_key_file: /app/data/ssl/pwd_rsa.pem
+    # 登录密码传输加密的 RSA 私钥（PEM 内联，兼容保留；优先级低于上方 key_file 与对应 ENV）。
+    # 多行 PEM 经 PASSWORD_RSA_PRIVATE_KEY 环境变量注入时换行写 \n 转义；两处均空 = 纯内存临时密钥（重启更换）
+    password_rsa_private_key: ""
 log:
     level: info
     format: json

@@ -1,4 +1,5 @@
 import { request } from './request'
+import { requestWithEncryptedPasswords } from '@/utils/crypto'
 import type { ApiResult, AdminInfo, PageParams, PageResult, Role } from './types'
 
 /**
@@ -33,6 +34,7 @@ export function getAdminDetail(id: number) {
 /**
  * 创建员工（当前社区任职）
  * username 已存在时复用该账号（不修改其密码），仅追加任职
+ * 初始密码经 RSA 公钥加密后传输（留空 = 复用账号不设密）
  * @param data 员工数据
  * @returns 创建结果
  */
@@ -45,11 +47,22 @@ export function createAdmin(data: {
   /** 创建时绑定的会员 ID（0=不绑定；绑定后该会员在任职社区即履约人员） */
   user_id?: number
 }) {
-  return request<ApiResult<AdminInfo>>({
-    url: '/api/v1/admin/admins',
-    method: 'POST',
-    data,
-  })
+  return requestWithEncryptedPasswords(
+    async (enc) => ({
+      username: data.username,
+      real_name: data.real_name,
+      phone: data.phone,
+      role_ids: data.role_ids,
+      user_id: data.user_id,
+      ...(data.password ? await enc.encryptFields({ password: data.password }) : {}),
+    }),
+    (body) =>
+      request<ApiResult<AdminInfo>>({
+        url: '/api/v1/admin/admins',
+        method: 'POST',
+        data: body,
+      }),
+  )
 }
 
 /**
@@ -90,16 +103,21 @@ export function deleteAdmin(id: number) {
 
 /**
  * 修改管理员密码
+ * 新旧密码经 RSA 公钥加密后传输
  * @param id 管理员 ID
  * @param data 密码数据
  * @returns 修改结果
  */
 export function changeAdminPassword(id: number, data: { old_password: string; new_password: string }) {
-  return request<ApiResult<null>>({
-    url: `/api/v1/admin/admins/${id}/password`,
-    method: 'PUT',
-    data,
-  })
+  return requestWithEncryptedPasswords(
+    async (enc) => await enc.encryptFields({ old_password: data.old_password, new_password: data.new_password }),
+    (body) =>
+      request<ApiResult<null>>({
+        url: `/api/v1/admin/admins/${id}/password`,
+        method: 'PUT',
+        data: body,
+      }),
+  )
 }
 
 /**

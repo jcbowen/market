@@ -101,6 +101,19 @@ func ApplyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("TRUSTED_PLATFORM"); v != "" {
 		cfg.Security.TrustedPlatform = strings.TrimSpace(v)
 	}
+	// PASSWORD_RSA_PRIVATE_KEY 登录密码传输加密的 RSA 私钥内联 PEM（多实例部署共享同一密钥）。
+	// 环境变量不便写多行 PEM：\n 字面转义会在此还原为真实换行（docker-compose .env 常规做法）；
+	// 设值时清空文件路径配置——维持「ENV 覆盖配置文件」语义，避免 docker 模板写死的
+	// password_rsa_key_file 路径抢占 ENV 注入的内联私钥
+	if v := os.Getenv("PASSWORD_RSA_PRIVATE_KEY"); v != "" {
+		cfg.Security.PasswordRSAPrivateKey = strings.ReplaceAll(v, `\n`, "\n")
+		cfg.Security.PasswordRSAKeyFile = ""
+	}
+	// PASSWORD_RSA_PRIVATE_KEY_FILE 登录密码加密 RSA 私钥的文件路径（推荐注入方式，免 \n 转义，
+	// 路径指向挂载目录即可持久化/多实例共享；后于内联处理，两 ENV 同设时文件路径优先）
+	if v := os.Getenv("PASSWORD_RSA_PRIVATE_KEY_FILE"); v != "" {
+		cfg.Security.PasswordRSAKeyFile = strings.TrimSpace(v)
+	}
 }
 
 // parseNumericEnv 校验数值型环境变量（端口/库号）取值，返回解析后的整数

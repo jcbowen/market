@@ -55,6 +55,13 @@ security:
     # 阿里云 CDN 填 Ali-CDN-Real-IP，Cloudflare 填 CF-Connecting-IP；头缺失时回落直连/代理网段逻辑。
     # 也可 docker run -e TRUSTED_PLATFORM=Ali-CDN-Real-IP 注入，留空不启用
     trusted_platform: ""
+    # 登录密码传输加密的 RSA 私钥文件路径（推荐方式）：/app/data 整体落宿主机 bind mount，
+    # 首启自动生成并落盘（0600），重建容器/升级镜像密钥不换；多实例部署挂载同一宿主文件共享，
+    # 建议预生成 openssl genrsa -out <宿主data目录>/ssl/pwd_rsa.pem 2048 后挂载
+    password_rsa_key_file: /app/data/ssl/pwd_rsa.pem
+    # 登录密码传输加密的 RSA 私钥（PEM 内联，兼容保留；优先级低于上方 key_file 与对应 ENV，
+    # 经 PASSWORD_RSA_PRIVATE_KEY 环境变量注入时 PEM 换行写 \n 转义）
+    password_rsa_private_key: ""
 log:
     level: info
     format: json

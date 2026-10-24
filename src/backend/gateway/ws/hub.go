@@ -76,6 +76,12 @@ var Upgrader = websocket.Upgrader{
 // 说明：主机名比对刻意忽略端口——反向代理到源站时端口口径天然不一致
 // （vite 的 changeOrigin 把 Host 改成代理目标端口，nginx 的 $host 又会剥掉端口），
 // 只比端口反而会误杀合法同源部署；跨主机名才是本校验要拦的攻击面
+//
+// 说明2：不从 X-Forwarded-Host 取"真实主机名"——该头客户端可控，网关直接暴露时
+// 攻击者将其与 Origin 设为同值即可通过校验，等于把同源判定交给可伪造头；r.Host 的
+// 可信度由部署规范收口：nginx 统一 proxy_set_header Host $host 把浏览器访问的
+// 域名还原进 Host（见 deploy/nginx.conf.example 与 10-部署方案/03-生产环境部署.md），
+// 因此直接比 r.Host 即为比对真实访问主机名（安全评审结论 2026-10-24，维持现状）
 func CheckSameHostOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {

@@ -259,6 +259,10 @@ services:
       # 或发布包内二进制）下载更新（不入 git），目录未初始化时 IP 定位接口优雅降级；
       # 挂载可写，缺失时容器内亦可自动补下载
       - ./bin/data/geoip:/app/data/geoip
+      # 登录密码加密 RSA 私钥（安全敏感，不入 git）：首次启动自动生成并落盘持久化，
+      # 容器重建 key_id 不变；多实例/负载均衡部署挂载同一宿主文件即共享同一密钥对。
+      # Linux 宿主需 chown -R 10001:10001 bin/data/ssl（Docker Desktop/VirtioFS 无需处理）
+      - ./bin/data/ssl:/app/data/ssl
       # 开发阶段挂载宿主机前端编译产物，避免每次修改都重新构建 gateway 镜像
       - ./bin/static/admin:/app/static/admin:ro
       - ./bin/static/h5:/app/static/h5:ro

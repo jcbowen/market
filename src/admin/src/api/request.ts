@@ -57,6 +57,16 @@ service.interceptors.request.use(
  */
 const CODE_NOT_LOGIN_OR_EXPIRED = 11001
 const CODE_INVALID_TOKEN = 11002
+/**
+ * 密码密文失效（key 轮换/解密失败）
+ * 前端可自动重拉公钥恢复（见 utils/crypto.ts），无需打扰用户，全局提示静默
+ */
+export const CODE_PWD_ENCRYPTED_INVALID = 11010
+
+/** 携带后端业务码的错误对象（业务层据 code 做定向处理，如 11010 自动重试） */
+export interface BizError extends Error {
+  code?: number
+}
 
 /**
  * 清除登录凭证并跳转登录页
@@ -82,8 +92,13 @@ service.interceptors.response.use(
         return Promise.reject(new Error(data.message || '未登录或登录已过期'))
       }
       const message = data.message || '请求失败'
-      tryShowError(message)
-      return Promise.reject(new Error(message))
+      // 密码密文失效由加密层自动重拉公钥重试恢复，不弹全局提示（避免重试成功前的误报）
+      if (data.code !== CODE_PWD_ENCRYPTED_INVALID) {
+        tryShowError(message)
+      }
+      const bizErr = new Error(message) as BizError
+      bizErr.code = data.code
+      return Promise.reject(bizErr)
     }
     return response
   },

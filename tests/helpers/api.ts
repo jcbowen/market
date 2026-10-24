@@ -1,3 +1,5 @@
+import { createPublicKey, publicEncrypt, constants } from 'node:crypto';
+
 import type { APIRequest, APIRequestContext, Playwright } from '@playwright/test';
 
 import { PRESET_PHONE, recordTestUser, uniquePhone } from './data';
@@ -136,8 +138,69 @@ function registerLoginUser(info: ClientLoginInfo, phone: string): void {
   });
 }
 
+/** 密码加密公钥缓存（进程级；服务端密钥轮换后重启测试进程即重建） */
+let cachedPubkey: { keyId: string; publicKey: string; alg: string } | null = null;
+
+/**
+ * 拉取密码传输加密公钥（带缓存；失败返回 null，调用方降级明文走后端兼容通道）
+ * - 函数名: fetchPwdPubkey
+ * - 参数: request — Playwright 请求上下文
+ * - 返回: Promise<{ keyId, publicKey, alg } | null>
+ * - 异常: 不抛出（网络失败按降级处理）
+ */
+async function fetchPwdPubkey(request: RequestSource): Promise<{ keyId: string; publicKey: string; alg: string } | null> {
+  if (cachedPubkey) return cachedPubkey;
+  const ctx = await ensureContext(request);
+  try {
+    const resp = await ctx.get('/api/v1/admin/auth/pubkey');
+    const body = (await resp.json()) as ApiResponse<{ key_id: string; public_key: string; alg: string }>;
+    const data = body?.data;
+    if (body.code !== 0 || !data?.public_key || !data?.key_id) return null;
+    cachedPubkey = { keyId: data.key_id, publicKey: data.public_key, alg: data.alg };
+    return cachedPubkey;
+  } catch {
+    return null;
+  } finally {
+    if (ctx !== request) await ctx.dispose();
+  }
+}
+
+/**
+ * 构造密码类请求体：密码字段 RSA(PKCS#1 v1.5) 加密上送，与网关 handler/password_crypto.go 协议一致
+ * 公钥不可得时原样返回明文字段（后端明文兼容通道兜底，测试仍可运行）
+ * - 函数名: encryptedCredentials
+ * - 参数: request — Playwright 请求上下文；fields — 明文字段 map（如 { password } 或 { old_password, new_password }）
+ * - 返回: Promise<Record<string, unknown>>：密文字段 + pwd_alg/pwd_key 声明（或降级明文）
+ * - 异常: 不抛出
+ * - 使用示例: const data = await encryptedCredentials(request, { password: 'admin123' });
+ */
+export async function encryptedCredentials(
+  request: RequestSource,
+  fields: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = { ...fields };
+  const pubkey = await fetchPwdPubkey(request);
+  if (!pubkey) return out;
+  let encryptedAny = false;
+  for (const [name, plain] of Object.entries(fields)) {
+    if (!plain) continue;
+    out[name] = publicEncrypt(
+      { key: createPublicKey(pubkey.publicKey), padding: constants.RSA_PKCS1_PADDING },
+      Buffer.from(plain, 'utf8'),
+    ).toString('base64');
+    encryptedAny = true;
+  }
+  if (encryptedAny) {
+    out.pwd_alg = pubkey.alg;
+    out.pwd_key = pubkey.keyId;
+  }
+  return out;
+}
+
 /**
  * 管理端账号密码登录
+ * 密码经 RSA 公钥加密后传输（公钥不可得时降级明文，后端兼容通道兜底），
+ * 全量回归的每轮登录都走加密链路，保证密文协议持续被验证
  * - 函数名: adminLogin
  * - 参数: request — Playwright 请求上下文；username/password — 管理员凭据（默认 admin/admin123）
  * - 返回: Promise<AdminLoginInfo>，含 access_token
@@ -151,7 +214,12 @@ export async function adminLogin(
 ): Promise<AdminLoginInfo> {
   const ctx = await ensureContext(request);
   try {
-    const resp = await ctx.post('/api/v1/admin/auth/login', { data: { username, password } });
+    // 只有密码字段走加密：username 是查询凭据不是机密，误加密会导致后端按密文查账号必然登录失败
+    const data = {
+      username,
+      ...(await encryptedCredentials(request, { password })),
+    };
+    const resp = await ctx.post('/api/v1/admin/auth/login', { data });
     if (!resp.ok()) throw new Error(`管理端登录 HTTP ${resp.status()}：${await resp.text()}`);
     const body = (await resp.json()) as ApiResponse<AdminLoginInfo>;
     return assertOk(body, '管理端登录');

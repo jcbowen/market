@@ -321,7 +321,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		// 猜密码的真正防线是 login_guard 的按账号失败锁定（计数存 Redis、跨 IP 有效），
 		// 本额度必须容纳 NAT 后多人同时登录与自动化全量回归（每轮数百次登录），故不按最激进口径设
 		adminAuthLimiter := gwMiddleware.RateLimitMiddleware(5, 50)
-		admin.POST("/auth/login", adminAuthLimiter, adminHandler.Login)
+		// 密码类接口的生产环境 HTTPS 兜底（nginx 层 301 是主防线，此处防 TLS 误配置兜底）；
+		// X-Forwarded-Proto 仅采信可信代理网段内的直连方，防公网直达时伪造头绕过
+		requireHTTPS := gwMiddleware.RequireHTTPS(cfg.Security.TrustedProxies)
+		// 密码传输加密公钥下发（公开接口，免登录；前端登录前实时拉取，见 handler/password_crypto.go）
+		admin.GET("/auth/pubkey", adminHandler.GetPasswordPubkey)
+		admin.POST("/auth/login", adminAuthLimiter, requireHTTPS, adminHandler.Login)
 		admin.POST("/auth/refresh", adminAuthLimiter, adminHandler.RefreshToken)
 		// 登出仅需清除 httpOnly refresh cookie，无需登录态（access 已过期也要能登出）
 		admin.POST("/auth/logout", adminAuthLimiter, adminHandler.AdminLogout)
@@ -357,10 +362,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.DELETE("/roles/:id", gwMiddleware.RequirePermission("role:delete"), adminHandler.DeleteRole)
 
 			authAdmin.GET("/admins", gwMiddleware.RequirePermission("admin:view"), adminHandler.ListAdmins)
-			authAdmin.POST("/admins", gwMiddleware.RequirePermission("admin:create"), adminHandler.CreateAdmin)
+			authAdmin.POST("/admins", gwMiddleware.RequirePermission("admin:create"), requireHTTPS, adminHandler.CreateAdmin)
 			authAdmin.PUT("/admins/:id", gwMiddleware.RequirePermission("admin:update"), adminHandler.UpdateAdmin)
 			authAdmin.DELETE("/admins/:id", gwMiddleware.RequirePermission("admin:delete"), adminHandler.DeleteAdmin)
-			authAdmin.PUT("/admins/:id/password", gwMiddleware.RequirePermission("admin:update"), adminHandler.ChangeAdminPassword)
+			authAdmin.PUT("/admins/:id/password", gwMiddleware.RequirePermission("admin:update"), requireHTTPS, adminHandler.ChangeAdminPassword)
 
 			authAdmin.GET("/categories", gwMiddleware.RequirePermission("product:view"), adminHandler.ListCategories)
 			authAdmin.POST("/categories", gwMiddleware.RequirePermission("product:create"), adminHandler.CreateCategory)
@@ -543,10 +548,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 路由级同样挂权限码：处理器内的超管判定是第二道闸，中间件先按权限码拦一轮，
 			// 避免「只要求登录」的写接口在超管判定被日后重构掉时静默变成全员可写
 			authAdmin.GET("/accounts", gwMiddleware.RequirePermission("admin:view"), adminHandler.ListAllAccounts)
-			authAdmin.POST("/accounts", gwMiddleware.RequirePermission("admin:create"), adminHandler.CreateAccount)
+			authAdmin.POST("/accounts", gwMiddleware.RequirePermission("admin:create"), requireHTTPS, adminHandler.CreateAccount)
 			authAdmin.GET("/accounts/:id/assignments", gwMiddleware.RequirePermission("admin:view"), adminHandler.GetAccountAssignments)
 			authAdmin.PUT("/accounts/:id/status", gwMiddleware.RequirePermission("admin:update"), adminHandler.UpdateAccountStatus)
-			authAdmin.PUT("/accounts/:id/password", gwMiddleware.RequirePermission("admin:update"), adminHandler.ResetAccountPassword)
+			authAdmin.PUT("/accounts/:id/password", gwMiddleware.RequirePermission("admin:update"), requireHTTPS, adminHandler.ResetAccountPassword)
 
 			authAdmin.GET("/communities", gwMiddleware.RequirePermission("community:view"), adminHandler.ListAdminCommunities)
 			authAdmin.GET("/communities/:id", gwMiddleware.RequirePermission("community:view"), adminHandler.GetCommunity)
@@ -562,7 +567,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/communities/:id/permissions", gwMiddleware.RequirePermission("community:view"), adminHandler.UpdateCommunityPermissions)
 			// 社区管理员指定（社区编辑页，处理器内强制超管；路由级同挂员工管理权限码）
 			authAdmin.GET("/communities/:id/admins", gwMiddleware.RequirePermission("admin:view"), adminHandler.ListCommunityAdmins)
-			authAdmin.POST("/communities/:id/admins", gwMiddleware.RequirePermission("admin:update"), adminHandler.AddCommunityAdmin)
+			authAdmin.POST("/communities/:id/admins", gwMiddleware.RequirePermission("admin:update"), requireHTTPS, adminHandler.AddCommunityAdmin)
 			authAdmin.DELETE("/communities/:id/admins/:adminId", gwMiddleware.RequirePermission("admin:update"), adminHandler.RemoveCommunityAdmin)
 
 			// 行政区划：列表查看 + 更新任务（检查 → 轮询差异 → 确认覆盖）

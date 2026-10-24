@@ -1,4 +1,5 @@
 import { request } from './request'
+import { requestWithEncryptedPasswords } from '@/utils/crypto'
 import type { ApiResult, LoginParams, LoginResult, AdminInfo } from './types'
 
 /**
@@ -13,16 +14,25 @@ const REFRESH_COOKIE_HEADER = { 'X-Refresh-Cookie': '1' }
 
 /**
  * 管理员登录
+ * 密码经 RSA 公钥加密后传输（密钥轮换自动重试，见 utils/crypto.ts）；
+ * 公钥不可得时降级明文，由后端明文兼容通道兜底
  * @param params 登录参数
  * @returns 登录结果，包含 token 和管理员信息
  */
 export function login(params: LoginParams) {
-  return request<ApiResult<LoginResult>>({
-    url: '/api/v1/admin/auth/login',
-    method: 'POST',
-    data: params,
-    headers: REFRESH_COOKIE_HEADER,
-  })
+  return requestWithEncryptedPasswords(
+    async (enc) => ({
+      username: params.username,
+      ...(await enc.encryptFields({ password: params.password })),
+    }),
+    (data) =>
+      request<ApiResult<LoginResult>>({
+        url: '/api/v1/admin/auth/login',
+        method: 'POST',
+        data,
+        headers: REFRESH_COOKIE_HEADER,
+      }),
+  )
 }
 
 /**

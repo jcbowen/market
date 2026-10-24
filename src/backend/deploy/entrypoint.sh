@@ -158,6 +158,9 @@ prepare_dir "$RUNTIME_DIR" 10001
 prepare_dir "$APP_DIR/attachment" 10001
 prepare_dir "$APP_DIR/logs" 10001
 prepare_dir "$APP_DIR/data/geoip" 10001
+# 登录密码加密 RSA 私钥目录：gateway 首启自动生成落盘（bin/config.allinone.yaml 的
+# password_rsa_key_file 指向此处），挂载宿主目录后容器重建/升级镜像密钥不丢
+prepare_dir "$APP_DIR/data/ssl" 10001
 prepare_dir "$MYSQL_DATA" "$(id -u mysql)"
 prepare_dir /data "$(id -u redis)"
 

@@ -24,6 +24,11 @@ const (
 	UserBlocked = 11008
 	// LoginLocked 连续登录失败已达上限，账号在锁定期内拒绝再次尝试（具体剩余时间由调用方拼进文案）
 	LoginLocked = 11009
+	// PasswordEncryptedError 密码密文无效：RSA 解密失败或 key_id 不匹配（服务端密钥已轮换）。
+	// 前端收到该码应重拉公钥（/auth/pubkey）后用新公钥重试一次，仍失败才提示用户
+	PasswordEncryptedError = 11010
+	// HTTPSRequired 生产环境密码类接口拒绝非 HTTPS 请求（传输层兜底，防止 TLS 配置失误时密码明文过网）
+	HTTPSRequired = 11011
 
 	// ----- 商品模块 -----
 	ProductNotFoundOrOffline = 12001
@@ -84,6 +89,8 @@ var Message = map[int]string{
 	IncorrectUsernameOrPassword: "用户名或密码错误",
 	UserBlocked:                 "系统错误，请联系工作人员",
 	LoginLocked:                 "登录失败次数过多，请稍后再试",
+	PasswordEncryptedError:      "密码加密数据无效，请刷新页面后重试",
+	HTTPSRequired:               "出于安全考虑，请通过 HTTPS 访问",
 	ProductNotFoundOrOffline:    "商品不存在或已下架",
 	ProductStockInsufficient:    "商品库存不足",
 	CategoryNotFound:            "分类不存在",

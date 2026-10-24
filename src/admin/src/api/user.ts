@@ -1,4 +1,5 @@
 import { request } from './request'
+import { requestWithEncryptedPasswords } from '@/utils/crypto'
 import type { ApiResult, Account, AccountAssignment, Community, FrequentProduct, PageParams, PageResult, User } from './types'
 
 /**
@@ -195,15 +196,25 @@ export function getAccountList(params: PageParams & { keyword?: string }) {
 /**
  * 新增后台账号（超管）
  * 仅创建账号本身，不在任何社区任职；任职由各社区员工管理页分配
+ * 初始密码经 RSA 公钥加密后传输
  * @param data 账号信息
  * @returns 新建账号
  */
 export function createAccount(data: { username: string; password: string; real_name?: string; phone?: string }) {
-  return request<ApiResult<Account>>({
-    url: '/api/v1/admin/accounts',
-    method: 'POST',
-    data,
-  })
+  return requestWithEncryptedPasswords(
+    async (enc) => ({
+      username: data.username,
+      real_name: data.real_name,
+      phone: data.phone,
+      ...(await enc.encryptFields({ password: data.password })),
+    }),
+    (body) =>
+      request<ApiResult<Account>>({
+        url: '/api/v1/admin/accounts',
+        method: 'POST',
+        data: body,
+      }),
+  )
 }
 
 /**
@@ -222,16 +233,21 @@ export function updateAccountStatus(id: number, status: number) {
 
 /**
  * 重置后台账号密码（超管，免旧密码）
+ * 新密码经 RSA 公钥加密后传输
  * @param id 账号 ID
  * @param newPassword 新密码
  * @returns 操作结果
  */
 export function resetAccountPassword(id: number, newPassword: string) {
-  return request<ApiResult<null>>({
-    url: `/api/v1/admin/accounts/${id}/password`,
-    method: 'PUT',
-    data: { new_password: newPassword },
-  })
+  return requestWithEncryptedPasswords(
+    async (enc) => await enc.encryptFields({ new_password: newPassword }),
+    (body) =>
+      request<ApiResult<null>>({
+        url: `/api/v1/admin/accounts/${id}/password`,
+        method: 'PUT',
+        data: body,
+      }),
+  )
 }
 
 /**
@@ -262,6 +278,7 @@ export function getCommunityAdmins(communityId: number) {
 /**
  * 指定社区管理员（超管）
  * username 已存在时复用账号；授予社区内置管理员角色（每社区仅一人，自动替换原任职者）
+ * 初始密码经 RSA 公钥加密后传输（留空 = 复用账号不设密）
  * @param communityId 社区 ID
  * @param data 账号信息
  * @returns 操作结果
@@ -270,11 +287,20 @@ export function addCommunityAdmin(
   communityId: number,
   data: { username: string; password?: string; real_name?: string; phone?: string },
 ) {
-  return request<ApiResult<null>>({
-    url: `/api/v1/admin/communities/${communityId}/admins`,
-    method: 'POST',
-    data,
-  })
+  return requestWithEncryptedPasswords(
+    async (enc) => ({
+      username: data.username,
+      real_name: data.real_name,
+      phone: data.phone,
+      ...(data.password ? await enc.encryptFields({ password: data.password }) : {}),
+    }),
+    (body) =>
+      request<ApiResult<null>>({
+        url: `/api/v1/admin/communities/${communityId}/admins`,
+        method: 'POST',
+        data: body,
+      }),
+  )
 }
 
 /**

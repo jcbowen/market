@@ -309,3 +309,34 @@ func TestEnsureSecureJWTDevAllowInsecure(t *testing.T) {
 		t.Error("非生产未设放行开关时，默认占位密钥应拒绝启动")
 	}
 }
+
+// TestApplyEnvOverridesPasswordRSAKey 登录密码加密私钥两类 ENV 的覆盖与互斥语义：
+// 内联 PEM 设值须清空文件路径配置（防模板写死的默认路径抢占 ENV 注入），
+// 文件路径 ENV 覆盖配置文件值且去首尾空白；两 ENV 同设时文件路径优先（后处理覆盖）
+func TestApplyEnvOverridesPasswordRSAKey(t *testing.T) {
+	// ENV 内联：覆盖内联字段、\n 转义还原、清空配置文件里的文件路径
+	cfg := &Config{}
+	cfg.Security.PasswordRSAKeyFile = "/app/data/ssl/pwd_rsa.pem"
+	t.Setenv("PASSWORD_RSA_PRIVATE_KEY", `-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----`)
+	ApplyEnvOverrides(cfg)
+	if cfg.Security.PasswordRSAKeyFile != "" {
+		t.Errorf("ENV 内联设值时应清空文件路径配置，实际 %q", cfg.Security.PasswordRSAKeyFile)
+	}
+	if !strings.Contains(cfg.Security.PasswordRSAPrivateKey, "\n") {
+		t.Error("PEM 的 \\n 字面转义应还原为真实换行")
+	}
+	// 清掉内联，避免影响后续断言
+	t.Setenv("PASSWORD_RSA_PRIVATE_KEY", "")
+
+	// ENV 文件路径：覆盖配置文件值并去空白；此时代理内联未设，文件路径生效
+	cfg2 := &Config{}
+	cfg2.Security.PasswordRSAKeyFile = "/old/path.pem"
+	t.Setenv("PASSWORD_RSA_PRIVATE_KEY_FILE", " /app/data/ssl/pwd_rsa.pem ")
+	ApplyEnvOverrides(cfg2)
+	if cfg2.Security.PasswordRSAKeyFile != "/app/data/ssl/pwd_rsa.pem" {
+		t.Errorf("ENV 文件路径应覆盖配置值并去空白，实际 %q", cfg2.Security.PasswordRSAKeyFile)
+	}
+	if cfg2.Security.PasswordRSAPrivateKey != "" {
+		t.Errorf("未设内联 ENV 时不应改写内联字段，实际 %q", cfg2.Security.PasswordRSAPrivateKey)
+	}
+}

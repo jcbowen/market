@@ -25,6 +25,8 @@
 #     文件缺失才从模板播种，已存在则原样使用（支付设置等写回不丢）；
 #   - 非 gateway 进程的副本覆写 service_name，debug_logs 进程级记录可区分来源；
 #   - gateway 容器 /app/data/geoip 无 mmdb 时后台自动下载（失败优雅降级）。
+#   - gateway 容器 /app/data/ssl 存放登录密码加密 RSA 私钥：首启自动生成落盘 0600，
+#     挂载宿主目录后重建容器 key_id 不变（多实例部署必须挂载同一宿主文件）。
 FROM alpine:3.19
 
 ENV TZ=Asia/Shanghai
@@ -32,7 +34,7 @@ ENV TZ=Asia/Shanghai
 RUN apk add --no-cache ca-certificates tzdata
 
 # 非 root 运行：容器内以固定 UID 10001 运行业务进程，与 allinone/Dockerfile.service
-# 同 UID。Linux 宿主挂载写目录（logs/attachment/runtime/geoip）需执行
+# 同 UID。Linux 宿主挂载写目录（logs/attachment/runtime/geoip/ssl）需执行
 # chown -R 10001:10001 <目录>（Docker Desktop/VirtioFS 无需处理）
 RUN adduser -D -u 10001 appuser
 

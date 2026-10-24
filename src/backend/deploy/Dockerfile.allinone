@@ -31,6 +31,10 @@
 #     （geoip 可选：缺失时 entrypoint 自动执行 ./geoip-download 下载（需目录可写，
 #      故不再 :ro 挂载），下载失败仅 IP 定位优雅降级；更新可由宿主机 crontab
 #      跑发布包内二进制或 docker exec 触发）
+#     -v /opt/market/data/ssl:/app/data/ssl \
+#     （ssl 存放登录密码加密 RSA 私钥（可选）：首启自动生成并落盘 0600，
+#      不挂载则密钥在容器可写层、重建即换（前端自动重拉公钥无感知）；挂载后
+#      重建容器/升级镜像 key_id 不变，多实例部署必须挂载同一宿主文件）
 #     <registry>/market:1.0.0
 ARG BASE_IMAGE=docker.io/jcbowen/market-base:latest
 FROM ${BASE_IMAGE}

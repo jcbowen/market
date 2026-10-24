@@ -11,8 +11,16 @@ server {
     listen [::]:80;
     server_name www.jiuchet.com;
 
-    # 强制 HTTPS（生产环境建议开启）
-    # return 301 https://$server_name$request_uri;
+    # 强制 HTTPS：生产环境必须开启（登录/改密接口已启用 RSA 密文传输，但 TLS 才是防中间人的根本）；
+    # 网关侧另有兜底：APP_ENV=production 时密码类接口直接拒绝非 HTTPS 请求（返回 11011）。
+    # ACME HTTP-01 证书签发/续期走 80 端口明文，须在 301 之前放行例外
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    return 301 https://$host$request_uri;
+
+    # ---- 以下 location 在开启上面的 301 后不再生效，保留作为 HTTP 调试回退参考 ----
+    # （调试时注释掉 return，并按需放开下方 location）
 
     # C 端 H5 静态资源
     location /s/ {
@@ -74,18 +82,79 @@ server {
     }
 }
 
-# HTTPS 配置示例
-# server {
-#     listen 443 ssl http2;
-#     listen [::]:443 ssl http2;
-#     server_name www.jiuchet.com;
-#
-#     ssl_certificate /path/to/cert.pem;
-#     ssl_certificate_key /path/to/key.pem;
-#
-#     location /s/ { ... }
-#     location /b/ { ... }
-#     location /api/v1/ { ... }
-#     location /api/v1/admin/ { ... }
-#     location /api/v1/admin/ws { ... }   # WebSocket：Upgrade/Connection/长超时同上方配置
-# }
+# HTTPS 主配置（生产环境将上节 301 指向本节；X-Forwarded-Proto 传 https 是网关
+# 密码类接口 HTTPS 兜底判定的依据，务必保留）
+server {
+    # nginx ≥ 1.25.1 用 http2 指令（旧写法 listen ... http2 已弃用，新版仅告警）；
+    # 旧版 nginx（< 1.25.1）请改回 listen 443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name www.jiuchet.com;
+
+    # 证书（Let's Encrypt 或云厂商签发；与登录加密的 RSA 密钥对无关，两者互不影响）
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+    # 仅保留安全协议版本与主流加密套件
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    # HSTS：一年内浏览器强制走 HTTPS（includeSubDomains 覆盖子域——子域也须全程 HTTPS，
+    # 若存在纯 HTTP 子域请去掉该参数；确认证书续期稳定后再开启 preload）
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # C 端 H5 静态资源
+    location /s/ {
+        alias /path/to/market/bin/static/h5/;
+        try_files $uri $uri/ /s/index.html;
+        index index.html;
+    }
+
+    # 管理端静态资源
+    location /b/ {
+        alias /path/to/market/bin/static/admin/;
+        try_files $uri $uri/ /b/index.html;
+        index index.html;
+    }
+
+    # C 端 API
+    location /api/v1/ {
+        proxy_pass http://market_gateway/api/v1/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 管理端 API（真实前缀是 /api/v1/admin，网关未注册 /api/admin 路由）
+    location /api/v1/admin/ {
+        proxy_pass http://market_gateway/api/v1/admin/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 后台 WebSocket：透传要求同上方说明（Upgrade/Connection/长超时/Host 用 $host）
+    location /api/v1/admin/ws {
+        proxy_pass http://market_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # 支付回调
+    location /api/v1/payments/callback/ {
+        proxy_pass http://market_gateway/api/v1/payments/callback/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

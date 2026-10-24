@@ -45,6 +45,8 @@ type AdminHandler struct {
 	guard *loginGuard
 	// refreshGuard refresh 令牌黑名单（P1-5）：轮转吊销旧令牌，停用/登出即时生效
 	refreshGuard *refreshGuard
+	// pwdCrypto 密码传输加密器：RSA 私钥解密前端密文（见 password_crypto.go 协议约定）
+	pwdCrypto *passwordCrypto
 }
 
 // NewAdminHandler 创建管理员接口处理器
@@ -68,6 +70,7 @@ func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient,
 		cfg:           cfg,
 		guard:         newLoginGuard(cfg),
 		refreshGuard:  newRefreshGuard(cfg),
+		pwdCrypto:     newPasswordCrypto(cfg),
 	}
 }
 
@@ -76,6 +79,10 @@ func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient,
 type AdminLoginReq struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
+	// 密文传输声明（可省略 = 明文兼容）：声明任一即视为 Password 为 RSA-PKCS1-V1_5 base64 密文，
+	// 协议详见 password_crypto.go；下同（其余密码请求结构体的同名字段不再重复注释）
+	PwdAlg string `json:"pwd_alg"`
+	PwdKey string `json:"pwd_key"`
 }
 
 // AdminLoginResp 管理员登录响应
@@ -103,6 +110,10 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	var req AdminLoginReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	// 密文传输：按 pwd_alg/pwd_key 声明解密密码（未声明走明文兼容），失败已写响应
+	if !h.decryptPwdField(c, &req.Password, req.PwdAlg, req.PwdKey) {
 		return
 	}
 
@@ -474,6 +485,9 @@ type CreateAdminReq struct {
 	RoleIDs  []int64 `json:"role_ids" binding:"required,min=1"`
 	// 创建时绑定的会员 ID（0=不绑定；绑定后该会员在任职社区即履约人员）
 	UserID int64 `json:"user_id"`
+	// 密文传输声明（语义同 AdminLoginReq）；Password 可不传（复用账号），声明字段与密码独立校验
+	PwdAlg string `json:"pwd_alg"`
+	PwdKey string `json:"pwd_key"`
 }
 
 // CreateAdmin 创建员工（在当前社区任职）
@@ -483,6 +497,9 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	var req CreateAdminReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	if !h.decryptPwdField(c, &req.Password, req.PwdAlg, req.PwdKey) {
 		return
 	}
 
@@ -589,6 +606,9 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 type ChangeAdminPasswordReq struct {
 	OldPassword string `json:"old_password" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required,min=6"`
+	// 密文传输声明：两个密码字段同批加密上送（语义同 AdminLoginReq）
+	PwdAlg string `json:"pwd_alg"`
+	PwdKey string `json:"pwd_key"`
 }
 
 // ChangeAdminPassword 修改管理员密码
@@ -604,6 +624,11 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 	var req ChangeAdminPasswordReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	// 密文传输：新旧密码同批解密
+	if !h.decryptPwdField(c, &req.OldPassword, req.PwdAlg, req.PwdKey) ||
+		!h.decryptPwdField(c, &req.NewPassword, req.PwdAlg, req.PwdKey) {
 		return
 	}
 
@@ -703,6 +728,9 @@ type CreateAccountReq struct {
 	Password string `json:"password" binding:"required,min=6"`
 	RealName string `json:"real_name"`
 	Phone    string `json:"phone"`
+	// 密文传输声明（语义同 AdminLoginReq）
+	PwdAlg string `json:"pwd_alg"`
+	PwdKey string `json:"pwd_key"`
 }
 
 // CreateAccount 新增账号（超管专用）
@@ -718,6 +746,9 @@ func (h *AdminHandler) CreateAccount(c *gin.Context) {
 	var req CreateAccountReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	if !h.decryptPwdField(c, &req.Password, req.PwdAlg, req.PwdKey) {
 		return
 	}
 
@@ -788,6 +819,9 @@ func (h *AdminHandler) UpdateAccountStatus(c *gin.Context) {
 // ResetAccountPasswordReq 超管重置账号密码请求
 type ResetAccountPasswordReq struct {
 	NewPassword string `json:"new_password" binding:"required,min=6"`
+	// 密文传输声明（语义同 AdminLoginReq）
+	PwdAlg string `json:"pwd_alg"`
+	PwdKey string `json:"pwd_key"`
 }
 
 // ResetAccountPassword 重置账号密码（超管专用，免旧密码）
@@ -807,6 +841,9 @@ func (h *AdminHandler) ResetAccountPassword(c *gin.Context) {
 	var req ResetAccountPasswordReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	if !h.decryptPwdField(c, &req.NewPassword, req.PwdAlg, req.PwdKey) {
 		return
 	}
 
@@ -920,6 +957,9 @@ type AddCommunityAdminReq struct {
 	Password string `json:"password"`
 	RealName string `json:"real_name"`
 	Phone    string `json:"phone"`
+	// 密文传输声明（语义同 AdminLoginReq）
+	PwdAlg string `json:"pwd_alg"`
+	PwdKey string `json:"pwd_key"`
 }
 
 // AddCommunityAdmin 指定社区管理员（超管专用，社区编辑页使用）
@@ -940,6 +980,9 @@ func (h *AdminHandler) AddCommunityAdmin(c *gin.Context) {
 	var req AddCommunityAdminReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
+		return
+	}
+	if !h.decryptPwdField(c, &req.Password, req.PwdAlg, req.PwdKey) {
 		return
 	}
 
@@ -2356,18 +2399,18 @@ func (h *AdminHandler) CreateOrderExportTask(c *gin.Context) {
 
 	// 查询条件快照：与 order 服务 exportQuery 结构对齐（所见即所导）
 	cond := map[string]interface{}{
-		"community_id":    communityID,
-		"user_id":         userID,
-		"source":          source,
-		"status":          status,
-		"shift_id":        shiftID,
-		"product_id":      productID,
-		"order_no":        c.Query("order_no"),
-		"start_time":      c.Query("start_time"),
-		"end_time":        c.Query("end_time"),
-		"receiver_name":   c.Query("receiver_name"),
-		"receiver_phone":  c.Query("receiver_phone"),
-		"pickup_code":     c.Query("pickup_code"),
+		"community_id":   communityID,
+		"user_id":        userID,
+		"source":         source,
+		"status":         status,
+		"shift_id":       shiftID,
+		"product_id":     productID,
+		"order_no":       c.Query("order_no"),
+		"start_time":     c.Query("start_time"),
+		"end_time":       c.Query("end_time"),
+		"receiver_name":  c.Query("receiver_name"),
+		"receiver_phone": c.Query("receiver_phone"),
+		"pickup_code":    c.Query("pickup_code"),
 		// pay_no 原始入参留档：失败任务「重新导出」时前端按快照原样重发，不丢账单号筛选
 		"pay_no":          payNo,
 		"include_deleted": true,

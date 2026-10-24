@@ -62,6 +62,21 @@ type Config struct {
 		// 与 trusted_proxies 的分工：后者解决「代理链要读哪段」；本项解决「厂商头值即真话」——
 		// CDN 回源 IP 无固定段不可枚举时，这是白名单/限流拿到真实 IP 的唯一可靠路径
 		TrustedPlatform string `json:"trusted_platform" yaml:"trusted_platform"`
+		// PasswordRSAPrivateKey 登录密码传输加密的 RSA 私钥（PEM，PKCS#8/PKCS#1 均可）。
+		// 前端以公钥加密密码（PKCS#1 v1.5）后传输，网关持私钥解密，链路抓包不再可见密码明文；
+		// 多实例/负载均衡部署必须让各实例持有同一私钥，否则拿公钥与提交密文落在不同实例
+		// 会随机解密失败。生产推荐改用下方 PasswordRSAKeyFile 文件方式（免 \n 转义、可挂载共享），
+		// 本内联项留作兼容。私钥不入 git 仓库；该密钥对不是 TLS 证书，无有效期概念，轮换只需替换并重启
+		PasswordRSAPrivateKey string `json:"password_rsa_private_key" yaml:"password_rsa_private_key"`
+		// PasswordRSAKeyFile 登录密码加密 RSA 私钥的文件路径（推荐方式，替代内联 PEM）。
+		// 文件存在 → 直接加载（内容非法拒绝启动）；文件不存在 → 自动生成并写入该路径
+		// （目录 0700 自动创建、文件 0600）：把路径指向挂载目录即可实现密钥持久化，
+		// 容器重建不换钥，多实例挂载同一宿主文件即共享同一密钥对（多实例建议预生成后挂载，
+		// 避免同时首启的生成竞争）；落盘失败降级为内存密钥并告警，不阻断启动。
+		// 优先级：PASSWORD_RSA_PRIVATE_KEY_FILE（ENV 路径）> PASSWORD_RSA_PRIVATE_KEY
+		// （ENV 内联，设值会清空本项）> 本项 > PasswordRSAPrivateKey（配置内联）
+		// > 均空时纯自动生成（内存，重启更换）
+		PasswordRSAKeyFile string `json:"password_rsa_key_file" yaml:"password_rsa_key_file"`
 	} `json:"security" yaml:"security"`
 	SMS struct {
 		Provider     string `json:"provider" yaml:"provider" default:"aliyun"`
