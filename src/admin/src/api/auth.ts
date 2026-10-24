@@ -26,6 +26,30 @@ export function login(params: LoginParams) {
 }
 
 /**
+ * 静默续期访问令牌（原生 fetch，不经 axios 拦截器）
+ * 刻意静默：WS 重连探测等场景下，refresh 失效不应触发全局错误提示或登录页跳转
+ * （会话真失效时由业务请求拦截器统一收口跳转）；refresh_token 经 httpOnly cookie
+ * 自动携带，请求头 X-Refresh-Cookie 声明 cookie 模式（后端同步轮换 refresh 与
+ * access 两枚 cookie），成功响应体返回新 access_token
+ * @returns 续期结果：成功时含新 token 与有效期（秒）
+ */
+export async function refreshToken(): Promise<{ ok: boolean; accessToken?: string; expiresIn?: number }> {
+  try {
+    const resp = await fetch('/api/v1/admin/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Refresh-Cookie': '1' },
+      body: '{}',
+    })
+    const body = (await resp.json()) as ApiResult<{ access_token: string; expires_in: number }>
+    if (!body || (body.code !== 0 && body.code !== 200)) return { ok: false }
+    return { ok: true, accessToken: body.data.access_token, expiresIn: body.data.expires_in }
+  } catch {
+    // 网络不可达（如网关重启窗口）：视为本次续期失败，由调用方重试
+    return { ok: false }
+  }
+}
+
+/**
  * 登出：请后端清除 refresh_token 的 httpOnly cookie
  * httpOnly cookie 无法由 JS 删除，只能由后端下发过期值
  * @returns 后端响应

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import Cookies from 'js-cookie'
-import { login as loginApi, getAdminInfo, logout as logoutApi } from '@/api/auth'
+import { login as loginApi, getAdminInfo, logout as logoutApi, refreshToken as refreshTokenApi } from '@/api/auth'
 import { useTabsStore } from '@/stores/tabs'
 import type { AdminInfo, LoginParams } from '@/api/types'
 
@@ -217,6 +217,20 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
+   * 静默续期访问令牌（refresh_token 经 httpOnly cookie 自动携带）
+   * 供 WS 鉴权失败重连前探测等低打扰场景调用：成功则刷新本地 token 与 cookie；
+   * 失败（refresh 已过期/账号被停用/网络不可达）不在此处跳登录，
+   * 交由 HTTP 请求拦截器统一处理，调用方据返回值决定是否停止重试
+   * @returns 是否续期成功
+   */
+  async function refreshAccessToken(): Promise<boolean> {
+    const res = await refreshTokenApi()
+    if (!res.ok || !res.accessToken) return false
+    setTokens(res.accessToken, res.expiresIn && res.expiresIn > 0 ? res.expiresIn : 7200)
+    return true
+  }
+
+  /**
    * 判断当前管理员是否拥有指定权限
    * 权限列表按当前社区语境解析，含 "*" 通配时视为全量
    * @param code 权限码
@@ -242,6 +256,7 @@ export const useAuthStore = defineStore('auth', () => {
     logout,
     fetchAdminInfo,
     ensureReady,
+    refreshAccessToken,
     hasPermission,
     switchCommunity,
   }

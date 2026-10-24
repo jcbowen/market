@@ -6,7 +6,10 @@ package ws
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,12 +47,65 @@ type Message struct {
 }
 
 // Upgrader 升级器（导出供握手 handler 使用）
-// CheckOrigin 放行任意来源：与网关既有 CORS 口径一致（前端与网关同源部署，
-// 开发态经 vite 代理时 Origin 为 dev server），鉴权由 JWT + 权限链兜底
+// CheckOrigin 只放行与请求同主机的握手：管理端与网关同源部署，浏览器带来的 Origin 主机名
+// 必然等于本次请求的主机名；跨站页面带着受害管理员的 httpOnly 登录 cookie 发起握手时
+// Origin 是外站域名，直接拒绝——这是 WS 通道对 CSWSH（跨站 WebSocket 劫持）的收口，
+// cookie 承载鉴权后 JWT 不再出现在 URL 里，光靠「令牌校验兜底」挡不住自动携带 cookie 的跨源连接
 var Upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin:     func(*http.Request) bool { return true },
+	CheckOrigin:     CheckSameHostOrigin,
+}
+
+// CheckSameHostOrigin 判定 WebSocket 握手是否与页面同主机
+//
+// 参数：
+//   - r: WebSocket 握手请求
+//
+// 返回值：
+//   - bool: 放行则为 true——Origin 缺失（非浏览器客户端不发送该头，如原生 POS/探测脚本），
+//     或 Origin 的主机名（忽略端口与大小写）等于本次请求的主机名
+//
+// 异常：
+//   - 无错误返回；Origin 无法解析按拒绝处理（fail-closed）
+//
+// 使用示例：
+//
+//	var Upgrader = websocket.Upgrader{CheckOrigin: ws.CheckSameHostOrigin}
+//
+// 说明：主机名比对刻意忽略端口——反向代理到源站时端口口径天然不一致
+// （vite 的 changeOrigin 把 Host 改成代理目标端口，nginx 的 $host 又会剥掉端口），
+// 只比端口反而会误杀合法同源部署；跨主机名才是本校验要拦的攻击面
+func CheckSameHostOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		log.Printf("[ws] 拒绝握手：Origin 无法解析 origin=%q remote=%s", origin, r.RemoteAddr)
+		return false
+	}
+	if hostName(u.Host) != hostName(r.Host) {
+		log.Printf("[ws] 拒绝跨源握手 origin=%q host=%s remote=%s", origin, r.Host, r.RemoteAddr)
+		return false
+	}
+	return true
+}
+
+// hostName 取 host:port 里的主机名部分并转小写
+//
+// 参数：
+//   - host: 形如 "example.com:8080" 或 "[::1]:18080" 的主机串
+//
+// 返回值：
+//   - string: 主机名（无端口时原样返回，仅大小写归一）
+func hostName(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return strings.ToLower(h)
+	}
+	// 无端口：IPv6 字面量带方括号，去括号后即为主机名
+	return strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
 }
 
 // Client 单个在线管理员的 WebSocket 连接

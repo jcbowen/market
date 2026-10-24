@@ -38,6 +38,8 @@ import (
  *   - TestEnsureTradeAccess                   纯函数：EnsureTradeAccess 归属×可售真值表（越权优先于不可售）
  *   - TestBatchGetProductsRequireSellable     集成：require_sellable 收口 + 非收口口径不变
  *   - TestBatchGetSkusTradeGuard              集成：禁用 SKU 不可下单、跨社区明细被拒
+ *   - TestBatchGetTolerantSkuFilter           集成：tolerate_missing 口径逐项剔除（再来一单）
+ *   - TestBatchGetTolerantProductFilter       集成：商品侧容忍口径同语义（下架原样返回）
  *   - TestBatchGetProductsCommunityScope      集成：商品侧传 community_id 的越权拒绝与放行
  *   - TestCategoryDisabledOnlyHidesCategories 集成：分类禁用仅隐藏分类项、不拦商品与交易（锁定文档口径）
  *   - TestBarcodeReleasedByProductSoftDelete  集成：商品软删连带禁用 SKU，条码即被释放可复用
@@ -513,6 +515,58 @@ func TestBatchGetSkusTradeGuard(t *testing.T) {
 	}
 	if len(backfill) != 2 {
 		t.Errorf("FindSkusByIDs 应返回命中的 2 条, got %d", len(backfill))
+	}
+}
+
+// TestBatchGetTolerantSkuFilter 集成：tolerate_missing 口径的 SKU 批量查询
+// 再来一单口径：缺失/越权项只剔除、不整体报错，停用项原样返回交由调用方给出「已停售」提示；
+// community_id>0 的归属筛选必须保留，否则跨社区脏数据会被加进本社区购物车
+func TestBatchGetTolerantSkuFilter(t *testing.T) {
+	env := newSellableTestEnv(t)
+	defer env.cleanup()
+	ctx := context.Background()
+
+	pID := seedSellableProduct(t, env, sellableTestCommunityID, "SELLABLETEST-复购商品", 1, 0)
+	skuOK := seedSellableSku(t, env, pID, sellableTestCommunityID, "SELLABLETEST-TOL-OK", "红色 / L", "", 1)
+	skuOff := seedSellableSku(t, env, pID, sellableTestCommunityID, "SELLABLETEST-TOL-OFF", "蓝色 / XL", "", 0)
+	skuForeign := seedSellableSku(t, env, pID, sellableOtherCommunityID, "SELLABLETEST-TOL-OTHER", "绿色 / M", "", 1)
+
+	got, err := env.skuSvc.BatchGetSkusTolerant(ctx, []int64{skuOK, skuOff, skuForeign, 999999999}, sellableTestCommunityID)
+	if err != nil {
+		t.Fatalf("容忍口径不应整体报错, got %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("应只保留本社区命中的 2 条, got %d", len(got))
+	}
+	// 按入参首次出现顺序返回，且停用项原样带回（调用方据 status 区分「失效」与「停售」）
+	if got[0].ID != skuOK || got[1].ID != skuOff || got[1].Status != 0 {
+		t.Errorf("返回项或顺序异常: %+v %+v", got[0], got[1])
+	}
+
+	// 全部失效（跨社区 + 已删除）：结果为空但不报错，由调用方汇总为「均无法购买」
+	empty, err := env.skuSvc.BatchGetSkusTolerant(ctx, []int64{skuForeign, 999999999}, sellableTestCommunityID)
+	if err != nil || len(empty) != 0 {
+		t.Errorf("全失效应返回空集且不报错, got len=%d err=%v", len(empty), err)
+	}
+}
+
+// TestBatchGetTolerantProductFilter 集成：tolerate_missing 口径的商品批量查询
+// 与 SKU 侧成对：下架商品仍返回（调用方给「已下架」文案），越权/已删除剔除
+func TestBatchGetTolerantProductFilter(t *testing.T) {
+	env := newSellableTestEnv(t)
+	defer env.cleanup()
+	ctx := context.Background()
+
+	onSale := seedSellableProduct(t, env, sellableTestCommunityID, "SELLABLETEST-TOL-在售", 1, 0)
+	offSale := seedSellableProduct(t, env, sellableTestCommunityID, "SELLABLETEST-TOL-仓库中", 0, 0)
+	foreign := seedSellableProduct(t, env, sellableOtherCommunityID, "SELLABLETEST-TOL-他人社区", 1, 0)
+
+	got, err := env.svc.BatchGetProductsTolerant(ctx, []int64{onSale, offSale, foreign, 999999999}, sellableTestCommunityID)
+	if err != nil {
+		t.Fatalf("容忍口径不应整体报错, got %v", err)
+	}
+	if len(got) != 2 || got[0].ID != onSale || got[1].ID != offSale || got[1].Status != 0 {
+		t.Errorf("应保留本社区命中的 2 条且下架项原样返回, got %d 条", len(got))
 	}
 }
 

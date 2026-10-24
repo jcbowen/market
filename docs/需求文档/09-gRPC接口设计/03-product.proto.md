@@ -44,8 +44,13 @@ service ProductService {
   rpc UpdateSku(UpdateSkuReq) returns (SkuInfo);
   rpc GetSkuById(GetSkuByIdReq) returns (SkuInfo);
   // SKU 批量查询：下单/收银按明细取价取库存，替代逐行 GetSkuById 的 N 次往返
+  // 默认「交易口径」：任一 ID 缺失、越权或 SKU 停用即整体拒绝；
+  // tolerate_missing=true 切「逐项判定口径」：缺失/越权项只从结果剔除、状态与库存原样返回，
+  // 可售判定交由调用方（C 端再来一单据此逐项跳过失效规格，不阻断整单复购）
   rpc BatchGetSkus(BatchGetSkusReq) returns (BatchGetSkusResp);
   // 商品批量查询：下单按明细取商品名/封面/分类，替代逐行 GetProduct
+  // require_sellable=true 为交易口径（任一非上架态整体拒绝）；tolerate_missing=true 为逐项判定口径
+  // （缺失/越权剔除、上架态原样返回），优先于 require_sellable
   rpc BatchGetProducts(BatchGetProductsReq) returns (BatchGetProductsResp);
 
   // 库存

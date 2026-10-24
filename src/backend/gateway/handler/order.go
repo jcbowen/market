@@ -768,7 +768,9 @@ func (h *OrderHandler) Reorder(c *gin.Context) {
 	// 加购社区取订单所属社区：AddItem 会校验 SKU 归属社区，
 	// 用户切换到其他社区后仍可复购原社区商品（购物车支持跨社区展示）
 	// AddItem 只校验商品/SKU 的存在与归属，不校验上架/停售/库存，
-	// 因此复购前批量拉取实时状态，失效项逐项跳过并给出原因
+	// 因此复购前批量拉取实时状态，失效项逐项跳过并给出原因。
+	// 必须走 tolerate_missing 口径：BatchGetProducts/BatchGetSkus 默认是下单交易口径
+	// （任一项缺失/停用即整体拒绝），会让一个失效规格阻断整单其余商品复购
 	productIDs := make([]int64, 0, len(orderResp.Items))
 	skuIDs := make([]int64, 0, len(orderResp.Items))
 	for _, item := range orderResp.Items {
@@ -776,16 +778,18 @@ func (h *OrderHandler) Reorder(c *gin.Context) {
 		skuIDs = append(skuIDs, item.SkuId)
 	}
 	productsResp, err := h.productClient.BatchGetProducts(c.Request.Context(), &product.BatchGetProductsReq{
-		Ids:         productIDs,
-		CommunityId: o.CommunityId,
+		Ids:             productIDs,
+		CommunityId:     o.CommunityId,
+		TolerateMissing: true,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
 	skusResp, err := h.productClient.BatchGetSkus(c.Request.Context(), &product.BatchGetSkusReq{
-		Ids:         skuIDs,
-		CommunityId: o.CommunityId,
+		Ids:             skuIDs,
+		CommunityId:     o.CommunityId,
+		TolerateMissing: true,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

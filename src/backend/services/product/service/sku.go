@@ -109,8 +109,8 @@ func EnsureSkuSellable(sku *model.Sku) error {
 //  3. 任一 SKU 非启用态（status=0，含后台禁用/移除规格/商品软删连带禁用）即整体拒绝，
 //     堵住「后台禁用 SKU 后购物车存量行仍能按快照规格成交并扣库存」。
 //
-// BatchGetSkusReq 暂无 require_sellable 字段，故本入口不按开关分叉：
-// 容忍缺失、不做越权与状态校验的展示/回填口径请走 FindSkusByIDs。
+// BatchGetSkusReq.tolerate_missing=true 走 BatchGetSkusTolerant：逐项判定口径（缺失/越权剔除、
+// 状态原样返回）；纯展示/回填且完全不判归属的口径走 FindSkusByIDs。
 //
 // 参数：
 //   - ctx: 上下文
@@ -146,6 +146,41 @@ func (s *SkuService) BatchGetSkus(ctx context.Context, ids []int64, communityID 
 		sku, ok := byID[id]
 		if !ok {
 			return nil, bizerr.New(codes.NotFound, fmt.Sprintf("SKU %d 不存在", id))
+		}
+		list = append(list, sku)
+	}
+	return list, nil
+}
+
+// BatchGetSkusTolerant 逐项判定口径的 SKU 批量查询：缺失与越权项只剔除，不整体报错
+// 与 BatchGetSkus 的取舍：后者是交易收口（订单明细不允许部分命中，任一失效整体拒绝）；
+// 本口径供「部分可用仍要继续」的调用方使用——C 端再来一单按订单明细逐项加购，
+// 一个失效规格不该阻断整单复购，可售/停售判定交由调用方按 status 自行给出提示。
+// 社区归属仍在本层拦（communityID>0 时越权项直接剔除），不可信数据不得跨社区取用；
+// 与 BatchGetProductsTolerant 成对使用，传同一个 community_id。
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: SKU ID 集合（重复、0 与负数自动忽略）
+//   - communityID: 调用方社区语境，<=0 时不筛归属
+//
+// 返回值：
+//   - []*model.Sku: 命中且归属合法的 SKU（按入参首次出现顺序）
+//   - error: 仅数据库错误
+//
+// 使用示例：
+//
+//	skus, err := svc.BatchGetSkusTolerant(ctx, []int64{1, 2, 3}, 456)
+func (s *SkuService) BatchGetSkusTolerant(ctx context.Context, ids []int64, communityID int64) ([]*model.Sku, error) {
+	byID, err := s.FindSkusByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]*model.Sku, 0, len(byID))
+	for _, id := range dedupIDs(ids) {
+		sku, ok := byID[id]
+		if !ok || (communityID > 0 && sku.CommunityID != communityID) {
+			continue
 		}
 		list = append(list, sku)
 	}

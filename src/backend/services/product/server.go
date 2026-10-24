@@ -427,10 +427,21 @@ func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*pr
 }
 
 // BatchGetSkus SKU 批量查询（下单/收银明细取价取库存，替代逐行 GetSkuById）
-// 交易口径入口：归属（community_id>0 逐条比对）与 SKU 启用态（status=1）都在商品服务收口，
-// 调用方（订单服务 loadOrderItemCatalog）须与 BatchGetProducts 传同一个 community_id
+// 默认交易口径：归属（community_id>0 逐条比对）与 SKU 启用态（status=1）都在商品服务收口，
+// 任一缺失/越权/停用整体报错，调用方（订单服务 loadOrderItemCatalog）须与 BatchGetProducts
+// 传同一个 community_id。
+// tolerate_missing=true 时切换到「逐项判定」口径（C 端再来一单）：缺失与越权项只从结果剔除、
+// 不再整体报错，启用态原样返回交由调用方判定；否则单个失效规格会阻断整单复购
 func (s *server) BatchGetSkus(ctx stdctx.Context, req *product.BatchGetSkusReq) (*product.BatchGetSkusResp, error) {
-	skus, err := s.skuService.BatchGetSkus(ctx, req.Ids, req.GetCommunityId())
+	var (
+		skus []*model.Sku
+		err  error
+	)
+	if req.GetTolerateMissing() {
+		skus, err = s.skuService.BatchGetSkusTolerant(ctx, req.Ids, req.GetCommunityId())
+	} else {
+		skus, err = s.skuService.BatchGetSkus(ctx, req.Ids, req.GetCommunityId())
+	}
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
@@ -446,9 +457,19 @@ func (s *server) BatchGetSkus(ctx stdctx.Context, req *product.BatchGetSkusReq) 
 
 // BatchGetProducts 商品批量查询（下单明细取商品名/封面/分类，替代逐行 GetProduct）
 // 只回主表字段：调用方不需要 SKU 明细、规格树与图集，避免按行放大附属查询。
-// require_sellable=true 时任一商品非上架态即整体报错（下单入口的可售收口，P1-4）
+// require_sellable=true 时任一商品非上架态即整体报错（下单入口的可售收口，P1-4）；
+// tolerate_missing=true 时切到逐项判定口径（缺失/越权项剔除、上架态原样返回交由调用方判定），
+// 优先于 require_sellable，与 BatchGetSkus 的同类开关成对使用
 func (s *server) BatchGetProducts(ctx stdctx.Context, req *product.BatchGetProductsReq) (*product.BatchGetProductsResp, error) {
-	products, err := s.productService.BatchGetProducts(ctx, req.Ids, req.GetCommunityId(), req.GetRequireSellable())
+	var (
+		products []*model.Product
+		err      error
+	)
+	if req.GetTolerateMissing() {
+		products, err = s.productService.BatchGetProductsTolerant(ctx, req.Ids, req.GetCommunityId())
+	} else {
+		products, err = s.productService.BatchGetProducts(ctx, req.Ids, req.GetCommunityId(), req.GetRequireSellable())
+	}
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}

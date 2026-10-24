@@ -393,6 +393,40 @@ func (s *ProductService) BatchGetProducts(ctx context.Context, ids []int64, comm
 	return list, nil
 }
 
+// BatchGetProductsTolerant 逐项判定口径的商品批量查询：缺失与越权项只剔除，不整体报错
+// 取舍与 BatchGetSkusTolerant 一致：交易收口用 BatchGetProducts（任一缺失/越权/不可售整体拒绝），
+// 「部分可用仍要继续」的调用方（C 端再来一单）用本口径。
+// 上架状态原样返回，不在此判可售——调用方据此区分「已下架」与「已删除」两种提示；
+// 社区归属在本层筛（communityID>0 时越权项剔除），与 BatchGetSkusTolerant 成对传同一社区
+//
+// 参数：
+//   - ctx: 上下文
+//   - ids: 商品 ID 集合（重复、0 与负数自动忽略）
+//   - communityID: 调用方社区语境，<=0 时不筛归属
+//
+// 返回值：
+//   - []*model.Product: 命中且归属合法的商品（按入参首次出现顺序）
+//   - error: 仅数据库错误
+//
+// 使用示例：
+//
+//	products, err := svc.BatchGetProductsTolerant(ctx, []int64{1, 2}, 456)
+func (s *ProductService) BatchGetProductsTolerant(ctx context.Context, ids []int64, communityID int64) ([]*model.Product, error) {
+	byID, err := s.FindProductsByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]*model.Product, 0, len(byID))
+	for _, id := range dedupIDs(ids) {
+		p, ok := byID[id]
+		if !ok || (communityID > 0 && p.CommunityID != communityID) {
+			continue
+		}
+		list = append(list, p)
+	}
+	return list, nil
+}
+
 // FindProductsByIDs 按 ID 集合批量取商品，返回 ID->商品 映射；缺失的 ID 直接不出现在结果里
 // 口径与 SkuService.FindSkusByIDs 一致：列表回填用，容忍个别商品被删、不做越权校验，
 // ID 须来自服务端已过滤的数据。

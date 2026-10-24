@@ -3009,11 +3009,15 @@ func (x *ListSkusResp) GetList() []*SkuInfo {
 // BatchGetSkusReq SKU 批量查询（下单/收银等按明细取价取库存，替代逐行 GetSkuById 的 N 次往返）
 // community_id 为操作者社区语境：>0 时逐个校验 SKU 归属，任一越权即整体拒绝
 type BatchGetSkusReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ids           []int64                `protobuf:"varint,1,rep,packed,name=ids,proto3" json:"ids,omitempty"`
-	CommunityId   int64                  `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Ids         []int64                `protobuf:"varint,1,rep,packed,name=ids,proto3" json:"ids,omitempty"`
+	CommunityId int64                  `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 容忍缺失：true 时任一 ID 不存在（含被删除）或归属越权只从结果中剔除，不再整体报错，
+	// 供「逐项判定、部分可用」的调用方使用（如 C 端再来一单：一个失效规格不应阻断整单复购）。
+	// 启用/停售状态与库存原样返回，可售判定交由调用方；默认 false 保持交易入口的整体拒绝口径
+	TolerateMissing bool `protobuf:"varint,3,opt,name=tolerate_missing,json=tolerateMissing,proto3" json:"tolerate_missing,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *BatchGetSkusReq) Reset() {
@@ -3058,6 +3062,13 @@ func (x *BatchGetSkusReq) GetCommunityId() int64 {
 		return x.CommunityId
 	}
 	return 0
+}
+
+func (x *BatchGetSkusReq) GetTolerateMissing() bool {
+	if x != nil {
+		return x.TolerateMissing
+	}
+	return false
 }
 
 type BatchGetSkusResp struct {
@@ -3112,6 +3123,9 @@ type BatchGetProductsReq struct {
 	// 可售校验（P1-4）：true 时任一商品非上架态（status≠1）即整体报错，
 	// 供下单入口收口「可售」判定，与 GetByBarcode 的 status=1 口径一致
 	RequireSellable bool `protobuf:"varint,3,opt,name=require_sellable,json=requireSellable,proto3" json:"require_sellable,omitempty"`
+	// 容忍缺失：语义同 BatchGetSkusReq.tolerate_missing——缺失/越权项只剔除不整体报错，
+	// 上架状态原样返回交由调用方判定；与 require_sellable 互斥，同时为 true 时本字段优先
+	TolerateMissing bool `protobuf:"varint,4,opt,name=tolerate_missing,json=tolerateMissing,proto3" json:"tolerate_missing,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -3163,6 +3177,13 @@ func (x *BatchGetProductsReq) GetCommunityId() int64 {
 func (x *BatchGetProductsReq) GetRequireSellable() bool {
 	if x != nil {
 		return x.RequireSellable
+	}
+	return false
+}
+
+func (x *BatchGetProductsReq) GetTolerateMissing() bool {
+	if x != nil {
+		return x.TolerateMissing
 	}
 	return false
 }
@@ -14038,16 +14059,18 @@ const file_product_product_proto_rawDesc = "" +
 	"pagination\x18\x02 \x01(\v2\x1a.common.PaginationResponseR\n" +
 	"pagination\"4\n" +
 	"\fListSkusResp\x12$\n" +
-	"\x04list\x18\x01 \x03(\v2\x10.product.SkuInfoR\x04list\"F\n" +
+	"\x04list\x18\x01 \x03(\v2\x10.product.SkuInfoR\x04list\"q\n" +
 	"\x0fBatchGetSkusReq\x12\x10\n" +
 	"\x03ids\x18\x01 \x03(\x03R\x03ids\x12!\n" +
-	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"8\n" +
+	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12)\n" +
+	"\x10tolerate_missing\x18\x03 \x01(\bR\x0ftolerateMissing\"8\n" +
 	"\x10BatchGetSkusResp\x12$\n" +
-	"\x04list\x18\x01 \x03(\v2\x10.product.SkuInfoR\x04list\"u\n" +
+	"\x04list\x18\x01 \x03(\v2\x10.product.SkuInfoR\x04list\"\xa0\x01\n" +
 	"\x13BatchGetProductsReq\x12\x10\n" +
 	"\x03ids\x18\x01 \x03(\x03R\x03ids\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12)\n" +
-	"\x10require_sellable\x18\x03 \x01(\bR\x0frequireSellable\"@\n" +
+	"\x10require_sellable\x18\x03 \x01(\bR\x0frequireSellable\x12)\n" +
+	"\x10tolerate_missing\x18\x04 \x01(\bR\x0ftolerateMissing\"@\n" +
 	"\x14BatchGetProductsResp\x12(\n" +
 	"\x04list\x18\x01 \x03(\v2\x14.product.ProductInfoR\x04list\"^\n" +
 	"\x0eDeductStockReq\x12\x15\n" +

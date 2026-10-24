@@ -5,8 +5,10 @@ import { useAuthStore } from '@/stores/auth'
  *
  * 职责：
  * - 登录就绪且具备 order:view 权限、已选定社区时，与 gateway 建立 WS 长连接
- * - 断线自动重连（指数退避 2s 起步，封顶 60s；收到服务端 hello 后复位）
+ * - 断线自动重连（指数退避 2s 起步，封顶 60s；收到服务端 hello 后复位），
+ *   重连前先探测续期 access cookie（30s 节流），避免过期后裸重连持续失败
  * - 收到 order.paid 事件：播放提示音（WebAudio 合成，无需音频文件）+ 语音播报（Web Speech）
+ * - 收到 order.refund 事件：按动作区分"退款申请/订单退款"话术播报
  * - 浏览器自动播放限制：首次用户交互时解锁 AudioContext 与语音合成
  *
  * 服务端消息协议（docs/需求文档/06-接口设计）：
@@ -20,6 +22,8 @@ import { useAuthStore } from '@/stores/auth'
 const RECONNECT_BASE_DELAY = 2000
 /** 重连最大间隔（毫秒） */
 const RECONNECT_MAX_DELAY = 60000
+/** 两次 token 续期探测的最小间隔（毫秒），重连风暴期间节流 */
+const REFRESH_PROBE_INTERVAL = 30000
 
 /** 当前连接实例（单例） */
 let socket: WebSocket | null = null
@@ -307,6 +311,27 @@ function scheduleReconnect() {
   retryDelay = Math.min(retryDelay * 2, RECONNECT_MAX_DELAY)
 }
 
+/** 上次 token 续期探测时间戳 */
+let lastRefreshProbeAt = 0
+
+/**
+ * WS 断连后的 token 续期探测（尽力而为）
+ * WS 握手凭 cookie 里的 access_token 鉴权，过期后若仅靠裸重连会持续失败，
+ * 直到其他 HTTP 请求恰好触发刷新——空闲后台页正是纯 WS 流量，会一直收不到通知。
+ * 此处在重连前主动调 refresh 接口续期；30s 节流避免重连风暴期反复请求。
+ * 续期失败（refresh 也过期/账号被停用/网关不可达）返回 false，调用方应停止重连，
+ * 登录态收口交给 HTTP 请求拦截器（用户下次操作时统一跳转登录页）
+ * @returns 是否可继续重连
+ */
+async function probeTokenRefresh(): Promise<boolean> {
+  const now = Date.now()
+  if (now - lastRefreshProbeAt < REFRESH_PROBE_INTERVAL) return true
+  lastRefreshProbeAt = now
+  const ok = await useAuthStore().refreshAccessToken()
+  if (!ok) console.warn('[orderNotify] 登录态续期失败，停止 WS 重连（等待页面重新登录）')
+  return ok
+}
+
 /**
  * 建立新订单通知 WS 连接（幂等）
  * 未登录 / 未选定社区 / 无 order:view 权限时直接跳过；
@@ -337,7 +362,12 @@ export function connectOrderNotify() {
     // 已被新连接替换（如社区切换）时静默退出，避免旧连接触发多余重连
     if (socket !== sock) return
     socket = null
-    if (!intentionallyClosed) scheduleReconnect()
+    if (intentionallyClosed) return
+    // 重连前先探测续期：握手凭 cookie 里的 access_token，过期后裸重连只会持续失败；
+    // 探测失败（refresh 已失效）时不再排重连，登录态由 HTTP 拦截器统一收口
+    void probeTokenRefresh().then((ok) => {
+      if (ok && !intentionallyClosed) scheduleReconnect()
+    })
   }
 }
 
