@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -237,7 +236,7 @@ func TestSchedulerRefundRetryRotation(t *testing.T) {
 	t.Run("流水查询失败计为失败但仍推进指针", func(t *testing.T) {
 		env := newRefundTestEnv(t)
 		orderID := seedSchedOrder(t, env.db, "B1-E", 7, schedTimeAgo(time.Hour), schedTimeAgo(time.Hour))
-		e := seedStuckRefund(t, env.db, refundSeed{No: fmt.Sprintf("SCHEDTEST-RF-B1-E"), OrderID: orderID})
+		e := seedStuckRefund(t, env.db, refundSeed{No: "SCHEDTEST-RF-B1-E", OrderID: orderID})
 		env.sched.payment.failRefundFlowQuery(e.RefundNo)
 
 		sched := NewScheduler(env.db, env.sched.redis, env.svc, nil)
