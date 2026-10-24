@@ -1,13 +1,21 @@
-import JSEncrypt from 'jsencrypt'
 import { request, CODE_PWD_ENCRYPTED_INVALID, type BizError } from '@/api/request'
 import type { ApiResult } from '@/api/types'
 
 /**
- * 密码传输加密工具（RSA + PKCS#1 v1.5，与后端 handler/password_crypto.go 协议对应）
+ * 密码传输加密工具（RSA + OAEP-SHA256，与后端 handler/password_crypto.go 协议对应）
  *
  * 背景：登录/改密类接口密码字段以密文上送，链路抓包不再可见密码明文。
  * 约定：密码字段承载 base64 密文，并附带 pwd_alg / pwd_key 声明字段；
  * 后端按 pwd_key 匹配私钥解密，未声明时按明文兼容。
+ *
+ * 实现说明：使用浏览器原生 Web Crypto（crypto.subtle，RSA-OAEP + SHA-256），
+ * 不依赖第三方加密库——jsencrypt 仅支持已被 Go 1.26 弃用的 PKCS#1 v1.5 填充。
+ * 明文以 TextEncoder 按 UTF-8 编码（jsencrypt 的 UTF-16 码元编码会拆散 emoji 等
+ * 增补平面字符，已随迁移一并根治）。RSA-2048 + OAEP-SHA256 单块明文上限 190 字节，
+ * 密码长度远小于此。
+ *
+ * 运行环境约束：crypto.subtle 仅在安全上下文（HTTPS 或 localhost）可用；
+ * 生产环境网关强制 HTTPS，非安全上下文（如局域网 HTTP 调试）自动降级明文兼容通道。
  *
  * 密钥管理：公钥经 GET /api/v1/admin/auth/pubkey 实时拉取、内存缓存（不持久化），
  * 服务端轮换密钥后刷新页面即无感切换；提交返回 11010 时由 requestWithEncryptedPasswords
@@ -69,6 +77,33 @@ export interface PasswordEncryptor {
 }
 
 /**
+ * RSA-OAEP-SHA256 加密单个密码字段（SPKI PEM 公钥 → base64 密文）
+ *
+ * @param publicKeyPem pubkey 接口下发的 SPKI 格式公钥 PEM
+ * @param plain 明文（按 UTF-8 编码）
+ * @returns base64 密文；非安全上下文（无 crypto.subtle）/公钥非法/明文超单块上限时 null（调用方降级明文）
+ */
+async function encryptWithPubkey(publicKeyPem: string, plain: string): Promise<string | null> {
+  // 非安全上下文（如局域网 HTTP 调试）下 crypto.subtle 不存在，走降级通道
+  if (!globalThis.crypto?.subtle) return null
+  try {
+    const pemBody = publicKeyPem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g, '').replace(/\s+/g, '')
+    const raw = atob(pemBody)
+    const der = new Uint8Array(raw.length)
+    for (let i = 0; i < raw.length; i++) der[i] = raw.charCodeAt(i)
+    const key = await crypto.subtle.importKey('spki', der, { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt'])
+    const cipher = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, key, new TextEncoder().encode(plain))
+    const bytes = new Uint8Array(cipher)
+    let binary = ''
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+    return btoa(binary)
+  } catch {
+    // 公钥非法、明文超 190 字节单块上限等：返回 null 由调用方降级明文（后端兼容通道兜底）
+    return null
+  }
+}
+
+/**
  * 创建密码加密器（拉取公钥）
  */
 async function createEncryptor(): Promise<PasswordEncryptor> {
@@ -79,13 +114,10 @@ async function createEncryptor(): Promise<PasswordEncryptor> {
       // 公钥不可得：整组降级明文（不带声明字段，后端按明文兼容处理）
       if (!pubkey) return out
 
-      const cipher = new JSEncrypt()
-      cipher.setPublicKey(pubkey.public_key)
       for (const [name, plain] of Object.entries(fields)) {
         // 空值原样保留（如创建员工不设初始密码），不发声明字段由后端跳过解密
         if (!plain) continue
-        // RSA-PKCS1-v1.5 单块容量 245 字节（2048 位），密码长度远小于此；false = 公钥非法等
-        const encrypted = cipher.encrypt(plain)
+        const encrypted = await encryptWithPubkey(pubkey.public_key, plain)
         if (encrypted) {
           out[name] = encrypted
         } else {

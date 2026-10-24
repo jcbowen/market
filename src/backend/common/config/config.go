@@ -63,7 +63,8 @@ type Config struct {
 		// CDN 回源 IP 无固定段不可枚举时，这是白名单/限流拿到真实 IP 的唯一可靠路径
 		TrustedPlatform string `json:"trusted_platform" yaml:"trusted_platform"`
 		// PasswordRSAPrivateKey 登录密码传输加密的 RSA 私钥（PEM，PKCS#8/PKCS#1 均可）。
-		// 前端以公钥加密密码（PKCS#1 v1.5）后传输，网关持私钥解密，链路抓包不再可见密码明文；
+		// 前端以公钥加密密码（RSA-OAEP-SHA256，PKCS#1 v1.5 已弃用勿回退）后传输，网关持私钥解密，
+		// 链路抓包不再可见密码明文；
 		// 多实例/负载均衡部署必须让各实例持有同一私钥，否则拿公钥与提交密文落在不同实例
 		// 会随机解密失败。生产推荐改用下方 PasswordRSAKeyFile 文件方式（免 \n 转义、可挂载共享），
 		// 本内联项留作兼容。私钥不入 git 仓库；该密钥对不是 TLS 证书，无有效期概念，轮换只需替换并重启

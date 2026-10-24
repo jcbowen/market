@@ -166,7 +166,7 @@ async function fetchPwdPubkey(request: RequestSource): Promise<{ keyId: string; 
 }
 
 /**
- * 构造密码类请求体：密码字段 RSA(PKCS#1 v1.5) 加密上送，与网关 handler/password_crypto.go 协议一致
+ * 构造密码类请求体：密码字段 RSA(OAEP-SHA256) 加密上送，与网关 handler/password_crypto.go 协议一致
  * 公钥不可得时原样返回明文字段（后端明文兼容通道兜底，测试仍可运行）
  * - 函数名: encryptedCredentials
  * - 参数: request — Playwright 请求上下文；fields — 明文字段 map（如 { password } 或 { old_password, new_password }）
@@ -184,8 +184,9 @@ export async function encryptedCredentials(
   let encryptedAny = false;
   for (const [name, plain] of Object.entries(fields)) {
     if (!plain) continue;
+    // oaepHash 必须显式指定 SHA-256：Node 默认 OAEP 哈希为 SHA-1，与后端 DecryptOAEP(sha256) 不一致会解密失败
     out[name] = publicEncrypt(
-      { key: createPublicKey(pubkey.publicKey), padding: constants.RSA_PKCS1_PADDING },
+      { key: createPublicKey(pubkey.publicKey), padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' },
       Buffer.from(plain, 'utf8'),
     ).toString('base64');
     encryptedAny = true;

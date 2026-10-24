@@ -79,7 +79,7 @@ func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient,
 type AdminLoginReq struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
-	// 密文传输声明（可省略 = 明文兼容）：声明任一即视为 Password 为 RSA-PKCS1-V1_5 base64 密文，
+	// 密文传输声明（可省略 = 明文兼容）：声明任一即视为 Password 为 RSA-OAEP-SHA256 base64 密文，
 	// 协议详见 password_crypto.go；下同（其余密码请求结构体的同名字段不再重复注释）
 	PwdAlg string `json:"pwd_alg"`
 	PwdKey string `json:"pwd_key"`

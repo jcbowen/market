@@ -23,14 +23,18 @@ import (
 )
 
 /**
- * 密码传输加密（RSA + PKCS#1 v1.5）
+ * 密码传输加密（RSA + OAEP-SHA256）
  *
  * 背景：登录/改密类接口的密码字段以 JSON 明文传输，安全完全依赖 HTTPS；
  * 等保合规与纵深防御要求即便 TLS 配置失误，链路抓包也不可见密码明文。
  *
+ * 填充选型：OAEP（SHA-256）——PKCS#1 v1.5 加密存在 Bleichenbacher 填充预言攻击面
+ * （解密成败差异即可泄露私钥信息），Go 1.26 起官方弃用 rsa.Encrypt/DecryptPKCS1v15，
+ * 勿回退；浏览器 Web Crypto 与 Node crypto 原生支持 RSA-OAEP，三端无兼容成本。
+ *
  * 协议约定：
  *   1. 前端登录前调 GET /api/v1/admin/auth/pubkey 拿 { key_id, public_key, alg }（内存缓存，不持久化）
- *   2. 密码字段以 RSA-PKCS1-V1_5 加密后的 base64 密文提交，并附带声明字段 pwd_alg / pwd_key
+ *   2. 密码字段以 RSA-OAEP-SHA256 加密后的 base64 密文提交，并附带声明字段 pwd_alg / pwd_key
  *   3. 网关按 pwd_key 匹配本机私钥解密；未带声明字段时按明文兼容（存量脚本/测试不受影响）
  *   4. 解密失败或 key_id 不匹配返回 11010，前端重拉公钥后重试一次（覆盖轮换窗口）
  *
@@ -44,11 +48,13 @@ import (
  */
 
 // PasswordEncryptAlg 密码加密算法标识（请求 pwd_alg 字段与 pubkey 接口 alg 出参共用）
-// 标注填充方式：RSA + PKCS#1 v1.5（jsencrypt 默认输出，Go rsa.DecryptPKCS1v15 对应解密）
-const PasswordEncryptAlg = "RSA-PKCS1-V1_5"
+// 标注填充方式：RSA + OAEP（SHA-256），浏览器 Web Crypto RSA-OAEP 与
+// Go rsa.EncryptOAEP/DecryptOAEP 对应；PKCS#1 v1.5 已被 Go 1.26 弃用，勿回退
+const PasswordEncryptAlg = "RSA-OAEP-SHA256"
 
-// maxRSAPasswordLen 解密明文的长度上限（RSA-2048 + PKCS#1 v1.5 单块明文上限 = 模长 256 - 填充开销 11）
-const maxRSAPasswordLen = 245
+// maxRSAPasswordLen 解密明文的长度上限
+// （RSA-2048 + OAEP-SHA256 单块明文上限 = 模长 256 - 2×SHA-256 长度 64 - 填充开销 2）
+const maxRSAPasswordLen = 190
 
 // passwordCrypto 密码传输加密器
 // 持有网关本机的 RSA 私钥与派生指纹，随 AdminHandler 生命周期常驻
@@ -222,7 +228,7 @@ func (h *AdminHandler) GetPasswordPubkey(c *gin.Context) {
 
 // decryptPwdField 按请求声明解密密码字段（原地覆写）
 // 请求未声明 pwd_alg/pwd_key 时原样返回（明文兼容通道，存量脚本与未迁移测试不受影响）；
-// 已声明时校验算法与 key_id → base64 解码 → RSA-PKCS1-v1.5 解密 → 覆写目标字段。
+// 已声明时校验算法与 key_id → base64 解码 → RSA-OAEP-SHA256 解密 → 覆写目标字段。
 // 任一环节失败直接写响应（11010）并返回 false，调用方立即 return。
 // 密码字段本身为空时跳过（对应 CreateAdmin 的「复用账号可不传密码」场景）
 //
@@ -257,9 +263,8 @@ func (h *AdminHandler) decryptPwdField(c *gin.Context, field *string, alg, keyID
 		response.Error(c, errcode.PasswordEncryptedError)
 		return false
 	}
-	// rand 是 legacy 占位参数：新版标准库忽略该值（内部防护无条件启用），传 nil 行为等价、零开销；
-	// 仍传 rand.Reader 是兼容旧工具链语义（旧版本该参数控制 RSA 盲化，传值才启用防护），任意版本下均安全
-	plain, err := rsa.DecryptPKCS1v15(rand.Reader, h.pwdCrypto.key, cipherBytes)
+	// label 置 nil：三端约定不使用该参数（空 label），仅作占位保持签名完整
+	plain, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, h.pwdCrypto.key, cipherBytes, nil)
 	if err != nil {
 		response.Error(c, errcode.PasswordEncryptedError)
 		return false
@@ -267,7 +272,7 @@ func (h *AdminHandler) decryptPwdField(c *gin.Context, field *string, alg, keyID
 	// 解密明文补长度约束：请求结构体上的 binding min=6 作用在密文（恒 344 字符）上必然通过，
 	// 不在此补校验则加密通道可绕过长度限制设置超短密码（改密/重置链路服务层无二次校验）。
 	// 下限 6 与创建路径的明文校验对齐（存量密码均 ≥6，登录场景无额外影响）；
-	// 上限 245 为 RSA-2048/PKCS1v1.5 单块明文上限，越界密文本就无法成立
+	// 上限 190 为 RSA-2048/OAEP-SHA256 单块明文上限，越界密文本就无法成立
 	if l := len(plain); l < 6 || l > maxRSAPasswordLen {
 		response.Error(c, errcode.PasswordEncryptedError)
 		return false

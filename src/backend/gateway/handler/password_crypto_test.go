@@ -3,6 +3,7 @@ package handler
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -178,7 +179,7 @@ func TestDecryptPwdFieldPlaintextLengthGuard(t *testing.T) {
 	// tryDecrypt 以给定明文走完整解密链路，返回是否放行
 	tryDecrypt := func(plain string) bool {
 		t.Helper()
-		cipher, err := rsa.EncryptPKCS1v15(rand.Reader, &key.PublicKey, []byte(plain))
+		cipher, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &key.PublicKey, []byte(plain), nil)
 		if err != nil {
 			t.Fatalf("加密失败: %v", err)
 		}
