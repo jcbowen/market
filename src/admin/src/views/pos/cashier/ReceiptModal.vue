@@ -105,6 +105,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:show', v: boolean): void
+  /** 补绑成功：由父组件回写小票快照（子组件不直接改 props） */
+  (e: 'bound', payload: { userId: number; userName: string }): void
 }>()
 
 const message = useMessage()
@@ -132,7 +134,7 @@ const canBind = computed(
 )
 
 /**
- * 选择会员并补绑到本单：成功后更新小票客户行并提示；绑后不可换绑（后端拒绝）
+ * 选择会员并补绑到本单：成功后经 bound 事件交父组件回写快照（绑后不可换绑，后端拒绝）
  * @param u 选中的会员
  */
 async function onSelectMember(u: User) {
@@ -142,10 +144,9 @@ async function onSelectMember(u: User) {
     const res = await bindOrderUser(props.receipt.order_id!, u.id)
     if (res.data.code !== 0) return
     showUserPicker.value = false
-    props.receipt.user_id = u.id
-    props.receipt.user_name = u.nickname || u.phone || `会员#${u.id}`
-    props.receipt.member_label = props.receipt.user_name
-    message.success(`已绑定到会员 ${props.receipt.user_name}，该单后续计入其名下`)
+    const userName = u.nickname || u.phone || `会员#${u.id}`
+    emit('bound', { userId: u.id, userName })
+    message.success(`已绑定到会员 ${userName}，该单后续计入其名下`)
   } finally {
     binding.value = false
   }

@@ -301,7 +301,7 @@
   />
 
   <!-- 结账成功弹窗（58mm 热敏小票预览与打印，与直接收款共用） -->
-  <receipt-modal v-model:show="showPaidModal" :receipt="receipt" />
+  <receipt-modal v-model:show="showPaidModal" :receipt="receipt" @bound="onReceiptBound" />
 
   <!-- 单品改价弹窗（仅对本次订单生效） -->
   <n-modal
@@ -942,6 +942,17 @@ const showPaidModal = ref(false)
 
 /** 结账成功的小票数据（快照，供成功弹窗展示与打印；resetWorkspace 前组装） */
 const receipt = ref<PaidReceipt | null>(null)
+
+/**
+ * 小票弹窗内补绑会员成功：回写快照客户行（ReceiptModal 经 bound 事件通知，不直接改 props）
+ * @param p 绑定结果（会员 ID 与展示名）
+ */
+function onReceiptBound(p: { userId: number; userName: string }) {
+  if (!receipt.value) return
+  receipt.value.user_id = p.userId
+  receipt.value.user_name = p.userName
+  receipt.value.member_label = p.userName
+}
 
 // 支付方式动态获取：结账区不再摆 radio（结账即收款），付款码入口取第一个非现金方式——
 // 两渠道齐备返回 5「付款码支付」（渠道按扫码时的付款码前缀自动识别）、仅单渠道时对应占位值；

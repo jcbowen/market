@@ -2166,14 +2166,15 @@ func (h *AdminHandler) BindOrderUser(c *gin.Context) {
 	}
 	communityID := h.getAdminCommunityID(c)
 	// 会员存在性与归属预检（带社区语境防跨社区挂账，禁用会员拒绝），失败提前给出可读错误；
-	// order 服务侧还有一次同口径校验兜底（防绕过网关直调 gRPC）
+	// 错误码与 order 服务侧同口径（NotFound→10003 / FailedPrecondition→10004，见 grpcCodeMap），
+	// 预检与兜底两条路径对外码值一致；order 服务侧还有一次同口径校验兜底（防绕过网关直调 gRPC）
 	u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: req.UserID, CommunityId: communityID})
 	if err != nil || u == nil || u.Id <= 0 {
-		response.Error(c, errcode.ParamError, "会员不存在")
+		response.Error(c, errcode.NotFound, "会员不存在")
 		return
 	}
 	if u.Status != 1 {
-		response.Error(c, errcode.ParamError, "该会员已被禁用，无法绑定")
+		response.Error(c, errcode.OperationNotAllowed, "该会员已被禁用，无法绑定")
 		return
 	}
 	resp, err := h.orderClient.BindOrderUser(c.Request.Context(), &order.BindOrderUserReq{

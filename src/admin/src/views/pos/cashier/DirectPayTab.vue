@@ -66,7 +66,7 @@
     />
 
     <!-- 收银成功小票弹窗 -->
-    <receipt-modal v-model:show="showPaid" :receipt="receipt" />
+    <receipt-modal v-model:show="showPaid" :receipt="receipt" @bound="onReceiptBound" />
   </div>
 </template>
 
@@ -316,6 +316,17 @@ async function onCodePay() {
 
 const showPaid = ref(false)
 const receipt = ref<PaidReceipt | null>(null)
+
+/**
+ * 小票弹窗内补绑会员成功：回写快照客户行（ReceiptModal 经 bound 事件通知，不直接改 props）
+ * @param p 绑定结果（会员 ID 与展示名）
+ */
+function onReceiptBound(p: { userId: number; userName: string }) {
+  if (!receipt.value) return
+  receipt.value.user_id = p.userId
+  receipt.value.user_name = p.userName
+  receipt.value.member_label = p.userName
+}
 
 /**
  * 组装直接收款小票快照（无商品明细；order_id/user_id 供散客单补绑会员入口判定）
