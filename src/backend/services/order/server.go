@@ -212,6 +212,14 @@ func (s *server) VerifyPickup(ctx stdctx.Context, req *order.VerifyPickupReq) (*
 	return resp, nil
 }
 
+// BindOrderUser 散客订单补绑会员（收银台收款后顾客要求挂账到会员名下）
+func (s *server) BindOrderUser(ctx stdctx.Context, req *order.BindOrderUserReq) (*common.CommonResponse, error) {
+	if err := s.orderService.BindOrderUser(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // AssignDelivery 后台指派/取消指派配送员（B 履约工作台）
 func (s *server) AssignDelivery(ctx stdctx.Context, req *order.AssignDeliveryReq) (*common.CommonResponse, error) {
 	if err := s.orderService.AssignDelivery(ctx, req); err != nil {

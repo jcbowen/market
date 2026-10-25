@@ -1468,6 +1468,65 @@ func (s *OrderService) VerifyPickup(ctx context.Context, req *order.VerifyPickup
 	return resp, nil
 }
 
+// bindableStatuses 散客单补绑会员允许的订单状态：已收款后的流转中/终态
+// （2已支付 3备货中 4配送中 5已完成）；待支付应走「继续收款」时选会员，
+// 已取消/退款单绑定无业务意义
+var bindableStatuses = []int32{2, 3, 4, 5}
+
+// BindOrderUser 散客订单补绑会员：仅 user_id=0 的已收款散客单可绑定一次（绑后不可换绑/解绑）。
+// 收银台收款完成后顾客要求把消费挂到会员名下（积分等会员权益前置）使用；
+// 绑定仅更新 orders.user_id，会员名等展示字段由网关按 user_id 实时填充，无需快照落库。
+// 条件更新（WHERE user_id=0）防并发下重复绑定/换绑；会员存在性经 user 服务二次校验（防绕过网关直调）
+// 参数：
+//   - ctx: 上下文
+//   - req: 绑定请求（order_id/user_id/操作者社区语境）
+//
+// 返回值：
+//   - error: 订单不存在、跨社区、非散客单、状态不允许、会员不存在或已禁用时返回业务错误
+func (s *OrderService) BindOrderUser(ctx context.Context, req *order.BindOrderUserReq) error {
+	if req.OrderId <= 0 || req.UserId <= 0 {
+		return bizerr.New(codes.InvalidArgument, "参数错误")
+	}
+	// 会员存在性校验：带社区语境（操作者非超管时校验会员归属，防跨社区挂账）；
+	// 禁用会员不接受挂账
+	if grpcclient.UserClient != nil {
+		u, err := grpcclient.UserClient.GetUserById(ctx, &user.GetUserByIdReq{Id: req.UserId, CommunityId: req.CommunityId})
+		if err != nil || u == nil || u.Id <= 0 {
+			return bizerr.New(codes.NotFound, "会员不存在")
+		}
+		if u.Status != 1 {
+			return bizerr.New(codes.FailedPrecondition, "该会员已被禁用，无法绑定")
+		}
+	}
+
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var o model.Order
+		if err := tx.First(&o, req.OrderId).Error; err != nil {
+			return bizerr.New(codes.NotFound, "订单不存在")
+		}
+		// 社区隔离：操作者社区语境与订单归属社区不一致时直接拒绝
+		if req.CommunityId > 0 && o.CommunityID != req.CommunityId {
+			return bizerr.New(codes.PermissionDenied, "无权操作其他社区的订单")
+		}
+		// 仅散客单可绑：user_id>0 说明已有归属（绑后不改口径）
+		if o.UserID != 0 {
+			return bizerr.New(codes.FailedPrecondition, "该订单已关联会员，不可重复绑定")
+		}
+		if !containsInt32(bindableStatuses, o.Status) {
+			return bizerr.New(codes.FailedPrecondition, "仅已收款的订单可绑定会员")
+		}
+		// 条件更新防并发：仅当订单仍是散客时生效（并发重复绑定只成功一次）
+		res := tx.Model(&model.Order{}).Where("id = ? AND user_id = 0", o.ID).Update("user_id", req.UserId)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.FailedPrecondition, "该订单已关联会员，不可重复绑定")
+		}
+		return nil
+	})
+}
+
 // cancelOrderInTx 在事务中执行取消语义：条件更新状态、写取消原因/时间并逐行回补库存。
 // 供后台取消（UpdateOrderStatus 特判 status=6）复用；C 端 CancelOrder 有额外的归属校验，不走此方法。
 // 参数：

@@ -399,6 +399,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/orders/:id/ship", gwMiddleware.RequirePermission("order:update"), adminHandler.ShipOrder)
 			authAdmin.PUT("/orders/:id/complete", gwMiddleware.RequirePermission("order:update"), adminHandler.CompleteOrder)
 			authAdmin.POST("/orders/:id/verify-pickup", gwMiddleware.RequirePermission("order:update"), adminHandler.AdminVerifyPickup)
+			// 散客订单补绑会员（收银台收款后顾客要求挂账到会员名下，仅散客单可绑一次）
+			authAdmin.POST("/orders/:id/bind-user", gwMiddleware.RequirePermission("order:update"), adminHandler.BindOrderUser)
 			// 履约工作台（B）：指派配送（履约人员 = 本社区任职且绑定会员的员工，配置入口在员工编辑页）
 			authAdmin.PUT("/orders/:id/assign-delivery", gwMiddleware.RequirePermission("order:update"), adminHandler.AssignDelivery)
 			authAdmin.GET("/fulfillers", gwMiddleware.RequirePermission("user:view"), adminHandler.ListFulfillers)

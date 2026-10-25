@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.1
-// source: order/order.proto
+// source: common/proto/order/order.proto
 
 package order
 
@@ -28,6 +28,7 @@ const (
 	OrderService_RestoreOrder_FullMethodName             = "/order.OrderService/RestoreOrder"
 	OrderService_UpdateOrderStatus_FullMethodName        = "/order.OrderService/UpdateOrderStatus"
 	OrderService_VerifyPickup_FullMethodName             = "/order.OrderService/VerifyPickup"
+	OrderService_BindOrderUser_FullMethodName            = "/order.OrderService/BindOrderUser"
 	OrderService_ApplyRefund_FullMethodName              = "/order.OrderService/ApplyRefund"
 	OrderService_AdminCreateRefund_FullMethodName        = "/order.OrderService/AdminCreateRefund"
 	OrderService_ListRefunds_FullMethodName              = "/order.OrderService/ListRefunds"
@@ -80,6 +81,9 @@ type OrderServiceClient interface {
 	UpdateOrderStatus(ctx context.Context, in *UpdateOrderStatusReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
 	VerifyPickup(ctx context.Context, in *VerifyPickupReq, opts ...grpc.CallOption) (*VerifyPickupResp, error)
+	// 散客订单补绑会员：仅 user_id=0 的已收款散客单可绑定一次（绑后不可换绑/解绑），
+	// 收银台收款后顾客要求把消费挂到会员名下（积分等会员权益前置）使用
+	BindOrderUser(ctx context.Context, in *BindOrderUserReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 退款
 	ApplyRefund(ctx context.Context, in *ApplyRefundReq, opts ...grpc.CallOption) (*RefundInfo, error)
 	// 后台代客退款：发起即执行（免审核），items 为空表示整单退
@@ -227,6 +231,16 @@ func (c *orderServiceClient) VerifyPickup(ctx context.Context, in *VerifyPickupR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VerifyPickupResp)
 	err := c.cc.Invoke(ctx, OrderService_VerifyPickup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) BindOrderUser(ctx context.Context, in *BindOrderUserReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.CommonResponse)
+	err := c.cc.Invoke(ctx, OrderService_BindOrderUser_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -589,6 +603,9 @@ type OrderServiceServer interface {
 	UpdateOrderStatus(context.Context, *UpdateOrderStatusReq) (*common.CommonResponse, error)
 	// 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
 	VerifyPickup(context.Context, *VerifyPickupReq) (*VerifyPickupResp, error)
+	// 散客订单补绑会员：仅 user_id=0 的已收款散客单可绑定一次（绑后不可换绑/解绑），
+	// 收银台收款后顾客要求把消费挂到会员名下（积分等会员权益前置）使用
+	BindOrderUser(context.Context, *BindOrderUserReq) (*common.CommonResponse, error)
 	// 退款
 	ApplyRefund(context.Context, *ApplyRefundReq) (*RefundInfo, error)
 	// 后台代客退款：发起即执行（免审核），items 为空表示整单退
@@ -685,6 +702,9 @@ func (UnimplementedOrderServiceServer) UpdateOrderStatus(context.Context, *Updat
 }
 func (UnimplementedOrderServiceServer) VerifyPickup(context.Context, *VerifyPickupReq) (*VerifyPickupResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method VerifyPickup not implemented")
+}
+func (UnimplementedOrderServiceServer) BindOrderUser(context.Context, *BindOrderUserReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BindOrderUser not implemented")
 }
 func (UnimplementedOrderServiceServer) ApplyRefund(context.Context, *ApplyRefundReq) (*RefundInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApplyRefund not implemented")
@@ -949,6 +969,24 @@ func _OrderService_VerifyPickup_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OrderServiceServer).VerifyPickup(ctx, req.(*VerifyPickupReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_BindOrderUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BindOrderUserReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).BindOrderUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_BindOrderUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).BindOrderUser(ctx, req.(*BindOrderUserReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1605,6 +1643,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _OrderService_VerifyPickup_Handler,
 		},
 		{
+			MethodName: "BindOrderUser",
+			Handler:    _OrderService_BindOrderUser_Handler,
+		},
+		{
 			MethodName: "ApplyRefund",
 			Handler:    _OrderService_ApplyRefund_Handler,
 		},
@@ -1742,5 +1784,5 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "order/order.proto",
+	Metadata: "common/proto/order/order.proto",
 }

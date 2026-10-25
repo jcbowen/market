@@ -293,6 +293,7 @@ import UserPicker from '@/components/UserPicker.vue'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
 import RefundModal from './components/RefundModal.vue'
+import PayTypeLabel from '@/components/PayTypeLabel.vue'
 import type { Order, Product, User } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import { reopenModal } from '@/utils/modal'
@@ -308,7 +309,6 @@ import {
   orderSourceTagType,
   orderSourceText,
   orderStatusTagType,
-  payTypeText,
 } from '@/constants/order'
 
 /**
@@ -690,7 +690,8 @@ const columns: DataTableColumns<Order> = [
     title: '支付方式',
     key: 'pay_type',
     width: 90,
-    render: (row) => row.pay_type_text || (row.pay_type ? payTypeText(row.pay_type) : '-'),
+    // 仅图标：悬浮/触屏点按显示文字（2026-10-25 修订）
+    render: (row) => h(PayTypeLabel, { payType: row.pay_type, text: row.pay_type_text, iconOnly: true }),
   },
   {
     title: '配送员',

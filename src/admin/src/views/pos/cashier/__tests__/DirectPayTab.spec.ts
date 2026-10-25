@@ -14,7 +14,14 @@ const { createPosOrder, listPosPayMethods } = vi.hoisted(() => ({
   listPosPayMethods: vi.fn(),
 }))
 
-vi.mock('@/api/order', () => ({ createPosOrder, listPosPayMethods }))
+vi.mock('@/api/order', () => ({ createPosOrder, listPosPayMethods, bindOrderUser: vi.fn() }))
+
+// ReceiptModal 新增散客补绑入口后 import 链引入 stores/auth（→ api/auth → request.ts 顶层
+// createDiscreteApi 依赖 naive-ui 完整包）与 UserPicker（→ api/user 同链），测试内统一阻断
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ isSuperAdmin: true, hasPermission: () => true }),
+}))
+vi.mock('@/api/user', () => ({ getUserList: vi.fn(), createUser: vi.fn() }))
 
 const { useDialog, useMessage } = vi.hoisted(() => ({ useDialog: vi.fn(), useMessage: vi.fn() }))
 vi.mock('naive-ui', () => ({ useDialog, useMessage }))

@@ -23,18 +23,19 @@
       <!-- 数字小键盘（触屏收银机点按） -->
       <number-pad dot @input="onPadInput" @backspace="onPadBackspace" @clear="clearAmount" />
 
-      <!-- 收款动作 -->
+      <!-- 收款动作（两按钮统一高度字号缩小视觉差异，付款码为主路径实心、现金次路径描边） -->
       <n-space vertical :size="10" class="pay-actions">
         <n-button
           v-if="codePayMethod"
           type="primary"
           size="large"
           block
-          class="pay-btn-main"
+          class="pay-btn"
           :loading="creating"
           :disabled="!amountValid"
           @click="onCodePay"
         >
+          <template #icon><n-icon :component="ScanOutline" /></template>
           付款码收款 ￥{{ formatAmount(amount) }}（F2）
         </n-button>
         <n-button
@@ -42,10 +43,12 @@
           block
           type="warning"
           secondary
+          class="pay-btn"
           :loading="creating"
           :disabled="!amountValid"
           @click="onCashPay"
         >
+          <template #icon><n-icon :component="CashOutline" /></template>
           现金收款（F3）
         </n-button>
       </n-space>
@@ -71,6 +74,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatAmount } from '@/utils/format'
 import { useDialog, useMessage } from 'naive-ui'
+import { CashOutline, ScanOutline } from '@vicons/ionicons5'
 import { createPosOrder, ensurePosCodePaySession, listPosPayMethods } from '@/api/order'
 import NumberPad from '@/components/NumberPad.vue'
 import CodePayDialog from './CodePayDialog.vue'
@@ -314,7 +318,7 @@ const showPaid = ref(false)
 const receipt = ref<PaidReceipt | null>(null)
 
 /**
- * 组装直接收款小票快照（无商品明细）
+ * 组装直接收款小票快照（无商品明细；order_id/user_id 供散客单补绑会员入口判定）
  * @param payLabel 支付方式文案
  */
 function buildReceipt(payLabel: string) {
@@ -322,6 +326,9 @@ function buildReceipt(payLabel: string) {
   const pad = (n: number) => String(n).padStart(2, '0')
   receipt.value = {
     order_no: '',
+    order_id: 0,
+    user_id: 0,
+    user_name: '',
     pay_amount: amount.value,
     channel_label: '到店消费',
     pay_label: payLabel,
@@ -365,6 +372,7 @@ function onCashPay() {
         })
         if (res.data.code === 0) {
           buildReceipt('现金')
+          receipt.value!.order_id = res.data.data.id
           receipt.value!.order_no = res.data.data.order_no
           showPaid.value = true
           message.success('收款成功')
@@ -393,6 +401,7 @@ function onCodePaid(payload: { payLabel: string; via: 'code' | 'cash' }) {
   showCodePay.value = false
   abandonedPending.value = null
   buildReceipt(payload.payLabel)
+  receipt.value!.order_id = codePayOrderId.value
   receipt.value!.order_no = codePayOrderNo.value
   showPaid.value = true
   message.success('收款成功')
@@ -463,8 +472,8 @@ onBeforeUnmount(() => {
 .pay-actions {
   margin-top: 4px;
 }
-.pay-btn-main {
-  height: 52px;
-  font-size: 17px;
+.pay-btn {
+  height: 48px;
+  font-size: 16px;
 }
 </style>

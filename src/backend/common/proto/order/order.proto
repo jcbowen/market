@@ -19,6 +19,9 @@ service OrderService {
   rpc UpdateOrderStatus(UpdateOrderStatusReq) returns (common.CommonResponse);
   // 自提订单核销：校验取货码后置为已完成（后台兜底核销 / 履约工作台核销共用）
   rpc VerifyPickup(VerifyPickupReq) returns (VerifyPickupResp);
+  // 散客订单补绑会员：仅 user_id=0 的已收款散客单可绑定一次（绑后不可换绑/解绑），
+  // 收银台收款后顾客要求把消费挂到会员名下（积分等会员权益前置）使用
+  rpc BindOrderUser(BindOrderUserReq) returns (common.CommonResponse);
 
   // 退款
   rpc ApplyRefund(ApplyRefundReq) returns (RefundInfo);
@@ -625,6 +628,15 @@ message VerifyPickupReq {
   int64 operator_id = 4;
   // 操作者社区语境（>0 时校验订单归属社区，跨社区核销直接拒绝；0=跳过校验）
   int64 community_id = 5;
+}
+
+// BindOrderUserReq 散客订单补绑会员请求
+message BindOrderUserReq {
+  int64 order_id = 1;
+  // 要绑定的会员 ID（须已存在；仅散客单 user_id=0 可绑，绑定后不可再改）
+  int64 user_id = 2;
+  // 操作者社区语境（>0 时校验订单归属社区，跨社区绑定直接拒绝；0=跳过校验）
+  int64 community_id = 3;
 }
 
 message VerifyPickupResp {

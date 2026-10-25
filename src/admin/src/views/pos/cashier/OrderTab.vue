@@ -975,16 +975,20 @@ function channelLabelOf(type: number): string {
 
 /**
  * 组装结账小票快照（必须 resetWorkspace 前调用，购物车清空后取不到值）
+ * @param orderId 订单 ID（散客单补绑会员入口需要）
  * @param orderNo 订单号
  * @param payAmount 实收金额
  * @param pickupCode 取货码（自提单）
  * @param payLabel 支付方式文案
  */
-function buildReceipt(orderNo: string, payAmount: number, pickupCode: string | undefined, payLabel: string) {
+function buildReceipt(orderId: number, orderNo: string, payAmount: number, pickupCode: string | undefined, payLabel: string) {
   const now = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   receipt.value = {
     order_no: orderNo,
+    order_id: orderId,
+    user_id: member.value?.id ?? 0,
+    user_name: member.value ? member.value.nickname || member.value.phone || `会员#${member.value.id}` : '',
     pay_amount: payAmount,
     pickup_code: pickupCode || undefined,
     channel_label: channelLabelOf(deliveryType.value),
@@ -1130,7 +1134,7 @@ function onCashPay() {
         const res = await createPosOrder({ ...buildOrderPayload(discount), pay_type: PAY_TYPE.CASH })
         if (res.data.code === 0) {
           // 组装小票快照（resetWorkspace 会清空购物车，必须先取值）
-          buildReceipt(res.data.data.order_no, res.data.data.pay_amount, res.data.data.pickup_code, '现金')
+          buildReceipt(res.data.data.id, res.data.data.order_no, res.data.data.pay_amount, res.data.data.pickup_code, '现金')
           showPaidModal.value = true
           resetWorkspace()
         }
@@ -1196,7 +1200,7 @@ function onCodePaid(payload: { payLabel: string; pickupCode?: string }) {
   showCodePayModal.value = false
   abandonedPending.value = null
   message.success('收款成功')
-  buildReceipt(codePayOrderNo.value, codePayAmount.value, payload.pickupCode, payload.payLabel)
+  buildReceipt(codePayOrderId.value, codePayOrderNo.value, codePayAmount.value, payload.pickupCode, payload.payLabel)
   showPaidModal.value = true
   resetWorkspace()
 }

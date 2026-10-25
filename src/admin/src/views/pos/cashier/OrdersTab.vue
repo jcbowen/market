@@ -197,10 +197,26 @@
               >
                 {{ detail.user_name || `用户${detail.user_id}` }}
               </n-button>
-              <span v-else>{{ detail.user_name || '散客' }}</span>
+              <template v-else>
+                <span>{{ detail.user_name || '散客' }}</span>
+                <!-- 散客单补绑会员：仅已收款单开放（待支付走继续收款时选会员），绑后不可换绑 -->
+                <n-button
+                  v-if="canBindUser(detail)"
+                  size="tiny"
+                  text
+                  type="warning"
+                  :disabled="bindingUser"
+                  @click="openBindUser(detail)"
+                >
+                  绑定会员
+                </n-button>
+              </template>
             </div>
             <div class="detail-item"><span class="label">配送方式</span><span>{{ deliveryTypeText(detail.delivery_type) }}</span></div>
-            <div class="detail-item"><span class="label">支付方式</span><span>{{ detail.pay_type_text || (detail.pay_type ? payTypeText(detail.pay_type) : '-') }}</span></div>
+            <div class="detail-item">
+              <span class="label">支付方式</span>
+              <pay-type-label :pay-type="detail.pay_type" :text="detail.pay_type_text" />
+            </div>
             <div class="detail-item"><span class="label">下单时间</span><span>{{ formatDateTime(detail.created_at) }}</span></div>
             <div class="detail-item"><span class="label">收银员</span><span>{{ detail.operator_name || '-' }}</span></div>
             <div class="detail-item"><span class="label">班次</span><span>{{ detail.shift_id ? `#${detail.shift_id}` : '-' }}</span></div>
@@ -327,6 +343,8 @@
 
     <!-- 会员选择器（筛选用，单选；复用公共 UserPicker） -->
     <user-picker v-model:show="userPickerVisible" title="按会员筛选订单" @select="onUserPicked" />
+    <!-- 会员选择器（散客单补绑会员用，详情弹窗内触发；与筛选用互不干扰） -->
+    <user-picker v-model:show="bindPickerVisible" title="补绑会员" @select="onBindUserSelect" />
 
     <!-- 商品选择器（筛选用，单选；与后台订单列表同款：仅上架商品 + 关键字防抖 + 分页） -->
     <n-modal
@@ -393,14 +411,15 @@ import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatAmount } from '@/utils/format'
 import { NButton, NEmpty, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { cancelOrder, ensurePosCodePaySession, getOrderDetail, getOrderList, payPosOrderCash, verifyPickup } from '@/api/order'
+import { bindOrderUser, cancelOrder, ensurePosCodePaySession, getOrderDetail, getOrderList, payPosOrderCash, verifyPickup } from '@/api/order'
 import { getProductList } from '@/api/product'
 import type { Order, OrderDetail, Product, User } from '@/api/types'
-import { ORDER_STATUS, QUERY_STATUS, canAdminRefund, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
+import { ORDER_STATUS, QUERY_STATUS, canAdminRefund, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
 import { usePosStore } from '@/stores/pos'
 import { formatDateTime } from '@/utils/datetime'
 import UserPicker from '@/components/UserPicker.vue'
+import PayTypeLabel from '@/components/PayTypeLabel.vue'
 import RefundModal from '@/views/order/components/RefundModal.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import OrderDetailModal from '@/views/order/detail.vue'
@@ -1083,6 +1102,54 @@ function openUserOrders(row: Pick<Order, 'user_id' | 'user_name'>) {
   openUserOrdersOf({ id: row.user_id, nickname: row.user_name })
 }
 
+// --- 散客单补绑会员（详情弹窗内；仅已收款散客单可绑，绑后不可换绑） ---
+
+/** 补绑会员选择弹窗 */
+const bindPickerVisible = ref(false)
+/** 补绑请求进行中（防重复提交） */
+const bindingUser = ref(false)
+/** 待补绑的订单 ID */
+const bindTargetId = ref(0)
+
+/**
+ * 散客单是否可补绑会员：仍是散客（user_id=0）、已收款（状态 2-5，待支付走继续收款时选会员）、
+ * 有订单处理权限（接口要求 order:update）
+ * @param row 订单（需含 user_id/status）
+ */
+function canBindUser(row: Pick<Order, 'user_id' | 'status'>): boolean {
+  if (row.user_id > 0) return false
+  if (!authStore.isSuperAdmin && !authStore.hasPermission('order:update')) return false
+  return row.status >= ORDER_STATUS.PAID && row.status <= ORDER_STATUS.COMPLETED
+}
+
+/**
+ * 打开补绑会员弹窗（详情弹窗内散客单）
+ * @param row 订单（需含 id）
+ */
+function openBindUser(row: Pick<Order, 'id'>) {
+  bindTargetId.value = row.id
+  bindPickerVisible.value = true
+}
+
+/**
+ * 补绑会员：调绑定接口，成功后刷新详情与列表（会员名按 user_id 重新填充）
+ * @param u 选中的会员
+ */
+async function onBindUserSelect(u: User) {
+  if (bindingUser.value || bindTargetId.value <= 0) return
+  bindingUser.value = true
+  try {
+    const res = await bindOrderUser(bindTargetId.value, u.id)
+    if (res.data.code !== 0) return
+    bindPickerVisible.value = false
+    message.success(`订单已绑定到会员 ${u.nickname || u.phone || `用户${u.id}`}，不可再更换`)
+    await openDetail({ id: bindTargetId.value } as Order)
+    void loadOrders()
+  } finally {
+    bindingUser.value = false
+  }
+}
+
 /** 表格列定义（行点击打开详情；状态列彩色标签；待支付可继续收款；有商品的单可引用到收银台） */
 const columns = computed<DataTableColumns<Order>>(() => [
   { title: '订单号', key: 'order_no', width: 190, ellipsis: { tooltip: true } },
@@ -1106,7 +1173,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
     title: '支付方式',
     key: 'pay_type',
     width: 90,
-    render: (row) => row.pay_type_text || (row.pay_type ? payTypeText(row.pay_type) : '-'),
+    // 仅图标：悬浮/触屏点按显示文字（2026-10-25 修订）
+    render: (row) => h(PayTypeLabel, { payType: row.pay_type, text: row.pay_type_text, iconOnly: true }),
   },
   {
     // 支付/订单状态彩色标签：与详情弹窗同口径（待支付黄/已支付蓝/完成绿/退款红）

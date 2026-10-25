@@ -30,6 +30,11 @@ vi.mock('@/api/order', () => ({
 }))
 vi.mock('@/api/marketing', () => ({ getCouponRecords: vi.fn() }))
 vi.mock('@/api/user', () => ({ getCommunityProfile }))
+// ReceiptModal 新增散客补绑入口后 import 链引入 stores/auth（→ api/auth → request.ts 顶层
+// createDiscreteApi 依赖 naive-ui 完整包），测试内阻断为固定超管上下文
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ isSuperAdmin: true, hasPermission: () => true }),
+}))
 
 const { useDialog, useMessage } = vi.hoisted(() => ({ useDialog: vi.fn(), useMessage: vi.fn() }))
 vi.mock('naive-ui', () => ({ useDialog, useMessage }))

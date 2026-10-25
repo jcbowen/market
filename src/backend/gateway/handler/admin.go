@@ -2143,6 +2143,51 @@ func (h *AdminHandler) AdminVerifyPickup(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// BindOrderUserReq 散客订单补绑会员请求
+type BindOrderUserReq struct {
+	UserID int64 `json:"user_id" binding:"required"`
+}
+
+// BindOrderUser 散客订单补绑会员（收银台收款后顾客要求把消费挂到会员名下，积分前置场景）
+// 接口: POST /api/v1/admin/orders/:id/bind-user（权限 order:update）
+// 仅散客订单（user_id=0）且已收款可绑，绑定后不可换绑/解绑（口径由 order 服务条件更新保证）
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) BindOrderUser(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req BindOrderUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	communityID := h.getAdminCommunityID(c)
+	// 会员存在性与归属预检（带社区语境防跨社区挂账，禁用会员拒绝），失败提前给出可读错误；
+	// order 服务侧还有一次同口径校验兜底（防绕过网关直调 gRPC）
+	u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: req.UserID, CommunityId: communityID})
+	if err != nil || u == nil || u.Id <= 0 {
+		response.Error(c, errcode.ParamError, "会员不存在")
+		return
+	}
+	if u.Status != 1 {
+		response.Error(c, errcode.ParamError, "该会员已被禁用，无法绑定")
+		return
+	}
+	resp, err := h.orderClient.BindOrderUser(c.Request.Context(), &order.BindOrderUserReq{
+		OrderId:     id,
+		UserId:      req.UserID,
+		CommunityId: communityID,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
 // --- 履约工作台（B）：订单指派 ---
 // 履约人员 = 本社区任职且绑定会员的员工，配置入口在员工编辑页（绑定 admin_users.user_id）
 

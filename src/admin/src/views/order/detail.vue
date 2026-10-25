@@ -43,7 +43,9 @@
             </n-tag>
           </n-descriptions-item>
           <n-descriptions-item v-if="detail.operator_name" label="经手人">{{ detail.operator_name }}</n-descriptions-item>
-          <n-descriptions-item label="支付方式">{{ detail.pay_type_text || (detail.pay_type ? payTypeText(detail.pay_type) : '-') }}</n-descriptions-item>
+          <n-descriptions-item label="支付方式">
+            <pay-type-label :pay-type="detail.pay_type" :text="detail.pay_type_text" />
+          </n-descriptions-item>
           <n-descriptions-item label="订单金额">￥{{ formatAmount(detail.total_amount) }}</n-descriptions-item>
           <n-descriptions-item label="优惠金额">-￥{{ formatAmount(detail.discount_amount) }}</n-descriptions-item>
           <n-descriptions-item label="运费">￥{{ formatAmount(detail.delivery_fee) }}</n-descriptions-item>
@@ -252,7 +254,6 @@ import {
   orderStatusTagType,
   orderStatusText,
   payChannelText,
-  payTypeText,
   paymentConfirmRefText,
   paymentConfirmSourceTagType,
   paymentConfirmSourceText,
@@ -265,6 +266,7 @@ import {
 } from '@/constants/order'
 import ShipModal from './components/ShipModal.vue'
 import CancelOrderModal from './components/CancelOrderModal.vue'
+import PayTypeLabel from '@/components/PayTypeLabel.vue'
 import RefundModal from './components/RefundModal.vue'
 import MarkPaidModal from './components/MarkPaidModal.vue'
 
@@ -404,7 +406,7 @@ const refundColumns: DataTableColumns<Refund> = [
 /** 支付记录列：一次支付尝试一行，确认来源非「渠道回调」即说明回调出过问题 */
 const paymentColumns: DataTableColumns<OrderPayment> = [
   { title: '支付单号', key: 'payment_no', width: 190, ellipsis: { tooltip: true } },
-  { title: '支付方式', key: 'pay_type', width: 90, render: (row) => payTypeText(row.pay_type) },
+  { title: '支付方式', key: 'pay_type', width: 120, render: (row) => h(PayTypeLabel, { payType: row.pay_type }) },
   { title: '金额', key: 'amount', width: 100, render: (row) => `￥${formatAmount(row.amount)}` },
   {
     title: '状态',

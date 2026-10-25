@@ -1,3 +1,6 @@
+import type { Component } from 'vue'
+import { CashOutline, LogoAlipay, LogoWechat, ScanOutline, WalletOutline } from '@vicons/ionicons5'
+
 /**
  * 订单/售后枚举与展示逻辑集中定义
  * 页面一律引用此处常量与函数，禁止再散落魔法数字
@@ -63,6 +66,33 @@ export function payTypeText(payType: number): string {
 
 /** 交班统计支付方式展示顺序（现金优先；付款码次之，未在清单中的支付方式排在末尾） */
 export const SHIFT_PAY_TYPES: number[] = [4, 1, 2, 5, 6]
+
+/** 支付方式图标定义：图标组件 + 渠道品牌色 */
+export interface PayTypeIcon {
+  /** 图标组件（ionicons） */
+  icon: Component
+  /** 图标颜色（微信绿/支付宝蓝与渠道一致，图标形状区分在线支付与付款码） */
+  color: string
+}
+
+/**
+ * 支付方式图标映射（2026-10-25 订单列表图标化）：
+ * 渠道维度用颜色区分（微信绿/支付宝蓝/现金橙/货到付款灰），
+ * 形式维度用图标区分（logo=在线支付、扫码=付款码、钞票=现金、钱包=货到付款）
+ * @param payType 支付方式码
+ * @returns 图标定义；未知方式返回 null（调用方仅显示文字）
+ */
+export function payTypeIcon(payType: number): PayTypeIcon | null {
+  const map: Record<number, PayTypeIcon> = {
+    [PAY_TYPE.WECHAT]: { icon: LogoWechat, color: '#09bb07' },
+    [PAY_TYPE.ALIPAY]: { icon: LogoAlipay, color: '#1677ff' },
+    [PAY_TYPE.CASH_ON_DELIVERY]: { icon: WalletOutline, color: '#8a8a8a' },
+    [PAY_TYPE.CASH]: { icon: CashOutline, color: '#f0a020' },
+    [PAY_TYPE.WECHAT_CODE]: { icon: ScanOutline, color: '#09bb07' },
+    [PAY_TYPE.ALIPAY_CODE]: { icon: ScanOutline, color: '#1677ff' },
+  }
+  return map[payType] ?? null
+}
 
 /**
  * 交班统计行：仅渲染后端实际返回的支付方式，按 SHIFT_PAY_TYPES 顺序排序

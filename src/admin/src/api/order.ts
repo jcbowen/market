@@ -393,6 +393,20 @@ export function verifyPickup(id: number, pickup_code: string) {
 }
 
 /**
+ * 散客订单补绑会员（收银台收款后顾客要求挂账到会员名下，积分前置场景）
+ * 仅散客订单（user_id=0）且已收款可绑，绑定后不可换绑/解绑（后端条件更新保证）
+ * @param id 订单 ID
+ * @param user_id 要绑定的会员 ID
+ */
+export function bindOrderUser(id: number, user_id: number) {
+  return request<ApiResult<Record<string, never>>>({
+    url: `/api/v1/admin/orders/${id}/bind-user`,
+    method: 'POST',
+    data: { user_id },
+  })
+}
+
+/**
  * 指派/取消指派配送员（B 履约工作台）
  * 指派后履约人员在 C 端工作台送货（开始配送/送达拍照），不经传统物流发货
  * @param id 订单 ID
