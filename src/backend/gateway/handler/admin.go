@@ -1621,10 +1621,11 @@ func (h *AdminHandler) CreateCategory(c *gin.Context) {
 
 // UpdateCategoryReq 更新分类请求
 type UpdateCategoryReq struct {
-	Name   string `json:"name"`
-	Icon   string `json:"icon"`
-	Sort   int32  `json:"sort"`
-	Status int32  `json:"status"`
+	Name string `json:"name"`
+	Icon string `json:"icon"`
+	Sort int32  `json:"sort"`
+	// Status 用指针区分「未传」与「传 0」：全量语义下 0 是合法的禁用值
+	Status *int32 `json:"status"`
 }
 
 // UpdateCategory 更新分类
@@ -1642,13 +1643,17 @@ func (h *AdminHandler) UpdateCategory(c *gin.Context) {
 		response.Error(c, errcode.ParamError)
 		return
 	}
+	if req.Status == nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
 
 	resp, err := h.productClient.UpdateCategory(c.Request.Context(), &product.UpdateCategoryReq{
 		Id:          id,
 		Name:        req.Name,
 		Icon:        req.Icon,
 		Sort:        req.Sort,
-		Status:      req.Status,
+		Status:      *req.Status,
 		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
@@ -2519,6 +2524,7 @@ func (h *AdminHandler) ListOrderExportTasks(c *gin.Context) {
 			"error_msg":      t.ErrorMsg,
 			"created_at":     t.CreatedAt,
 			"expires_at":     t.ExpiresAt,
+			"query_cond":     t.QueryCond,
 		}
 		// 下载留痕名单仅超管可见（普通管理员只见自己的记录，名单即自己，无需回传）
 		if isSuper {

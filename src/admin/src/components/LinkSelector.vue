@@ -94,8 +94,8 @@ interface LinkOption {
 
 /** C 端可跳转页面静态列表（与 src/client/src/pages.json 保持同步） */
 const PAGE_OPTIONS: LinkOption[] = [
-  { name: '首页', path: '/pages/index/index', isTab: true },
-  { name: '分类', path: '/pages/category/category', isTab: true },
+  // 首页与分类已合并为同一页面，路径以 pages.json 为准
+  { name: '首页/分类', path: '/pages/category/category', isTab: true },
   { name: '购物车', path: '/pages/cart/cart', isTab: true },
   { name: '我的', path: '/pages/user/user', isTab: true },
   { name: '订单列表', path: '/pages/order/list' },

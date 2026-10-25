@@ -215,7 +215,8 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, req *user.UpdateUse
 	if req.Avatar != "" {
 		u.Avatar = req.Avatar
 	}
-	if req.Gender > 0 {
+	// 仅接受 1男/2女；0=未传，其他正值是非法输入，不能覆盖既有资料
+	if req.Gender == 1 || req.Gender == 2 {
 		u.Gender = req.Gender
 	}
 	// 生日非空才覆盖（与昵称/头像一致的宽松语义；C 端选择器无法表达「清空」）
