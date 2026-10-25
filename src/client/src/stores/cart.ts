@@ -7,6 +7,9 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getCart } from '@/api/cart'
 
+/** 购物车在 tabBar 中的索引，须与 pages.json 的 tabBar.list 顺序保持一致 */
+const CART_TAB_INDEX = 1
+
 export const useCartStore = defineStore('cart', () => {
   /** 购物车商品总数量 */
   const totalCount = ref(0)
@@ -56,7 +59,7 @@ export const useCartStore = defineStore('cart', () => {
   function updateTabBarBadge() {
     if (badgeCount.value > 0) {
       uni.setTabBarBadge({
-        index: 2,
+        index: CART_TAB_INDEX,
         text: String(badgeCount.value),
       })
     } else {
@@ -68,7 +71,7 @@ export const useCartStore = defineStore('cart', () => {
    * 移除 tabBar 购物车角标
    */
   function removeTabBarBadge() {
-    uni.removeTabBarBadge({ index: 2, fail: () => {} })
+    uni.removeTabBarBadge({ index: CART_TAB_INDEX, fail: () => {} })
   }
 
   return {
