@@ -50,16 +50,18 @@ export function canCancel(o: OrderActionTarget): boolean {
 
 /**
  * 判断订单是否可申请退款
- * 已支付及之后（2/3/4）可申请；货到付款未发货单（2/3）应直接取消而非退款，不显示退款入口；
+ * 已支付及之后（2/3/4）可申请；已完成（5）在售后窗口内可申请（2026-10-25 已完成单售后窗口，
+ * 窗口由服务端按订单完成时间校验，前端不预判——超窗提交时由服务端返回明确文案引导联系门店）；
+ * 货到付款未发货单（2/3）应直接取消而非退款，不显示退款入口；
  * 门店单（收银台代客）C 端只读，退款由门店处理，不提供退款入口
  * @param o 订单
  * @returns 是否可申请退款
  */
 export function canRefund(o: OrderActionTarget): boolean {
   if (isStoreOrder(o)) return false
-  if (![2, 3, 4].includes(o.status)) return false
-  // 货到付款 + 未发货：走直接取消，不提供退款入口
-  if (o.pay_type === PAY_TYPE_CASH_ON_DELIVERY && o.status !== 4) return false
+  if (![2, 3, 4, 5].includes(o.status)) return false
+  // 货到付款 + 未发货：走直接取消，不提供退款入口（已完成单已实际收款，正常走退款）
+  if (o.pay_type === PAY_TYPE_CASH_ON_DELIVERY && o.status !== 4 && o.status !== 5) return false
   return true
 }
 

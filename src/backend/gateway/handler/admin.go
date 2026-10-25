@@ -5144,7 +5144,7 @@ func (h *AdminHandler) UpdateCommunityProfile(c *gin.Context) {
 
 // --- 退款管理 ---
 
-// GetRefundSetting 获取退款配置（运费退还策略）
+// GetRefundSetting 获取退款配置（运费退还策略 + 已完成单售后窗口）
 //
 // 接口: GET /api/v1/admin/settings/refund
 //
@@ -5157,33 +5157,63 @@ func (h *AdminHandler) GetRefundSetting(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{
-		"refund_freight_policy": resp.RefundFreightPolicy,
+		"refund_freight_policy":  resp.RefundFreightPolicy,
+		"completed_refund_hours": resp.CompletedRefundHours,
 	})
 }
 
-// UpdateRefundSetting 更新退款配置（运费退还策略）
+// UpdateRefundSetting 更新退款配置（运费退还策略 + 已完成单售后窗口）
 //
 // 接口: PUT /api/v1/admin/settings/refund
 //
 // 参数:
 //   - c: gin 上下文
 func (h *AdminHandler) UpdateRefundSetting(c *gin.Context) {
+	// 手动解析请求体而非 binding:"required,oneof"：窗口字段 0 合法（关闭 C 端售后入口），
+	// 用指针区分「未传→保留现值」与「传 0→显式关闭」；且各字段校验失败返回各自的准确文案
+	// （binding 失败统一报运费策略文案，会把「窗口为负数」误报成「运费策略不支持」）
 	var req struct {
-		RefundFreightPolicy string `json:"refund_freight_policy" binding:"required,oneof=always never user_decide"`
+		RefundFreightPolicy  string `json:"refund_freight_policy"`
+		CompletedRefundHours *int32 `json:"completed_refund_hours"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil || len(raw) == 0 || json.Unmarshal(raw, &req) != nil {
+		response.Error(c, errcode.ParamError, "请求体 JSON 格式不正确")
+		return
+	}
+	if req.RefundFreightPolicy != "always" && req.RefundFreightPolicy != "never" && req.RefundFreightPolicy != "user_decide" {
 		response.Error(c, errcode.ParamError, "运费退还策略仅支持 always / never / user_decide")
 		return
 	}
+	if req.CompletedRefundHours != nil && *req.CompletedRefundHours < 0 {
+		response.Error(c, errcode.ParamError, "已完成单售后窗口不能为负数")
+		return
+	}
+	hours := int32(0)
+	if req.CompletedRefundHours == nil {
+		// 未传窗口字段：读现值透传给保存链路，避免把配置意外清零
+		cur, err := h.orderClient.GetRefundConfig(c.Request.Context(), &order.GetRefundConfigReq{})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		hours = cur.CompletedRefundHours
+	} else {
+		hours = *req.CompletedRefundHours
+	}
 
-	_, err := h.orderClient.SaveRefundConfig(c.Request.Context(), &order.SaveRefundConfigReq{
-		RefundFreightPolicy: req.RefundFreightPolicy,
+	_, err = h.orderClient.SaveRefundConfig(c.Request.Context(), &order.SaveRefundConfigReq{
+		RefundFreightPolicy:  req.RefundFreightPolicy,
+		CompletedRefundHours: hours,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
-	response.Success(c, gin.H{"refund_freight_policy": req.RefundFreightPolicy})
+	response.Success(c, gin.H{
+		"refund_freight_policy":  req.RefundFreightPolicy,
+		"completed_refund_hours": hours,
+	})
 }
 
 // AdminCreateRefundReq 后台代客退款请求

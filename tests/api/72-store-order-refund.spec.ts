@@ -336,7 +336,7 @@ test.describe.serial('到店单退款', () => {
     ).toBe(true);
   });
 
-  test('6. 口径边界：自提单已完成(5) 仍不可退', async ({ playwright }) => {
+  test('6. 口径边界：自提单已完成(5) 后台可退（2026-10-25 已完成单售后窗口，后台不受窗口限制）', async ({ playwright }) => {
     test.skip(!sku, '环境无库存 SKU');
     const buyer = await memberIn(playwright, communityId);
     const buyerApi = await newAuthedRequest(playwright, buyer.token);
@@ -373,10 +373,11 @@ test.describe.serial('到店单退款', () => {
     );
     expect((await orderDetail(pickupOrderId)).status, '前置：自提单应为已完成(5)').toBe(ORDER_STATUS.completed);
 
-    const body = await adminRefund(pickupOrderId, { reason: autoName('72 自提已完成尝试退款') });
-    expect(body.code, '自提已完成单不在本轮放开范围，应被拒').toBe(PARAM_ERROR);
-    expect(body.message, '拒绝文案应说明状态不允许退款').toContain('订单状态不允许退款');
-    expect((await orderDetail(pickupOrderId)).status, '被拒后订单状态不应变化').toBe(ORDER_STATUS.completed);
+    // 2026-10-25 起 adminRefundable 全量放行已完成(5)：后台代客退款不受售后窗口限制，
+    // 由商家自行判断是否给超窗顾客退款；窗口仅约束 C 端自助申请（见 79 号用例）
+    const body = await adminRefund(pickupOrderId, { reason: autoName('72 自提已完成代退') });
+    expect(body.code, '后台代退已完成自提单应成功').toBe(0);
+    expect((await orderDetail(pickupOrderId)).status, '整单退款完成后订单应为已退款(8)').toBe(ORDER_STATUS.refunded);
   });
 
   test('7. C 端入口不放开：到店单申请退款仍被拒', async ({ playwright }) => {

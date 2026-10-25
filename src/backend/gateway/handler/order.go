@@ -1050,7 +1050,7 @@ func ucUserID(c *gin.Context) int64 {
 	return uc.UserID
 }
 
-// GetRefundConfig 获取退款配置（C 端发起退款时展示运费策略用）
+// GetRefundConfig 获取退款配置（C 端发起退款时展示运费策略与已完成单售后窗口用）
 //
 // 接口: GET /api/v1/refund/config
 //
@@ -1063,7 +1063,8 @@ func (h *OrderHandler) GetRefundConfig(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{
-		"refund_freight_policy": resp.RefundFreightPolicy,
+		"refund_freight_policy":  resp.RefundFreightPolicy,
+		"completed_refund_hours": resp.CompletedRefundHours,
 	})
 }
 

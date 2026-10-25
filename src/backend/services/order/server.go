@@ -629,12 +629,15 @@ func (s *server) GetRefundConfig(ctx stdctx.Context, req *order.GetRefundConfigR
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return &order.RefundConfig{RefundFreightPolicy: row.RefundFreightPolicy}, nil
+	return &order.RefundConfig{
+		RefundFreightPolicy:  row.RefundFreightPolicy,
+		CompletedRefundHours: row.CompletedRefundHours,
+	}, nil
 }
 
 // SaveRefundConfig 保存退款配置
 func (s *server) SaveRefundConfig(ctx stdctx.Context, req *order.SaveRefundConfigReq) (*common.CommonResponse, error) {
-	if err := s.refundService.SaveRefundConfig(ctx, req.RefundFreightPolicy); err != nil {
+	if err := s.refundService.SaveRefundConfig(ctx, req.RefundFreightPolicy, req.CompletedRefundHours); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil

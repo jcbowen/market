@@ -176,19 +176,16 @@ export function canCancelOrder(order: { status: number; pay_type?: number }): bo
 
 /**
  * 判断订单是否允许后台代客退款（与后端 refund.go 的 adminRefundable 口径一致）
- * - 已支付（2）/备货中（3）/配送中（4）恒可退
- * - 到店单（delivery_type=3）收款即在事务内自动完结为已完成（5），这个 5 是自动终态
- *   而非用户确认收货，故放行；否则门店售出的订单永远退不了款
- * - 自提/配送的已完成单不在此列（用户已确认收货，售后口径另行设计）
+ * - 已支付（2）/备货中（3）/配送中（4）/已完成（5）均可退：
+ *   到店单的 5 是收款即自动完结的终态；自提/配送单的 5 是确认收货后的终态，
+ *   2026-10-25 已完成单售后窗口上线，后台代客退款不受窗口限制（窗口仅约束 C 端自助申请），
+ *   由商家自行判断是否给超窗顾客退款
  * @param order 订单（需含状态与配送方式）
  * @returns 是否展示"退款"入口
  */
 export function canAdminRefund(order: { status: number; delivery_type?: number }): boolean {
   const { status } = order
-  if (status === ORDER_STATUS.PAID || status === ORDER_STATUS.STOCKING || status === ORDER_STATUS.SHIPPING) {
-    return true
-  }
-  return status === ORDER_STATUS.COMPLETED && order.delivery_type === DELIVERY_TYPE.STORE
+  return status === ORDER_STATUS.PAID || status === ORDER_STATUS.STOCKING || status === ORDER_STATUS.SHIPPING || status === ORDER_STATUS.COMPLETED
 }
 
 /**

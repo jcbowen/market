@@ -3045,8 +3045,10 @@ type RefundConfig struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// 运费退还策略：always始终退运费 never不退运费 user_decide用户自行选择
 	RefundFreightPolicy string `protobuf:"bytes,1,opt,name=refund_freight_policy,json=refundFreightPolicy,proto3" json:"refund_freight_policy,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// 已完成单售后窗口（小时）：已完成(5)订单在完成后该时长内允许 C 端申请退款，0=不允许；后台代客退款不受窗口限制
+	CompletedRefundHours int32 `protobuf:"varint,2,opt,name=completed_refund_hours,json=completedRefundHours,proto3" json:"completed_refund_hours,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *RefundConfig) Reset() {
@@ -3086,12 +3088,21 @@ func (x *RefundConfig) GetRefundFreightPolicy() string {
 	return ""
 }
 
+func (x *RefundConfig) GetCompletedRefundHours() int32 {
+	if x != nil {
+		return x.CompletedRefundHours
+	}
+	return 0
+}
+
 // SaveRefundConfigReq 保存退款配置请求
 type SaveRefundConfigReq struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	RefundFreightPolicy string                 `protobuf:"bytes,1,opt,name=refund_freight_policy,json=refundFreightPolicy,proto3" json:"refund_freight_policy,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// 已完成单售后窗口（小时），>=0
+	CompletedRefundHours int32 `protobuf:"varint,2,opt,name=completed_refund_hours,json=completedRefundHours,proto3" json:"completed_refund_hours,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SaveRefundConfigReq) Reset() {
@@ -3129,6 +3140,13 @@ func (x *SaveRefundConfigReq) GetRefundFreightPolicy() string {
 		return x.RefundFreightPolicy
 	}
 	return ""
+}
+
+func (x *SaveRefundConfigReq) GetCompletedRefundHours() int32 {
+	if x != nil {
+		return x.CompletedRefundHours
+	}
+	return 0
 }
 
 type ListRefundsResp struct {
@@ -6441,11 +6459,13 @@ const file_order_order_proto_rawDesc = "" +
 	"pagination\x12\x17\n" +
 	"\auser_id\x18\x04 \x01(\x03R\x06userId\x12\x19\n" +
 	"\border_id\x18\x05 \x01(\x03R\aorderId\"\x14\n" +
-	"\x12GetRefundConfigReq\"B\n" +
+	"\x12GetRefundConfigReq\"x\n" +
 	"\fRefundConfig\x122\n" +
-	"\x15refund_freight_policy\x18\x01 \x01(\tR\x13refundFreightPolicy\"I\n" +
+	"\x15refund_freight_policy\x18\x01 \x01(\tR\x13refundFreightPolicy\x124\n" +
+	"\x16completed_refund_hours\x18\x02 \x01(\x05R\x14completedRefundHours\"\x7f\n" +
 	"\x13SaveRefundConfigReq\x122\n" +
-	"\x15refund_freight_policy\x18\x01 \x01(\tR\x13refundFreightPolicy\"t\n" +
+	"\x15refund_freight_policy\x18\x01 \x01(\tR\x13refundFreightPolicy\x124\n" +
+	"\x16completed_refund_hours\x18\x02 \x01(\x05R\x14completedRefundHours\"t\n" +
 	"\x0fListRefundsResp\x12%\n" +
 	"\x04list\x18\x01 \x03(\v2\x11.order.RefundInfoR\x04list\x12:\n" +
 	"\n" +

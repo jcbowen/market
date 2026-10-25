@@ -7,6 +7,9 @@
           发起后将立即按订单原支付流水退回，无需再审核；
           退款金额以服务端按实付汇算为准（支持多笔部分退，可调低金额）。若渠道退款失败，售后单会保留在「退款中」，可在售后管理页重试。
         </n-alert>
+        <n-alert type="info" :show-icon="false" style="margin-bottom: 12px">
+          本系统暂不支持在线换货：换货请引导顾客到店办理，或先退款后重新下单。
+        </n-alert>
         <n-form-item label="订单">
           <span>
             {{ detail.order_no }}（实付 ￥{{ formatAmount(detail.pay_amount) }}

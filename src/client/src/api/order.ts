@@ -150,11 +150,11 @@ export function getOrderRefunds(id: number) {
 }
 
 /**
- * 获取退款配置（运费退还策略）
- * @returns refund_freight_policy: always/never/user_decide
+ * 获取退款配置（运费退还策略 + 已完成单售后窗口）
+ * @returns refund_freight_policy: always/never/user_decide；completed_refund_hours: 完成后 N 小时内可自助申请售后，0=关闭
  */
 export function getRefundConfig() {
-  return get<{ refund_freight_policy: string }>('/refund/config')
+  return get<{ refund_freight_policy: string; completed_refund_hours?: number }>('/refund/config')
 }
 
 /**

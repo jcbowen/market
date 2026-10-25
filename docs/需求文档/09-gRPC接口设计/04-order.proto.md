@@ -481,11 +481,15 @@ message GetRefundConfigReq {}
 message RefundConfig {
   // 运费退还策略：always始终退运费 never不退运费 user_decide用户自行选择
   string refund_freight_policy = 1;
+  // 已完成单售后窗口（小时）：已完成(5)订单在完成后该时长内允许 C 端申请退款，0=不允许；后台代客退款不受窗口限制
+  int32 completed_refund_hours = 2;
 }
 
 // SaveRefundConfigReq 保存退款配置请求
 message SaveRefundConfigReq {
   string refund_freight_policy = 1;
+  // 已完成单售后窗口（小时），>=0
+  int32 completed_refund_hours = 2;
 }
 
 message ListRefundsResp {

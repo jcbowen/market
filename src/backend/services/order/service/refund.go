@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -25,6 +26,10 @@ import (
 
 // refundConfigID 退款配置表固定单行主键
 const refundConfigID = 1
+
+// defaultCompletedRefundHours 已完成单售后窗口默认值（168 小时 = 7 天）；
+// 配置行缺失或读取失败时兜底默认值，读到 0 视为显式关闭 C 端已完成单售后入口
+const defaultCompletedRefundHours = 168
 
 // invalidArg 构造用户输入/业务规则类退款错误（gRPC InvalidArgument），
 // 网关按业务错误码透传原始文案，避免被归类为服务器内部错误吞掉提示
@@ -66,11 +71,12 @@ func ensureOrderCommunity(tx *gorm.DB, orderID, communityId int64) error {
 }
 
 // adminRefundable 判定订单当前是否允许发起后台代客退款
-// 常规可退状态为 已支付(2)/备货中(3)/配送中(4)；此外放行「到店单已完成(5)」：
-// 到店单（delivery_type=3，收银台即买即走）在收款事务内被直接终态化为已完成(5)
-// （见 order.go UpdateOrderStatus 的 case 2 分支），这个 5 是自动终态而非用户确认收货，
-// 若沿用常规门禁会让门店售出的订单永远退不了款、班次退款统计对到店单形同虚设。
-// 自提/配送的已完成单不在此列（用户已确认收货，售后口径另行设计），维持不可退。
+// 可退状态为 已支付(2)/备货中(3)/配送中(4)/已完成(5)：
+// - 到店单（delivery_type=3，收银台即买即走）在收款事务内被直接终态化为已完成(5)
+//   （见 order.go UpdateOrderStatus 的 case 2 分支），这个 5 是自动终态而非用户确认收货；
+// - 自提/配送单的已完成(5) 为用户确认收货（或自动完成）后的终态，2026-10-25 起同样放行：
+//   已完成单售后窗口仅约束 C 端自助申请，后台代客退款是商家主动行为，不受窗口限制，
+//   由商家自行判断是否给超窗顾客退款（避免「顾客愿意协商、系统却拦住」的新客诉）。
 // 参数：
 //   - o: 订单模型（需含 status 与 delivery_type）
 //
@@ -86,11 +92,7 @@ func ensureOrderCommunity(tx *gorm.DB, orderID, communityId int64) error {
 //	    return invalidArg("订单状态不允许退款")
 //	}
 func adminRefundable(o *model.Order) bool {
-	if o.Status >= 2 && o.Status <= 4 {
-		return true
-	}
-	// 3 = 到店（收银台即买即走），5 = 已完成（到店单收款即自动完结）
-	return o.DeliveryType == 3 && o.Status == 5
+	return o.Status >= 2 && o.Status <= 5
 }
 
 // RefundService 退款业务服务
@@ -172,8 +174,21 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 		if o.Source == 2 {
 			return bizerr.New(codes.PermissionDenied, "门店订单请联系门店处理")
 		}
+		// 常规可退状态：已支付(2)/备货中(3)/配送中(4)
 		if o.Status != 2 && o.Status != 3 && o.Status != 4 {
-			return invalidArg("订单状态不允许申请退款")
+			// 已完成单售后窗口（2026-10-25）：已完成(5)订单在完成后 N 小时内允许 C 端自助申请
+			// （生鲜/包装品的差异化窗口待分类标记落地后启用，本期统一窗口，默认 7 天）；
+			// 窗口为 0 表示关闭该入口，超窗引导联系门店协商
+			if o.Status != 5 {
+				return invalidArg("订单状态不允许申请退款")
+			}
+			hours := s.getCompletedRefundHours(ctx)
+			if hours <= 0 {
+				return invalidArg("已完成订单不支持在线申请售后，请联系门店协商处理")
+			}
+			if !completedAfterSaleOpen(&o, hours) {
+				return invalidArg("已超出售后申请窗口（完成后%s内），请联系门店协商处理", completedSaleWindowText(hours))
+			}
 		}
 
 		// 同一订单存在未完结退款申请时禁止重复申请（持行锁后检查，串行化生效）
@@ -766,16 +781,105 @@ func (s *RefundService) getFreightPolicy(ctx context.Context) string {
 	return row.RefundFreightPolicy
 }
 
+// getCompletedRefundHours 读取已完成单售后窗口（小时）
+// 配置行不存在/读取失败时兜底 defaultCompletedRefundHours；
+// 返回 0 为合法值，表示显式关闭已完成单的 C 端售后入口
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - int32: 窗口小时数（>=0）
+func (s *RefundService) getCompletedRefundHours(ctx context.Context) int32 {
+	var row model.RefundConfig
+	if err := s.db.GetDb().WithContext(ctx).First(&row, refundConfigID).Error; err != nil {
+		return defaultCompletedRefundHours
+	}
+	if row.CompletedRefundHours < 0 {
+		return defaultCompletedRefundHours
+	}
+	return row.CompletedRefundHours
+}
+
+// parseOrderTime 解析订单时间字符串，兼容两种存储形态：
+// "2006-01-02 15:04:05"（本服务写入格式）与 RFC3339/RFC3339Nano
+// （GORM string 字段接 datetime 列读库时经 database/sql convertAssign 会输出该格式，
+// 见 order 服务 ToPosShiftInfo.normalizeTime 同类处理）
+// 参数：
+//   - s: 时间字符串
+//
+// 返回值：
+//   - time.Time: 解析结果
+//   - error: 两种格式均解析失败时返回错误
+func parseOrderTime(s string) (time.Time, error) {
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+// completedAfterSaleOpen 判定已完成订单当前是否仍在售后窗口内
+// 起算时间取 complete_time（确认收货/核销/自动完成时写入），
+// 历史数据缺失时兜底 updated_at（宁可少算不放大窗口）；窗口不随部分退款重置
+// 参数：
+//   - o: 订单模型（需含 complete_time 与 updated_at）
+//   - hours: 窗口小时数（>0，由调用方保证）
+//
+// 返回值：
+//   - bool: true 表示仍在窗口内
+func completedAfterSaleOpen(o *model.Order, hours int32) bool {
+	base := o.UpdatedAt
+	if o.CompleteTime != nil && *o.CompleteTime != "" {
+		base = *o.CompleteTime
+	}
+	completedAt, err := parseOrderTime(base)
+	if err != nil {
+		// 起算时间不可解析时保守放行（completed 5 本身即合法售后对象），由后台审批兜底把关
+		return true
+	}
+	return time.Since(completedAt) <= time.Duration(hours)*time.Hour
+}
+
+// completedSaleWindowText 窗口时长转展示文案：整 24 小时按「天」表述，其余按小时
+// 参数：
+//   - hours: 窗口小时数（>0）
+//
+// 返回值：
+//   - string: 如「7 天」/「24 小时」
+func completedSaleWindowText(hours int32) string {
+	if hours > 0 && hours%24 == 0 {
+		return fmt.Sprintf("%d 天", hours/24)
+	}
+	return fmt.Sprintf("%d 小时", hours)
+}
+
 // GetRefundConfig 查询退款配置
+// 配置行缺失时自愈：插入默认配置行（always + 默认窗口）后返回，
+// 与 getFreightPolicy/getCompletedRefundHours 的缺行兜底语义一致，
+// 避免「读接口报错、写接口把默认值当 0 落库」的口径分叉
 // 参数：
 //   - ctx: 上下文
 //
 // 返回值：
 //   - *model.RefundConfig: 退款配置
-//   - error: 查询失败时返回错误
+//   - error: 读取或初始化失败时返回错误
 func (s *RefundService) GetRefundConfig(ctx context.Context) (*model.RefundConfig, error) {
 	var row model.RefundConfig
-	if err := s.db.GetDb().WithContext(ctx).First(&row, refundConfigID).Error; err != nil {
+	err := s.db.GetDb().WithContext(ctx).First(&row, refundConfigID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		now := time.Now().Format("2006-01-02 15:04:05")
+		defaultRow := &model.RefundConfig{
+			ID:                   refundConfigID,
+			RefundFreightPolicy:  "always",
+			CompletedRefundHours: defaultCompletedRefundHours,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		}
+		if cerr := s.db.GetDb().WithContext(ctx).Create(defaultRow).Error; cerr != nil {
+			return nil, fmt.Errorf("初始化默认退款配置失败: %w", cerr)
+		}
+		return defaultRow, nil
+	}
+	if err != nil {
 		return nil, fmt.Errorf("读取退款配置失败: %w", err)
 	}
 	return &row, nil
@@ -785,18 +889,23 @@ func (s *RefundService) GetRefundConfig(ctx context.Context) (*model.RefundConfi
 // 参数：
 //   - ctx: 上下文
 //   - policy: 运费退还策略（always/never/user_decide）
+//   - completedRefundHours: 已完成单售后窗口（小时），>=0，0=不允许已完成单申请售后
 //
 // 返回值：
 //   - error: 策略非法或保存失败时返回错误
-func (s *RefundService) SaveRefundConfig(ctx context.Context, policy string) error {
+func (s *RefundService) SaveRefundConfig(ctx context.Context, policy string, completedRefundHours int32) error {
 	if !refundFreightPolicies[policy] {
 		return fmt.Errorf("运费退还策略不合法: %s", policy)
+	}
+	if completedRefundHours < 0 {
+		return fmt.Errorf("已完成单售后窗口不合法: %d", completedRefundHours)
 	}
 	row, err := s.GetRefundConfig(ctx)
 	if err != nil {
 		return err
 	}
 	row.RefundFreightPolicy = policy
+	row.CompletedRefundHours = completedRefundHours
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
 	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
 		return fmt.Errorf("保存退款配置失败: %w", err)
@@ -820,6 +929,7 @@ func (s *RefundService) EnsureDefaultRefundConfig() error {
 	row := &model.RefundConfig{
 		ID:                  refundConfigID,
 		RefundFreightPolicy: "always",
+		CompletedRefundHours: defaultCompletedRefundHours,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -1502,10 +1612,11 @@ func orderMoneyFullyRefundedTx(tx *gorm.DB, orderID int64) (bool, error) {
 }
 
 // lastStatusBeforeRefundTx 查询订单最近一次进入退款中(7)之前的来源状态
-// 合法来源状态为 2/3/4，以及到店单的已完成(5)——到店单收款即自动完结，
-// 部分退款完成后应回到 5 而不是被兜底成 2（否则会凭空多出「已支付」停留态，
-// 后台会把它当作待核销/待发货单处理）。from=5 只可能由 adminRefundable 放行的
-// 到店单产生，故此处无需再查 delivery_type 二次确认。
+// 合法来源状态为 2/3/4 与已完成(5)：
+// - 到店单的 5 来自收款事务内自动完结（2026-10-21）；
+// - 自提/配送单的 5 来自确认收货/核销/自动完成（2026-10-25 已完成单售后窗口放行后产生）；
+// 部分退款完成后回到 5 而不是被兜底成 2（否则会凭空多出「已支付」停留态，
+// 后台会把它当作待核销/待发货单处理），故 from=5 无需再查 delivery_type 二次确认。
 // 来源状态非法（不在上述范围）时兜底返回 2 已支付
 // 参数：
 //   - tx: 数据库事务（或普通 DB）

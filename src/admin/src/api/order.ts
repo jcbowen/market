@@ -578,26 +578,27 @@ export function rejectRefund(id: number, reject_reason: string) {
 }
 
 /**
- * 获取退款配置（运费退还策略）
+ * 获取退款配置（运费退还策略 + 已完成单售后窗口）
  * @returns 退款配置
  */
 export function getRefundSetting() {
-  return request<ApiResult<{ refund_freight_policy: string }>>({
+  return request<ApiResult<{ refund_freight_policy: string; completed_refund_hours: number }>>({
     url: '/api/v1/admin/settings/refund',
     method: 'GET',
   })
 }
 
 /**
- * 更新退款配置（运费退还策略）
+ * 更新退款配置（运费退还策略 + 已完成单售后窗口）
  * @param policy 运费退还策略：always 始终退运费 / never 不退运费 / user_decide 用户自行选择
+ * @param completedRefundHours 已完成单售后窗口（小时），0=不允许已完成单申请售后
  * @returns 操作结果
  */
-export function updateRefundSetting(policy: string) {
-  return request<ApiResult<{ refund_freight_policy: string }>>({
+export function updateRefundSetting(policy: string, completedRefundHours: number) {
+  return request<ApiResult<{ refund_freight_policy: string; completed_refund_hours: number }>>({
     url: '/api/v1/admin/settings/refund',
     method: 'PUT',
-    data: { refund_freight_policy: policy },
+    data: { refund_freight_policy: policy, completed_refund_hours: completedRefundHours },
   })
 }
 

@@ -7,6 +7,10 @@
       </view>
 
       <scroll-view scroll-y class="refund-body">
+        <!-- 已完成单售后窗口引导：入口不逐单预判窗口（需跨服务算完成时间），超窗提交时由服务端拒绝并提示 -->
+        <view v-if="windowTip" class="window-tip">{{ windowTip }}</view>
+        <!-- 换货口径引导（暂不支持在线换货） -->
+        <view class="exchange-tip">如需换货：请到店办理，或申请退款后重新下单</view>
         <!-- 商品明细：勾选 + 数量（默认全部=整单退） -->
         <view class="section-title">退款商品（默认整单退，可取消勾选或调低数量改为部分退）</view>
         <view v-for="(line, index) in lines" :key="line.order_item_id" class="refund-item">
@@ -147,6 +151,8 @@ const emit = defineEmits<{
 const order = ref<Order | null>(null)
 const lines = ref<RefundLine[]>([])
 const policy = ref('always')
+/** 已完成单售后窗口（小时），来自退款配置；0=关闭已完成单在线售后入口 */
+const completedRefundHours = ref(0)
 const wantFreight = ref(false)
 /** 预设退款理由（「其他」时展示补充输入框） */
 const selectedReason = ref(REFUND_REASONS[0])
@@ -170,6 +176,15 @@ const freightPolicyText = computed(() => {
   if (policy.value === 'always') return '整单退款可退运费'
   if (policy.value === 'never') return '整单退款不退运费'
   return '由您选择是否退运费'
+})
+
+/** 已完成单售后窗口引导文案（仅已完成(5)订单展示；0/负数视为入口关闭） */
+const windowTip = computed(() => {
+  if (order.value?.status !== 5) return ''
+  const h = completedRefundHours.value
+  if (!h || h <= 0) return '该订单已完成，已过在线售后受理期，如需售后请联系门店协商处理'
+  const text = h % 24 === 0 ? `${h / 24} 天` : `${h} 小时`
+  return `已完成订单可在完成后 ${text} 内申请售后，超出后请联系门店协商处理`
 })
 
 /** 本单应退运费 */
@@ -316,6 +331,9 @@ async function load() {
     if (configRes?.data?.refund_freight_policy) {
       policy.value = configRes.data.refund_freight_policy
     }
+    if (typeof configRes?.data?.completed_refund_hours === 'number') {
+      completedRefundHours.value = configRes.data.completed_refund_hours
+    }
     fillDefaultAmount()
   } catch {
     // request 已统一提示错误
@@ -419,6 +437,24 @@ watch(refundable, (value) => {
 .refund-body {
   flex: 1;
   max-height: 56vh;
+}
+
+.window-tip {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  background-color: #fdf6ec;
+  color: #e6a23c;
+  font-size: 24rpx;
+}
+
+.exchange-tip {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  background-color: #f0f9eb;
+  color: #67c23a;
+  font-size: 24rpx;
 }
 
 .section-title {
