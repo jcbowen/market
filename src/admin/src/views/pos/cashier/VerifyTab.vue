@@ -183,7 +183,7 @@ function appendDigit(digit: string) {
 }
 
 /**
- * 页面级键盘监听：数字键直接录入（无需聚焦输入框）、退格删一位、回车查询。
+ * 页面级键盘监听：数字键直接录入（无需聚焦输入框）、退格删一位、回车查询、ESC 清空重扫。
  * 扫码枪等价于高速键盘输入 + 回车，即扫即得
  * @param e 键盘事件
  */
@@ -196,6 +196,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
   }
   if (e.key === 'Backspace') {
     pickupCode.value = pickupCode.value.slice(0, -1)
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'Escape') {
+    // ESC = 放弃当前输入回到初始态，与「清空重扫」按钮同语义
+    resetVerify()
     e.preventDefault()
     return
   }

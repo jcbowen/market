@@ -65,11 +65,16 @@
               <chevron-down-outline />
             </n-icon>
           </n-button>
-          <span class="admin-name">{{ authStore.admin?.nickname || authStore.admin?.username || '管理员' }}</span>
+          <!-- 用户区：与业务后台（pos/layout.vue）一致，头像图标 + 名字 + 箭头整体作为下拉触发区，
+               悬停名字也能弹出菜单（名字在触发区外会导致 hover 无响应） -->
           <n-dropdown :options="userOptions" @select="onUserAction">
-            <n-button text>
+            <n-button text class="user-trigger">
               <n-icon size="20">
                 <person-circle-outline />
+              </n-icon>
+              <span class="admin-name">{{ authStore.admin?.nickname || authStore.admin?.username || '管理员' }}</span>
+              <n-icon size="14">
+                <chevron-down-outline />
               </n-icon>
             </n-button>
           </n-dropdown>
@@ -691,6 +696,10 @@ function onUserAction(key: string) {
 .admin-name {
   font-size: 14px;
   color: #666;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .community-trigger {
   max-width: 220px;
