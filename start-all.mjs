@@ -210,7 +210,9 @@ const MYSQL_EXEC_ENV = { MYSQL_PWD: MYSQL_ROOT_PASSWORD };
 
 // 本地附件共享目录（Docker bind mount 挂载点）：
 // product-service 落盘与 gateway /uploads 静态服务共用，宿主目录不存在时先创建，
-// 避免首次部署或目录被清理后挂载异常
+// 避免首次部署或目录被清理后挂载异常。
+// 演示种子商品图不落这里：它们随网关镜像打包到 /app/seed（deploy/seed-assets），
+// 由 gateway 直接服务 /uploads/seed/**，不走宿主目录挂载（挂载会遮蔽镜像内容）
 fs.mkdirSync(path.join(ROOT_DIR, 'bin', 'attachment'), { recursive: true });
 
 // 构建阶段

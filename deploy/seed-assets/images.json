@@ -1,0 +1,418 @@
+[
+  {
+    "file": "latiao.png",
+    "label": "大面筋辣条",
+    "brand": "魔小鲜",
+    "shape": "bag",
+    "color": "#DC2626",
+    "note": ""
+  },
+  {
+    "file": "latiao-alt.png",
+    "label": "大面筋辣条",
+    "brand": "魔小鲜",
+    "shape": "bag",
+    "color": "#DC2626",
+    "note": "alt"
+  },
+  {
+    "file": "chips.png",
+    "label": "原味薯片",
+    "brand": "乐游",
+    "shape": "bag",
+    "color": "#F59E0B",
+    "note": ""
+  },
+  {
+    "file": "cookie.png",
+    "label": "夹心饼干",
+    "brand": "麦香源",
+    "shape": "pack",
+    "color": "#8B5CF6",
+    "note": ""
+  },
+  {
+    "file": "nuts.png",
+    "label": "每日坚果",
+    "brand": "果仁季",
+    "shape": "box",
+    "color": "#B45309",
+    "note": ""
+  },
+  {
+    "file": "jerky.png",
+    "label": "蜜汁猪肉脯",
+    "brand": "肉匠",
+    "shape": "pouch",
+    "color": "#BE123C",
+    "note": ""
+  },
+  {
+    "file": "snowcake.png",
+    "label": "咸味雪饼",
+    "brand": "雪旺",
+    "shape": "pack",
+    "color": "#FBBF24",
+    "note": ""
+  },
+  {
+    "file": "konjac.png",
+    "label": "香辣魔芋爽",
+    "brand": "魔小鲜",
+    "shape": "pouch",
+    "color": "#EA580C",
+    "note": ""
+  },
+  {
+    "file": "water.png",
+    "label": "饮用天然水",
+    "brand": "碧源",
+    "shape": "bottle",
+    "color": "#0EA5E9",
+    "note": ""
+  },
+  {
+    "file": "cola.png",
+    "label": "经典可乐",
+    "brand": "气泡山",
+    "shape": "can",
+    "color": "#B91C1C",
+    "note": ""
+  },
+  {
+    "file": "sprite.png",
+    "label": "柠檬汽水",
+    "brand": "气泡山",
+    "shape": "bottle",
+    "color": "#22C55E",
+    "note": ""
+  },
+  {
+    "file": "iced-tea.png",
+    "label": "冰红茶",
+    "brand": "茶语时光",
+    "shape": "bottle",
+    "color": "#C2410C",
+    "note": ""
+  },
+  {
+    "file": "oolong.png",
+    "label": "无糖乌龙茶",
+    "brand": "茶语时光",
+    "shape": "bottle",
+    "color": "#15803D",
+    "note": ""
+  },
+  {
+    "file": "energy-drink.png",
+    "label": "功能饮料",
+    "brand": "倍力特",
+    "shape": "can",
+    "color": "#F59E0B",
+    "note": ""
+  },
+  {
+    "file": "beer.png",
+    "label": "经典啤酒",
+    "brand": "青岛",
+    "shape": "can",
+    "color": "#EAB308",
+    "note": ""
+  },
+  {
+    "file": "lactic-drink.png",
+    "label": "乳酸菌饮品",
+    "brand": "优乐乳",
+    "shape": "pack",
+    "color": "#F472B6",
+    "note": ""
+  },
+  {
+    "file": "noodle-cup.png",
+    "label": "红烧牛肉面",
+    "brand": "面匠",
+    "shape": "cup",
+    "color": "#DC2626",
+    "note": ""
+  },
+  {
+    "file": "noodle-pickle-cup.png",
+    "label": "老坛酸菜面",
+    "brand": "面匠",
+    "shape": "cup",
+    "color": "#F97316",
+    "note": ""
+  },
+  {
+    "file": "noodle-5pack.png",
+    "label": "骨汤面",
+    "brand": "汤好鲜",
+    "shape": "pack",
+    "color": "#FACC15",
+    "note": ""
+  },
+  {
+    "file": "selfheat-rice.png",
+    "label": "自热米饭",
+    "brand": "自热派",
+    "shape": "box",
+    "color": "#B91C1C",
+    "note": ""
+  },
+  {
+    "file": "sausage.png",
+    "label": "火腿肠",
+    "brand": "旺肉多",
+    "shape": "stick",
+    "color": "#EF4444",
+    "note": ""
+  },
+  {
+    "file": "pickle.png",
+    "label": "涪陵榨菜",
+    "brand": "脆爽",
+    "shape": "pouch",
+    "color": "#65A30D",
+    "note": ""
+  },
+  {
+    "file": "luncheon-jar.png",
+    "label": "午餐肉罐头",
+    "brand": "香林",
+    "shape": "jar",
+    "color": "#A16207",
+    "note": ""
+  },
+  {
+    "file": "milk-carton.png",
+    "label": "纯牛奶",
+    "brand": "怡香源",
+    "shape": "carton",
+    "color": "#4F46E5",
+    "note": ""
+  },
+  {
+    "file": "milk-carton-alt.png",
+    "label": "纯牛奶",
+    "brand": "怡香源",
+    "shape": "carton",
+    "color": "#4F46E5",
+    "note": "alt"
+  },
+  {
+    "file": "milk-calcium.png",
+    "label": "高钙牛奶",
+    "brand": "牧场精选",
+    "shape": "carton",
+    "color": "#0EA5E9",
+    "note": ""
+  },
+  {
+    "file": "yogurt-bottle.png",
+    "label": "浓稠酸奶",
+    "brand": "慕希",
+    "shape": "bottle",
+    "color": "#F472B6",
+    "note": ""
+  },
+  {
+    "file": "fresh-milk.png",
+    "label": "巴氏鲜牛奶",
+    "brand": "晨鲜",
+    "shape": "bottle",
+    "color": "#93C5FD",
+    "note": ""
+  },
+  {
+    "file": "soft-bread.png",
+    "label": "法式软面包",
+    "brand": "麦香坊",
+    "shape": "pack",
+    "color": "#D97706",
+    "note": ""
+  },
+  {
+    "file": "toast.png",
+    "label": "切片吐司",
+    "brand": "醇熟",
+    "shape": "bag",
+    "color": "#FBBF24",
+    "note": ""
+  },
+  {
+    "file": "rice-bag.png",
+    "label": "长粒香米",
+    "brand": "金稻",
+    "shape": "ricebag",
+    "color": "#CA8A04",
+    "note": ""
+  },
+  {
+    "file": "rice-bag-alt.png",
+    "label": "长粒香米",
+    "brand": "金稻",
+    "shape": "ricebag",
+    "color": "#CA8A04",
+    "note": "alt"
+  },
+  {
+    "file": "oil-jug.png",
+    "label": "菜籽油",
+    "brand": "油乐",
+    "shape": "jug",
+    "color": "#EAB308",
+    "note": ""
+  },
+  {
+    "file": "soy-sauce.png",
+    "label": "金标生抽",
+    "brand": "海天下",
+    "shape": "bottle",
+    "color": "#78350F",
+    "note": ""
+  },
+  {
+    "file": "vinegar.png",
+    "label": "五年陈醋",
+    "brand": "海天下",
+    "shape": "bottle",
+    "color": "#57534E",
+    "note": ""
+  },
+  {
+    "file": "salt.png",
+    "label": "食用盐",
+    "brand": "白盐",
+    "shape": "pack",
+    "color": "#E2E8F0",
+    "note": ""
+  },
+  {
+    "file": "tissue-pack.png",
+    "label": "抽取面巾纸",
+    "brand": "维纯",
+    "shape": "tissue",
+    "color": "#14B8A6",
+    "note": ""
+  },
+  {
+    "file": "tissue-pack-alt.png",
+    "label": "抽取面巾纸",
+    "brand": "维纯",
+    "shape": "tissue",
+    "color": "#14B8A6",
+    "note": "alt"
+  },
+  {
+    "file": "laundry-jug.png",
+    "label": "洗衣液",
+    "brand": "清月",
+    "shape": "jug",
+    "color": "#3B82F6",
+    "note": ""
+  },
+  {
+    "file": "dish-soap.png",
+    "label": "柠檬洗洁精",
+    "brand": "净立",
+    "shape": "bottle",
+    "color": "#84CC16",
+    "note": ""
+  },
+  {
+    "file": "toothpaste.png",
+    "label": "薄荷牙膏",
+    "brand": "草本",
+    "shape": "tube",
+    "color": "#10B981",
+    "note": ""
+  },
+  {
+    "file": "dumpling-box.png",
+    "label": "猪肉白菜水饺",
+    "brand": "三鲜",
+    "shape": "box",
+    "color": "#0284C7",
+    "note": ""
+  },
+  {
+    "file": "dumpling-box-alt.png",
+    "label": "猪肉白菜水饺",
+    "brand": "三鲜",
+    "shape": "box",
+    "color": "#0284C7",
+    "note": "alt"
+  },
+  {
+    "file": "tangyuan.png",
+    "label": "黑芝麻汤圆",
+    "brand": "芝麻心",
+    "shape": "box",
+    "color": "#F59E0B",
+    "note": ""
+  },
+  {
+    "file": "icecream.png",
+    "label": "脆皮雪糕",
+    "brand": "雪绒",
+    "shape": "stick",
+    "color": "#7C3AED",
+    "note": ""
+  },
+  {
+    "file": "chocolate.png",
+    "label": "牛奶巧克力",
+    "brand": "丝滑",
+    "shape": "bar",
+    "color": "#92400E",
+    "note": ""
+  },
+  {
+    "file": "energy-bar.png",
+    "label": "花生能量棒",
+    "brand": "能量棒",
+    "shape": "bar",
+    "color": "#B45309",
+    "note": ""
+  },
+  {
+    "file": "gum-jar.png",
+    "label": "无糖口香糖",
+    "brand": "清息",
+    "shape": "jar",
+    "color": "#22D3EE",
+    "note": ""
+  },
+  {
+    "file": "coffee-box.png",
+    "label": "速溶咖啡",
+    "brand": "雀语",
+    "shape": "box",
+    "color": "#78350F",
+    "note": ""
+  },
+  {
+    "file": "milktea-cup.png",
+    "label": "芋圆奶茶",
+    "brand": "飘飘",
+    "shape": "cup",
+    "color": "#A855F7",
+    "note": ""
+  },
+  {
+    "file": "oats-jar.png",
+    "label": "即食燕麦片",
+    "brand": "麦谷",
+    "shape": "jar",
+    "color": "#D6D3D1",
+    "note": ""
+  },
+  {
+    "file": "egg-carton.png",
+    "label": "散养鲜鸡蛋",
+    "brand": "农欢",
+    "shape": "eggcarton",
+    "color": "#D97706",
+    "note": ""
+  }
+]

@@ -7,7 +7,8 @@
 #               全部交给 compose（depends_on + healthcheck + restart）。
 #
 # 启动流程：
-#   1. 校验 SERVICE_NAME 并映射到二进制（缺省或无法识别直接拒绝启动）
+#   1. 校验 SERVICE_NAME 并映射到二进制（缺省或无法识别直接拒绝启动）；
+#      seed-init 为一次性演示种子任务，直接转交 /seed-init.sh，不走后续步骤
 #   2. 准备配置文件（见 Dockerfile.app 头注释：缺省复制容器私有副本，
 #      显式 CONFIG_FILE 仅在缺失时从模板播种）
 #   3. 非 gateway 进程覆写副本的 service_name（debug_logs 来源标识）
@@ -17,7 +18,8 @@
 # 环境变量（凭据/拓扑经 common/config.ApplyEnvOverrides 覆盖配置文件，
 # 由 compose 的 environment 注入，本脚本不处理）：
 #   SERVICE_NAME 必填：user-service / product-service / order-service /
-#                cart-service / payment-service / gateway / market-admin
+#                cart-service / payment-service / gateway / market-admin /
+#                seed-init（一次性任务：APP_ENV=stage 且库为空时导入演示种子）
 #                （亦接受短名 user / product / order / cart / payment）
 #   CONFIG_FILE  可选：显式指定时该文件缺失才从 /app/config.yaml 播种；
 #                缺省每次启动从模板复制 /app/config.runtime.yaml
@@ -40,13 +42,19 @@ case "$SERVICE" in
 esac
 
 case "$SERVICE" in
-  user-service|product-service|order-service|cart-service|payment-service|gateway|market-admin) ;;
+  user-service|product-service|order-service|cart-service|payment-service|gateway|market-admin|seed-init) ;;
   *)
     echo "[entrypoint-app] 错误: 未设置或无法识别的 SERVICE_NAME='${SERVICE_NAME:-}'" >&2
-    echo "[entrypoint-app] 可选值: user-service / product-service / order-service / cart-service / payment-service / gateway / market-admin" >&2
+    echo "[entrypoint-app] 可选值: user-service / product-service / order-service / cart-service / payment-service / gateway / market-admin / seed-init" >&2
     exit 1
     ;;
 esac
+
+# 演示种子导入任务：只在 APP_ENV=stage 的空库上执行一次，不加载配置、不起业务进程，
+# 由 compose 的 depends_on（service_completed_successfully）保证先于超管初始化
+if [ "$SERVICE" = "seed-init" ]; then
+  exec /seed-init.sh
+fi
 
 # ---------- 2. 配置文件 ----------
 

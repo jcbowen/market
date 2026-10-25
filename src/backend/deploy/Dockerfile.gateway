@@ -19,6 +19,10 @@ COPY bin/linux-${TARGETARCH}/gateway ./gateway
 # 复制前端编译产物（非源码）
 COPY bin/static ./static
 
+# 演示种子素材（商品图/分类图等）：打包进镜像由网关直接服务 /uploads/seed/**。
+# 不能放进 /app/attachment —— 该目录在 compose 部署中被宿主目录挂载，镜像内文件会被遮蔽
+COPY deploy/seed-assets/products ./seed/products
+
 RUN chmod +x ./gateway && chown -R appuser:appuser /app
 
 USER appuser

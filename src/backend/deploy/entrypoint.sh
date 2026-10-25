@@ -12,7 +12,9 @@
 #      崩溃由 supervise 循环自动拉起）
 #   5. 调用 market-admin init 初始化超管账号（幂等，凭据输出到 stdout，
 #      即 docker logs；未配置 MARKET_ADMIN_PASSWORD 时随机生成）
-#   6. wait 常驻；收到 SIGTERM/SIGINT 向全部子进程广播 TERM 优雅退出
+#   6. APP_ENV=stage（线上演示/灰度）且库中无社区时，导入镜像内置演示种子
+#      （与本地 start-all.mjs 同一份 init.dev.sql，已有数据一律跳过）
+#   7. wait 常驻；收到 SIGTERM/SIGINT 向全部子进程广播 TERM 优雅退出
 #
 # 数据持久化（bind mount，容器/镜像重装不丢失）：
 #   /var/lib/mysql      MySQL 数据
@@ -342,6 +344,30 @@ wait_port 127.0.0.1 50055 payment-service 120 || exit 1
 start_service gateway gateway
 wait_port 127.0.0.1 18080 gateway 120 || exit 1
 log "全部服务已启动，网关监听 :18080"
+
+# ---------- 演示种子（APP_ENV=stage，空库导入） ----------
+
+# 口径与 app 多容器形态的 seed-init.sh 一致：只在 communities 表为空时导入镜像内置
+# 的演示种子，已有业务数据一律跳过。必须早于下方超管初始化——market-admin init 在
+# 零社区时会补建内置社区，一旦先建社区，这里就会误判为"已初始化"而拿不到演示数据。
+# 口令经 MYSQL_PWD 传子进程，不写命令行参数（容器内 ps 同样可见）。
+if [ "${APP_ENV:-}" = "stage" ]; then
+  SEED_COMMUNITIES=$(MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h127.0.0.1 -uroot -N -s \
+    -e "SELECT COUNT(*) FROM $MYSQL_DATABASE.communities" 2>/dev/null || echo 0)
+  if [ "${SEED_COMMUNITIES:-0}" != "0" ]; then
+    log "库中已有 $SEED_COMMUNITIES 个社区，跳过演示种子导入"
+  elif [ ! -s /app/seed/init.dev.sql ]; then
+    log "警告: 演示种子 /app/seed/init.dev.sql 缺失（镜像构建残缺），跳过导入"
+  else
+    log "APP_ENV=stage 且库中无社区，导入演示种子（商品图由网关 /uploads/seed/** 直接服务）..."
+    if MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h127.0.0.1 -uroot \
+        --default-character-set=utf8mb4 "$MYSQL_DATABASE" < /app/seed/init.dev.sql; then
+      log "演示种子导入完成：演示账号与弱口令见 init.dev.sql 头注释，对外演示环境上线前务必改密"
+    else
+      log "警告: 演示种子导入失败，可稍后手动执行: docker exec -i <容器名> mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" $MYSQL_DATABASE < /app/seed/init.dev.sql"
+    fi
+  fi
+fi
 
 # ---------- 超管初始化（幂等，非致命） ----------
 

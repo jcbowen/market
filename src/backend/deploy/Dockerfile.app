@@ -31,7 +31,7 @@ FROM alpine:3.19
 
 ENV TZ=Asia/Shanghai
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata mysql-client
 
 # 非 root 运行：容器内以固定 UID 10001 运行业务进程，与 allinone/Dockerfile.service
 # 同 UID。Linux 宿主挂载写目录（logs/attachment/runtime/geoip/ssl）需执行
@@ -57,7 +57,14 @@ COPY bin/static ./static
 COPY bin/config.docker.yaml ./config.yaml
 COPY src/backend/deploy/entrypoint-app.sh /entrypoint-app.sh
 
-RUN chmod +x /entrypoint-app.sh ./gateway ./user-service ./product-service \
+# 演示种子：素材打进镜像由 gateway 直接服务 /uploads/seed/**（不能放 /app/attachment，
+# 该目录部署时被宿主目录挂载、会遮蔽镜像内容）；init.dev.sql 与 seed-init.sh 供
+# SERVICE_NAME=seed-init 一次性任务在 APP_ENV=stage 且库为空时导入
+COPY deploy/seed-assets/products ./seed/products
+COPY deploy/init.dev.sql ./seed/init.dev.sql
+COPY src/backend/deploy/seed-init.sh /seed-init.sh
+
+RUN chmod +x /entrypoint-app.sh /seed-init.sh ./gateway ./user-service ./product-service \
     ./order-service ./cart-service ./payment-service ./market-admin ./geoip-download \
     && chown -R appuser:appuser /app
 

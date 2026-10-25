@@ -513,6 +513,12 @@ jobs:
           # app 镜像（多容器部署）依赖的配置模板与入口脚本（后者随 checkout 提供）
           test -f bin/config.docker.yaml
           test -f src/backend/deploy/entrypoint-app.sh
+          # 演示种子素材与导入脚本随镜像打包（三个 Dockerfile 的 COPY deploy/seed-assets/products），
+          # 缺文件会让 /uploads/seed/** 全 404、stage 环境无演示数据，故与二进制同批校验
+          test -f deploy/init.dev.sql
+          test -f deploy/seed-assets/images.json
+          test -f deploy/seed-assets/products/latiao.png
+          test -f src/backend/deploy/seed-init.sh
           chmod +x bin/linux-amd64/* bin/linux-arm64/*
 
       # FROM market-base（apt 层已固化）仅 COPY 无需 QEMU；但 app 镜像基于
@@ -628,6 +634,8 @@ jobs:
           test -d bin/static/admin
           test -d bin/static/h5
           test -f bin/config.yaml
+          # 种子素材随发布包分发（打包步骤 cp 到 <包根>/seed），缺失即种子商品图 404
+          test -f deploy/seed-assets/products/latiao.png
           chmod +x bin/linux-*/* bin/darwin-*/*
 
       # 打包：解压后得到 market-{ver}-{os}-{arch}/ 目录，布局对齐部署文档 9.3.5 的 /opt/market；
@@ -644,6 +652,10 @@ jobs:
             cp bin/config.yaml "package/${stage}/config.yaml"
             cp -r bin/static/admin "package/${stage}/static/admin"
             cp -r bin/static/h5 "package/${stage}/static/h5"
+            # 演示种子素材：发布包内 gateway 以 <包根>/seed 作为 /uploads/seed/** 的根目录，
+            # 不带这份素材时种子商品图全 404（来源与镜像一致，均为 deploy/seed-assets/products）
+            mkdir -p "package/${stage}/seed"
+            cp -r deploy/seed-assets/products "package/${stage}/seed/products"
             case "$name" in
               windows-*) zip -qr "package/${stage}.zip" "package/${stage}" ;;
               *)         tar -czf "package/${stage}.tar.gz" -C package "${stage}" ;;

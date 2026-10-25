@@ -601,10 +601,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	r.Static("/s", h5Path)
 	r.Static("/b", adminPath)
 
-	// 本地附件静态服务：与 product 服务落盘目录（<bin>/attachment/）保持一致，
-	// URL 形如 /uploads/images/{Ymd}/{dd}/xxx.jpg
-	attachmentPath := filepath.Join(getBinDir(), "attachment")
-	r.Static("/uploads", attachmentPath)
+	// 本地静态素材分两处：镜像内置的演示种子素材（/uploads/seed/**）与运行期上传附件
+	// （/uploads/**）。种子素材不能放进 attachment 目录——compose/allinone 部署都把该目录
+	// 挂载为宿主目录，镜像内的文件会被挂载遮蔽；故单独打包到 <bin>/seed 并在此分流
+	registerUploads(r, resolveSeedDir(), filepath.Join(getBinDir(), "attachment"))
 
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/b/") {
@@ -628,6 +628,52 @@ func shutdown(srv *http.Server) {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("Gateway 关闭异常: %v", err)
 	}
+}
+
+// registerUploads 注册 /uploads 静态路由，按前缀把演示种子素材与运行期上传附件分流
+// 参数：
+//   - r: gin 引擎
+//   - seedRoot: 镜像内置的种子素材根目录，对外映射为 /uploads/seed/（如 /app/seed）
+//   - attachmentRoot: 运行期上传附件根目录，对外映射为 /uploads/（如 /app/attachment）
+//
+// 说明：
+//   - 种子素材目录不存在时（裁剪过的发布包）仅 /uploads/seed/** 返回 404，上传附件不受影响
+//   - 两个根目录各自交给 http.FileServer 处理：路径由标准库 Clean 并拒绝含 .. 的请求，
+//     请求方无法借 URL 逃出根目录
+//
+// 使用示例：
+//   - registerUploads(r, filepath.Join(getBinDir(), "seed"), filepath.Join(getBinDir(), "attachment"))
+func registerUploads(r *gin.Engine, seedRoot, attachmentRoot string) {
+	seedFS := http.StripPrefix("/uploads/seed/", http.FileServer(http.Dir(seedRoot)))
+	attachmentFS := http.StripPrefix("/uploads/", http.FileServer(http.Dir(attachmentRoot)))
+	serve := func(c *gin.Context) {
+		// gin 的 *filepath 带前导斜杠，形如 /seed/products/latiao.png
+		if strings.HasPrefix(c.Param("filepath"), "/seed/") {
+			seedFS.ServeHTTP(c.Writer, c.Request)
+			return
+		}
+		attachmentFS.ServeHTTP(c.Writer, c.Request)
+	}
+	r.GET("/uploads/*filepath", serve)
+	r.HEAD("/uploads/*filepath", serve)
+}
+
+// resolveSeedDir 解析演示种子素材根目录
+// 返回：
+//   - string: 素材根目录；镜像与发布包内为 <bin>/seed
+//
+// 非容器方式在源码树里直接运行 bin/gateway 时没有 bin/seed，回落到仓库内受版本管理的
+// deploy/seed-assets；两处都不存在时返回 <bin>/seed，路由对 /uploads/seed/** 自然返回 404
+func resolveSeedDir() string {
+	primary := filepath.Join(getBinDir(), "seed")
+	if info, err := os.Stat(primary); err == nil && info.IsDir() {
+		return primary
+	}
+	fallback := filepath.Join(getBinDir(), "..", "deploy", "seed-assets")
+	if info, err := os.Stat(fallback); err == nil && info.IsDir() {
+		return fallback
+	}
+	return primary
 }
 
 // getBinDir 获取可执行文件所在目录
