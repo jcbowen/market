@@ -338,11 +338,15 @@ jobs:
       # 注意：path 单目录会被 v4 剥掉目录名层（root=目录内容）。matrix job 的 bin/ 下
       # 只有本平台一个目录，上传 `bin` 使 artifact 根=bin 内容（即 linux-amd64/...），
       # merge 下载到 bin/ 后恰好恢复 bin/<platform>/ 结构
+      # retention-days=1：artifact 仅为流水线内部传递用，下游消费完即无用；
+      # 私有仓库 Actions 存储免费额度仅 500MB，默认 90 天保留会撑爆配额，
+      # 设 1 天兜底（正常路径发布完即删，见 release-packages 的清理步骤）
       - name: 上传产物
         uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.platform }}
           path: bin
+          retention-days: 1
 
   release-frontend:
     name: 前端构建（admin + H5）
@@ -391,6 +395,7 @@ jobs:
         with:
           name: bin-static
           path: bin
+          retention-days: 1
 
   release-base:
     name: 基础镜像（按需构建）
@@ -732,3 +737,40 @@ jobs:
             echo "上传完成：${name}"
           done
           echo "发布完成：${GITHUB_SERVER_URL%/}/${GITHUB_REPOSITORY}/releases/tag/${VERSION}"
+
+  # ================= artifact 清理（2026-10-26 新增，压 Actions 存储配额） =================
+  # release-backend/release-frontend 上传的 bin-* artifact 仅作 job 间传递，发布完成后即无用。
+  # 私有仓库 Actions 存储免费额度 500MB，单次发版 artifact 体量为 GB 级（6 平台二进制包+前端），
+  # 默认保留 90 天必然撑爆配额，故发布完成后立即删除；
+  # 流水线中断遗留的由 upload-artifact 的 retention-days: 1 兜底次日清理。
+  # cleanup 单独成 job 且始终执行（含 release-packages 失败时），不依赖发布成败
+  cleanup-artifacts:
+    name: 清理传递用 artifact
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
+    needs: [release-backend, release-frontend, release-packages]
+    permissions:
+      actions: write
+    steps:
+      - name: 删除本次运行的 artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GitHub 与 Gitea API 域名差异同「创建 Release」步骤；Gitea 不支持 artifacts
+          # API 时列出为空/请求失败，脚本静默跳过，不影响任何已完成的发布结果
+          if [[ "${GITHUB_SERVER_URL}" == *github.com* ]]; then
+            API="https://api.github.com"
+          else
+            API="${GITHUB_SERVER_URL%/}/api/v1"
+          fi
+          AUTH="Authorization: token ${GITHUB_TOKEN}"
+          RUN_ARTIFACTS_URL="${API}/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100"
+          RESP=$(curl -sS "${RUN_ARTIFACTS_URL}" -H "$AUTH") || true
+          COUNT=$(echo "${RESP}" | grep -o '"total_count": *[0-9]*' | head -1 | grep -o '[0-9]*' || echo 0)
+          echo "本次运行 artifact 数量：${COUNT:-0}"
+          # 仅提取 artifact 条目的 "id" 字段逐个删除；删除失败不阻断（job 无发布依赖）
+          echo "${RESP}" | grep -o '"id": *[0-9]*' | grep -o '[0-9]*' | while read -r id; do
+            CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+              "${API}/repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" -H "$AUTH") || CODE="000"
+            echo "删除 artifact ${id}：HTTP ${CODE}"
+          done
