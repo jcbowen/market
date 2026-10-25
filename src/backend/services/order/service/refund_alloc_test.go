@@ -131,6 +131,34 @@ func TestBuildRefundLinesFull(t *testing.T) {
 	}
 }
 
+// TestItemlessRefundPlan 无商品明细订单（直接收款）整单退的金额与类型：
+// 默认退剩余可退并判为整单退，客户端传值仅允许调低（超上限按剩余可退兜底），
+// 调低未退完时判为部分退，避免「整单退」与「仍有剩余可退」自相矛盾
+func TestItemlessRefundPlan(t *testing.T) {
+	cases := []struct {
+		name      string
+		remaining float64
+		reqAmount float64
+		want      float64
+		wantFull  bool
+	}{
+		{name: "未指定金额退全部剩余", remaining: 88.8, reqAmount: 0, want: 88.8, wantFull: true},
+		{name: "允许调低且判为部分退", remaining: 88.8, reqAmount: 50, want: 50, wantFull: false},
+		{name: "超过剩余可退按上限兜底", remaining: 88.8, reqAmount: 100, want: 88.8, wantFull: true},
+		{name: "调低金额四舍五入到分", remaining: 88.8, reqAmount: 50.005, want: 50.01, wantFull: false},
+		{name: "调低到与剩余可退同额判为整单退", remaining: 88.8, reqAmount: 88.8, want: 88.8, wantFull: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			amount, isFull := itemlessRefundPlan(tc.remaining, tc.reqAmount)
+			if amount != tc.want || isFull != tc.wantFull {
+				t.Fatalf("itemlessRefundPlan(%v, %v) = (%v, %v), want (%v, %v)",
+					tc.remaining, tc.reqAmount, amount, isFull, tc.want, tc.wantFull)
+			}
+		})
+	}
+}
+
 // TestBuildRefundLinesPartial 部分退：归属校验、去重、数量上限
 func TestBuildRefundLinesPartial(t *testing.T) {
 	o := newTestOrder(100, 10, 0)

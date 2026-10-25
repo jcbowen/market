@@ -20,9 +20,10 @@
         <n-form-item label="退款方式">
           <n-radio-group v-model:value="form.mode">
             <n-radio-button value="full">整单退</n-radio-button>
-            <n-radio-button value="partial">部分商品退</n-radio-button>
+            <n-radio-button v-if="hasItems" value="partial">部分商品退</n-radio-button>
             <n-radio-button value="amount">仅金额退</n-radio-button>
           </n-radio-group>
+          <span v-if="detail && !hasItems" class="mode-hint">该订单无商品明细（直接收款），不支持按商品退款</span>
         </n-form-item>
         <n-form-item v-if="form.mode === 'partial'" label="退款商品">
           <div class="item-list">
@@ -156,6 +157,9 @@ const remaining = computed(() => Math.round(((detail.value?.pay_amount ?? 0) - r
 /** 剩余可退运费 */
 const freightRemaining = computed(() => Math.round(((detail.value?.delivery_fee ?? 0) - refundedFreight.value) * 100) / 100)
 
+/** 是否存在商品明细：直接收款单为 false，此时不提供「部分商品退」 */
+const hasItems = computed(() => (detail.value?.items?.length ?? 0) > 0)
+
 /**
  * 单行商品指定数量的应退金额估算（前端展示用，以服务端汇算为准）
  * 行全额应退 = 行小计 - 行小计/订单总额 × 订单优惠总额（系统优惠 + 手动优惠），按数量比例折算
@@ -174,6 +178,8 @@ const estimate = computed(() => {
   const d = detail.value
   if (!d) return 0
   if (form.mode === 'amount') return form.amount ?? 0
+  // 无商品明细（直接收款）：整单可退即剩余可退，按商品行汇算会得到 0
+  if (!hasItems.value) return remaining.value
   let goods = 0
   if (form.mode === 'full') {
     goods = d.items.reduce((s, item) => s + itemEstimate(item, item.quantity), 0)
@@ -344,6 +350,12 @@ watch(
 }
 
 .amount-hint {
+  color: #999;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.mode-hint {
   color: #999;
   font-size: 12px;
   margin-left: 8px;

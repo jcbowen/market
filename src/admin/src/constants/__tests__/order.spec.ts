@@ -17,9 +17,9 @@ describe('canAdminRefund 后台可退款门禁', () => {
     expect(canAdminRefund({ status: ORDER_STATUS.COMPLETED, delivery_type: DELIVERY_TYPE.STORE })).toBe(true)
   })
 
-  it('自提/配送单已完成不可退（用户确认收货，售后另走口径）', () => {
-    expect(canAdminRefund({ status: ORDER_STATUS.COMPLETED, delivery_type: DELIVERY_TYPE.SELF_PICKUP })).toBe(false)
-    expect(canAdminRefund({ status: ORDER_STATUS.COMPLETED, delivery_type: DELIVERY_TYPE.DELIVERY })).toBe(false)
+  it('已完成单后台可退（含自提/配送，售后窗口仅约束 C 端自助申请）', () => {
+    expect(canAdminRefund({ status: ORDER_STATUS.COMPLETED, delivery_type: DELIVERY_TYPE.SELF_PICKUP })).toBe(true)
+    expect(canAdminRefund({ status: ORDER_STATUS.COMPLETED, delivery_type: DELIVERY_TYPE.DELIVERY })).toBe(true)
   })
 
   it('待支付/已取消/已退款不可走代客退款', () => {

@@ -356,6 +356,8 @@ message OrderInfo {
   int64 shift_id = 32;
   // 用户软删除标记：1=该单已被用户在 C 端删除（仅从 C 端列表移除，后台与详情链路保留）
   int32 user_deleted = 33;
+  // 商品明细行数（0=直接收款等无商品单）：列表批量回填，用于收敛依赖商品明细的入口
+  int32 item_count = 34;
 }
 
 message OrderItemInfo {
@@ -445,6 +447,10 @@ message RefundInfo {
   double freight_amount = 15;
   // 审批/重试操作日志（后台列表展示用）
   repeated RefundLogInfo logs = 16;
+  // 所属订单的商品明细行数（0=收银台直接收款等无商品单）：由查询侧按订单批量回填。
+  // 前端据此区分「无明细」究竟来自直接收款单，还是全额退完升格为整单退的仅金额退/部分退。
+  // 注意 proto3 数字 0 经 JSON 序列化会被 omitempty 省略，消费方一律按缺省=0 处理
+  int32 order_item_count = 17;
 }
 
 // RefundLogInfo 退款审批日志

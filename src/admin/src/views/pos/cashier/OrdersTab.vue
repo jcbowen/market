@@ -85,9 +85,10 @@
             <div v-if="detail.remark" class="detail-item span2"><span class="label">备注</span><span>{{ detail.remark }}</span></div>
           </div>
 
-          <!-- 商品明细（含改价标记） -->
+          <!-- 商品明细（含改价标记）；直接收款单无商品，给出空状态避免空白区块 -->
           <div class="section-title">商品明细</div>
-          <div class="items-table">
+          <n-empty v-if="!detail.items?.length" description="该订单无商品明细（直接收款）" size="small" class="items-empty" />
+          <div v-else class="items-table">
             <div v-for="item in detail.items" :key="item.id" class="item-row">
               <span class="item-name">
                 {{ item.product_name }}
@@ -229,7 +230,7 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatAmount } from '@/utils/format'
-import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
+import { NButton, NEmpty, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { cancelOrder, ensurePosCodePaySession, getOrderDetail, getOrderList, payPosOrderCash, verifyPickup } from '@/api/order'
 import type { Order, OrderDetail } from '@/api/types'
@@ -248,7 +249,7 @@ import { reopenModal } from '@/utils/modal'
  * 单号精确搜索 + 状态/来源筛选 + 分页；详情弹窗内完成继续收款/取消/代客退款/自提核销，
  * 处理按钮按状态与权限显示（取消/核销=order:update，退款=refund:update），不打断收银流程跳后台；
  * 待支付单支持「继续收款」（付款码/现金两路，扣款失败可换现金）；
- * 「引用到收银台」把订单商品写入 posStore 待引用清单并切回商品下单 Tab；
+ * 「引用到收银台」把订单商品写入 posStore 待引用清单并切回商品下单 Tab（仅限有商品明细的订单）；
  * 代客退款与后台共用 RefundModal（整单/部分商品/仅金额退，金额可调低），详情弹窗内展示每次售后记录
  */
 
@@ -591,7 +592,7 @@ function openUserOrders(row: Pick<Order, 'user_id' | 'user_name'>) {
   openUserOrdersOf({ id: row.user_id, nickname: row.user_name })
 }
 
-/** 表格列定义（行点击打开详情；状态列彩色标签；待支付可继续收款，全部可引用到收银台） */
+/** 表格列定义（行点击打开详情；状态列彩色标签；待支付可继续收款；有商品的单可引用到收银台） */
 const columns = computed<DataTableColumns<Order>>(() => [
   { title: '订单号', key: 'order_no', width: 190, ellipsis: { tooltip: true } },
   {
@@ -643,12 +644,17 @@ const columns = computed<DataTableColumns<Order>>(() => [
           { size: 'tiny', type: 'primary', quaternary: true, onClick: () => openDetail(row) },
           { default: () => '详情' },
         ),
-        h(
-          NButton,
-          { size: 'tiny', type: 'info', quaternary: true, onClick: () => void importToCashier(row) },
-          { default: () => '引用' },
-        ),
       ]
+      // 引用按商品快照重建小票：直接收款单（item_count=0）无商品可引用，不渲染入口
+      if ((row.item_count ?? 0) > 0) {
+        btns.push(
+          h(
+            NButton,
+            { size: 'tiny', type: 'info', quaternary: true, onClick: () => void importToCashier(row) },
+            { default: () => '引用' },
+          ),
+        )
+      }
       // 待支付收银台单：列表直达继续收款
       if (row.status === ORDER_STATUS.PENDING_PAY && row.source === 2) {
         btns.push(
@@ -738,6 +744,9 @@ onBeforeUnmount(() => {
 .items-table {
   border: 1px solid #efeff5;
   border-radius: 6px;
+}
+.items-empty {
+  padding: 12px 0;
 }
 .item-row {
   display: flex;

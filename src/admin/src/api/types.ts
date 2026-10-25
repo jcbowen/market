@@ -273,6 +273,8 @@ export interface Order {
   status_text: string
   /** 用户已从自己的订单列表软删除（1=已删）：后台仍全量可见，并提供恢复入口 */
   user_deleted?: number
+  /** 商品明细行数（0=直接收款等无商品单），列表返回；用于隐藏引用/按商品退款等入口 */
+  item_count?: number
   /** 订单来源：1=C端 2=收银台（决策点⑨） */
   source?: number
   /** 手动优惠金额（收银台整单改价/抹零折算，仅收银单） */
@@ -482,7 +484,14 @@ export interface Refund {
   payment_no: string
   amount: number
   freight_amount: number
+  /** 退款单类型：1 整单退 2 部分退 3 仅金额退（全额退完时后端升格为 1 展示） */
   type: number
+  /**
+   * 所属订单的商品明细行数（后端查询侧回填）：0=收银台直接收款等无商品单。
+   * 判定「无商品明细」必须看订单口径而非本退款行的 items——仅金额退全额退完
+   * 也会升格为整单退且没有明细，按 type 推断会把普通单误标成直接收款
+   */
+  order_item_count?: number
   reason: string
   status: number
   reject_reason: string

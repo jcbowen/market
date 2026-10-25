@@ -67,8 +67,9 @@
           </n-descriptions-item>
         </n-descriptions>
 
-        <!-- 商品明细：固定列宽,窄屏横向滚动 -->
-        <n-data-table :columns="itemColumns" :data="detail.items" size="small" :bordered="true" :scroll-x="620" />
+        <!-- 商品明细：固定列宽,窄屏横向滚动；直接收款单无商品，给空状态避免空白表格 -->
+        <n-empty v-if="!detail.items || !detail.items.length" description="该订单无商品明细（直接收款）" size="small" />
+        <n-data-table v-else :columns="itemColumns" :data="detail.items" size="small" :bordered="true" :scroll-x="620" />
 
         <!-- 支付记录：本单每次支付尝试（次数/金额/状态/渠道交易号/确认来源） -->
         <div>
@@ -364,10 +365,15 @@ const refundColumns: DataTableColumns<Refund> = [
   {
     title: '退款商品',
     key: 'items',
-    render: (row) =>
-      row.items && row.items.length
-        ? row.items.map((it) => `${it.product_name}${it.spec_name ? `(${it.spec_name})` : ''}×${it.quantity}`).join('、')
-        : '不退商品',
+    render: (row) => {
+      if (row.items && row.items.length) {
+        return row.items.map((it) => `${it.product_name}${it.spec_name ? `(${it.spec_name})` : ''}×${it.quantity}`).join('、')
+      }
+      // 无明细要按订单口径判定（与售后管理页同一字段、同一规则）：仅金额退全额退完也会
+      // 升格为整单退且无明细，只有订单本身没有商品行（收银台直接收款）才是「无商品明细」。
+      // 该字段为 proto 数字，0 会被 omitempty 省略，必须用 ?? 0 归一
+      return (row.order_item_count ?? 0) === 0 ? '无商品明细（直接收款）' : '不退商品'
+    },
   },
   {
     title: '状态',
@@ -514,7 +520,8 @@ const actions = computed<OrderAction[]>(() => {
   if (d.status === ORDER_STATUS.SHIPPING) {
     list.push({ key: 'complete', label: '完成', type: 'success', run: () => confirmComplete(d) })
   }
-  // 可退状态口径统一由 canAdminRefund 判定（已支付/备货中/配送中，以及到店单的已完成），与后端一致
+  // 可退状态口径统一由 canAdminRefund 判定（已支付/备货中/配送中/已完成，不区分配送方式），
+  // 与后端 adminRefundable（status 2~5）同口径；售后窗口只约束 C 端自助申请，不约束后台代客退款
   if (canAdminRefund(d)) {
     list.push({ key: 'refund', label: '退款', type: 'error', run: () => openRefund(d.id) })
   }

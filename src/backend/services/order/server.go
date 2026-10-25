@@ -39,11 +39,11 @@ type server struct {
 func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient, cfg *config.Config) *server {
 	orderSvc := service.NewOrderService(db, cfg)
 	return &server{
-		orderService:   orderSvc,
-		refundService:  service.NewRefundService(db, paymentClient),
-		posHeldService: service.NewPosHeldService(db),
-		shiftService:   service.NewShiftService(db),
-		prefService:    service.NewAppPreferenceService(db),
+		orderService:      orderSvc,
+		refundService:     service.NewRefundService(db, paymentClient),
+		posHeldService:    service.NewPosHeldService(db),
+		shiftService:      service.NewShiftService(db),
+		prefService:       service.NewAppPreferenceService(db),
 		exportTaskService: service.NewExportTaskService(db, orderSvc),
 		paymentClient:     paymentClient,
 	}
@@ -73,6 +73,8 @@ func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.Or
 		StatusLogs: make([]*order.OrderStatusLog, 0, len(logs)),
 		Refunds:    make([]*order.RefundInfo, 0, len(refunds)),
 	}
+	// 详情不做额外聚合统计，明细行数即 len(items)，与列表口径保持一致
+	detail.Order.ItemCount = int32(len(items))
 	for _, item := range items {
 		detail.Items = append(detail.Items, ToOrderItemInfo(item))
 	}
@@ -80,6 +82,9 @@ func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.Or
 		detail.StatusLogs = append(detail.StatusLogs, ToOrderStatusLog(log))
 	}
 	for _, r := range refunds {
+		// 详情内的退款单：所属订单商品行数即上面的 len(items)，与列表回填口径一致，
+		// 供前端区分「直接收款单的整单退」与「仅金额退全额退完升格为整单退」
+		r.OrderItemCount = int32(len(items))
 		detail.Refunds = append(detail.Refunds, ToRefundInfo(r))
 	}
 	return detail, nil
@@ -349,8 +354,8 @@ func (s *server) ListExportTasks(ctx stdctx.Context, req *order.ListExportTasksR
 		return nil, bizerr.ToStatus(err)
 	}
 	return &order.ListExportTasksResp{
-		List:        list,
-		Total:       total,
+		List:         list,
+		Total:        total,
 		Undownloaded: undownloaded,
 	}, nil
 }
@@ -502,6 +507,7 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		// 用户软删标记透出，供后台列表/详情显示「已被用户删除」并给出恢复入口
 		// （网关侧为手工装配 gin.H，不存在 omitempty 吞零值的问题）
 		UserDeleted: o.UserDeleted,
+		ItemCount:   o.ItemCount,
 	}
 	// 送达签收凭证：DB 存 JSON 数组字符串，解析失败静默为空
 	if o.DeliveryProofImages != "" {
@@ -582,8 +588,10 @@ func ToRefundInfo(r *model.Refund) *order.RefundInfo {
 		RefundTime:    ptrString(r.RefundTime),
 		CreatedAt:     r.CreatedAt,
 		OrderNo:       r.OrderNo,
-		Items:         make([]*order.RefundItemInfo, 0, len(r.Items)),
-		Logs:          make([]*order.RefundLogInfo, 0, len(r.Logs)),
+		// 所属订单商品行数（由 GetOrder/ListRefunds 查询侧回填；新建退款单响应不携带，前端按需刷新详情）
+		OrderItemCount: r.OrderItemCount,
+		Items:          make([]*order.RefundItemInfo, 0, len(r.Items)),
+		Logs:           make([]*order.RefundLogInfo, 0, len(r.Logs)),
 	}
 	for _, item := range r.Items {
 		info.Items = append(info.Items, ToRefundItemInfo(item))

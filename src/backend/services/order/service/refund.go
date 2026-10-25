@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"github.com/go-redis/redis/v8"
+	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -72,11 +72,12 @@ func ensureOrderCommunity(tx *gorm.DB, orderID, communityId int64) error {
 
 // adminRefundable 判定订单当前是否允许发起后台代客退款
 // 可退状态为 已支付(2)/备货中(3)/配送中(4)/已完成(5)：
-// - 到店单（delivery_type=3，收银台即买即走）在收款事务内被直接终态化为已完成(5)
-//   （见 order.go UpdateOrderStatus 的 case 2 分支），这个 5 是自动终态而非用户确认收货；
-// - 自提/配送单的已完成(5) 为用户确认收货（或自动完成）后的终态，2026-10-25 起同样放行：
-//   已完成单售后窗口仅约束 C 端自助申请，后台代客退款是商家主动行为，不受窗口限制，
-//   由商家自行判断是否给超窗顾客退款（避免「顾客愿意协商、系统却拦住」的新客诉）。
+//   - 到店单（delivery_type=3，收银台即买即走）在收款事务内被直接终态化为已完成(5)
+//     （见 order.go UpdateOrderStatus 的 case 2 分支），这个 5 是自动终态而非用户确认收货；
+//   - 自提/配送单的已完成(5) 为用户确认收货（或自动完成）后的终态，2026-10-25 起同样放行：
+//     已完成单售后窗口仅约束 C 端自助申请，后台代客退款是商家主动行为，不受窗口限制，
+//     由商家自行判断是否给超窗顾客退款（避免「顾客愿意协商、系统却拦住」的新客诉）。
+//
 // 参数：
 //   - o: 订单模型（需含 status 与 delivery_type）
 //
@@ -480,6 +481,15 @@ func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, req
 		itemMap[item.ID] = item
 	}
 
+	// 无商品明细订单（收银台「直接收款」）：items 为空即整单退，
+	// 按剩余可退金额执行，不产生退款行、不回补库存；金额仍允许调低。
+	// 直接收款单不收运费，remaining 即全部可退金额。
+	// 非空 reqItems 仍走下方校验（商品不属于该订单会报错）
+	if len(orderItems) == 0 && len(reqItems) == 0 {
+		amount, isFull := itemlessRefundPlan(remaining, reqAmount)
+		return &refundCalc{isFull: isFull, amount: amount}, nil
+	}
+
 	refundedQty, _, err := s.refundedStat(ctx, o.ID)
 	if err != nil {
 		return nil, err
@@ -528,6 +538,27 @@ func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, req
 		last.amount = round2(last.amount - cut)
 	}
 	return &refundCalc{lines: lines, isFull: isFull, freight: freight, amount: amount}, nil
+}
+
+// itemlessRefundPlan 无商品明细订单（收银台直接收款）整单退的金额与类型
+// 默认退还剩余可退全部金额，客户端传值仅允许调低（超上限按剩余可退兜底）；
+// 类型按「本次是否把剩余可退退完」判定——调低未退完时属部分退（type=2），
+// 恒按整单退展示会与「订单仍有剩余可退」自相矛盾
+// 参数：
+//   - remaining: 剩余可退金额（调用方已四舍五入到分）
+//   - reqAmount: 客户端传入金额（0 表示不指定，按剩余可退全退）
+//
+// 返回值：
+//   - float64: 本次退款金额（2位小数）
+//   - bool: 是否整单退完（决定退款单类型 1/2）
+func itemlessRefundPlan(remaining, reqAmount float64) (float64, bool) {
+	remaining = round2(remaining)
+	if reqAmount > 0 {
+		if amount := round2(reqAmount); amount < remaining {
+			return amount, false
+		}
+	}
+	return remaining, true
 }
 
 // scaleLinesToTarget 将退款行金额按比例收敛到目标合计（最后一行兜底尾差）
@@ -927,11 +958,11 @@ func (s *RefundService) EnsureDefaultRefundConfig() error {
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")
 	row := &model.RefundConfig{
-		ID:                  refundConfigID,
-		RefundFreightPolicy: "always",
+		ID:                   refundConfigID,
+		RefundFreightPolicy:  "always",
 		CompletedRefundHours: defaultCompletedRefundHours,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 	if err := s.db.GetDb().Create(row).Error; err != nil {
 		return fmt.Errorf("初始化默认退款配置失败: %w", err)
@@ -1011,6 +1042,11 @@ func (s *RefundService) fillRefundExtras(ctx context.Context, list []*model.Refu
 	for _, o := range orders {
 		orderNoMap[o.ID] = o.OrderNo
 	}
+	// 所属订单的商品明细行数：前端据此区分「无明细」来自直接收款单还是退完升格的整单退
+	orderItemCount, err := orderItemCountsByOrders(ctx, s.db.GetDb(), orderIDs)
+	if err != nil {
+		return err
+	}
 
 	var items []*model.RefundItem
 	if err := s.db.GetDb().WithContext(ctx).Where("refund_id IN ?", refundIDs).Find(&items).Error; err != nil {
@@ -1033,6 +1069,7 @@ func (s *RefundService) fillRefundExtras(ctx context.Context, list []*model.Refu
 
 	for _, r := range list {
 		r.OrderNo = orderNoMap[r.OrderID]
+		r.OrderItemCount = orderItemCount[r.OrderID]
 		r.Items = itemMap[r.ID]
 		r.Logs = logMap[r.ID]
 	}

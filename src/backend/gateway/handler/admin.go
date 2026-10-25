@@ -2355,6 +2355,7 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"status_text":     orderStatusText(o.Status, o.DeliveryType),
 			"source":          o.Source,
 			"user_deleted":    o.UserDeleted,
+			"item_count":      o.ItemCount,
 			"operator_name":   o.OperatorName,
 			"shift_id":        o.ShiftId,
 			"pay_type":        payType,
@@ -2720,6 +2721,9 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 			"refund_time":    r.RefundTime,
 			"created_at":     r.CreatedAt,
 			"items":          refundItems,
+			// 所属订单商品行数：详情页的订单明细同源于本响应，但退款行需自带该口径，
+			// 前端才能区分「直接收款单的整单退」与「全额退完升格为整单退的仅金额退」
+			"order_item_count": r.OrderItemCount,
 		})
 	}
 

@@ -706,7 +706,8 @@ const exportCSVHeader = "订单号,用户,配送方式,来源,经手人,商品�
 //   - []byte: 含换行的 CSV 行
 //   - error: 无（签名保留以便扩展）
 func exportCSVRow(o *model.Order, items []model.OrderItem, userName, payTypeText string) ([]byte, error) {
-	// 商品明细摘要：名称x数量（多商品分号分隔），含规格
+	// 商品明细摘要：名称x数量（多商品分号分隔），含规格；
+	// 无明细订单（收银台直接收款）显式标注，避免导出后该列空白难以与漏数据区分
 	detail := ""
 	for i, it := range items {
 		if i > 0 {
@@ -717,6 +718,9 @@ func exportCSVRow(o *model.Order, items []model.OrderItem, userName, payTypeText
 		} else {
 			detail += fmt.Sprintf("%s x%d", it.ProductName, it.Quantity)
 		}
+	}
+	if len(items) == 0 {
+		detail = "直接收款（无商品）"
 	}
 	cells := []string{
 		o.OrderNo,

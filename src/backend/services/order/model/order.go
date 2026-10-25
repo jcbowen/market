@@ -58,6 +58,8 @@ type Order struct {
 	// 用户侧软删除标记（C端「删除订单」）：1=用户已删；C 端列表与角标统计排除，
 	// 后台管理端不受影响；详情链路（售后进度/支付详情）保留可达
 	UserDeleted int32 `gorm:"column:user_deleted;type:tinyint;default:0;comment:用户软删除 0否 1是" json:"user_deleted"`
+	// ItemCount 商品明细行数：非持久化字段，仅列表查询时批量回填（0=直接收款等无商品单）
+	ItemCount int32 `gorm:"-" json:"item_count"`
 	// 时间列参与调度器复合索引：超时扫描按 (status, created_at)、
 	// 卡单恢复与抢占按 (status, updated_at)；此前的 (community_id,status,created_at)
 	// 因缺少 community_id 前导列无法被这些查询使用
@@ -79,8 +81,8 @@ func (Order) TableName() string {
 //go:generate go tool gormgen -struct OrderItem
 type OrderItem struct {
 	base.MysqlBaseModel
-	ID           int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	OrderID      int64   `gorm:"column:order_id;type:bigint;not null;index;comment:订单 ID" json:"order_id"`
+	ID      int64 `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	OrderID int64 `gorm:"column:order_id;type:bigint;not null;index;comment:订单 ID" json:"order_id"`
 	// ProductID 后台「按商品搜订单」经本列反查订单（含全部规格），加普通索引加速定位
 	ProductID    int64   `gorm:"column:product_id;type:bigint;not null;index;comment:商品 ID" json:"product_id"`
 	SkuID        int64   `gorm:"column:sku_id;type:bigint;not null;index;comment:SKU ID" json:"sku_id"`
@@ -165,6 +167,10 @@ type Refund struct {
 
 	// OrderNo 关联订单号（非表字段，列表查询时填充）
 	OrderNo string `gorm:"-" json:"order_no"`
+	// OrderItemCount 所属订单的商品明细行数（非表字段，查询时按订单批量填充）：
+	// 0=收银台直接收款等无商品单。退款行自身的 Items 为空不足以判定该事实——
+	// 仅金额退/部分退在全额退完时会被升格为 type=1 整单退，其明细同样为空
+	OrderItemCount int32 `gorm:"-" json:"order_item_count"`
 	// Items 退款商品明细（非表字段，查询时批量填充）
 	Items []*RefundItem `gorm:"-" json:"items"`
 	// Logs 审批/重试操作日志（非表字段，查询时批量填充）

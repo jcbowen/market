@@ -1735,7 +1735,9 @@ type OrderInfo struct {
 	// 收银班次 ID（0=非收银单）
 	ShiftId int64 `protobuf:"varint,32,opt,name=shift_id,json=shiftId,proto3" json:"shift_id,omitempty"`
 	// 用户软删除标记：1=该单已被用户在 C 端删除（仅从 C 端列表移除，后台与详情链路保留）
-	UserDeleted   int32 `protobuf:"varint,33,opt,name=user_deleted,json=userDeleted,proto3" json:"user_deleted,omitempty"`
+	UserDeleted int32 `protobuf:"varint,33,opt,name=user_deleted,json=userDeleted,proto3" json:"user_deleted,omitempty"`
+	// 商品明细行数（0=直接收款等无商品单）：列表批量回填，用于收敛依赖商品明细的入口
+	ItemCount     int32 `protobuf:"varint,34,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1997,6 +1999,13 @@ func (x *OrderInfo) GetShiftId() int64 {
 func (x *OrderInfo) GetUserDeleted() int32 {
 	if x != nil {
 		return x.UserDeleted
+	}
+	return 0
+}
+
+func (x *OrderInfo) GetItemCount() int32 {
+	if x != nil {
+		return x.ItemCount
 	}
 	return 0
 }
@@ -2585,9 +2594,13 @@ type RefundInfo struct {
 	// 本单退还的运费金额
 	FreightAmount float64 `protobuf:"fixed64,15,opt,name=freight_amount,json=freightAmount,proto3" json:"freight_amount,omitempty"`
 	// 审批/重试操作日志（后台列表展示用）
-	Logs          []*RefundLogInfo `protobuf:"bytes,16,rep,name=logs,proto3" json:"logs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Logs []*RefundLogInfo `protobuf:"bytes,16,rep,name=logs,proto3" json:"logs,omitempty"`
+	// 所属订单的商品明细行数（0=收银台直接收款等无商品单）：由查询侧按订单批量回填。
+	// 前端据此区分「无明细」究竟来自直接收款单，还是全额退完升格为整单退的仅金额退/部分退。
+	// 注意 proto3 数字 0 经 JSON 序列化会被 omitempty 省略，消费方一律按缺省=0 处理
+	OrderItemCount int32 `protobuf:"varint,17,opt,name=order_item_count,json=orderItemCount,proto3" json:"order_item_count,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RefundInfo) Reset() {
@@ -2730,6 +2743,13 @@ func (x *RefundInfo) GetLogs() []*RefundLogInfo {
 		return x.Logs
 	}
 	return nil
+}
+
+func (x *RefundInfo) GetOrderItemCount() int32 {
+	if x != nil {
+		return x.OrderItemCount
+	}
+	return 0
 }
 
 // RefundLogInfo 退款审批日志
@@ -6315,7 +6335,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\x0fexpress_company\x18\x06 \x01(\tR\x0eexpressCompany\x12\x1d\n" +
 	"\n" +
 	"express_no\x18\a \x01(\tR\texpressNo\x12!\n" +
-	"\fcommunity_id\x18\b \x01(\x03R\vcommunityId\"\xed\b\n" +
+	"\fcommunity_id\x18\b \x01(\x03R\vcommunityId\"\x8c\t\n" +
 	"\tOrderInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x19\n" +
 	"\border_no\x18\x02 \x01(\tR\aorderNo\x12!\n" +
@@ -6356,7 +6376,9 @@ const file_order_order_proto_rawDesc = "" +
 	"\x15delivery_proof_images\x18\x1e \x03(\tR\x13deliveryProofImages\x12'\n" +
 	"\x0fmanual_discount\x18\x1f \x01(\x01R\x0emanualDiscount\x12\x19\n" +
 	"\bshift_id\x18  \x01(\x03R\ashiftId\x12!\n" +
-	"\fuser_deleted\x18! \x01(\x05R\vuserDeleted\"\xdb\x02\n" +
+	"\fuser_deleted\x18! \x01(\x05R\vuserDeleted\x12\x1d\n" +
+	"\n" +
+	"item_count\x18\" \x01(\x05R\titemCount\"\xdb\x02\n" +
 	"\rOrderItemInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +
@@ -6409,7 +6431,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\fproduct_name\x18\x05 \x01(\tR\vproductName\x12\x1b\n" +
 	"\tspec_name\x18\x06 \x01(\tR\bspecName\x12\x1a\n" +
 	"\bquantity\x18\a \x01(\x05R\bquantity\x12#\n" +
-	"\rrefund_amount\x18\b \x01(\x01R\frefundAmount\"\xe6\x03\n" +
+	"\rrefund_amount\x18\b \x01(\x01R\frefundAmount\"\x90\x04\n" +
 	"\n" +
 	"RefundInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1b\n" +
@@ -6431,7 +6453,8 @@ const file_order_order_proto_rawDesc = "" +
 	"\x04type\x18\r \x01(\x05R\x04type\x12+\n" +
 	"\x05items\x18\x0e \x03(\v2\x15.order.RefundItemInfoR\x05items\x12%\n" +
 	"\x0efreight_amount\x18\x0f \x01(\x01R\rfreightAmount\x12(\n" +
-	"\x04logs\x18\x10 \x03(\v2\x14.order.RefundLogInfoR\x04logs\"\xb4\x01\n" +
+	"\x04logs\x18\x10 \x03(\v2\x14.order.RefundLogInfoR\x04logs\x12(\n" +
+	"\x10order_item_count\x18\x11 \x01(\x05R\x0eorderItemCount\"\xb4\x01\n" +
 	"\rRefundLogInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12#\n" +

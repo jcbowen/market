@@ -644,8 +644,73 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 
 	offset := (page - 1) * pageSize
 	var list []*model.Order
-	err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error
-	return list, int(total), err
+	if err := db.Order("id desc").Offset(offset).Limit(pageSize).Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := s.fillOrderItemCounts(ctx, list); err != nil {
+		return nil, 0, err
+	}
+	return list, int(total), nil
+}
+
+// fillOrderItemCounts 批量回填订单商品明细行数
+// 无商品单（如收银台直接收款）保持 0，调用方据此判断是否提供
+// 「引用/按商品退款」等依赖商品明细的入口
+// 参数：
+//   - ctx: 上下文
+//   - list: 订单列表（原地写入 ItemCount）
+//
+// 返回值：
+//   - error: 统计查询失败时返回错误（宁可整页失败也不回填空值，避免误隐藏有效入口）
+func (s *OrderService) fillOrderItemCounts(ctx context.Context, list []*model.Order) error {
+	if len(list) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(list))
+	for _, o := range list {
+		ids = append(ids, o.ID)
+	}
+	counts, err := orderItemCountsByOrders(ctx, s.db.GetDb(), ids)
+	if err != nil {
+		return err
+	}
+	for _, o := range list {
+		o.ItemCount = counts[o.ID]
+	}
+	return nil
+}
+
+// orderItemCountsByOrders 批量统计订单的商品明细行数（一次 GROUP BY 覆盖全部入参订单）
+// 订单服务与退款服务共用：订单列表回填 ItemCount、退款列表回填 OrderItemCount，
+// 两者都要靠「订单有没有商品」区分收银台直接收款单，口径必须一致
+// 参数：
+//   - ctx: 上下文
+//   - db: 事务/查询句柄
+//   - orderIds: 订单 ID 集合（空集合直接返回空映射，不发查询）
+//
+// 返回值：
+//   - map[int64]int32: 订单 ID -> 明细行数，无商品单不出现在结果集中（调用方按零值处理）
+//   - error: 统计查询失败时返回错误
+func orderItemCountsByOrders(ctx context.Context, db *gorm.DB, orderIds []int64) (map[int64]int32, error) {
+	counts := make(map[int64]int32, len(orderIds))
+	if len(orderIds) == 0 {
+		return counts, nil
+	}
+	var rows []struct {
+		OrderID int64
+		Cnt     int32
+	}
+	if err := db.WithContext(ctx).Model(&model.OrderItem{}).
+		Select("order_id, COUNT(*) AS cnt").
+		Where("order_id IN ?", orderIds).
+		Group("order_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		counts[row.OrderID] = row.Cnt
+	}
+	return counts, nil
 }
 
 // applyOrderListFilters 构建订单列表查询过滤条件（列表查询与后台导出共用单一事实源，

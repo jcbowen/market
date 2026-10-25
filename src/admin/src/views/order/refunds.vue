@@ -272,7 +272,16 @@ const tableColumns = computed<DataTableColumns<Refund>>(() => {
 function renderExpandItems(row: Refund) {
   const hasItems = row.items && row.items.length > 0
   const hasLogs = row.logs && row.logs.length > 0
-  const emptyText = row.type === 3 ? '仅金额退款，不退商品' : '整单退款，含订单全部商品'
+  // 无明细只有两种来源：订单本身没有商品行（收银台直接收款），或仅金额退不退商品；
+  // 按订单口径（order_item_count）判定，避免把「全额退完升格为整单退」的仅金额退误标成直接收款。
+  // 该字段为 proto 数字，0 会被 omitempty 省略，必须用 ?? 0 归一
+  const orderItemCount = row.order_item_count ?? 0
+  const emptyText =
+    orderItemCount === 0
+      ? '无商品明细（直接收款），整单退款'
+      : row.type === 1
+        ? '仅金额退款，不退商品（本单钱款已全额退完，按整单退展示）'
+        : '仅金额退款，不退商品'
   if (!hasItems && !hasLogs) {
     return h('div', { style: 'padding:8px;color:#999' }, emptyText)
   }
