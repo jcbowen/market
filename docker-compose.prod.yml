@@ -215,6 +215,10 @@ services:
       DEBUGGER_ALLOWED_IPS: ${DEBUGGER_ALLOWED_IPS:-}
       # 运行环境标识：生产填 production（EnsureSecureJWT fail-fast），留空 = 非生产
       APP_ENV: ${APP_ENV:-}
+      # 生产 HTTPS 兜底开关（密码类接口拒绝非 HTTPS 请求 11011）：留空 = 开启（默认）；
+      # 前置链路暂无法保证 HTTPS 回源时可临时设 false 关闭（此时密码与 token 明文过网，
+      # 链路修复后应删除本项恢复兜底）
+      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-}
       # 后台版本检查源（留空走内置默认；国内网络不通时 DOCKERHUB_API_BASE 可指向镜像代理）
       DOCKERHUB_REPO: ${DOCKERHUB_REPO:-}
       GHCR_REPO: ${GHCR_REPO:-}

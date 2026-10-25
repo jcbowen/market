@@ -21,6 +21,8 @@ import (
  *   - 生产环境（APP_ENV=production）非 HTTPS 请求被拒绝，返回 11011
  *   - 生产环境 X-Forwarded-Proto=https：可信代理网段内直连放行（原生 TLS 路径 httptest 不可模拟，靠前者同口径）
  *   - 生产环境 X-Forwarded-Proto=https：非可信直连（网关端口可达的外部客户端伪造头）拒绝——兜底不被伪造绕过
+ *   - 生产环境 REQUIRE_HTTPS=false：兜底应急关闭，明文请求放行
+ *   - 生产环境 REQUIRE_HTTPS=true：显式开启时仍拦截（未设置的同口径由上条拒绝用例覆盖）
  *   - 非生产环境一律放行（本地开发/内网 HTTP 部署不受影响）
  */
 
@@ -102,6 +104,46 @@ func TestRequireHTTPSProductionRejectsForgedProtoFromUntrustedIP(t *testing.T) {
 
 	if hit {
 		t.Error("非可信直连伪造 X-Forwarded-Proto=https 不应放行")
+	}
+	if !strings.Contains(w.Body.String(), `"code":`+strconv.Itoa(errcode.HTTPSRequired)) {
+		t.Errorf("拒绝响应应含业务码 %d，实际: %s", errcode.HTTPSRequired, w.Body.String())
+	}
+}
+
+// TestRequireHTTPSDisabledByEnv 生产环境设 REQUIRE_HTTPS=false 应急关闭兜底，明文请求放行
+//
+// 参数：
+//   - t: 测试对象
+func TestRequireHTTPSDisabledByEnv(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv(EnvRequireHTTPS, "false")
+	var hit bool
+	r := newHTTPSProbe(&hit, nil)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/probe", nil))
+
+	if !hit {
+		t.Errorf("REQUIRE_HTTPS=false 时生产环境明文请求应放行，实际 HTTP %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestRequireHTTPSExplicitEnabledStillBlocks 生产环境显式设 REQUIRE_HTTPS=true 兜底保持拦截
+// （未设置 = 默认开启，由 TestRequireHTTPSProductionBlocksPlainHTTP 同口径覆盖）
+//
+// 参数：
+//   - t: 测试对象
+func TestRequireHTTPSExplicitEnabledStillBlocks(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv(EnvRequireHTTPS, "true")
+	var hit bool
+	r := newHTTPSProbe(&hit, nil)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/probe", nil))
+
+	if hit {
+		t.Error("REQUIRE_HTTPS=true 时生产环境明文请求不应放行")
 	}
 	if !strings.Contains(w.Body.String(), `"code":`+strconv.Itoa(errcode.HTTPSRequired)) {
 		t.Errorf("拒绝响应应含业务码 %d，实际: %s", errcode.HTTPSRequired, w.Body.String())
