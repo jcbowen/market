@@ -211,10 +211,11 @@ const birthdayTs = computed(() => {
 
 /**
  * 生日确认：时间戳转 YYYY-MM-DD 并收起选择器（u-datetime-picker 为受控模式）
- * @param value 选中的时间戳（毫秒）
+ * @param e 确认事件，e.value 为选中的时间戳（毫秒）
  */
-function onBirthdayConfirm(value: number) {
-  const d = new Date(value)
+function onBirthdayConfirm(e: { value: number }) {
+  const d = new Date(e?.value)
+  if (Number.isNaN(d.getTime())) return
   form.value.birthday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   birthdayPickerShow.value = false
 }
