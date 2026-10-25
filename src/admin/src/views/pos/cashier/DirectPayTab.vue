@@ -3,6 +3,16 @@
     <div class="pay-panel">
       <div class="panel-hint">直接收款：输入金额后收款，不关联商品（按到店消费记录）</div>
 
+      <!-- 会员栏：默认散客，可把本笔消费挂到会员名下（口径与商品下单一致，布局更紧凑） -->
+      <div class="member-bar">
+        <span class="member-label">会员</span>
+        <n-tag v-if="member" type="primary" size="small" closable @close="clearMember">{{ memberLabel }}</n-tag>
+        <n-tag v-else type="default" size="small">散客</n-tag>
+        <n-button size="small" quaternary class="member-btn" @click="showUserPicker = true">
+          {{ member ? '更换会员' : '选会员' }}
+        </n-button>
+      </div>
+
       <!-- 金额展示与输入 -->
       <div class="amount-box" @click="focusAmount">
         <span class="amount-label">收款金额</span>
@@ -67,6 +77,9 @@
 
     <!-- 收银成功小票弹窗 -->
     <receipt-modal v-model:show="showPaid" :receipt="receipt" @bound="onReceiptBound" />
+
+    <!-- 会员选择（单选，含现场注册；与商品下单共用） -->
+    <user-picker v-model:show="showUserPicker" title="选择会员" registerable register-scene="pos" @select="onSelectMember" />
   </div>
 </template>
 
@@ -76,7 +89,9 @@ import { formatAmount } from '@/utils/format'
 import { useDialog, useMessage } from 'naive-ui'
 import { CashOutline, ScanOutline } from '@vicons/ionicons5'
 import { createPosOrder, ensurePosCodePaySession, listPosPayMethods } from '@/api/order'
+import type { User } from '@/api/types'
 import NumberPad from '@/components/NumberPad.vue'
+import UserPicker from '@/components/UserPicker.vue'
 import CodePayDialog from './CodePayDialog.vue'
 import ReceiptModal, { type PaidReceipt } from './ReceiptModal.vue'
 import { PAY_TYPE } from '@/constants/order'
@@ -84,7 +99,9 @@ import { PAY_TYPE } from '@/constants/order'
 /**
  * 直接收款 Tab（无商品快速收款）
  * 输入金额（物理键盘/触屏小键盘双通道）→ 付款码收款（建无商品到店单后扫码扣款）
- * 或现金收款（确认即完结）。金额即成交金额，不参与券/满减/库存，订单可在订单查询继续处理
+ * 或现金收款（确认即完结）。金额即成交金额，不参与券/满减/库存，订单可在订单查询继续处理。
+ * 可选会员（默认散客）：选中的会员随建单写入 user_id，消费计入其名下；
+ * 收款成功后保留会员选择便于连续收款，可点标签关闭回散客
  */
 
 const message = useMessage()
@@ -102,6 +119,35 @@ const amount = computed(() => {
 })
 /** 金额有效性：大于 0 才可收款 */
 const amountValid = computed(() => amount.value > 0)
+
+// --- 会员选择（默认散客） ---
+
+const member = ref<User | null>(null)
+const showUserPicker = ref(false)
+
+/** 会员展示名：昵称优先，退回手机号，无有效 id 时按散客口径兜底（与 user_id ?? 0 一致） */
+const memberLabel = computed(
+  () =>
+    member.value?.nickname ||
+    member.value?.phone ||
+    (member.value?.id ? `会员#${member.value.id}` : '散客')
+)
+
+/**
+ * 会员选择弹窗回传：记录会员并回焦金额输入（连续输金额收款）
+ * @param u 选中的会员
+ */
+function onSelectMember(u: User) {
+  member.value = u
+  focusAmount()
+}
+
+/**
+ * 清除会员回散客（小票会员标签的关闭按钮）
+ */
+function clearMember() {
+  member.value = null
+}
 
 // --- 支付方式：现金恒可用；付款码按渠道配置出现（与商品下单同口径） ---
 const codePayMethod = ref<{ label: string; value: number } | null>(null)
@@ -273,7 +319,12 @@ async function onCodePay() {
   }
   creating.value = true
   try {
-    const key = JSON.stringify({ amount: amount.value, pay_type: codePayMethod.value.value })
+    // 会员参与载荷判定：换会员后同金额也不得复用他人名下的遗留单
+    const key = JSON.stringify({
+      amount: amount.value,
+      pay_type: codePayMethod.value.value,
+      user_id: member.value?.id ?? 0,
+    })
     if (abandonedPending.value && abandonedPending.value.key === key) {
       const reused = await ensurePosCodePaySession(abandonedPending.value.orderId)
       if (reused.data.code !== 0) return
@@ -286,7 +337,7 @@ async function onCodePay() {
       return
     }
     const res = await createPosOrder({
-      user_id: 0,
+      user_id: member.value?.id ?? 0,
       delivery_type: 3,
       pay_type: codePayMethod.value.value,
       manual_amount: amount.value,
@@ -329,7 +380,8 @@ function onReceiptBound(p: { userId: number; userName: string }) {
 }
 
 /**
- * 组装直接收款小票快照（无商品明细；order_id/user_id 供散客单补绑会员入口判定）
+ * 组装直接收款小票快照（无商品明细；order_id/user_id 供散客单补绑会员入口判定）：
+ * 收款前已选会员时直接写入会员信息，小票弹窗不再出现补绑入口
  * @param payLabel 支付方式文案
  */
 function buildReceipt(payLabel: string) {
@@ -338,12 +390,12 @@ function buildReceipt(payLabel: string) {
   receipt.value = {
     order_no: '',
     order_id: 0,
-    user_id: 0,
-    user_name: '',
+    user_id: member.value?.id ?? 0,
+    user_name: member.value ? memberLabel.value : '',
     pay_amount: amount.value,
     channel_label: '到店消费',
     pay_label: payLabel,
-    member_label: '散客',
+    member_label: member.value ? memberLabel.value : '散客',
     items: [],
     total_amount: amount.value,
     coupon_discount: 0,
@@ -366,7 +418,7 @@ function onCashPay() {
   cashConfirmOpen.value = true
   dialog.warning({
     title: '现金收款',
-    content: `确认已收现金 ￥${formatAmount(amount.value)}？（回车确认，Esc 取消）`,
+    content: `确认已收现金 ￥${formatAmount(amount.value)}，为${member.value ? `会员 ${memberLabel.value}` : '散客'}收款？（回车确认，Esc 取消）`,
     positiveText: '确认收款',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -375,7 +427,7 @@ function onCashPay() {
       creating.value = true
       try {
         const res = await createPosOrder({
-          user_id: 0,
+          user_id: member.value?.id ?? 0,
           delivery_type: 3,
           pay_type: PAY_TYPE.CASH,
           manual_amount: amount.value,
@@ -462,6 +514,23 @@ onBeforeUnmount(() => {
   text-align: center;
   font-size: 13px;
   color: #999;
+}
+.member-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #efeff5;
+  border-radius: 8px;
+  background: #fafafc;
+
+  .member-label {
+    font-size: 14px;
+    color: #666;
+  }
+  .member-btn {
+    margin-left: auto;
+  }
 }
 .amount-box {
   display: flex;

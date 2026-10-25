@@ -53,8 +53,15 @@ export const NButton = defineComponent({
 /** n-space 替身：纵向布局容器，直接透传插槽 */
 export const NSpace = defineComponent({ template: '<div class="n-space-stub"><slot /></div>' })
 
+/** n-tag 替身：closable 时渲染关闭按钮（会员标签关闭回散客交互用） */
+export const NTag = defineComponent({
+  props: { closable: { type: Boolean, default: false } },
+  emits: ['close'],
+  template: `<span class="n-tag-stub"><slot /><button v-if="closable" class="n-tag-close" @click="$emit('close')">x</button></span>`,
+})
+
 /** 收银台单测统一挂载配置：替身组件注入 */
-export const naiveTestComponents = { NModal, NInput, NButton, NSpace }
+export const naiveTestComponents = { NModal, NInput, NButton, NSpace, NTag }
 
 /** naive-ui 组合式 API 替身（vi.mock('naive-ui') 工厂用） */
 export function mockNaiveApi() {

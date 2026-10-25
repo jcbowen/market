@@ -28,8 +28,8 @@ vi.mock('naive-ui', () => ({ useDialog, useMessage }))
 
 const warningMock = vi.fn()
 const successMock = vi.fn()
-/** dialog.warning 捕获的配置（onPositiveClick 由用例手动触发，模拟收银员点确认/回车） */
-let capturedDialog: { onPositiveClick?: () => void | Promise<void> } | null = null
+/** dialog.warning 捕获的配置（onPositiveClick 由用例手动触发，模拟收银员点确认/回车；content 供文案断言） */
+let capturedDialog: { content?: string; onPositiveClick?: () => void | Promise<void> } | null = null
 
 // 组件挂载时注册 window keydown 监听：必须逐用例卸载，否则前一用例的
 // 快捷键监听会响应后一用例的按键（真实组件 onBeforeUnmount 会移除）
@@ -56,7 +56,7 @@ function mountTab() {
   const wrapper = mount(DirectPayTab, {
     global: {
       components: naiveTestComponents,
-      stubs: { CodePayDialog: true, ReceiptModal: true },
+      stubs: { CodePayDialog: true, ReceiptModal: true, UserPicker: true },
     },
   })
   wrappers.push(wrapper)
@@ -216,6 +216,107 @@ describe('DirectPayTab 付款码收款', () => {
 
     await wrapper.find('input').trigger('keydown', { key: 'Enter' })
     expect(capturedDialog?.onPositiveClick).toBeTruthy()
+  })
+})
+
+describe('DirectPayTab 会员选择', () => {
+  const memberA = {
+    id: 11,
+    nickname: '张三',
+    phone: '13800000001',
+    community_id: 1,
+    community_name: '测试社区',
+    status: 1,
+    created_at: '2026-10-25 10:00:00',
+  }
+  const memberB = {
+    id: 22,
+    nickname: '',
+    phone: '13900000022',
+    community_id: 1,
+    community_name: '测试社区',
+    status: 1,
+    created_at: '2026-10-25 10:00:00',
+  }
+
+  /** 经 UserPicker 弹窗选会员（点击选会员/更换会员按钮后由弹窗 select 回传） */
+  async function pickMember(wrapper: ReturnType<typeof mountTab>, u: typeof memberA) {
+    await wrapper.findAll('button').find((b) => b.text().includes('会员') && !b.text().includes('收款'))!.trigger('click')
+    const picker = wrapper.findComponent({ name: 'UserPicker' })
+    picker.vm.$emit('select', u)
+    await flushPromises()
+  }
+
+  it('默认散客标签；选会员后展示会员名，可关闭回散客', async () => {
+    const wrapper = mountTab()
+    await flushPromises()
+    expect(wrapper.text()).toContain('散客')
+
+    await pickMember(wrapper, memberA)
+    expect(wrapper.text()).toContain('张三')
+    expect(wrapper.text()).not.toContain('散客')
+
+    // 标签关闭按钮：清回散客
+    await wrapper.find('.n-tag-close').trigger('click')
+    expect(wrapper.text()).toContain('散客')
+  })
+
+  it('选会员后现金收款：建单带 user_id，确认文案含会员名，小票快照写入会员', async () => {
+    createPosOrder.mockResolvedValue({ data: { code: 0, data: { order_no: 'D-002' } } })
+    const wrapper = mountTab()
+    await flushPromises()
+    await pickMember(wrapper, memberA)
+    await tapPad(wrapper, '8.8')
+
+    await wrapper.findAll('button').find((b) => b.text().includes('现金收款'))!.trigger('click')
+    expect(capturedDialog?.content).toContain('会员 张三')
+    await capturedDialog!.onPositiveClick!()
+
+    expect(createPosOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 11, pay_type: 4, manual_amount: 8.8 })
+    )
+    const receipt = wrapper.findComponent({ name: 'ReceiptModal' }).props('receipt')
+    expect(receipt.user_id).toBe(11)
+    expect(receipt.member_label).toBe('张三')
+    // 收款成功后保留会员选择（连续收款），金额清零
+    expect(wrapper.text()).toContain('张三')
+    expect((wrapper.find('input').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('选会员后付款码建单带 user_id；换会员后同金额不复用放弃的遗留单', async () => {
+    createPosOrder
+      .mockResolvedValueOnce({ data: { code: 0, data: { id: 101, order_no: 'D-101', pay_amount: 6.6, payment_no: 'ZF101' } } })
+      .mockResolvedValueOnce({ data: { code: 0, data: { id: 102, order_no: 'D-102', pay_amount: 6.6, payment_no: 'ZF102' } } })
+    const wrapper = mountTab()
+    await flushPromises()
+    await pickMember(wrapper, memberA)
+    await tapPad(wrapper, '6.6')
+    await wrapper.findAll('button').find((b) => b.text().includes('付款码收款'))!.trigger('click')
+    await flushPromises()
+    expect(createPosOrder).toHaveBeenNthCalledWith(1, expect.objectContaining({ user_id: 11, pay_type: 5 }))
+
+    // 放弃扫码（弹窗关闭并遗留待支付单），换会员后同金额再发起：不得复用 A 名下的单
+    const dialogStub = wrapper.findComponent({ name: 'CodePayDialog' })
+    dialogStub.vm.$emit('update:show', false)
+    dialogStub.vm.$emit('close-abandoned')
+    await flushPromises()
+    await pickMember(wrapper, memberB)
+    await wrapper.findAll('button').find((b) => b.text().includes('付款码收款'))!.trigger('click')
+    await flushPromises()
+    expect(createPosOrder).toHaveBeenCalledTimes(2)
+    expect(createPosOrder).toHaveBeenNthCalledWith(2, expect.objectContaining({ user_id: 22 }))
+  })
+
+  it('散客路径回归：不选会员时建单仍为 user_id=0', async () => {
+    createPosOrder.mockResolvedValue({ data: { code: 0, data: { order_no: 'D-003' } } })
+    const wrapper = mountTab()
+    await flushPromises()
+    await tapPad(wrapper, '2')
+    await wrapper.findAll('button').find((b) => b.text().includes('现金收款'))!.trigger('click')
+    await capturedDialog!.onPositiveClick!()
+    expect(createPosOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 0, pay_type: 4, manual_amount: 2 })
+    )
   })
 })
 
