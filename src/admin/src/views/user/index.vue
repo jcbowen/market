@@ -40,12 +40,23 @@
           <n-form-item label="性别">
             <n-select v-model:value="createForm.gender" :options="genderOptions" style="width: 140px" />
           </n-form-item>
+          <n-form-item label="生日">
+            <n-date-picker
+              v-model:formatted-value="createForm.birthday"
+              type="date"
+              value-format="yyyy-MM-dd"
+              clearable
+              placeholder="选填"
+              style="width: 160px"
+              :is-date-disabled="isFutureDate"
+            />
+          </n-form-item>
         </n-form>
       </n-space>
     </n-modal>
 
     <!-- 会员订单弹窗：查看该会员在当前社区（或超管跨社区）的订单（订单号点击经 open-order 转发到详情弹窗） -->
-    <UserOrdersModal v-model:show="showOrdersModal" :user="ordersUser" @open-order="openOrderDetail" />
+    <UserOrdersModal v-model:show="showOrdersModal" :user="ordersUser" @open-order="openOrderDetail" @updated="loadUsers" />
 
     <!-- 订单详情弹窗（会员订单内订单号点击打开；用户点击经 view-user 回到会员订单弹窗） -->
     <order-detail-modal v-model:show="detailVisible" :order-id="detailId" @view-user="openOrdersOf" />
@@ -151,7 +162,17 @@ const users = ref<User[]>([])
 // 添加会员弹窗状态
 const showCreateModal = ref(false)
 const createLoading = ref(false)
-const createForm = reactive({ phone: '', nickname: '', gender: 0 })
+const createForm = reactive<{ phone: string; nickname: string; gender: number; birthday: string | null }>({
+  phone: '',
+  nickname: '',
+  gender: 0,
+  birthday: null,
+})
+
+/** 生日不允许选择未来日期 */
+function isFutureDate(ts: number) {
+  return ts > Date.now()
+}
 
 // 会员订单弹窗状态（行数据或详情弹窗 view-user 转发的轻量用户对象）
 const showOrdersModal = ref(false)
@@ -230,11 +251,13 @@ async function handleCreate() {
       phone: createForm.phone,
       nickname: createForm.nickname.trim(),
       gender: createForm.gender,
+      birthday: createForm.birthday || undefined,
     })
     message.success('会员添加成功')
     createForm.phone = ''
     createForm.nickname = ''
     createForm.gender = 0
+    createForm.birthday = null
     onSearch()
     return true
   } finally {

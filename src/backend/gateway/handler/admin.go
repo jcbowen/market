@@ -4590,6 +4590,7 @@ func (h *AdminHandler) ListUsers(c *gin.Context) {
 			"nickname":       u.Nickname,
 			"avatar":         u.Avatar,
 			"gender":         u.Gender,
+			"birthday":       u.Birthday,
 			"community_id":   u.CommunityId,
 			"community_name": u.CommunityName,
 			"status":         u.Status,
@@ -4642,12 +4643,30 @@ func (h *AdminHandler) ListUserFrequentProducts(c *gin.Context) {
 	response.SuccessWithPage(c, list, int(resp.Total), page, pageSize)
 }
 
+// isValidBirthday 校验生日字符串是否为合法的 YYYY-MM-DD 日期
+// 参数：
+//   - value: 待校验的生日字符串（空串视为未填写，放行由调用方跳过校验）
+//
+// 返回：
+//   - bool: 空串或合法日期返回 true，格式或日期非法（如 1995-13-40）返回 false
+//
+// 示例：isValidBirthday("1995-06-15") => true；isValidBirthday("1995/06/15") => false
+func isValidBirthday(value string) bool {
+	if value == "" {
+		return true
+	}
+	_, err := time.ParseInLocation("2006-01-02", value, time.Local)
+	return err == nil
+}
+
 // CreateUserReq 后台/收银台添加会员请求
 type CreateUserReq struct {
 	// 手机号（唯一）
 	Phone    string `json:"phone" binding:"required"`
 	Nickname string `json:"nickname"`
 	Gender   int32  `json:"gender"`
+	// 生日（YYYY-MM-DD，选填）
+	Birthday string `json:"birthday"`
 	// 注册场景：admin 后台会员管理 / pos 收银台（仅影响会员-社区关联来源标记，非白名单值按 admin 处理）
 	Scene string `json:"scene"`
 }
@@ -4667,6 +4686,10 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		response.Error(c, errcode.ParamError, "手机号格式错误")
 		return
 	}
+	if !isValidBirthday(req.Birthday) {
+		response.Error(c, errcode.ParamError, "生日格式错误，应为 YYYY-MM-DD")
+		return
+	}
 	source := "admin"
 	if req.Scene == "pos" {
 		source = "pos"
@@ -4676,6 +4699,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		Phone:       req.Phone,
 		Nickname:    req.Nickname,
 		Gender:      req.Gender,
+		Birthday:    req.Birthday,
 		CommunityId: h.getAdminCommunityID(c),
 		Source:      source,
 	})
@@ -4689,6 +4713,7 @@ func (h *AdminHandler) CreateUser(c *gin.Context) {
 		"phone":      u.Phone,
 		"nickname":   u.Nickname,
 		"gender":     u.Gender,
+		"birthday":   u.Birthday,
 		"status":     u.Status,
 		"created_at": u.CreatedAt,
 		"is_new":     resp.IsNew,
@@ -4733,6 +4758,79 @@ func (h *AdminHandler) SetUserStatus(c *gin.Context) {
 	// 清除状态缓存，使拦截立即生效
 	gwMiddleware.InvalidateUserStatusCache(id)
 	response.Success(c, gin.H{"id": id, "status": *req.Status})
+}
+
+// GetUser 会员详情（会员订单弹窗信息卡数据源）
+// 社区语境校验：普通管理员仅可查看与本社区关联的会员，超管（语境 0）不限
+// 参数：
+//   - c: gin 上下文（路径 id）
+func (h *AdminHandler) GetUser(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	resp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{
+		Id:          id,
+		CommunityId: h.scopeCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// UpdateUserReq 后台编辑会员基础资料请求
+// 表单为全量提交：gender 与 birthday 按全量覆盖语义透传（birthday 空串=清空）
+type UpdateUserReq struct {
+	// 昵称（空串不修改）
+	Nickname string `json:"nickname"`
+	// 0未知 1男 2女
+	Gender int32 `json:"gender"`
+	// 生日（YYYY-MM-DD，空串=清空）
+	Birthday string `json:"birthday"`
+}
+
+// UpdateMember 编辑会员基础资料（昵称/性别/生日）
+// 社区语境校验：普通管理员仅可修改与本社区关联的会员，超管（语境 0）不限
+// 参数：
+//   - c: gin 上下文（路径 id）
+func (h *AdminHandler) UpdateMember(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req UpdateUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	if !isValidBirthday(req.Birthday) {
+		response.Error(c, errcode.ParamError, "生日格式错误，应为 YYYY-MM-DD")
+		return
+	}
+
+	u, err := h.userClient.UpdateMember(c.Request.Context(), &user.UpdateMemberReq{
+		Id:          id,
+		Nickname:    req.Nickname,
+		Gender:      req.Gender,
+		Birthday:    req.Birthday,
+		CommunityId: h.scopeCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"id":       u.Id,
+		"phone":    u.Phone,
+		"nickname": u.Nickname,
+		"gender":   u.Gender,
+		"birthday": u.Birthday,
+		"status":   u.Status,
+	})
 }
 
 // ListAdminCommunities 获取社区列表

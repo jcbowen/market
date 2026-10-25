@@ -114,14 +114,48 @@ export function getUserList(params: PageParams & { keyword?: string; status_filt
 /**
  * 注册会员（幂等，归属当前社区）
  * 手机号已注册（含其他社区老会员）时不报错：服务端复用既有会员并自动关联当前社区
- * @param data 会员基础信息（手机号必填）
+ * @param data 会员基础信息（手机号必填，生日选填 YYYY-MM-DD）
  * @param data.scene 注册场景：admin 后台会员管理 / pos 收银台（仅影响关联来源标记）
  * @returns 会员信息（is_new=true 表示本次新注册，false 表示复用既有会员）
  */
-export function createUser(data: { phone: string; nickname?: string; gender?: number; scene?: 'admin' | 'pos' }) {
+export function createUser(data: {
+  phone: string
+  nickname?: string
+  gender?: number
+  birthday?: string
+  scene?: 'admin' | 'pos'
+}) {
   return request<ApiResult<User & { is_new?: boolean }>>({
     url: '/api/v1/admin/users',
     method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 获取会员详情（会员订单弹窗信息卡数据源）
+ * 服务端按当前社区语境校验会员关联，跨社区会员按不存在处理（超管不限）
+ * @param id 会员 ID
+ * @returns 会员详情
+ */
+export function getUser(id: number) {
+  return request<ApiResult<User>>({
+    url: `/api/v1/admin/users/${id}`,
+    method: 'GET',
+  })
+}
+
+/**
+ * 编辑会员基础资料（昵称/性别/生日）
+ * 表单为全量提交：gender 与 birthday 全量覆盖（birthday 传空串表示清空），nickname 空串不修改
+ * @param id 会员 ID
+ * @param data 编辑数据
+ * @returns 更新后的会员信息
+ */
+export function updateUser(id: number, data: { nickname?: string; gender?: number; birthday?: string }) {
+  return request<ApiResult<User>>({
+    url: `/api/v1/admin/users/${id}`,
+    method: 'PUT',
     data,
   })
 }

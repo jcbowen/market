@@ -98,6 +98,17 @@
         <n-form-item-row label="昵称">
           <n-input v-model:value="regNickname" placeholder="选填，缺省为「会员+尾号4位」" maxlength="30" />
         </n-form-item-row>
+        <n-form-item-row label="生日">
+          <n-date-picker
+            v-model:formatted-value="regBirthday"
+            type="date"
+            value-format="yyyy-MM-dd"
+            clearable
+            placeholder="选填"
+            style="width: 100%"
+            :is-date-disabled="isFutureDate"
+          />
+        </n-form-item-row>
       </n-form>
       <template #footer>
         <n-space justify="end">
@@ -308,12 +319,19 @@ const message = useMessage()
 const showRegister = ref(false)
 const regPhone = ref('')
 const regNickname = ref('')
+const regBirthday = ref<string | null>(null)
 const registering = ref(false)
+
+/** 生日不允许选择未来日期 */
+function isFutureDate(ts: number) {
+  return ts > Date.now()
+}
 
 watch(showRegister, (v) => {
   if (v) {
     regPhone.value = ''
     regNickname.value = ''
+    regBirthday.value = null
   }
 })
 
@@ -330,7 +348,12 @@ async function submitRegister() {
   }
   registering.value = true
   try {
-    const res = await createUser({ phone, nickname: regNickname.value.trim() || undefined, scene: props.registerScene })
+    const res = await createUser({
+      phone,
+      nickname: regNickname.value.trim() || undefined,
+      birthday: regBirthday.value || undefined,
+      scene: props.registerScene,
+    })
     if (res.data.code !== 0 || !res.data.data) return
     const user = res.data.data
     message.success(user.is_new ? `已注册会员 ${phone}` : `该手机号已是会员，已自动关联本社区`)

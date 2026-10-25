@@ -47,9 +47,9 @@ func newServer(db *mysql.Instance) *server {
 	}
 }
 
-// GetUserById 根据 ID 获取用户信息
+// GetUserById 根据 ID 获取用户信息（携带社区语境时做关联校验，防跨社区越权读取）
 func (s *server) GetUserById(ctx stdctx.Context, req *user.GetUserByIdReq) (*user.UserInfo, error) {
-	u, err := s.userService.GetUserById(ctx, req.Id)
+	u, err := s.userService.GetUserByIdWithScope(ctx, req.Id, req.CommunityId)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
@@ -85,6 +85,15 @@ func (s *server) UpdateUserCommunity(ctx stdctx.Context, req *user.UpdateCommuni
 // UpdateUserProfile 更新用户资料
 func (s *server) UpdateUserProfile(ctx stdctx.Context, req *user.UpdateUserProfileReq) (*user.UserInfo, error) {
 	u, err := s.userService.UpdateUserProfile(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return service.ToUserInfo(u), nil
+}
+
+// UpdateMember 后台编辑会员基础资料（昵称/性别/生日，社区语境校验）
+func (s *server) UpdateMember(ctx stdctx.Context, req *user.UpdateMemberReq) (*user.UserInfo, error) {
+	u, err := s.userService.UpdateMember(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}

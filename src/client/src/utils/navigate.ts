@@ -149,6 +149,13 @@ export function goAddressList() {
 }
 
 /**
+ * 跳转个人资料页
+ */
+export function goUserProfile() {
+  goPage('/pages/user/profile')
+}
+
+/**
  * 跳转地址编辑/新增
  * @param id 地址 ID，新增时不传
  */

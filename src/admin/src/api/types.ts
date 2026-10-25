@@ -791,7 +791,11 @@ export interface User {
   id: number
   nickname: string
   phone: string
+  /** 头像 URL */
+  avatar?: string
   gender?: number
+  /** 生日（YYYY-MM-DD，未设置为空） */
+  birthday?: string
   community_id: number
   community_name: string
   status: number

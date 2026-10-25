@@ -34,6 +34,8 @@ service UserService {
 
   // 用户资料
   rpc UpdateUserProfile(UpdateUserProfileReq) returns (UserInfo);
+  // UpdateMember 后台编辑会员基础资料（昵称/性别/生日，社区语境校验）
+  rpc UpdateMember(UpdateMemberReq) returns (UserInfo);
 
   // 行政区划
   rpc ListRegionChildren(ListRegionChildrenReq) returns (ListRegionChildrenResp);
@@ -80,6 +82,8 @@ service UserService {
 
 message GetUserByIdReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时校验会员与本社区关联，无关联按不存在处理（防跨社区越权读取；超管传 0 放行）
+  int64 community_id = 2;
 }
 
 message GetUserByPhoneReq {
@@ -117,6 +121,8 @@ message UserInfo {
   string created_at = 12;
   // 当前过滤语境下的社区名称（ListUsers 按社区过滤时由服务端填充）
   string community_name = 13;
+  // 生日（YYYY-MM-DD，未设置时为空串）
+  string birthday = 14;
 }
 
 message UpdateUserProfileReq {
@@ -124,6 +130,22 @@ message UpdateUserProfileReq {
   string nickname = 2;
   string avatar = 3;
   int32 gender = 4;
+  // 生日（YYYY-MM-DD，非空才覆盖）
+  string birthday = 5;
+}
+
+// UpdateMemberReq 后台编辑会员基础资料请求
+message UpdateMemberReq {
+  // 会员 ID
+  int64 id = 1;
+  // 昵称（非空才覆盖）
+  string nickname = 2;
+  // 性别：全量覆盖（0未知 1男 2女）
+  int32 gender = 3;
+  // 生日：全量覆盖，空串表示清空
+  string birthday = 4;
+  // 操作者社区语境：>0 时校验会员与本社区关联，防止跨社区修改他社区会员（超管传 0 放行）
+  int64 community_id = 5;
 }
 
 message ListUsersReq {
@@ -659,6 +681,8 @@ message CreateMemberReq {
   int64 community_id = 4;
   // 会员-社区关联来源：admin 后台添加 / pos 收银台（缺省 admin）
   string source = 5;
+  // 生日（YYYY-MM-DD，选填）
+  string birthday = 6;
 }
 
 // CreateMemberResp 注册会员响应

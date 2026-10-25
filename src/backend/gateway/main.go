@@ -545,6 +545,9 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 			authAdmin.GET("/users", gwMiddleware.RequirePermission("user:view"), adminHandler.ListUsers)
 			authAdmin.POST("/users", gwMiddleware.RequirePermission("user:create"), adminHandler.CreateUser)
+			// 会员详情（会员订单弹窗信息卡）：订单详情「查看会员」入口仅有 order:view 权限，故查看放行两码
+			authAdmin.GET("/users/:id", gwMiddleware.RequirePermission("user:view", "order:view"), adminHandler.GetUser)
+			authAdmin.PUT("/users/:id", gwMiddleware.RequirePermission("user:update"), adminHandler.UpdateMember)
 			authAdmin.PUT("/users/:id/status", gwMiddleware.RequirePermission("user:update"), adminHandler.SetUserStatus)
 
 			// 全局账号管理（系统管理空间，处理器内强制超管）：仅管账号本身，任职走各社区员工管理

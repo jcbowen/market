@@ -39,6 +39,7 @@ const (
 	UserService_UpdateCommunity_FullMethodName           = "/user.UserService/UpdateCommunity"
 	UserService_DeleteCommunity_FullMethodName           = "/user.UserService/DeleteCommunity"
 	UserService_UpdateUserProfile_FullMethodName         = "/user.UserService/UpdateUserProfile"
+	UserService_UpdateMember_FullMethodName              = "/user.UserService/UpdateMember"
 	UserService_ListRegionChildren_FullMethodName        = "/user.UserService/ListRegionChildren"
 	UserService_ListRegions_FullMethodName               = "/user.UserService/ListRegions"
 	UserService_MatchRegionByName_FullMethodName         = "/user.UserService/MatchRegionByName"
@@ -100,6 +101,8 @@ type UserServiceClient interface {
 	DeleteCommunity(ctx context.Context, in *DeleteCommunityReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// 用户资料
 	UpdateUserProfile(ctx context.Context, in *UpdateUserProfileReq, opts ...grpc.CallOption) (*UserInfo, error)
+	// UpdateMember 后台编辑会员基础资料（昵称/性别/生日，社区语境校验）
+	UpdateMember(ctx context.Context, in *UpdateMemberReq, opts ...grpc.CallOption) (*UserInfo, error)
 	// 行政区划
 	ListRegionChildren(ctx context.Context, in *ListRegionChildrenReq, opts ...grpc.CallOption) (*ListRegionChildrenResp, error)
 	ListRegions(ctx context.Context, in *ListRegionsReq, opts ...grpc.CallOption) (*ListRegionsResp, error)
@@ -347,6 +350,16 @@ func (c *userServiceClient) UpdateUserProfile(ctx context.Context, in *UpdateUse
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UserInfo)
 	err := c.cc.Invoke(ctx, UserService_UpdateUserProfile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *userServiceClient) UpdateMember(ctx context.Context, in *UpdateMemberReq, opts ...grpc.CallOption) (*UserInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UserInfo)
+	err := c.cc.Invoke(ctx, UserService_UpdateMember_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -700,6 +713,8 @@ type UserServiceServer interface {
 	DeleteCommunity(context.Context, *DeleteCommunityReq) (*common.CommonResponse, error)
 	// 用户资料
 	UpdateUserProfile(context.Context, *UpdateUserProfileReq) (*UserInfo, error)
+	// UpdateMember 后台编辑会员基础资料（昵称/性别/生日，社区语境校验）
+	UpdateMember(context.Context, *UpdateMemberReq) (*UserInfo, error)
 	// 行政区划
 	ListRegionChildren(context.Context, *ListRegionChildrenReq) (*ListRegionChildrenResp, error)
 	ListRegions(context.Context, *ListRegionsReq) (*ListRegionsResp, error)
@@ -819,6 +834,9 @@ func (UnimplementedUserServiceServer) DeleteCommunity(context.Context, *DeleteCo
 }
 func (UnimplementedUserServiceServer) UpdateUserProfile(context.Context, *UpdateUserProfileReq) (*UserInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateUserProfile not implemented")
+}
+func (UnimplementedUserServiceServer) UpdateMember(context.Context, *UpdateMemberReq) (*UserInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateMember not implemented")
 }
 func (UnimplementedUserServiceServer) ListRegionChildren(context.Context, *ListRegionChildrenReq) (*ListRegionChildrenResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRegionChildren not implemented")
@@ -1275,6 +1293,24 @@ func _UserService_UpdateUserProfile_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(UserServiceServer).UpdateUserProfile(ctx, req.(*UpdateUserProfileReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _UserService_UpdateMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateMemberReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).UpdateMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_UpdateMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).UpdateMember(ctx, req.(*UpdateMemberReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1937,6 +1973,10 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateUserProfile",
 			Handler:    _UserService_UpdateUserProfile_Handler,
+		},
+		{
+			MethodName: "UpdateMember",
+			Handler:    _UserService_UpdateMember_Handler,
 		},
 		{
 			MethodName: "ListRegionChildren",

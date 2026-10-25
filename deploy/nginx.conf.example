@@ -84,6 +84,9 @@ server {
 
 # HTTPS 主配置（生产环境将上节 301 指向本节；X-Forwarded-Proto 传 https 是网关
 # 密码类接口 HTTPS 兜底判定的依据，务必保留）
+# 经 CDN/DCDN/ESA 前置时还须设置动态回源协议：DCDN 的「动态内容协议跟随回源」在
+# 「动静态加速规则 → 动态内容回源配置」页（不在「回源配置」页），未设置时默认
+# 跟随源站端口（80 → HTTP 明文回源），登录等密码类接口会被网关兜底拒绝（11011）
 server {
     # nginx ≥ 1.25.1 用 http2 指令（旧写法 listen ... http2 已弃用，新版仅告警）；
     # 旧版 nginx（< 1.25.1）请改回 listen 443 ssl http2;

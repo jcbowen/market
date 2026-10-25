@@ -3,7 +3,7 @@
  * 包含用户信息、收货地址、社区切换等
  */
 
-import { get, post, put, del } from './request'
+import { get, post, put, del, upload } from './request'
 import type { PageData } from './request'
 import type { UserInfo, Address, Community } from './types'
 
@@ -13,6 +13,24 @@ import type { UserInfo, Address, Community } from './types'
  */
 export function getUserInfo() {
   return get<UserInfo>('/user/profile')
+}
+
+/**
+ * 更新当前登录用户基础资料（头像/昵称/性别/生日）
+ * 服务端口径：头像/昵称/生日非空才覆盖；性别仅传 1/2 时覆盖，传 0 不修改（C 端无法改回「未知」）
+ * @param data 基础资料（birthday 为 YYYY-MM-DD，空串表示不修改；avatar 为附件 URL，非空才提交）
+ */
+export function updateUserProfile(data: { nickname?: string; avatar?: string; gender?: number; birthday?: string }) {
+  return put<UserInfo>('/user/profile', data as Record<string, unknown>)
+}
+
+/**
+ * 上传头像图片
+ * @param filePath 本地临时文件路径（H5 为 blob URL，小程序为临时路径）
+ * @returns 附件 ID 与可访问 URL（avatar 字段直接使用 url）
+ */
+export function uploadUserAvatar(filePath: string) {
+  return upload<{ attach_id: number; url: string }>('/upload/image', filePath)
 }
 
 /**

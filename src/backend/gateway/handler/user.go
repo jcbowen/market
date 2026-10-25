@@ -126,6 +126,8 @@ type UpdateUserProfileReq struct {
 	Nickname string `json:"nickname"`
 	Avatar   string `json:"avatar"`
 	Gender   int32  `json:"gender"`
+	// 生日（YYYY-MM-DD，非空才覆盖）
+	Birthday string `json:"birthday"`
 }
 
 // UpdateUserProfile 更新当前登录用户资料
@@ -145,6 +147,7 @@ func (h *UserHandler) UpdateUserProfile(c *gin.Context) {
 		Nickname: req.Nickname,
 		Avatar:   req.Avatar,
 		Gender:   req.Gender,
+		Birthday: req.Birthday,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

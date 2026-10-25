@@ -61,6 +61,7 @@
       <u-cell-group>
         <!-- 履约工作台（B）：仅履约人员可见（onShow 实时查询身份） -->
         <u-cell v-if="isFulfiller" icon="server-man" title="履约工作台" value="送货 · 核销" isLink @click="goFulfillment" />
+        <u-cell icon="account" title="个人资料" value="昵称 · 性别 · 生日" isLink @click="goUserProfile" />
         <u-cell icon="map" title="收货地址" @click="goAddressList" />
         <u-cell icon="coupon" title="优惠券包" @click="goCoupon" />
         <u-cell icon="clock" title="限时秒杀" @click="goFlash" />
@@ -112,6 +113,7 @@ import {
   goLogin,
   goOrderList,
   goAddressList,
+  goUserProfile,
   goCoupon,
   goCommunitySelect,
   goFlash,

@@ -31,7 +31,7 @@ func NewUserService(db *mysql.Instance) *UserService {
 	return &UserService{db: db}
 }
 
-// GetUserById 根据 ID 查询用户
+// GetUserById 根据 ID 查询用户（无社区语境，服务间/自身调用使用）
 // 参数：
 //   - ctx: 上下文
 //   - id: 用户 ID
@@ -48,6 +48,31 @@ func (s *UserService) GetUserById(ctx context.Context, id int64) (*model.User, e
 		return nil, err
 	}
 	return &u, nil
+}
+
+// GetUserByIdWithScope 按 ID 查询会员（带社区语境校验，后台查询使用）
+// communityID > 0 时校验会员与本社区关联，无关联按不存在处理，防止跨社区越权读取（超管传 0 放行）
+// 参数：
+//   - ctx: 上下文
+//   - id: 用户 ID
+//   - communityID: 操作者社区语境（0 放行）
+//
+// 返回：
+//   - *model.User: 用户模型
+//   - error: 错误信息
+func (s *UserService) GetUserByIdWithScope(ctx context.Context, id, communityID int64) (*model.User, error) {
+	if communityID > 0 {
+		var bound int64
+		if err := s.db.GetDb().WithContext(ctx).Model(&model.UserCommunity{}).
+			Where("user_id = ? AND community_id = ?", id, communityID).
+			Count(&bound).Error; err != nil {
+			return nil, err
+		}
+		if bound == 0 {
+			return nil, fmt.Errorf("用户不存在")
+		}
+	}
+	return s.GetUserById(ctx, id)
 }
 
 // GetUserByPhone 根据手机号查询用户
@@ -193,10 +218,82 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, req *user.UpdateUse
 	if req.Gender > 0 {
 		u.Gender = req.Gender
 	}
+	// 生日非空才覆盖（与昵称/头像一致的宽松语义；C 端选择器无法表达「清空」）
+	if req.Birthday != "" {
+		birthday, err := normalizeBirthday(req.Birthday)
+		if err != nil {
+			return nil, err
+		}
+		u.Birthday = &birthday
+	}
 	if err := s.db.GetDb().WithContext(ctx).Save(u).Error; err != nil {
 		return nil, err
 	}
 	return u, nil
+}
+
+// UpdateMember 后台编辑会员基础资料（昵称/性别/生日）
+// 昵称非空才覆盖；性别与生日全量覆盖（生日空串=清空）；
+// communityId > 0 时校验会员与本社区的关联关系，防止跨社区修改他社区会员（超管传 0 放行）
+// 参数：
+//   - ctx: 上下文
+//   - req: 编辑会员请求
+//
+// 返回：
+//   - *model.User: 更新后的会员模型
+//   - error: 错误信息
+func (s *UserService) UpdateMember(ctx context.Context, req *user.UpdateMemberReq) (*model.User, error) {
+	if req.Id <= 0 {
+		return nil, fmt.Errorf("参数错误")
+	}
+	db := s.db.GetDb().WithContext(ctx)
+	if req.CommunityId > 0 {
+		var bound int64
+		if err := db.Model(&model.UserCommunity{}).
+			Where("user_id = ? AND community_id = ?", req.Id, req.CommunityId).
+			Count(&bound).Error; err != nil {
+			return nil, err
+		}
+		if bound == 0 {
+			return nil, fmt.Errorf("会员不存在或无权操作")
+		}
+	}
+	u, err := s.GetUserById(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	if req.Nickname != "" {
+		u.Nickname = req.Nickname
+	}
+	u.Gender = req.Gender
+	if req.Birthday == "" {
+		u.Birthday = nil
+	} else {
+		birthday, err := normalizeBirthday(req.Birthday)
+		if err != nil {
+			return nil, err
+		}
+		u.Birthday = &birthday
+	}
+	if err := db.Save(u).Error; err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// normalizeBirthday 校验并规范生日格式（接受 YYYY-MM-DD，非法格式报参数错误）
+// 参数：
+//   - value: 待校验的生日字符串
+//
+// 返回：
+//   - string: 规范化后的生日（YYYY-MM-DD）
+//   - error: 格式错误时返回错误
+func normalizeBirthday(value string) (string, error) {
+	t, err := time.ParseInLocation("2006-01-02", value, time.Local)
+	if err != nil {
+		return "", fmt.Errorf("生日格式错误，应为 YYYY-MM-DD")
+	}
+	return t.Format("2006-01-02"), nil
 }
 
 // ListUsers 查询会员列表（多社区模型：communityID > 0 时按会员-社区关联表过滤）
@@ -450,6 +547,14 @@ func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberRe
 		CommunityID: req.CommunityId,
 		Status:      1,
 	}
+	// 生日选填：注册时携带才写入（YYYY-MM-DD）
+	if req.Birthday != "" {
+		birthday, err := normalizeBirthday(req.Birthday)
+		if err != nil {
+			return nil, false, err
+		}
+		u.Birthday = &birthday
+	}
 	// 并发竞态兜底：两个同手机号请求同时通过上方查重后撞 phone 唯一索引（1062），
 	// 捕获后按 phone 重查复用既有会员，幂等口径与查重命中分支一致（补社区关联、非新注册），
 	// 而不是把 1062 冒泡成内部错误（网关吞成 10002）
@@ -634,6 +739,7 @@ func ToUserInfo(u *model.User) *user.UserInfo {
 		CommunityId:  u.CommunityID,
 		Status:       u.Status,
 		LastLoginAt:  ptrString(u.LastLoginAt),
+		Birthday:     birthdayString(u.Birthday),
 		CreatedAt:    u.CreatedAt,
 	}
 }
@@ -695,6 +801,23 @@ func ptrString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// birthdayString 将生日列扫描值规范化为 YYYY-MM-DD 输出
+// DATE 列在 DSN parseTime=true 时被驱动解析为 time.Time，扫入 *string 字段时
+// database/sql 按 RFC3339Nano 格式化（如 "1995-06-15T00:00:00+08:00"），须截取前 10 位
+// 参数：
+//   - v: 生日字段指针（可空）
+//
+// 返回：
+//   - string: YYYY-MM-DD；未设置或值异常短时返回空串
+//
+// 示例：入参指向 "1995-06-15T00:00:00+08:00" 时返回 "1995-06-15"；入参 nil 返回 ""
+func birthdayString(v *string) string {
+	if v == nil || len(*v) < 10 {
+		return ""
+	}
+	return (*v)[:10]
 }
 
 // _ 占位，避免 errcode 未使用告警

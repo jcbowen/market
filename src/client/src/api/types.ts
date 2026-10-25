@@ -8,6 +8,10 @@ export interface UserInfo {
   nickname: string
   avatar: string
   phone: string
+  /** 性别：0未知 1男 2女 */
+  gender?: number
+  /** 生日（YYYY-MM-DD，未设置为空） */
+  birthday?: string
   community_id: number
   community_name?: string
 }

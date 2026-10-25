@@ -16,6 +16,7 @@ type User struct {
 	Nickname     string  `gorm:"column:nickname;type:varchar(100);comment:昵称" json:"nickname"`
 	Avatar       string  `gorm:"column:avatar;type:varchar(255);comment:头像 URL" json:"avatar"`
 	Gender       int32   `gorm:"column:gender;type:tinyint;default:0;comment:0未知 1男 2女，默认0" json:"gender"`
+	Birthday     *string `gorm:"column:birthday;type:date;comment:生日（YYYY-MM-DD，可空）" json:"birthday"`
 	CommunityID  int64   `gorm:"column:community_id;type:bigint;default:0;index;comment:当前选择的社区 ID" json:"community_id"`
 	Status       int32   `gorm:"column:status;type:tinyint;default:1;comment:0禁用 1启用" json:"status"`
 	LastLoginAt  *string `gorm:"column:last_login_at;type:datetime;comment:最后登录时间" json:"last_login_at"`
