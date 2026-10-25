@@ -116,6 +116,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { SearchOutline } from '@vicons/ionicons5'
 import { getProductList, getCategoryList } from '@/api/product'
 import type { Product, Category } from '@/api/types'
@@ -327,7 +328,7 @@ function onConfirm() {
  * 金额格式化（后端金额单位为元，decimal(10,2)）
  */
 function formatPrice(price: number): string {
-  return Number(price ?? 0).toFixed(2)
+  return formatAmount(price)
 }
 </script>
 

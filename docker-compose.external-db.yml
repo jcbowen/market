@@ -18,6 +18,7 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: user
+        SERVICE_PORT: 50051
     container_name: market-user
     restart: unless-stopped
     environment:
@@ -48,6 +49,7 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: product
+        SERVICE_PORT: 50052
     container_name: market-product
     restart: unless-stopped
     environment:
@@ -81,6 +83,7 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: order
+        SERVICE_PORT: 50053
     container_name: market-order
     restart: unless-stopped
     environment:
@@ -111,6 +114,7 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: cart
+        SERVICE_PORT: 50054
     container_name: market-cart
     restart: unless-stopped
     environment:
@@ -144,6 +148,7 @@ services:
       dockerfile: src/backend/deploy/Dockerfile.service
       args:
         SERVICE_NAME: payment
+        SERVICE_PORT: 50055
     container_name: market-payment
     restart: unless-stopped
     environment:

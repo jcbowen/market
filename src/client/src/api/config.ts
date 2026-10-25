@@ -8,14 +8,15 @@
  * H5 平台：优先读取环境变量 VITE_API_BASE_URL（见 .env.development / .env.production），
  * 未配置时回退为同源相对路径 /api/v1 —— 开发环境经 vite proxy 代理到后端（见 vite.config.ts），
  * 生产环境同样使用 /api/v1，避免与 gateway 的 /s 静态文件前缀冲突
- * 非 H5 平台（小程序/App）不受环境变量影响，使用线上域名
+ * 非 H5 平台（小程序/App）：读取 VITE_APP_API_BASE_URL（独立变量——小程序无同源概念，
+ * 不能复用 H5 的相对路径值），未配置时回退线上域名；调试改环境换 .env 即可，不再改代码
  */
 export const BASE_URL = (() => {
   // #ifdef H5
   return import.meta.env.VITE_API_BASE_URL || '/api/v1'
   // #endif
-  // 非 H5 平台（小程序/App）使用线上域名
-  return 'https://www.jiuchet.com/s/api/v1'
+  // 非 H5 平台（小程序/App）使用绝对地址，缺省回退线上
+  return import.meta.env.VITE_APP_API_BASE_URL || 'https://market.jiuchet.com/s/api/v1'
 })()
 
 /** 请求超时时间（毫秒） */

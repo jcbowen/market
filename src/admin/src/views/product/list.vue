@@ -34,6 +34,7 @@
 defineOptions({ name: 'ProductList' })
 import { ref, onMounted, onActivated, h, reactive, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { formatAmount } from '@/utils/format'
 import { NButton, NInput, NSpace, NTag, NTooltip, createDiscreteApi } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getProductList, getCategoryList, updateProductStatus, deleteProduct, updateProductName, batchUpdateProductStatus, getProductStatusStats } from '@/api/product'
@@ -148,7 +149,7 @@ function cancelRename(row: Product) {
  * @returns 形如 "¥3.00" 或 "¥3.00 ~ ¥8.00"
  */
 function priceText(row: Product): string {
-  const fmt = (n: number) => `¥${n.toFixed(2)}`
+  const fmt = (n: number) => `¥${formatAmount(n)}`
   if (row.is_multi_spec && row.min_price != null && row.max_price != null) {
     return row.min_price === row.max_price ? fmt(row.min_price) : `${fmt(row.min_price)} ~ ${fmt(row.max_price)}`
   }

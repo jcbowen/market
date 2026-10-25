@@ -9,7 +9,7 @@
             {{ statusMeta[detail.info.status]?.label ?? detail.info.status }}
           </n-tag>
         </n-descriptions-item>
-        <n-descriptions-item label="采购金额">¥{{ Number(detail.info.total_amount || 0).toFixed(2) }}</n-descriptions-item>
+        <n-descriptions-item label="采购金额">¥{{ formatAmount(detail.info.total_amount) }}</n-descriptions-item>
         <n-descriptions-item label="创建时间">{{ formatDateTime(detail.info.created_at) }}</n-descriptions-item>
         <n-descriptions-item label="备注">{{ detail.info.remark || '-' }}</n-descriptions-item>
       </n-descriptions>
@@ -36,6 +36,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'PurchaseDetail' })
 import { onMounted, ref, h } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRoute, useRouter } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { NTag } from 'naive-ui'
@@ -80,13 +81,13 @@ const columns: DataTableColumns<PurchaseOrderItemRow> = [
     title: '采购单价',
     key: 'purchase_price',
     width: 110,
-    render: (row) => `¥${Number(row.purchase_price || 0).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.purchase_price)}`,
   },
   {
     title: '小计',
     key: 'subtotal',
     width: 110,
-    render: (row) => `¥${(row.quantity * row.purchase_price).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.quantity * row.purchase_price)}`,
   },
 ]
 

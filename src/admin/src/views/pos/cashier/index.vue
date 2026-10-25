@@ -11,7 +11,7 @@
       </n-button>
     </div>
 
-    <!-- 进行中班次：三 Tab 工作区 -->
+    <!-- 进行中班次：四 Tab 工作区 -->
     <template v-else>
       <n-tabs
         v-model:value="activeTab"
@@ -21,13 +21,15 @@
         :tabs-padding="16"
       >
         <n-tab name="order" tab="商品下单" />
+        <n-tab name="direct" tab="直接收款" />
         <n-tab name="verify" tab="取货核销" />
         <n-tab name="orders" tab="订单查询" />
       </n-tabs>
       <div class="tab-body">
         <OrderTab v-if="activeTab === 'order'" />
+        <DirectPayTab v-else-if="activeTab === 'direct'" />
         <VerifyTab v-else-if="activeTab === 'verify'" />
-        <OrdersTab v-else />
+        <OrdersTab v-else @import-to-cashier="activeTab = 'order'" />
       </div>
     </template>
   </div>
@@ -41,6 +43,7 @@ import { useAuthStore } from '@/stores/auth'
 import { usePosStore } from '@/stores/pos'
 import { startPosShift } from '@/api/order'
 import OrderTab from './OrderTab.vue'
+import DirectPayTab from './DirectPayTab.vue'
 import VerifyTab from './VerifyTab.vue'
 import OrdersTab from './OrdersTab.vue'
 
@@ -49,7 +52,7 @@ const authStore = useAuthStore()
 const posStore = usePosStore()
 
 /** 当前激活 Tab */
-const activeTab = ref<'order' | 'verify' | 'orders'>('order')
+const activeTab = ref<'order' | 'direct' | 'verify' | 'orders'>('order')
 
 /** 开工引导：备注与提交状态 */
 const startNote = ref('')

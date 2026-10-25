@@ -25,3 +25,17 @@ export function formatMoney(value: number): string {
 export function formatMoneyFixed(value: number): string {
   return (value ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+
+/**
+ * 金额展示统一出口（元，固定两位小数、带千分位、null 容错为 0）
+ * 全部金额渲染一律调用本函数，禁止再裸写 toFixed(2)：
+ * 金额类型后续迁移 decimal 时只需改这一处
+ * @param value 金额（元），允许 null/undefined
+ * @returns 格式化结果
+ * @example
+ * formatAmount(1234.5) // '1,234.50'
+ * formatAmount(null) // '0.00'
+ */
+export function formatAmount(value: number | null | undefined): string {
+  return formatMoneyFixed(Number(value ?? 0))
+}

@@ -57,6 +57,9 @@ func (s *server) GetCart(ctx stdctx.Context, req *cart.GetCartReq) (*cart.CartRe
 // 共同口径（cart 不引商品服务包，proto SkuInfo.status 原样透出，此处按值判定）
 const skuStatusEnabled = 1
 
+// maxCartItemQty 单条购物车项数量上限，与下单侧「单品 1~999」口径一致
+const maxCartItemQty = 999
+
 // AddItem 添加商品到购物车
 // 若同一用户同一 SKU 已存在记录，则累加数量并置为选中；否则新建记录。
 // 交易入口校验三件事：加购社区=SKU 归属社区（P0-4）、SKU 启用（规格未失效）、商品可售（P1-4）；
@@ -70,8 +73,10 @@ const skuStatusEnabled = 1
 //   - *cart.CartResp: 购物车响应
 //   - error: 错误信息
 func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartResp, error) {
-	if req.Quantity <= 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "数量必须大于0")
+	// 数量上限对齐下单口径（order 侧 1~999）：不设限会让超大数量进购物车试算与展示，
+	// 到下单才被拒；累加后总量仍由下单侧兜底
+	if req.Quantity <= 0 || req.Quantity > maxCartItemQty {
+		return nil, status.Errorf(codes.InvalidArgument, "数量须在 1~%d 之间", maxCartItemQty)
 	}
 
 	skuInfo, err := s.productClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: req.SkuId})
@@ -148,6 +153,10 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 //   - *cart.CartResp: 购物车响应
 //   - error: 错误信息
 func (s *server) UpdateItem(ctx stdctx.Context, req *cart.UpdateItemReq) (*cart.CartResp, error) {
+	// 改数量路径（quantity>0 才是改数量，<=0 为纯选中操作）补上限，与 AddItem 同口径
+	if req.Quantity > maxCartItemQty {
+		return nil, status.Errorf(codes.InvalidArgument, "数量须在 1~%d 之间", maxCartItemQty)
+	}
 	if err := s.updateCartItem(ctx, req.UserId, req.Id, req.Quantity, req.Selected); err != nil {
 		return nil, err
 	}

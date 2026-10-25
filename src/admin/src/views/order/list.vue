@@ -279,6 +279,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'OrderList' })
 import { computed, h, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -701,13 +702,13 @@ const columns: DataTableColumns<Order> = [
     title: '订单金额',
     key: 'total_amount',
     width: 110,
-    render: (row) => `￥${(row.total_amount ?? 0).toFixed(2)}`,
+    render: (row) => `￥${formatAmount(row.total_amount)}`,
   },
   {
     title: '实付金额',
     key: 'pay_amount',
     width: 110,
-    render: (row) => `￥${(row.pay_amount ?? 0).toFixed(2)}`,
+    render: (row) => `￥${formatAmount(row.pay_amount)}`,
   },
   {
     title: '状态',
@@ -1208,6 +1209,11 @@ onActivated(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', updateNarrow)
+  // 清理商品搜索防抖 timer，否则卸载后 300ms 仍会触发一次列表请求
+  if (productSearchTimer) {
+    clearTimeout(productSearchTimer)
+    productSearchTimer = null
+  }
 })
 </script>
 

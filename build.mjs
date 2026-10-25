@@ -22,7 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createContext, parseAutoFix, preflightGoModules, runWithRepair } from './deps-tools.mjs';
 

@@ -61,6 +61,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'PaymentAnomalies' })
 import { computed, h, onMounted, onUnmounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { NButton, NSpace, NTag, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getPaymentAnomalies, handlePaymentAnomaly } from '@/api/order'
@@ -167,7 +168,7 @@ const columns: DataTableColumns<PaymentAnomaly> = [
     title: '金额',
     key: 'amount',
     width: 100,
-    render: (row) => (row.amount > 0 ? `￥${row.amount.toFixed(2)}` : '-'),
+    render: (row) => (row.amount > 0 ? `￥${formatAmount(row.amount)}` : '-'),
   },
   { title: '说明', key: 'error_msg', ellipsis: { tooltip: true }, render: (row) => row.error_msg || '-' },
   {

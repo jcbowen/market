@@ -211,7 +211,7 @@ func (h *Hub) BroadcastToCommunity(communityID int64, msg *Message) {
 	}
 }
 
-// Attach 将已升级的连接挂入集线器并启动读写循环，随后下发 hello 欢迎消息
+// Attach 将已升级的连接挂入集线器：登记后先下发 hello，再启动读写循环
 // 调用前置条件：路由链已完成 admin JWT 鉴权、社区访问校验与 order:view 权限校验，
 // UserContext 已注入 gin 上下文
 //
@@ -220,8 +220,11 @@ func (h *Hub) BroadcastToCommunity(communityID int64, msg *Message) {
 func (h *Hub) Attach(c *Client) {
 	h.Register(c)
 	go c.writePump()
-	go c.readPump()
+	// hello 必须先于 readPump 启动写入（send 有缓冲，writePump 随后取走）：
+	// readPump 退出即触发 Unregister 关闭 send，若 hello 排在其后，
+	// 连接瞬断时会对已关闭 channel 发送而 panic
 	c.SendJSON(&Message{Type: MsgTypeHello})
+	go c.readPump()
 }
 
 // NewClient 由已升级连接构造客户端

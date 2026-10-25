@@ -35,8 +35,8 @@
             </div>
             <div class="shift-item-meta">{{ formatTime(shift.start_time) }} - {{ shift.end_time ? formatTime(shift.end_time) : '至今' }}</div>
             <div class="shift-item-amount">
-              <span>收款 ￥{{ (shift.statistics?.total_income ?? 0).toFixed(2) }}</span>
-              <span v-if="shift.statistics?.total_refund" class="refund">退 ￥{{ shift.statistics.total_refund.toFixed(2) }}</span>
+              <span>收款 ￥{{ formatAmount(shift.statistics?.total_income) }}</span>
+              <span v-if="shift.statistics?.total_refund" class="refund">退 ￥{{ formatAmount(shift.statistics.total_refund) }}</span>
             </div>
           </div>
         </n-spin>
@@ -60,25 +60,25 @@
             <!-- 仅展示实际有数据的支付方式，按 SHIFT_PAY_TYPES 顺序排列 -->
             <div v-for="item in incomeRows" :key="'in' + item.pay_type" class="receipt-row" :class="{ muted: item.amount === 0 }">
               <span>{{ payTypeText(item.pay_type) }}</span>
-              <span>￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
+              <span>￥{{ formatAmount(item.amount) }}（{{ item.order_count }} 单）</span>
             </div>
             <div class="receipt-section">退款</div>
             <div v-for="item in refundRows" :key="'rf' + item.pay_type" class="receipt-row" :class="{ muted: item.amount === 0 }">
               <span>{{ payTypeText(item.pay_type) }}</span>
-              <span>-￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
+              <span>-￥{{ formatAmount(item.amount) }}（{{ item.order_count }} 单）</span>
             </div>
             <div class="receipt-divider">- - - - - - - - - - - - - - - -</div>
             <div class="receipt-row total">
-              <span>收款合计</span><span>￥{{ (activeShift.statistics?.total_income ?? 0).toFixed(2) }}</span>
+              <span>收款合计</span><span>￥{{ formatAmount(activeShift.statistics?.total_income) }}</span>
             </div>
             <div class="receipt-row total">
-              <span>退款合计</span><span>￥{{ (activeShift.statistics?.total_refund ?? 0).toFixed(2) }}</span>
+              <span>退款合计</span><span>￥{{ formatAmount(activeShift.statistics?.total_refund) }}</span>
             </div>
             <div class="receipt-row total">
               <span>班内订单</span><span>{{ activeShift.statistics?.order_count ?? 0 }} 单</span>
             </div>
             <div class="receipt-row total strong">
-              <span>现金合计</span><span>￥{{ (activeShift.statistics?.cash_total ?? 0).toFixed(2) }}</span>
+              <span>现金合计</span><span>￥{{ formatAmount(activeShift.statistics?.cash_total) }}</span>
             </div>
             <div v-if="activeShift.note" class="receipt-line note">备注：{{ activeShift.note }}</div>
             <div class="receipt-line muted center">打印时间：{{ printTimeText }}</div>
@@ -96,6 +96,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRouter } from 'vue-router'
 import { ArrowBackOutline } from '@vicons/ionicons5'
 import { getMyPosShifts } from '@/api/order'

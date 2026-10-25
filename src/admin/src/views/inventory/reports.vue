@@ -58,6 +58,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockReports' })
 import { h, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getInventorySummaryReport, getProfitReport } from '@/api/inventory'
@@ -109,13 +110,13 @@ const summaryColumns: DataTableColumns<InventorySummaryItem> = [
     title: '成本价',
     key: 'cost_price',
     width: 100,
-    render: (row) => `¥${Number(row.cost_price || 0).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.cost_price)}`,
   },
   {
     title: '库存金额',
     key: 'stock_value',
     width: 120,
-    render: (row) => `¥${(row.closing_stock * row.cost_price).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.closing_stock * row.cost_price)}`,
   },
 ]
 
@@ -162,13 +163,13 @@ const profitColumns: DataTableColumns<ProfitReportItem> = [
     title: '销售额',
     key: 'sales_amount',
     width: 120,
-    render: (row) => `¥${Number(row.sales_amount || 0).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.sales_amount)}`,
   },
   {
     title: '成本',
     key: 'cost_amount',
     width: 120,
-    render: (row) => `¥${Number(row.cost_amount || 0).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.cost_amount)}`,
   },
   {
     title: '毛利',
@@ -176,7 +177,7 @@ const profitColumns: DataTableColumns<ProfitReportItem> = [
     width: 120,
     render: (row) =>
       h('span', { style: `color: ${row.profit >= 0 ? '#d03050' : '#2080f0'}` }, {
-        default: () => `¥${Number(row.profit || 0).toFixed(2)}`,
+        default: () => `¥${formatAmount(row.profit)}`,
       }),
   },
   {

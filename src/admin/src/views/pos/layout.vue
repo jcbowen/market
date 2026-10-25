@@ -51,14 +51,14 @@
               <!-- 仅展示实际有数据的支付方式，按 SHIFT_PAY_TYPES 顺序排列 -->
               <div v-for="item in incomeRows" :key="'in' + item.pay_type" class="stat-row" :class="{ muted: item.amount === 0 }">
                 <span>{{ payTypeText(item.pay_type) }}</span>
-                <span class="amount">￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
+                <span class="amount">￥{{ formatAmount(item.amount) }}（{{ item.order_count }} 单）</span>
               </div>
             </div>
             <div class="stats-block">
               <div class="info-title">退款</div>
               <div v-for="item in refundRows" :key="'rf' + item.pay_type" class="stat-row" :class="{ muted: item.amount === 0 }">
                 <span>{{ payTypeText(item.pay_type) }}</span>
-                <span class="amount refund">-￥{{ item.amount.toFixed(2) }}（{{ item.order_count }} 单）</span>
+                <span class="amount refund">-￥{{ formatAmount(item.amount) }}（{{ item.order_count }} 单）</span>
               </div>
             </div>
           </div>
@@ -85,6 +85,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { CashOutline, PersonCircleOutline, ChevronDownOutline } from '@vicons/ionicons5'
@@ -123,7 +124,7 @@ const refundRows = computed(() => payStatRows(stats.value.refund))
 /**
  * 现金合计文本（收款-退款，后端已按支付方式折算）
  */
-const cashTotalText = computed(() => (stats.value.cash_total ?? 0).toFixed(2))
+const cashTotalText = computed(() => formatAmount(stats.value.cash_total))
 
 /** 交班弹窗打开时的当前时间文本（交班时间展示） */
 const nowTimeText = ref('')

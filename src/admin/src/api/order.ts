@@ -189,7 +189,8 @@ export function deleteOrderExportTask(id: number) {
 /**
  * 收银台代客下单（按所选支付方式当场结清）
  * @param data 下单参数（user_id=0 为散客；配送单必须带联系人/电话/地址；pay_type 支付方式，缺省现金 4；
- *              items[].price 单品改价（>0 以该价成交）；manual_discount 整单优惠（改价/抹零折算，不超过应付）
+ *              items[].price 单品改价（>0 以该价成交）；manual_discount 整单优惠（改价/抹零折算，不超过应付）；
+ *              manual_amount 直接收款金额（「直接收款」无商品单，>0 时 items 可空，仅到店）
  * @returns 订单信息（含取货码，自提单）
  */
 export function createPosOrder(data: {
@@ -203,7 +204,9 @@ export function createPosOrder(data: {
   pay_type?: number
   /** 整单手动优惠金额（整单改价/抹零折算），仅对本次订单生效 */
   manual_discount?: number
-  items: Array<{ sku_id: number; quantity: number; /** 单品成交价（>0 覆盖档案价，仅本单生效） */ price?: number }>
+  /** 直接收款金额（无商品单专用）：>0 时订单不含商品明细，金额即成交金额，仅到店 */
+  manual_amount?: number
+  items?: Array<{ sku_id: number; quantity: number; /** 单品成交价（>0 覆盖档案价，仅本单生效） */ price?: number }>
 }) {
   return request<
     ApiResult<{
@@ -284,6 +287,48 @@ export function getPosOrderPayStatus(orderId: number, paymentNo?: string) {
     url: `/api/v1/admin/pos/orders/${orderId}/pay-code`,
     method: 'GET',
     params: paymentNo ? { payment_no: paymentNo } : undefined,
+  })
+}
+
+/**
+ * 收银台待支付订单改用现金收款（扣款失败换现金 / 订单查询继续收现金）
+ * 后端先关闭遗留待支付支付单（旧付款码不可再扣款），再创建现金支付单，订单自动流转已支付
+ * @param orderId 订单 ID
+ * @returns 收款结果（paid=true 订单已完结，到店单自动完成）
+ */
+export function payPosOrderCash(orderId: number) {
+  return request<
+    ApiResult<{
+      paid: boolean
+      order_id: number
+      order_no: string
+      pay_amount: number
+      pay_type: number
+    }>
+  >({
+    url: `/api/v1/admin/pos/orders/${orderId}/pay-cash`,
+    method: 'POST',
+  })
+}
+
+/**
+ * 收银台待支付订单重建付款码收款会话（订单查询「继续收款」入口）
+ * 复用后端幂等：同渠道同金额待支付单直接复用（out_trade_no 不变）
+ * @param orderId 订单 ID
+ * @returns payment_no 付款码扫码窗凭据 / pay_type 占位值 / pay_amount 订单应付
+ */
+export function ensurePosCodePaySession(orderId: number) {
+  return request<
+    ApiResult<{
+      payment_no: string
+      pay_type: number
+      order_id: number
+      order_no: string
+      pay_amount: number
+    }>
+  >({
+    url: `/api/v1/admin/pos/orders/${orderId}/pay-code-session`,
+    method: 'POST',
   })
 }
 

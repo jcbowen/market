@@ -91,6 +91,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useDialog, useMessage } from 'naive-ui'
 import { adminCreateRefund, getOrderDetail, getRefundSetting } from '@/api/order'
 import type { OrderDetail, OrderItem } from '@/api/types'
@@ -134,10 +135,6 @@ const selState = reactive<Record<number, { checked: boolean; qty: number }>>({})
 
 function onUpdateShow(value: boolean) {
   emit('update:show', value)
-}
-
-function formatAmount(value?: number | null): string {
-  return (value ?? 0).toFixed(2)
 }
 
 /** 已成功退款合计（含运费），来自订单详情的售后记录 */

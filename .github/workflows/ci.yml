@@ -107,9 +107,7 @@ jobs:
     name: golangci-lint
     runs-on: ubuntu-latest
     if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-    # lint 首次引入：存量代码可能存在历史问题，先以 advisory 模式运行不阻断合并；
-    # 待本地按报告清理完成后移除 continue-on-error 改为阻断
-    continue-on-error: true
+    # 2026-10-25 本地以与 CI 同版本 v2.14 全量跑 0 issues，改为阻断模式（收紧 linter 前先保持最小集）
     steps:
       - uses: actions/checkout@v5
 

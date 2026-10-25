@@ -40,6 +40,7 @@
  * 弹窗内多列展示完整信息（名称/规格/编码/条形码/库存/成本），无截断遮挡。
  */
 import { computed, h, onUnmounted, ref, watch } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { NTag, NText } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getSkuStockList } from '@/api/inventory'
@@ -112,7 +113,7 @@ const columns: DataTableColumns<Sku> = [
           : null,
       ]),
   },
-  { title: '成本价', key: 'cost_price', width: 90, render: (row) => `¥${Number(row.cost_price || 0).toFixed(2)}` },
+  { title: '成本价', key: 'cost_price', width: 90, render: (row) => `¥${formatAmount(row.cost_price)}` },
   {
     title: '操作',
     key: 'action',

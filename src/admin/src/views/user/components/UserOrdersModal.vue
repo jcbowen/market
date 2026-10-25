@@ -31,6 +31,7 @@
 
 <script setup lang="ts">
 import { h, ref, watch } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { NButton, NImage, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getOrderList } from '@/api/order'
@@ -104,7 +105,7 @@ const columns: DataTableColumns<Order> = [
   },
   { title: '社区', key: 'community_name', width: 110, ellipsis: { tooltip: true } },
   { title: '状态', key: 'status_text', width: 90, render: (row) => h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => row.status_text }) },
-  { title: '实付金额', key: 'pay_amount', width: 100, render: (row) => `¥${Number(row.pay_amount ?? 0).toFixed(2)}` },
+  { title: '实付金额', key: 'pay_amount', width: 100, render: (row) => `¥${formatAmount(row.pay_amount)}` },
   { title: '配送方式', key: 'delivery_type', width: 90, render: (row) => (row.delivery_type === 1 ? '自提' : '配送') },
   { title: '下单时间', key: 'created_at', width: 160, render: (row) => formatDateTime(row.created_at) },
 ]

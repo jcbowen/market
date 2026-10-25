@@ -73,6 +73,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'RefundList' })
 import { ref, onActivated, onMounted, onUnmounted, computed, h } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, NDataTable, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -140,7 +141,7 @@ const itemColumns: DataTableColumns<RefundItem> = [
     title: '应退金额',
     key: 'refund_amount',
     width: 110,
-    render: (row) => `￥${(row.refund_amount ?? 0).toFixed(2)}`,
+    render: (row) => `￥${formatAmount(row.refund_amount)}`,
   },
 ]
 
@@ -179,9 +180,9 @@ const columns: DataTableColumns<Refund> = [
     key: 'amount',
     width: 130,
     render(row) {
-      const text = `￥${(row.amount ?? 0).toFixed(2)}`
+      const text = `￥${formatAmount(row.amount)}`
       if (row.freight_amount > 0) {
-        return h('span', null, [text, h('span', { style: 'color:#999;font-size:12px;margin-left:4px' }, `（含运费￥${row.freight_amount.toFixed(2)}）`)])
+        return h('span', null, [text, h('span', { style: 'color:#999;font-size:12px;margin-left:4px' }, `（含运费￥${formatAmount(row.freight_amount)}）`)])
       }
       return text
     },
@@ -342,7 +343,7 @@ function onPageChange(page: number) {
 function confirmApprove(row: Refund) {
   dialog.warning({
     title: '同意退款',
-    content: `确认同意售后单 ${row.refund_no} 的退款申请？同意后将按订单原支付流水退回 ￥${(row.amount ?? 0).toFixed(2)}。`,
+    content: `确认同意售后单 ${row.refund_no} 的退款申请？同意后将按订单原支付流水退回 ￥${formatAmount(row.amount)}。`,
     positiveText: '确认同意',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -363,7 +364,7 @@ function confirmApprove(row: Refund) {
 function confirmRetry(row: Refund) {
   dialog.warning({
     title: '重试退款',
-    content: `确认对退款单 ${row.refund_no} 重新发起渠道退款？金额 ￥${(row.amount ?? 0).toFixed(2)}。`,
+    content: `确认对退款单 ${row.refund_no} 重新发起渠道退款？金额 ￥${formatAmount(row.amount)}。`,
     positiveText: '确认重试',
     negativeText: '取消',
     onPositiveClick: async () => {

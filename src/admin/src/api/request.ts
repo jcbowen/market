@@ -70,11 +70,22 @@ export interface BizError extends Error {
 
 /**
  * 清除登录凭证并跳转登录页
- * 与 HTTP 401 分支保持同一处理：静默跳转，不弹错误提示
+ * 与 HTTP 401 分支保持同一处理：静默跳转，不弹错误提示。
+ * 携带 redirect 回跳原页面（收银台 /pos* 回 /pos/login，其余回 /login），
+ * 否则收银员会话过期会被带回主登录页且丢上下文
  */
 function redirectToLogin() {
   Cookies.remove('access_token')
-  window.location.href = '/b/#/login'
+  const current = window.location.hash.replace(/^#/, '')
+  const isPos = current.startsWith('/pos')
+  const loginPath = isPos ? '/pos/login' : '/login'
+  const validRedirect =
+    current.startsWith('/') &&
+    !current.startsWith('//') &&
+    current !== loginPath &&
+    (isPos ? current.startsWith('/pos/') : !current.startsWith('/pos'))
+  const query = validRedirect ? `?redirect=${encodeURIComponent(current)}` : ''
+  window.location.href = `/b/#${loginPath}${query}`
 }
 
 /**

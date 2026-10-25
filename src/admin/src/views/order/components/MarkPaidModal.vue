@@ -45,6 +45,7 @@
 // 后台人工「标记已支付」弹窗
 // 这条入口绕过渠道核实，因此四个字段全部必填：支付服务据此写 payments 成功态并流转订单，备注里带操作人
 import { computed, reactive, ref, watch } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useMessage } from 'naive-ui'
 import type { FormInst, FormRules, SelectOption } from 'naive-ui'
 import { markOrderPaid } from '@/api/order'
@@ -93,7 +94,7 @@ const rules: FormRules = {
 /** 支付单号下拉项：本单每次支付尝试一行，标注状态供选择 */
 const paymentNoOptions = computed<SelectOption[]>(() =>
   (props.payments ?? []).map((p) => ({
-    label: `${p.payment_no}（${paymentStatusText(p.status)}　￥${(p.amount ?? 0).toFixed(2)}）`,
+    label: `${p.payment_no}（${paymentStatusText(p.status)}　￥${formatAmount(p.amount)}）`,
     value: p.payment_no,
   })),
 )

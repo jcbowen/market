@@ -1,7 +1,7 @@
 <template>
-  <div class="verify-tab">
+  <div class="verify-tab" tabindex="-1">
     <div class="verify-panel">
-      <div class="verify-hint">输入或扫码枪扫入 8 位取货码后回车</div>
+      <div class="verify-hint">直接敲键盘或扫码枪扫入 8 位取货码，回车查询（无需点击输入框）</div>
       <n-input
         ref="codeInputRef"
         v-model:value="pickupCode"
@@ -11,14 +11,15 @@
         class="code-input"
         :input-props="{ inputmode: 'numeric' }"
         clearable
-        @keydown.enter="onQuery"
       >
         <template #prefix>
           <n-icon><BarcodeOutline /></n-icon>
         </template>
       </n-input>
-      <n-button type="primary" size="large" block :loading="querying" @click="onQuery">查询订单</n-button>
     </div>
+
+    <!-- 触屏数字小键盘（收银机点按输入） -->
+    <number-pad class="verify-pad" @input="onPadInput" @backspace="onPadBackspace" @clear="resetVerify" />
 
     <!-- 订单摘要与核销 -->
     <div v-if="detail" class="order-summary">
@@ -33,12 +34,12 @@
         <div v-for="item in detail.items" :key="item.id" class="summary-item">
           <span class="item-name">{{ item.product_name }}<template v-if="item.sku_name">（{{ item.sku_name }}）</template></span>
           <span class="item-qty">x{{ item.quantity }}</span>
-          <span class="item-price">￥{{ item.price.toFixed(2) }}</span>
+          <span class="item-price">￥{{ formatAmount(item.price) }}</span>
         </div>
       </div>
       <div class="summary-amount">
         <span>应付</span>
-        <span class="amount">￥{{ detail.pay_amount.toFixed(2) }}</span>
+        <span class="amount">￥{{ formatAmount(detail.pay_amount) }}</span>
       </div>
       <n-space justify="center" class="summary-actions">
         <n-button :disabled="verifying" @click="resetVerify">清空重扫</n-button>
@@ -62,19 +63,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useMessage } from 'naive-ui'
 import { BarcodeOutline } from '@vicons/ionicons5'
 import { getOrderDetail, getOrderList, verifyPickup } from '@/api/order'
 import type { OrderDetail } from '@/api/types'
+import NumberPad from '@/components/NumberPad.vue'
 import { ORDER_STATUS, orderStatusTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 取货核销 Tab
- * 输入/扫码枪扫入取货码 → 查本社区订单 → 展示摘要 → 仅待自提（自提单已支付）可核销
- * 核销权限沿用接口要求（order:update），无权限时按钮不展示并给出提示
+ * 进入即聚焦：页面级键盘监听（无需点击输入框），物理键盘数字与扫码枪直接录入、回车查询；
+ * 配触屏数字小键盘供触屏收银机点按。输入/扫码枪扫入取货码 → 查本社区订单 → 展示摘要
+ * → 仅待自提（自提单已支付）可核销。核销权限沿用接口要求（order:update）
  */
 
 const message = useMessage()
@@ -105,12 +109,47 @@ const canVerify = computed(
 )
 
 /**
+ * 追加一位数字到取货码（页面级键盘与小键盘共用）
+ * @param digit 数字字符
+ */
+function appendDigit(digit: string) {
+  if (pickupCode.value.length >= 8) return
+  pickupCode.value += digit
+}
+
+/**
+ * 页面级键盘监听：数字键直接录入（无需聚焦输入框）、退格删一位、回车查询。
+ * 扫码枪等价于高速键盘输入 + 回车，即扫即得
+ * @param e 键盘事件
+ */
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  if (/^\d$/.test(e.key)) {
+    appendDigit(e.key)
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'Backspace') {
+    pickupCode.value = pickupCode.value.slice(0, -1)
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'Enter') {
+    void onQuery()
+    e.preventDefault()
+  }
+}
+
+/**
  * 按取货码查询订单并加载详情
  */
 async function onQuery() {
   const code = pickupCode.value.trim()
-  if (!code) {
-    message.warning('请输入取货码')
+  if (!code || querying.value) {
+    return
+  }
+  if (code.length < 8) {
+    message.warning('请输入完整的 8 位取货码')
     return
   }
   querying.value = true
@@ -158,6 +197,27 @@ function resetVerify() {
   pickupCode.value = ''
   void nextTick(() => codeInputRef.value?.focus())
 }
+
+// --- 小键盘事件 ---
+
+/** 小键盘数字输入 */
+function onPadInput(char: string) {
+  appendDigit(char)
+}
+
+/** 小键盘退格 */
+function onPadBackspace() {
+  pickupCode.value = pickupCode.value.slice(0, -1)
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onGlobalKeydown)
+  void nextTick(() => codeInputRef.value?.focus())
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+})
 </script>
 
 <style lang="scss" scoped>
@@ -190,6 +250,10 @@ function resetVerify() {
       font-variant-numeric: tabular-nums;
     }
   }
+}
+.verify-pad {
+  width: 320px;
+  max-width: 100%;
 }
 .order-summary {
   width: 520px;

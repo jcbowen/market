@@ -135,13 +135,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/inventory/reports.vue'),
         meta: { title: '报表中心', permission: 'inventory:view', group: '库存管理' },
       },
-      // SKU 选择器方案对比演示页（临时，敲定方案后连同路由一起删除）
-      {
-        path: 'stock/picker-demo',
-        name: 'StockPickerDemo',
-        component: () => import('@/views/inventory/picker-demo.vue'),
-        meta: { title: '选择器方案对比', permission: 'inventory:view', group: '库存管理', hidden: true },
-      },
       // 订单管理
       {
         path: 'orders',

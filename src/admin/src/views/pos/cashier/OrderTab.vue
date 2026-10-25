@@ -63,7 +63,7 @@
               </n-image>
               <div class="p-name">{{ p.name }}</div>
               <div class="p-meta">
-                <span class="p-price">￥{{ (p.min_price ?? p.price).toFixed(2) }}</span>
+                <span class="p-price">￥{{ formatAmount(p.min_price ?? p.price) }}</span>
                 <span class="p-stock">{{ p.stock > 0 ? `库存${p.stock}` : '缺货' }}</span>
               </div>
               <n-tag v-if="p.is_multi_spec" size="small" type="warning" :bordered="false" class="spec-badge">
@@ -108,8 +108,8 @@
             </div>
             <!-- 价格：点击改价（弹窗确认，仅本单生效） -->
             <div class="cart-price" title="点击改价" @click="openPriceModal(row)">
-              <template v-if="row.price_modified">￥{{ row.price.toFixed(2) }}<span class="origin">￥{{ row.original_price.toFixed(2) }}</span></template>
-              <template v-else>￥{{ row.price.toFixed(2) }} <n-icon :size="13" class="edit-hint"><CreateOutline /></n-icon></template>
+              <template v-if="row.price_modified">￥{{ formatAmount(row.price) }}<span class="origin">￥{{ formatAmount(row.original_price) }}</span></template>
+              <template v-else>￥{{ formatAmount(row.price) }} <n-icon :size="13" class="edit-hint"><CreateOutline /></n-icon></template>
             </div>
           </div>
           <div class="stepper">
@@ -117,7 +117,7 @@
             <span class="qty">{{ row.quantity }}</span>
             <n-button size="small" circle @click="changeQty(row.sku_id, 1)">+</n-button>
           </div>
-          <div class="cart-subtotal">￥{{ (row.price * row.quantity).toFixed(2) }}</div>
+          <div class="cart-subtotal">￥{{ formatAmount(row.price * row.quantity) }}</div>
           <n-button size="small" quaternary type="error" @click="removeRow(row.sku_id)">删除</n-button>
         </div>
       </div>
@@ -178,36 +178,47 @@
       <!-- 合计与结账 -->
       <div class="summary">
         <div class="summary-row muted">
-          <span>商品 {{ totalQuantity }} 件 · 合计 ￥{{ totalAmount.toFixed(2) }}</span>
+          <span>商品 {{ totalQuantity }} 件 · 合计 ￥{{ formatAmount(totalAmount) }}</span>
         </div>
         <div v-if="couponDiscount > 0" class="summary-row">
           <span>券优惠</span>
-          <span class="discount-amount">-￥{{ couponDiscount.toFixed(2) }}</span>
+          <span class="discount-amount">-￥{{ formatAmount(couponDiscount) }}</span>
         </div>
         <div v-if="couponId && couponDiscount === 0" class="summary-row muted">
           <span>所选券未达使用门槛</span>
         </div>
         <div v-if="manualDiscount > 0" class="summary-row">
           <span>手动优惠</span>
-          <span class="discount-amount">-￥{{ manualDiscount.toFixed(2) }}</span>
+          <span class="discount-amount">-￥{{ formatAmount(manualDiscount) }}</span>
         </div>
         <div class="summary-row payable">
           <span>应付</span>
-          <span class="amount">￥{{ payableAmount.toFixed(2) }}</span>
-        </div>
-        <div class="pay-method-row">
-          <span class="pay-method-label">支付方式</span>
-          <n-radio-group v-model:value="payType" size="medium">
-            <n-radio v-for="m in PAY_METHODS" :key="m.value" :value="m.value">{{ m.label }}</n-radio>
-          </n-radio-group>
+          <span class="amount">￥{{ formatAmount(payableAmount) }}</span>
         </div>
         <div class="summary-hint">满减与券减免以后端实际结算为准</div>
       </div>
       <n-space justify="end" :size="12" class="actions">
         <n-button @click="openHeldList">挂单({{ heldCount }})</n-button>
         <n-button type="warning" :disabled="!cart.length" @click="onHold">暂存挂单</n-button>
-        <n-button type="primary" class="checkout-btn" :loading="checkingOut" :disabled="!cart.length" @click="onCheckout">
-          {{ payMethodLabel }}结账 ￥{{ payableAmount.toFixed(2) }}
+        <!-- 结账双按钮：结账即收款，免选支付方式。付款码渠道不可用时只显示现金 -->
+        <n-button
+          v-if="codePayMethod"
+          type="primary"
+          class="checkout-btn"
+          :loading="checkingOut"
+          :disabled="!cart.length"
+          @click="onCodePay"
+        >
+          付款码收款 ￥{{ formatAmount(payableAmount) }}（F2）
+        </n-button>
+        <n-button
+          type="warning"
+          secondary
+          :loading="checkingOut"
+          :disabled="!cart.length"
+          @click="onCashPay"
+        >
+          现金收款（F3）
         </n-button>
       </n-space>
     </div>
@@ -231,7 +242,7 @@
         @click="addSkuToCart(sku)"
       >
         <div class="sku-name">{{ sku.spec_name || sku.sku_code }}</div>
-        <div class="sku-meta">￥{{ sku.price.toFixed(2) }}（库存 {{ sku.stock }}）</div>
+        <div class="sku-meta">￥{{ formatAmount(sku.price) }}（库存 {{ sku.stock }}）</div>
       </div>
     </div>
   </n-modal>
@@ -254,7 +265,7 @@
                 {{ h.user_id ? h.user_name || '会员' : '散客' }}
               </n-tag>
               <span>{{ h.item_count }} 件商品</span>
-              <span class="held-amount">￥{{ h.total_amount.toFixed(2) }}</span>
+              <span class="held-amount">￥{{ formatAmount(h.total_amount) }}</span>
             </div>
             <div class="held-sub">
               {{ h.items.map((i) => `${i.product_name}${i.spec_name ? `(${i.spec_name})` : ''}x${i.quantity}`).join('、') }}
@@ -270,73 +281,20 @@
     </n-spin>
   </n-modal>
 
-  <!-- 付款码扫码弹窗：下单建待支付单后弹出，扫码枪录入顾客付款码（回车提交） -->
-  <n-modal
-    :show="showCodePayModal"
-    preset="card"
-    title="付款码收款"
-    style="width: 460px; max-width: 92vw"
-    :mask-closable="false"
-    :close-on-esc="codePayState === 'idle'"
-    @update:show="(v: boolean) => (v ? null : onCodePayModalClose())"
-  >
-    <div class="codepay-wrap">
-      <div class="codepay-amount">￥{{ codePayAmount.toFixed(2) }}</div>
-      <div class="codepay-order muted">{{ codePayOrderNo }}</div>
-      <n-input
-        ref="codePayInputRef"
-        v-model:value="authCode"
-        size="large"
-        placeholder="请扫顾客付款码（微信/支付宝）"
-        :disabled="codePayState !== 'idle'"
-        @keydown.enter="submitAuthCode"
-      />
-      <div class="codepay-tip" :class="{ error: codePayState === 'failed' }">
-        <template v-if="codePayState === 'idle'">光标在输入框内直接扫码即可，渠道按付款码自动识别</template>
-        <template v-else-if="codePayState === 'submitting'">扣款中，请勿重复扫码…</template>
-        <template v-else-if="codePayState === 'polling'">顾客支付中（等待输入密码），自动查询结果…</template>
-        <template v-else-if="codePayState === 'failed'">{{ codePayMessage || '扣款失败，请让顾客重新出示付款码' }}</template>
-      </div>
-      <n-button block quaternary :disabled="codePayState !== 'idle'" @click="onCodePayModalClose">
-        暂不收款（订单保留为待支付）
-      </n-button>
-    </div>
-  </n-modal>
+  <!-- 付款码扫码弹窗（共用组件：下单建待支付单后弹出，支持失败改现金） -->
+  <code-pay-dialog
+    v-model:show="showCodePayModal"
+    :order-id="codePayOrderId"
+    :order-no="codePayOrderNo"
+    :amount="codePayAmount"
+    :payment-no="codePayPaymentNo"
+    :pickup-code="codePayPickupCode"
+    @paid="onCodePaid"
+    @close-abandoned="onCodeAbandoned"
+  />
 
-  <!-- 结账成功弹窗（含 58mm 热敏小票预览与打印） -->
-  <n-modal
-    :show="showPaidModal"
-    preset="card"
-    title="收银成功"
-    style="width: 420px; max-width: 92vw"
-    @update:show="(v: boolean) => (showPaidModal = v)"
-  >
-    <div v-if="lastPaid" class="paid-wrap">
-      <div class="paid-amount">￥{{ lastPaid.pay_amount.toFixed(2) }}</div>
-      <div class="paid-receipt" id="paid-receipt">
-        <div class="r-title">收银小票</div>
-        <div class="r-line">单号：{{ lastPaid.order_no }}</div>
-        <div class="r-line">时间：{{ lastPaid.time }}</div>
-        <div class="r-line">渠道：{{ lastPaid.channel_label }}</div>
-        <div class="r-line">支付：{{ lastPaid.pay_label }}</div>
-        <div class="r-line">客户：{{ lastPaid.member_label }}</div>
-        <div v-if="lastPaid.pickup_code" class="r-line strong">取货码：{{ lastPaid.pickup_code }}</div>
-        <div class="r-divider">- - - - - - - - - - - - - -</div>
-        <div v-for="(it, idx) in lastPaid.items" :key="idx" class="r-row">
-          <span>{{ it.name }}{{ it.spec ? `(${it.spec})` : '' }} x{{ it.qty }}</span>
-          <span>￥{{ it.subtotal.toFixed(2) }}</span>
-        </div>
-        <div class="r-divider">- - - - - - - - - - - - - -</div>
-        <div class="r-row"><span>商品合计</span><span>￥{{ lastPaid.total_amount.toFixed(2) }}</span></div>
-        <div v-if="lastPaid.coupon_discount > 0" class="r-row"><span>券优惠</span><span>-￥{{ lastPaid.coupon_discount.toFixed(2) }}</span></div>
-        <div v-if="lastPaid.manual_discount > 0" class="r-row"><span>手动优惠</span><span>-￥{{ lastPaid.manual_discount.toFixed(2) }}</span></div>
-        <div class="r-row total"><span>实收</span><span>￥{{ lastPaid.pay_amount.toFixed(2) }}</span></div>
-        <div class="r-line muted center">谢谢惠顾，欢迎再次光临</div>
-      </div>
-      <n-button type="primary" block size="large" class="print-btn" @click="printPaidReceipt">打印小票</n-button>
-      <n-text depth="3" style="font-size: 12px">订单已按「收银台」来源记录，可在「订单查询」Tab 处理</n-text>
-    </div>
-  </n-modal>
+  <!-- 结账成功弹窗（58mm 热敏小票预览与打印，与直接收款共用） -->
+  <receipt-modal v-model:show="showPaidModal" :receipt="receipt" />
 
   <!-- 单品改价弹窗（仅对本次订单生效） -->
   <n-modal
@@ -351,7 +309,7 @@
     @update:show="(v: boolean) => (showPriceModal = v)"
   >
     <div class="price-modal-tip">
-      <template v-if="editRow">原价 ￥{{ editRow.original_price.toFixed(2) }}，</template>改价仅对当前这笔订单生效，不改商品档案价
+      <template v-if="editRow">原价 ￥{{ formatAmount(editRow.original_price) }}，</template>改价仅对当前这笔订单生效，不改商品档案价
     </div>
     <n-input-number
       v-model:value="editPrice"
@@ -370,28 +328,34 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useDialog, useMessage } from 'naive-ui'
 import { CreateOutline, SearchOutline } from '@vicons/ionicons5'
 import defaultProductImage from '@/assets/logo.png'
 import { pinyin } from 'pinyin-pro'
-import { createPosHeldOrder, createPosOrder, deletePosHeldOrder, getPosOrderPayStatus, getPosHeldOrders, listPosPayMethods, payPosOrderCode } from '@/api/order'
+import { createPosHeldOrder, createPosOrder, deletePosHeldOrder, ensurePosCodePaySession, getPosHeldOrders, listPosPayMethods } from '@/api/order'
 import { getCouponRecords } from '@/api/marketing'
 import { getProductByBarcode, getProductDetail, getProductList } from '@/api/product'
 import { getCommunityProfile } from '@/api/user'
 import type { PosHeldOrder, Product, Sku, User } from '@/api/types'
 import UserPicker from '@/components/UserPicker.vue'
-import { DELIVERY_TYPE, PAY_TYPE, payTypeText } from '@/constants/order'
+import CodePayDialog from './CodePayDialog.vue'
+import ReceiptModal, { type PaidReceipt } from './ReceiptModal.vue'
+import { DELIVERY_TYPE, PAY_TYPE } from '@/constants/order'
+import { usePosStore } from '@/stores/pos'
 import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 商品下单 Tab（收银台核心，点单收银机风格）
  * 选会员（可散客，支持现场注册新会员）→ 分类/首字母定位商品 → 卡片选商品 → 支持单品改价/整单备注/抹零/整单改价
  * （均仅对本次订单生效，不改商品档案价）→ 券优惠预估与明细 → 挂单暂存/恢复/删除
- * → 按支付方式结账 → 结账成功可打印 58mm 热敏小票。最终金额以服务端结算为准。
+ * → 双按钮结账（付款码 F2 / 现金 F3，结账即收款，免选支付方式）→ 成功可打印 58mm 热敏小票。
+ * 支持订单查询「引用到收银台」（posStore 待引用清单挂载时消费）。最终金额以服务端结算为准。
  */
 
 const dialog = useDialog()
 const message = useMessage()
+const posStore = usePosStore()
 
 // --- 商品搜索与筛选 ---
 const keyword = ref('')
@@ -608,21 +572,22 @@ const wholePrice = ref<number | null>(null)
 
 /**
  * 手动优惠总额（抹零/整单改价折算，仅对本次订单生效）
- * 抹分=取整到角（去掉分位），抹角=取整到元；整单改价=商品小计-成交价
+ * 抹分=取整到角（去掉分位），抹角=取整到元；整单改价=商品小计-成交价；
+ * 上限=商品额−券优惠（服务端按「手动优惠不得超券后应付」拒单，前置对齐避免结账被拒）
  */
 const manualDiscount = computed(() => {
   const total = Math.round(totalAmount.value * 100) / 100
+  const cap = Math.max(0, Math.round((total - couponDiscount.value) * 100) / 100)
+  let raw = 0
   if (discountMode.value === 'round') {
-    if (roundKind.value === 'fen') return Math.round((total - Math.floor(total * 10) / 10) * 100) / 100
-    if (roundKind.value === 'jiao') return total - Math.floor(total)
-    return Math.min(Math.max(customDiscount.value ?? 0, 0), total)
-  }
-  if (discountMode.value === 'whole') {
+    if (roundKind.value === 'fen') raw = Math.round((total - Math.floor(total * 10) / 10) * 100) / 100
+    else if (roundKind.value === 'jiao') raw = total - Math.floor(total)
+    else raw = Math.max(customDiscount.value ?? 0, 0)
+  } else if (discountMode.value === 'whole') {
     const target = wholePrice.value ?? 0
-    if (target <= 0 || target > total) return 0
-    return Math.round((total - target) * 100) / 100
+    if (target > 0 && target < total) raw = Math.round((total - target) * 100) / 100
   }
-  return 0
+  return Math.min(raw, cap)
 })
 
 // --- 会员与优惠券 ---
@@ -669,10 +634,11 @@ const couponDiscount = computed(() => {
 })
 
 /**
- * 预计应付金额（商品小计 - 券优惠 - 手动优惠，最低 0.01）
+ * 预计应付金额（商品小计 - 券优惠 - 手动优惠，最低 0）
+ * 下限对齐服务端「实付 ≥ 0」口径：0 元全额优惠单由现金路径收款（付款码路径自行拦截）
  */
 const payableAmount = computed(
-  () => Math.max(0.01, Math.round((totalAmount.value - couponDiscount.value - manualDiscount.value) * 100) / 100)
+  () => Math.max(0, Math.round((totalAmount.value - couponDiscount.value - manualDiscount.value) * 100) / 100)
 )
 
 /**
@@ -962,53 +928,27 @@ function onDeleteHeld(h: PosHeldOrder) {
 const showPaidModal = ref(false)
 
 /** 结账成功的小票数据（快照，供成功弹窗展示与打印；resetWorkspace 前组装） */
-interface PaidReceipt {
-  order_no: string
-  pay_amount: number
-  pickup_code?: string
-  /** 渠道文案：到店消费 / 社区自提 / 送货上门 */
-  channel_label: string
-  pay_label: string
-  member_label: string
-  items: Array<{ name: string; spec: string; qty: number; subtotal: number }>
-  total_amount: number
-  coupon_discount: number
-  manual_discount: number
-  time: string
-}
-const lastPaid = ref<PaidReceipt | null>(null)
+const receipt = ref<PaidReceipt | null>(null)
 
-// 支付方式动态渲染：现金恒可用；付款码选项按支付配置出现——两渠道齐备返回 5「付款码支付」、
-// 仅微信可用返回 5「微信付款码」、仅支付宝可用返回 6「支付宝付款码」（后端 /pos/pay-methods 下发）。
-// 两渠道齐备时为单一入口（pay_type=5 占位下单），实际渠道由扫码时的付款码前缀自动识别
-const PAY_METHODS = ref<Array<{ label: string; value: number }>>([{ label: '现金', value: PAY_TYPE.CASH }])
-const payType = ref<number>(PAY_TYPE.CASH)
-const payMethodLabel = computed(() => PAY_METHODS.value.find((m) => m.value === payType.value)?.label ?? '现金')
-
-/**
- * 判断是否付款码支付（占位值 5/6 均走「下单建待支付单→扫码扣款」两步化流程）
- * @param t 支付方式
- */
-const isCodePay = (t: number) => t === PAY_TYPE.WECHAT_CODE || t === PAY_TYPE.ALIPAY_CODE
+// 支付方式动态获取：结账区不再摆 radio（结账即收款），付款码入口取第一个非现金方式——
+// 两渠道齐备返回 5「付款码支付」（渠道按扫码时的付款码前缀自动识别）、仅单渠道时对应占位值；
+// 无可用付款码渠道时只显示现金按钮
+const codePayMethod = ref<{ label: string; value: number } | null>(null)
 
 /**
  * 拉取收银台可用支付方式（挂载时调用一次；服务端未开放的值会被下单接口拒绝）
  */
 async function loadPayMethods() {
+  codePayMethod.value = null
   try {
     const res = await listPosPayMethods()
     if (res.data.code !== 0) return
     const list = (res.data.data.list || []).map((m) => ({ label: m.label, value: m.pay_type }))
-    if (list.length) PAY_METHODS.value = list
+    codePayMethod.value = list.find((m) => m.value !== PAY_TYPE.CASH) ?? null
   } catch {
-    // 拉取失败降级保留现金，服务端渠道校验兜底
+    // 拉取失败降级为仅现金，服务端渠道校验兜底
   }
 }
-
-// 支付方式列表变化时，若当前选中项已不存在（如配置刚关闭付款码），回落到现金
-watch(PAY_METHODS, (list) => {
-  if (!list.some((m) => m.value === payType.value)) payType.value = PAY_TYPE.CASH
-})
 
 /**
  * 渠道文案（小票展示）
@@ -1030,7 +970,7 @@ function channelLabelOf(type: number): string {
 function buildReceipt(orderNo: string, payAmount: number, pickupCode: string | undefined, payLabel: string) {
   const now = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
-  lastPaid.value = {
+  receipt.value = {
     order_no: orderNo,
     pay_amount: payAmount,
     pickup_code: pickupCode || undefined,
@@ -1050,67 +990,134 @@ function buildReceipt(orderNo: string, payAmount: number, pickupCode: string | u
   }
 }
 
-/**
- * 结账：代客下单（source=收银台），按所选支付方式分两路：
- * 现金——下单即收款完成，出小票；付款码——只建待支付支付单（不收款），弹扫码窗扫顾客付款码扣款
- * 改价/抹零/整单改价折算为 manual_discount 提交，券优惠由服务端按券规则结算
- */
-function onCheckout() {
-  if (!cart.value.length) return
+/** 下单请求体（付款码/现金两路共用） */
+function buildOrderPayload(discount: number) {
+  return {
+    user_id: member.value?.id ?? 0,
+    delivery_type: deliveryType.value,
+    contact_name: contact.value.name.trim() || member.value?.nickname || '',
+    contact_phone: contact.value.phone.trim() || member.value?.phone || '',
+    contact_address: contact.value.address.trim(),
+    remark: remark.value.trim() || undefined,
+    coupon_id: couponId.value ?? 0,
+    manual_discount: discount > 0 ? discount : undefined,
+    items: cart.value.map((r) => ({
+      sku_id: r.sku_id,
+      quantity: r.quantity,
+      price: r.price_modified ? r.price : undefined,
+    })),
+  }
+}
+
+/** 校验配送联系信息（配送单必填），不通过时提示并返回 false */
+function validateContact(): boolean {
   if (deliveryType.value === DELIVERY_TYPE.DELIVERY &&
       (!contact.value.name.trim() || !contact.value.phone.trim() || !contact.value.address.trim())) {
     message.warning('配送订单请填写完整的联系人、电话与地址')
+    return false
+  }
+  return true
+}
+
+/** 折算到分位的手动优惠 */
+const roundedManualDiscount = computed(() => Math.round(manualDiscount.value * 100) / 100)
+
+/**
+ * 付款码收款（F2）：建待支付订单后直接弹扫码窗（无确认弹窗——金额已明示，
+ * 渠道由顾客付款码前缀自动识别），扣款失败可在弹窗内改用现金；
+ * 上次放弃扫码的同载荷遗留单走 pay-code-session 复用，不重复建待支付单
+ */
+async function onCodePay() {
+  if (!cart.value.length || checkingOut.value) return
+  if (showCodePayModal.value || cashConfirmOpen.value) return
+  if (!validateContact()) return
+  // 渠道不受理 0 元扣款：前置拦截，避免产生无法收款的订单（改用现金）
+  if (payableAmount.value <= 0) {
+    message.warning('付款码支付不支持 0 元订单，请改用现金收款')
     return
   }
-  const discount = Math.round(manualDiscount.value * 100) / 100
-  const parts = [`商品￥${totalAmount.value.toFixed(2)}`]
-  if (couponDiscount.value > 0) parts.push(`券优惠￥${couponDiscount.value.toFixed(2)}`)
-  if (discount > 0) parts.push(`优惠￥${discount.toFixed(2)}`)
-
-  // 付款码两步化：确认后先下单建待支付单，再弹扫码窗（渠道由付款码前缀自动识别）
-  if (isCodePay(payType.value)) {
-    // 渠道不受理 0 元扣款：前置拦截，避免产生无法收款的订单（服务端命中时也会自动取消并报错兜底）
-    if (payableAmount.value <= 0) {
-      message.warning('付款码支付不支持 0 元订单，请改用现金收款')
+  if (!codePayMethod.value) return
+  checkingOut.value = true
+  try {
+    const payload = { ...buildOrderPayload(roundedManualDiscount.value), pay_type: codePayMethod.value.value }
+    const key = JSON.stringify(payload)
+    // 载荷未变且存在放弃扫码的遗留待支付单：复用原单继续收款（金额/明细一致，out_trade_no 不变）
+    if (abandonedPending.value && abandonedPending.value.key === key) {
+      const reused = await ensurePosCodePaySession(abandonedPending.value.orderId)
+      if (reused.data.code !== 0) return
+      const p = abandonedPending.value
+      codePayOrderId.value = p.orderId
+      codePayOrderNo.value = p.orderNo
+      codePayPaymentNo.value = reused.data.data.payment_no || p.paymentNo
+      codePayAmount.value = p.amount
+      codePayPickupCode.value = p.pickupCode
+      showCodePayModal.value = true
       return
     }
-    dialog.warning({
-      title: '付款码收款',
-      content: `将创建订单 ￥${payableAmount.value.toFixed(2)}（${parts.join('，')}），随后扫码扣款，是否继续？`,
-      positiveText: '创建订单并扫码',
-      negativeText: '取消',
-      onPositiveClick: () => createOrderAndOpenCodePay(discount),
-    })
-    return
+    const res = await createPosOrder(payload)
+    if (res.data.code !== 0) return
+    codePayOrderId.value = res.data.data.id
+    codePayOrderNo.value = res.data.data.order_no
+    codePayPaymentNo.value = res.data.data.payment_no || ''
+    codePayAmount.value = res.data.data.pay_amount
+    codePayPickupCode.value = res.data.data.pickup_code || ''
+    abandonedPending.value = {
+      orderId: codePayOrderId.value,
+      orderNo: codePayOrderNo.value,
+      paymentNo: codePayPaymentNo.value,
+      amount: codePayAmount.value,
+      pickupCode: codePayPickupCode.value,
+      key,
+    }
+    showCodePayModal.value = true
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    checkingOut.value = false
   }
+}
 
+/**
+ * 弹窗确认按钮聚焦：渲染完成后原生回车即确认（不依赖鼠标）。
+ * 定时器随组件卸载清理；新弹窗打开会取消上一个未触发的聚焦，多窗叠开时焦点归最近一窗
+ * @param selector 确认按钮选择器
+ */
+function focusDialogConfirm(selector = '.n-dialog__action button:last-of-type') {
+  if (dialogFocusTimer) clearTimeout(dialogFocusTimer)
+  dialogFocusTimer = setTimeout(() => {
+    const btn = document.querySelector(selector) as HTMLButtonElement | null
+    btn?.focus()
+  }, 150)
+}
+
+/**
+ * 现金收款（F3）：确认后下单即收款完结、出小票。
+ * 确认弹窗打开后自动聚焦确认按钮，回车即确认（不依赖鼠标）
+ */
+function onCashPay() {
+  if (!cart.value.length || checkingOut.value) return
+  if (showCodePayModal.value || cashConfirmOpen.value) return
+  if (!validateContact()) return
+  const discount = roundedManualDiscount.value
+  const parts = [`商品￥${formatAmount(totalAmount.value)}`]
+  if (couponDiscount.value > 0) parts.push(`券优惠￥${formatAmount(couponDiscount.value)}`)
+  if (discount > 0) parts.push(`优惠￥${formatAmount(discount)}`)
+  // 确认窗打开期间屏蔽 F2/F3/再次进入（2026-10-25 审查 P1：快捷键可叠第二个确认窗重复建单）
+  cashConfirmOpen.value = true
   dialog.warning({
-    title: `${payMethodLabel.value}结账`,
-    content: `确认已收${payMethodLabel.value} ￥${payableAmount.value.toFixed(2)}（${parts.join('，')}），为${member.value ? `会员 ${member.value.nickname || member.value.phone}` : '散客'}结账？`,
+    title: '现金收款',
+    content: `确认已收现金 ￥${formatAmount(payableAmount.value)}（${parts.join('，')}），为${member.value ? `会员 ${member.value.nickname || member.value.phone}` : '散客'}结账？（回车确认）`,
     positiveText: '确认收款',
     negativeText: '取消',
     onPositiveClick: async () => {
+      // 二重门禁：确认时点若已有收款请求在途（叠窗遗留/重复点击），拒绝再次提交
+      if (checkingOut.value) return false
       checkingOut.value = true
       try {
-        const res = await createPosOrder({
-          user_id: member.value?.id ?? 0,
-          delivery_type: deliveryType.value,
-          contact_name: contact.value.name.trim() || member.value?.nickname || '',
-          contact_phone: contact.value.phone.trim() || member.value?.phone || '',
-          contact_address: contact.value.address.trim(),
-          remark: remark.value.trim() || undefined,
-          coupon_id: couponId.value ?? 0,
-          pay_type: payType.value,
-          manual_discount: discount > 0 ? discount : undefined,
-          items: cart.value.map((r) => ({
-            sku_id: r.sku_id,
-            quantity: r.quantity,
-            price: r.price_modified ? r.price : undefined,
-          })),
-        })
+        const res = await createPosOrder({ ...buildOrderPayload(discount), pay_type: PAY_TYPE.CASH })
         if (res.data.code === 0) {
           // 组装小票快照（resetWorkspace 会清空购物车，必须先取值）
-          buildReceipt(res.data.data.order_no, res.data.data.pay_amount, res.data.data.pickup_code, payMethodLabel.value)
+          buildReceipt(res.data.data.order_no, res.data.data.pay_amount, res.data.data.pickup_code, '现金')
           showPaidModal.value = true
           resetWorkspace()
         }
@@ -1120,219 +1127,100 @@ function onCheckout() {
         checkingOut.value = false
       }
     },
+    // 覆盖所有关闭路径（确认/取消/Esc），关闭动画结束即释放快捷键守卫
+    onAfterLeave: () => {
+      cashConfirmOpen.value = false
+    },
   })
+  // 回车确认：弹窗渲染后聚焦确认按钮，原生回车触发其 click
+  focusDialogConfirm()
 }
 
-// --- 付款码收款（两步化的第二步）---
+/**
+ * F2/F3 全局结账快捷键：F2 付款码收款、F3 现金收款（收款弹窗/确认窗打开时忽略，避免重复建单）
+ * @param e 键盘事件
+ */
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key !== 'F2' && e.key !== 'F3') return
+  if (showCodePayModal.value || showPaidModal.value || cashConfirmOpen.value) return
+  if (!cart.value.length) return
+  e.preventDefault()
+  if (e.key === 'F2') void onCodePay()
+  else onCashPay()
+}
+
+// --- 付款码收款（共用 CodePayDialog 的凭据状态） ---
 const showCodePayModal = ref(false)
-/** 扫码状态机：idle 可扫码 / submitting 扣款中 / polling 用户支付中轮询 / failed 待重扫 */
-const codePayState = ref<'idle' | 'submitting' | 'polling' | 'failed'>('idle')
 const codePayOrderNo = ref('')
 const codePayOrderId = ref(0)
 const codePayPaymentNo = ref('')
 const codePayAmount = ref(0)
-const codePayMessage = ref('')
 /** 下单响应缓存的取货码（自提单收款成功后回填小票） */
 const codePayPickupCode = ref('')
-const authCode = ref('')
-const codePayInputRef = ref<{ focus: () => void } | null>(null)
-/** 轮询定时器句柄（弹窗关闭/收款成功时清理） */
-let codePayTimer: ReturnType<typeof setTimeout> | null = null
-
-// 组件卸载兜底：扫码窗轮询是 setTimeout 链，关窗/收工之外的卸载路径
-// （切 tab 销毁组件等）若不清理，回调仍会发起状态查询请求
-onBeforeUnmount(() => {
-  if (codePayTimer) {
-    clearTimeout(codePayTimer)
-    codePayTimer = null
-  }
-})
-/** 轮询起始时间（超过 3 分钟仍 PAYING 提示走订单列表处理，不让收银台干等） */
-let codePayPollStart = 0
-
+/** 现金确认窗打开标记：F2/F3/输入框回车在窗打开期间一律忽略，防叠窗重复建单 */
+const cashConfirmOpen = ref(false)
+/** 弹窗确认按钮聚焦定时器（组件卸载清理） */
+let dialogFocusTimer: ReturnType<typeof setTimeout> | null = null
 /**
- * 创建待支付订单并打开扫码窗（现金结账不经过此路径）
- * @param discount 整单手动优惠（结账确认时已折算到分位）
+ * 放弃扫码的遗留待支付单快照：再次 F2 且载荷与 key 一致时复用原单
+ * （pay-code-session 续收），载荷有变才新建，防同一购物车连按 F2 叠多笔待支付单；
+ * 收款成功即清除
  */
-async function createOrderAndOpenCodePay(discount: number) {
-  checkingOut.value = true
-  try {
-    const res = await createPosOrder({
-      user_id: member.value?.id ?? 0,
-      delivery_type: deliveryType.value,
-      contact_name: contact.value.name.trim() || member.value?.nickname || '',
-      contact_phone: contact.value.phone.trim() || member.value?.phone || '',
-      contact_address: contact.value.address.trim(),
-      remark: remark.value.trim() || undefined,
-      coupon_id: couponId.value ?? 0,
-      pay_type: payType.value,
-      manual_discount: discount > 0 ? discount : undefined,
-      items: cart.value.map((r) => ({
-        sku_id: r.sku_id,
-        quantity: r.quantity,
-        price: r.price_modified ? r.price : undefined,
-      })),
-    })
-    if (res.data.code !== 0) return
-    codePayOrderId.value = res.data.data.id
-    codePayOrderNo.value = res.data.data.order_no
-    codePayPaymentNo.value = res.data.data.payment_no || ''
-    codePayAmount.value = res.data.data.pay_amount
-    codePayPickupCode.value = res.data.data.pickup_code || ''
-    codePayMessage.value = ''
-    authCode.value = ''
-    codePayState.value = 'idle'
-    showCodePayModal.value = true
-    // 等弹窗渲染后聚焦输入框，扫码枪即扫即得
-    setTimeout(() => codePayInputRef.value?.focus(), 100)
-  } catch {
-    // 错误提示由请求拦截器统一弹出
-  } finally {
-    checkingOut.value = false
-  }
-}
-
-/**
- * 提交付款码扣款（输入框回车触发）：PAID 出小票收工；
- * PAYING 转轮询；FAILED 停留弹窗清码重扫；网络异常回 idle 可重试
- */
-async function submitAuthCode() {
-  const code = authCode.value.trim()
-  if (!code || codePayState.value === 'submitting' || codePayState.value === 'polling') return
-  if (codePayAmount.value <= 0) {
-    codePayState.value = 'failed'
-    codePayMessage.value = '付款码支付不支持 0 元订单，请改用现金收款'
-    return
-  }
-  codePayState.value = 'submitting'
-  codePayMessage.value = ''
-  let finished = false
-  try {
-    const res = await payPosOrderCode(codePayOrderId.value, { payment_no: codePayPaymentNo.value, auth_code: code })
-    if (res.data.code !== 0) {
-      codePayState.value = 'failed'
-      return
-    }
-    const data = res.data.data
-    if (data.state === 'PAID') {
-      finished = true
-      await finishCodePay(payTypeText(data.pay_type))
-      return
-    }
-    if (data.state === 'PAYING') {
-      codePayState.value = 'polling'
-      codePayPollStart = Date.now()
-      scheduleCodePayPoll()
-      return
-    }
-    // 渠道确定性拒绝：清码重扫（同一支付单重试，out_trade_no 不变）
-    codePayState.value = 'failed'
-    codePayMessage.value = data.message || '扣款失败，请重新扫码'
-  } catch {
-    // 网络/服务异常：资金状态未知，回到可扫码状态由收银员重试（渠道幂等 + 对账兜底）
-    codePayState.value = 'idle'
-  } finally {
-    authCode.value = ''
-    // 未收工（失败重扫/可重试）时保持输入框聚焦，连续作业不点鼠标
-    if (!finished && showCodePayModal.value) {
-      setTimeout(() => codePayInputRef.value?.focus(), 50)
-    }
-  }
-}
-
-/**
- * PAYING 在途轮询：向渠道核实是否已收款，已收款补收工；持续在途则 2 秒后再查；
- * 超过 3 分钟仍未定则停止轮询提示改走订单列表，避免收银台无限等
- */
-function scheduleCodePayPoll() {
-  if (codePayTimer) clearTimeout(codePayTimer)
-  codePayTimer = setTimeout(async () => {
-    if (!showCodePayModal.value || codePayState.value !== 'polling') return
-    try {
-      const res = await getPosOrderPayStatus(codePayOrderId.value, codePayPaymentNo.value)
-      if (res.data.code === 0 && res.data.data.paid) {
-        // 轮询路径拿不到实际扣款渠道，小票按「付款码支付」展示
-        await finishCodePay('付款码支付')
-        return
-      }
-    } catch {
-      // 单次轮询失败忽略，下一轮继续
-    }
-    if (Date.now() - codePayPollStart > 3 * 60 * 1000) {
-      codePayState.value = 'failed'
-      codePayMessage.value = '顾客长时间未完成支付，请到「订单查询」处理该笔订单'
-      return
-    }
-    scheduleCodePayPoll()
-  }, 2000)
-}
+const abandonedPending = ref<{
+  orderId: number
+  orderNo: string
+  paymentNo: string
+  amount: number
+  pickupCode: string
+  key: string
+} | null>(null)
 
 /**
  * 付款码收款成功收尾：关扫码窗 → 出小票 → 清工作区
- * @param payLabel 支付方式文案（扣款响应按实际渠道回传）
+ * @param payload 收款结果（payLabel 渠道文案；pickupCode 自提单取货码）
  */
-async function finishCodePay(payLabel: string) {
-  if (codePayTimer) {
-    clearTimeout(codePayTimer)
-    codePayTimer = null
-  }
+function onCodePaid(payload: { payLabel: string; pickupCode?: string }) {
   showCodePayModal.value = false
-  codePayState.value = 'idle'
+  abandonedPending.value = null
   message.success('收款成功')
-  buildReceipt(codePayOrderNo.value, codePayAmount.value, codePayPickupCode.value, payLabel)
+  buildReceipt(codePayOrderNo.value, codePayAmount.value, payload.pickupCode, payload.payLabel)
   showPaidModal.value = true
   resetWorkspace()
 }
 
 /**
- * 关闭扫码窗（收银员主动放弃/ESC）：工作区保留，订单停留在待支付，
- * 可在「订单查询」里重新收款或按超时取消；清理轮询定时器
+ * 收银员放弃扫码：订单保留待支付，提示去订单查询处理（可继续收款或取消）
  */
-function onCodePayModalClose() {
-  if (codePayState.value === 'submitting' || codePayState.value === 'polling') {
-    message.warning('正在收款中，请等待结果或稍后再试')
-    return
-  }
-  if (codePayTimer) {
-    clearTimeout(codePayTimer)
-    codePayTimer = null
-  }
-  showCodePayModal.value = false
+function onCodeAbandoned() {
   message.info(`订单 ${codePayOrderNo.value} 已创建未收款，可在「订单查询」继续收款`)
 }
 
 /**
- * 打印收银小票：取弹窗内小票 DOM 快照写入打印窗口（58mm 热敏纸风格窄版，与交班小票同款）
+ * 消费订单查询写入的待引用清单：按订单明细快照回填购物车（追加模式），
+ * 价格取订单档案价（original_price），改价与优惠不带入（"再来一单"按当前档案价，
+ * 后端下单仍按服务端实时价结算）；软删/缺货商品由下单接口兜底拦截
  */
-function printPaidReceipt() {
-  const el = document.getElementById('paid-receipt')
-  if (!el || !lastPaid.value) return
-  const win = window.open('', '_blank', 'width=320,height=600')
-  if (!win) {
-    message.warning('浏览器拦截了打印窗口，请允许弹出窗口后重试')
-    return
+function consumePendingImport() {
+  const items = posStore.consumePendingImport()
+  if (!items.length) return
+  for (const it of items) {
+    const existing = cart.value.find((r) => r.sku_id === it.sku_id)
+    if (existing) {
+      existing.quantity += it.quantity
+      continue
+    }
+    cart.value.push({
+      sku_id: it.sku_id,
+      product_id: 0,
+      product_name: it.product_name,
+      spec_name: it.spec_name || '',
+      price: it.price,
+      original_price: it.price,
+      price_modified: false,
+      quantity: it.quantity,
+    })
   }
-  win.document.write(`
-    <html>
-      <head><title>收银小票 ${lastPaid.value.order_no}</title>
-        <style>
-          body { font-family: "Courier New", monospace; font-size: 12px; width: 220px; margin: 0 auto; padding: 8px; }
-          .r-title { text-align: center; font-size: 15px; font-weight: bold; margin-bottom: 8px; }
-          .r-line { margin: 3px 0; }
-          .r-line.center { text-align: center; }
-          .r-line.muted { color: #888; }
-          .r-line.strong { font-weight: bold; font-size: 14px; }
-          .r-divider { margin: 6px 0; color: #888; }
-          .r-row { display: flex; justify-content: space-between; margin: 2px 0; }
-          .r-row.total { font-weight: bold; font-size: 13px; margin-top: 6px; }
-        </style>
-      </head>
-      <body>${el.innerHTML}</body>
-    </html>
-  `)
-  win.document.close()
-  win.focus()
-  win.print()
+  message.success(`已引用 ${items.length} 项商品到小票，可继续加减后结账`)
 }
 
 onMounted(() => {
@@ -1340,6 +1228,16 @@ onMounted(() => {
   void refreshHeld()
   void loadChannelConfig()
   void loadPayMethods()
+  consumePendingImport()
+  window.addEventListener('keydown', onGlobalKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  if (dialogFocusTimer) {
+    clearTimeout(dialogFocusTimer)
+    dialogFocusTimer = null
+  }
 })
 </script>
 

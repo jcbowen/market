@@ -85,12 +85,12 @@
         </template>
         <div v-if="revenueMax > 0" class="trend-chart">
           <div v-for="item in revenueTrend" :key="item.date" class="trend-col">
-            <div class="trend-amount">¥{{ formatAmount(item.revenue) }}</div>
+            <div class="trend-amount">¥{{ formatMoney(item.revenue) }}</div>
             <div class="trend-bar-wrap">
               <div
                 class="trend-bar"
                 :style="{ height: trendBarHeight(item.revenue) }"
-                :title="`${item.date}：营收 ¥${item.revenue.toFixed(2)}，${item.order_count} 单`"
+                :title="`${item.date}：营收 ¥${formatMoney(item.revenue)}，${item.order_count} 单`"
               />
             </div>
             <div class="trend-orders">{{ item.order_count }} 单</div>
@@ -125,7 +125,7 @@
             </div>
             <div class="rank-num">
               <div class="rank-sales">{{ item.sales_count }} 件</div>
-              <div class="rank-amount">¥{{ formatAmount(item.sales_amount) }}</div>
+              <div class="rank-amount">¥{{ formatMoney(item.sales_amount) }}</div>
             </div>
           </div>
         </div>
@@ -151,6 +151,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'Dashboard' })
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+import { formatMoney } from '@/utils/format'
 import { useRouter } from 'vue-router'
 import {
   AddCircleOutline,
@@ -238,7 +239,7 @@ const statistics = reactive({
 /** 今日客单价（无订单时显示 --） */
 const avgPrice = computed(() => {
   if (!statistics.order_count) return '--'
-  return `¥${formatAmount(statistics.sale_amount / statistics.order_count)}`
+  return `¥${formatMoney(statistics.sale_amount / statistics.order_count)}`
 })
 
 const statCards = computed(() => [
@@ -254,7 +255,7 @@ const statCards = computed(() => [
   },
   {
     label: '今日销售额',
-    value: formatAmount(statistics.sale_amount),
+    value: formatMoney(statistics.sale_amount),
     prefix: '¥',
     icon: CashOutline,
     bg: 'rgba(250, 157, 59, 0.12)',
@@ -458,13 +459,6 @@ const quickActions = computed(() => {
 })
 
 // --- 数据加载 ---
-
-/**
- * 金额格式化：千分位 + 最多两位小数（不补零，减少视觉噪音）
- */
-function formatAmount(value: number): string {
-  return value.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
-}
 
 /**
  * 并发加载工作台各区块数据

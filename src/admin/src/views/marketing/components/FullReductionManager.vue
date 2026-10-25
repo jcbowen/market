@@ -37,6 +37,7 @@
 
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getFullReductionList, createFullReduction, updateFullReduction } from '@/api/marketing'
@@ -49,8 +50,8 @@ const pageSize = 10
 const columns: DataTableColumns<FullReduction> = [
   { title: 'ID', key: 'id', width: 60 },
   { title: '活动名称', key: 'name', width: 140, ellipsis: { tooltip: true } },
-  { title: '满减门槛', key: 'threshold', width: 110, render(row) { return `¥${row.threshold.toFixed(2)}` } },
-  { title: '减免金额', key: 'reduce_amount', width: 110, render(row) { return `¥${row.reduce_amount.toFixed(2)}` } },
+  { title: '满减门槛', key: 'threshold', width: 110, render(row) { return `¥${formatAmount(row.threshold)}` } },
+  { title: '减免金额', key: 'reduce_amount', width: 110, render(row) { return `¥${formatAmount(row.reduce_amount)}` } },
   { title: '开始时间', key: 'start_time', width: 160, render: (row) => formatDateTime(row.start_time) },
   { title: '结束时间', key: 'end_time', width: 160, render: (row) => formatDateTime(row.end_time) },
   {

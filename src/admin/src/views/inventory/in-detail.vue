@@ -18,7 +18,7 @@
           </n-button>
           <template v-else>-</template>
         </n-descriptions-item>
-        <n-descriptions-item label="入库金额">¥{{ Number(detail.info.total_amount || 0).toFixed(2) }}</n-descriptions-item>
+        <n-descriptions-item label="入库金额">¥{{ formatAmount(detail.info.total_amount) }}</n-descriptions-item>
         <n-descriptions-item label="入库时间">{{ formatDateTime(detail.info.created_at) }}</n-descriptions-item>
         <n-descriptions-item label="备注" :span="3">{{ detail.info.remark || '-' }}</n-descriptions-item>
       </n-descriptions>
@@ -34,6 +34,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockInDetail' })
 import { onMounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRoute, useRouter } from 'vue-router'
 import type { DataTableColumns } from 'naive-ui'
 import { getStockInOrderDetail } from '@/api/inventory'
@@ -60,7 +61,7 @@ const columns: DataTableColumns<StockInOrderItemRow> = [
     title: '单位成本',
     key: 'unit_cost',
     width: 110,
-    render: (row) => `¥${Number(row.unit_cost || 0).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.unit_cost)}`,
   },
   { title: '批次号', key: 'batch_no', width: 150 },
   { title: '生产日期', key: 'production_date', width: 120, render: (row) => row.production_date || '-' },

@@ -225,6 +225,53 @@ func TestCreatePaymentCash(t *testing.T) {
 	}
 }
 
+// TestCreatePaymentCashConcurrent 现金双击防护：同订单并发建单只允许一笔成功
+// 覆盖 2026-10-25 收银台审查 P1：现金单「创建即已支付」且不走 pending_flag 唯一索引，
+// 「查重→创建」由订单级分段锁串行化，锁外并发请求在锁内查重被拒（AlreadyExists）
+func TestCreatePaymentCashConcurrent(t *testing.T) {
+	s, stub, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+
+	orderID := testOrderIDBase + 3
+	const n = 4
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _, errs[i] = s.CreatePayment(context.Background(), &payment.CreatePaymentReq{
+				OrderId: orderID,
+				UserId:  0,
+				Amount:  66.60,
+				PayType: 4,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	succeeded := 0
+	for _, err := range errs {
+		if err == nil {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("并发现金建单应仅一笔成功，实际 %d 笔，errs=%v", succeeded, errs)
+	}
+
+	var cnt int64
+	if err := s.db.GetDb().Model(&model.Payment{}).Where("order_id = ? AND status = 2", orderID).Count(&cnt).Error; err != nil {
+		t.Fatalf("统计支付流水失败: %v", err)
+	}
+	if cnt != 1 {
+		t.Errorf("订单已支付现金流水应恰为 1 笔，实际 %d", cnt)
+	}
+	if calls := stub.orderCalls(); len(calls) != 1 {
+		t.Errorf("订单状态同步应仅发生一次，实际 %d 次: %+v", len(calls), calls)
+	}
+}
+
 // TestCreatePaymentAlreadyPaid 幂等：订单已有支付成功记录时拒绝再次创建支付单
 func TestCreatePaymentAlreadyPaid(t *testing.T) {
 	s, _, cleanup := newPaymentTestEnv(t)

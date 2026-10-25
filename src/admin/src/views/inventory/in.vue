@@ -13,6 +13,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockIn' })
 import { h, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRouter } from 'vue-router'
 import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -65,7 +66,7 @@ const columns: DataTableColumns<StockInOrder> = [
     title: '入库金额',
     key: 'total_amount',
     width: 120,
-    render: (row) => `¥${Number(row.total_amount || 0).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.total_amount)}`,
   },
   { title: '备注', key: 'remark', ellipsis: { tooltip: true } },
   { title: '入库时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.created_at) },

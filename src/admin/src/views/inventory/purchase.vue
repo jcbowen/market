@@ -88,6 +88,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockPurchase' })
 import { h, ref, onMounted } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRouter, useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NTag } from 'naive-ui'
@@ -158,7 +159,7 @@ const orderColumns: DataTableColumns<PurchaseOrder> = [
     title: '采购金额',
     key: 'total_amount',
     width: 120,
-    render: (row) => `¥${Number(row.total_amount || 0).toFixed(2)}`,
+    render: (row) => `¥${formatAmount(row.total_amount)}`,
   },
   { title: '备注', key: 'remark', ellipsis: { tooltip: true } },
   { title: '创建时间', key: 'created_at', width: 170, render: (row) => formatDateTime(row.created_at) },

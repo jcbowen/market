@@ -119,8 +119,25 @@ func (s *OrderService) loadOrderItemCatalog(ctx context.Context, skuIDs []int64,
 //   - *model.Order: 订单模型
 //   - error: 错误信息
 func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderReq) (*model.Order, error) {
-	if len(req.Items) == 0 {
+	// 商品明细与直接收款金额二选一：常规单必带明细；直接收款单（manual_amount>0）无明细
+	if len(req.Items) == 0 && req.ManualAmount <= 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "订单商品不能为空")
+	}
+	// 直接收款单收口：仅收银台（source=2）到店（delivery_type=3）可用，
+	// 金额即成交金额，不允许叠加商品明细/券/满减/手动优惠（网关已拦截，此处服务端兜底）。
+	// 明细必须拦截：算价走 manual 分支不建 order_items，但事务仍会按 req.Items 扣库存，
+	// 取消单按明细回补即回补不到，造成永久库存泄漏
+	isManualOrder := req.ManualAmount > 0
+	if isManualOrder {
+		if req.Source != 2 || req.DeliveryType != 3 {
+			return nil, bizerr.New(codes.InvalidArgument, "直接收款单仅收银台到店模式可用")
+		}
+		if len(req.Items) > 0 {
+			return nil, bizerr.New(codes.InvalidArgument, "直接收款单不支持商品明细")
+		}
+		if req.CouponId > 0 || req.ManualDiscount > 0 {
+			return nil, bizerr.New(codes.InvalidArgument, "直接收款单不支持优惠券与手动优惠")
+		}
 	}
 	// 配送类型：1自提 2配送 3到店（仅收银台，即买即走，不生成取货码、无需核销）
 	if req.DeliveryType != 1 && req.DeliveryType != 2 && req.DeliveryType != 3 {
@@ -169,69 +186,82 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 	// 免配送费范围判定上下文（参与商品额计算用，见 calcFreeShipping）
 	var itemScopes []itemScope
 
-	// 明细商品预取：原先每行 2 次 RPC（SKU + 商品），N 行订单即 2N 次往返，
-	// 收银台整单尤其明显；收口为两次批量查询后按 ID 取内存结果。
-	// 批量查询任一 ID 缺失即整体报错，不会出现「部分明细算价」的金额/库存双口径偏差。
-	// 社区语境透传成交社区：越权取用其他社区的 SKU/商品在此拦下
-	skuIDs := make([]int64, 0, len(req.Items))
-	for _, item := range req.Items {
-		skuIDs = append(skuIDs, item.SkuId)
-	}
-	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs, req.CommunityId)
-	if err != nil {
-		return nil, err
-	}
-	// 秒杀价按请求维度一次取回，明细侧查表（原先逐明细 ListFlashSales + GetFlashSale，N 行放大为 N×(1+K) 次 RPC）
-	flashPriceByID := s.loadFlashSalePrices(ctx, req.CommunityId)
-
-	for _, item := range req.Items {
-		if item.Quantity <= 0 || item.Quantity > 999 {
-			return nil, bizerr.New(codes.InvalidArgument, "单品购买数量须在 1~999 之间")
+	// 直接收款单：金额即成交金额（四舍五入到分），无商品明细、无库存扣减、无满减/券
+	if isManualOrder {
+		totalAmount = math.Round(req.ManualAmount*100) / 100
+	} else {
+		// 明细商品预取：原先每行 2 次 RPC（SKU + 商品），N 行订单即 2N 次往返，
+		// 收银台整单尤其明显；收口为两次批量查询后按 ID 取内存结果。
+		// 批量查询任一 ID 缺失即整体报错，不会出现「部分明细算价」的金额/库存双口径偏差。
+		// 社区语境透传成交社区：越权取用其他社区的 SKU/商品在此拦下
+		skuIDs := make([]int64, 0, len(req.Items))
+		for _, item := range req.Items {
+			skuIDs = append(skuIDs, item.SkuId)
 		}
-		skuInfo := skuByID[item.SkuId]
-		if skuInfo.Stock < item.Quantity {
-			return nil, bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足", skuInfo.SkuCode))
+		skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs, req.CommunityId)
+		if err != nil {
+			return nil, err
 		}
-		productInfo := productByID[skuInfo.ProductId]
+		// 秒杀价按请求维度一次取回，明细侧查表（原先逐明细 ListFlashSales + GetFlashSale，N 行放大为 N×(1+K) 次 RPC）
+		flashPriceByID := s.loadFlashSalePrices(ctx, req.CommunityId)
 
-		// 优先使用生效的秒杀价
-		price := skuInfo.Price
-		if flashPrice := flashPriceByID[item.SkuId]; flashPrice > 0 {
-			price = flashPrice
+		for _, item := range req.Items {
+			if item.Quantity <= 0 || item.Quantity > 999 {
+				return nil, bizerr.New(codes.InvalidArgument, "单品购买数量须在 1~999 之间")
+			}
+			skuInfo := skuByID[item.SkuId]
+			if skuInfo == nil {
+				// product 侧 BatchGetSkus 缺失即整体报错，正常不落到这里；
+				// nil 防御避免跨服务协议回退为部分结果时解引用 panic
+				return nil, bizerr.New(codes.FailedPrecondition, "SKU 已失效，请刷新后重新下单")
+			}
+			if skuInfo.Stock < item.Quantity {
+				return nil, bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足", skuInfo.SkuCode))
+			}
+			productInfo := productByID[skuInfo.ProductId]
+			if productInfo == nil {
+				return nil, bizerr.New(codes.FailedPrecondition, "商品已失效，请刷新后重新下单")
+			}
+
+			// 优先使用生效的秒杀价
+			price := skuInfo.Price
+			if flashPrice := flashPriceByID[item.SkuId]; flashPrice > 0 {
+				price = flashPrice
+			}
+
+			// 收银台单品改价（仅对当前订单生效，不改商品档案价）：
+			// 仅限收银台来源（Source==2）允许改价，C 端用户下单一律服务端取价，
+			// 防止客户端注入 price 字段以任意低价成交
+			// item.Price>0 时以改价成交，original_price 留服务端实时价快照供后台对账
+			originalPrice := price
+			priceModified := int32(0)
+			if req.Source == 2 && item.Price > 0 {
+				price = item.Price
+				priceModified = 1
+			}
+
+			totalPrice := price * float64(item.Quantity)
+			totalAmount += totalPrice
+			itemScopes = append(itemScopes, itemScope{
+				productID:  skuInfo.ProductId,
+				categoryID: productInfo.CategoryId,
+				totalPrice: totalPrice,
+			})
+
+			orderItems = append(orderItems, &model.OrderItem{
+				ProductID:     skuInfo.ProductId,
+				SkuID:         item.SkuId,
+				ProductName:   productInfo.Name,
+				SpecName:      skuInfo.SpecName,
+				ProductImage:  productInfo.CoverImage,
+				Price:         price,
+				Quantity:      item.Quantity,
+				TotalPrice:    totalPrice,
+				OriginalPrice: originalPrice,
+				PriceModified: priceModified,
+				CreatedAt:     now,
+			})
 		}
-
-		// 收银台单品改价（仅对当前订单生效，不改商品档案价）：
-		// 仅限收银台来源（Source==2）允许改价，C 端用户下单一律服务端取价，
-		// 防止客户端注入 price 字段以任意低价成交
-		// item.Price>0 时以改价成交，original_price 留服务端实时价快照供后台对账
-		originalPrice := price
-		priceModified := int32(0)
-		if req.Source == 2 && item.Price > 0 {
-			price = item.Price
-			priceModified = 1
-		}
-
-		totalPrice := price * float64(item.Quantity)
-		totalAmount += totalPrice
-		itemScopes = append(itemScopes, itemScope{
-			productID:  skuInfo.ProductId,
-			categoryID: productInfo.CategoryId,
-			totalPrice: totalPrice,
-		})
-
-		orderItems = append(orderItems, &model.OrderItem{
-			ProductID:     skuInfo.ProductId,
-			SkuID:         item.SkuId,
-			ProductName:   productInfo.Name,
-			SpecName:      skuInfo.SpecName,
-			ProductImage:  productInfo.CoverImage,
-			Price:         price,
-			Quantity:      item.Quantity,
-			TotalPrice:    totalPrice,
-			OriginalPrice: originalPrice,
-			PriceModified: priceModified,
-			CreatedAt:     now,
-		})
 	}
 
 	// 配送订单需计算配送费并校验起送金额（按商品总额校验，优惠不影响起送门槛）
@@ -248,20 +278,24 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		}
 	}
 
-	// 分别计算满减与优惠券优惠，两者均按商品总价校验门槛并可叠加
-	fullReductionAmount := s.calculateFullReduction(ctx, req.CommunityId, totalAmount)
-
-	// 优惠券是用户主动选择，校验失败（券不存在/已使用/门槛不满足）直接中断下单，
-	// 避免页面展示优惠与订单实付不符的静默失败
+	// 分别计算满减与优惠券优惠，两者均按商品总价校验门槛并可叠加；
+	// 直接收款单金额即成交金额，不参与满减与券（服务端兜底，网关已拦）
+	fullReductionAmount := 0.0
 	var discountAmount float64
 	var userCouponID int64
-	if req.CouponId > 0 {
-		couponDiscount, ucID, err := s.applyCoupon(ctx, req.UserId, req.CouponId, itemScopes)
-		if err != nil {
-			return nil, bizerr.New(codes.FailedPrecondition, err.Error())
+	if !isManualOrder {
+		fullReductionAmount = s.calculateFullReduction(ctx, req.CommunityId, totalAmount)
+
+		// 优惠券是用户主动选择，校验失败（券不存在/已使用/门槛不满足）直接中断下单，
+		// 避免页面展示优惠与订单实付不符的静默失败
+		if req.CouponId > 0 {
+			couponDiscount, ucID, err := s.applyCoupon(ctx, req.UserId, req.CouponId, itemScopes)
+			if err != nil {
+				return nil, bizerr.New(codes.FailedPrecondition, err.Error())
+			}
+			discountAmount = couponDiscount
+			userCouponID = ucID
 		}
-		discountAmount = couponDiscount
-		userCouponID = ucID
 	}
 
 	payAmount := totalAmount + deliveryFee - fullReductionAmount - discountAmount
@@ -278,15 +312,18 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 
 	var contactName, contactPhone, contactAddress string
 	if req.AddressId > 0 {
+		// 取地址失败必须拒单：吞错继续会产出收货信息全空的配送单——
+		// 用户付了配送费却无地址可配（原实现 err==nil && resp!=nil 静默跳过）
 		addrResp, err := grpcclient.UserClient.GetAddress(ctx, &user.GetAddressReq{
 			Id:     req.AddressId,
 			UserId: req.UserId,
 		})
-		if err == nil && addrResp != nil {
-			contactName = addrResp.ContactName
-			contactPhone = addrResp.ContactPhone
-			contactAddress = addrResp.Province + addrResp.City + addrResp.District + addrResp.Detail
+		if err != nil || addrResp == nil {
+			return nil, bizerr.New(codes.FailedPrecondition, "收货地址获取失败，请重新选择地址后下单")
 		}
+		contactName = addrResp.ContactName
+		contactPhone = addrResp.ContactPhone
+		contactAddress = addrResp.Province + addrResp.City + addrResp.District + addrResp.Detail
 	} else if req.ContactName != "" || req.ContactPhone != "" || req.ContactAddress != "" {
 		// 收银台代客下单：无地址簿，联系信息由收银员直填
 		contactName = req.ContactName
@@ -396,7 +433,8 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *model.Order, orderItems []*model.OrderItem, req *order.CreateOrderReq, userCouponID int64, source int32) error {
 	// 整单库存收口为两次批量 RPC（主库存 + 秒杀库存），替代原先逐行各一次的 2N 次往返。
 	// 批量在 product 侧同一事务内完成：要么整单扣减成功，要么一条都没扣，
-	// 因此补偿只需按「是否已提交成功」整单回补，不再逐项追踪下标
+	// 因此补偿只需按「是否已提交成功」整单回补，不再逐项追踪下标。
+	// 直接收款单无商品明细，跳过库存扣减（事务仍无条件执行：落订单与创建日志）
 	stockItems := toStockItemQtys(req.Items)
 	var stockDeducted, flashDeducted bool
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -409,22 +447,24 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 				return err
 			}
 		}
-		if _, err := grpcclient.ProductClient.BatchDeductStock(ctx, &product.BatchDeductStockReq{
-			OrderId: orderModel.ID,
-			Items:   stockItems,
-		}); err != nil {
-			return fmt.Errorf("扣减库存失败: %w", err)
-		}
-		stockDeducted = true
+		if len(stockItems) > 0 {
+			if _, err := grpcclient.ProductClient.BatchDeductStock(ctx, &product.BatchDeductStockReq{
+				OrderId: orderModel.ID,
+				Items:   stockItems,
+			}); err != nil {
+				return fmt.Errorf("扣减库存失败: %w", err)
+			}
+			stockDeducted = true
 
-		// 秒杀独立库存：命中秒杀价的商品在 product 侧自动识别扣减（无生效秒杀时 no-op）
-		if _, err := grpcclient.ProductClient.BatchDeductFlashSaleStock(ctx, &product.BatchDeductFlashSaleStockReq{
-			OrderId: orderModel.ID,
-			Items:   stockItems,
-		}); err != nil {
-			return fmt.Errorf("扣减秒杀库存失败: %w", err)
+			// 秒杀独立库存：命中秒杀价的商品在 product 侧自动识别扣减（无生效秒杀时 no-op）
+			if _, err := grpcclient.ProductClient.BatchDeductFlashSaleStock(ctx, &product.BatchDeductFlashSaleStockReq{
+				OrderId: orderModel.ID,
+				Items:   stockItems,
+			}); err != nil {
+				return fmt.Errorf("扣减秒杀库存失败: %w", err)
+			}
+			flashDeducted = true
 		}
-		flashDeducted = true
 
 		if userCouponID > 0 {
 			if _, err := grpcclient.ProductClient.UseCoupon(ctx, &product.UseCouponReq{
@@ -1502,7 +1542,14 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 	if eligible < target.Threshold {
 		return 0, 0, bizerr.New(codes.FailedPrecondition, "订单中可使用该券的商品金额不满足使用门槛")
 	}
-	return calculateDiscount(eligible, coupon), target.Id, nil
+	discount := calculateDiscount(eligible, coupon)
+	// 门槛单一口径收口：calculateDiscount 按实时券面 coupon.Threshold 复算，
+	// 发放后商家调高门槛时快照校验放行但复算恒为 0——券照常核销即静默烧券，
+	// 与上方「券校验失败直接中断下单，避免静默失败」的设计意图相悖，拒单优于白烧
+	if discount <= 0 {
+		return 0, 0, bizerr.New(codes.FailedPrecondition, "该券使用条件已变更，暂不可用，请重新选择优惠或下单")
+	}
+	return discount, target.Id, nil
 }
 
 // flashSalePriceEnabled 秒杀价开关：库存扣减与限购校验尚未实现，关闭防止超卖资损；

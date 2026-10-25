@@ -1,5 +1,6 @@
 <template>
   <div class="statistics-page">
+    <n-spin :show="loading">
     <!-- 概览：时间范围 + 核心指标 -->
     <n-card size="small" class="section-card">
       <div class="range-bar">
@@ -77,6 +78,7 @@
       </div>
       <n-empty v-else description="所选时间范围内暂无销售数据" class="trend-empty" />
     </n-card>
+    </n-spin>
   </div>
 </template>
 
@@ -265,25 +267,37 @@ function rankPercent(salesCount: number): number {
 
 // --- 数据加载 ---
 
+// 整页加载态 + 请求序号守卫：四个数据各自独立 ref，快速切换日期时旧响应可能
+// 晚于新响应返回并乱序覆盖，呈现混合区间数据；序号过期即丢弃
+const loading = ref(false)
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   const [start, end] = currentRange()
-  const [salesRes, orderRes, revenueRes, rankRes] = await Promise.allSettled([
-    getSalesStatistics({ start_date: start, end_date: end }),
-    getOrderStatistics({ start_date: start, end_date: end }),
-    getRevenueReport({ start_date: start, end_date: end, group_by: 'day' }),
-    getProductRankings({ start_date: start, end_date: end, limit: 10 }),
-  ])
-  if (salesRes.status === 'fulfilled' && salesRes.value.data.code === 0) {
-    sales.value = salesRes.value.data.data
-  }
-  if (orderRes.status === 'fulfilled' && orderRes.value.data.code === 0) {
-    orderStats.value = orderRes.value.data.data
-  }
-  if (revenueRes.status === 'fulfilled' && revenueRes.value.data.code === 0) {
-    buildTrend(revenueRes.value.data.data || [], start, end)
-  }
-  if (rankRes.status === 'fulfilled' && rankRes.value.data.code === 0) {
-    hotProducts.value = rankRes.value.data.data || []
+  loading.value = true
+  try {
+    const [salesRes, orderRes, revenueRes, rankRes] = await Promise.allSettled([
+      getSalesStatistics({ start_date: start, end_date: end }),
+      getOrderStatistics({ start_date: start, end_date: end }),
+      getRevenueReport({ start_date: start, end_date: end, group_by: 'day' }),
+      getProductRankings({ start_date: start, end_date: end, limit: 10 }),
+    ])
+    if (seq !== loadSeq) return
+    if (salesRes.status === 'fulfilled' && salesRes.value.data.code === 0) {
+      sales.value = salesRes.value.data.data
+    }
+    if (orderRes.status === 'fulfilled' && orderRes.value.data.code === 0) {
+      orderStats.value = orderRes.value.data.data
+    }
+    if (revenueRes.status === 'fulfilled' && revenueRes.value.data.code === 0) {
+      buildTrend(revenueRes.value.data.data || [], start, end)
+    }
+    if (rankRes.status === 'fulfilled' && rankRes.value.data.code === 0) {
+      hotProducts.value = rankRes.value.data.data || []
+    }
+  } finally {
+    if (seq === loadSeq) loading.value = false
   }
 }
 

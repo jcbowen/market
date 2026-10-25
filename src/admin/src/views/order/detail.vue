@@ -227,6 +227,7 @@
 // 底部按当前状态渲染操作按钮（发货/核销/完成/取消），操作后刷新详情并通知父级刷新列表
 defineOptions({ name: 'OrderDetailModal' })
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { approveRefund, completeOrder, getOrderDetail, rejectRefund, restoreOrder, syncOrderPayment, verifyPickup } from '@/api/order'
@@ -357,8 +358,8 @@ const refundColumns: DataTableColumns<Refund> = [
     width: 120,
     render: (row) =>
       row.freight_amount > 0
-        ? `￥${(row.amount ?? 0).toFixed(2)}（含运费￥${row.freight_amount.toFixed(2)}）`
-        : `￥${(row.amount ?? 0).toFixed(2)}`,
+        ? `￥${formatAmount(row.amount)}（含运费￥${formatAmount(row.freight_amount)}）`
+        : `￥${formatAmount(row.amount)}`,
   },
   {
     title: '退款商品',
@@ -549,7 +550,7 @@ const auditRejectSubmitting = ref(false)
 function confirmAuditApprove(row: Refund) {
   dialog.warning({
     title: '同意退款',
-    content: `确认同意售后单 ${row.refund_no} 的退款申请？同意后将按订单原支付流水退回 ￥${(row.amount ?? 0).toFixed(2)}。`,
+    content: `确认同意售后单 ${row.refund_no} 的退款申请？同意后将按订单原支付流水退回 ￥${formatAmount(row.amount)}。`,
     positiveText: '确认同意',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -766,15 +767,6 @@ function confirmRestore() {
       }
     },
   })
-}
-
-/**
- * 金额格式化（保留两位小数）
- * @param value 金额
- * @returns 格式化结果
- */
-function formatAmount(value: number): string {
-  return (value ?? 0).toFixed(2)
 }
 
 watch(

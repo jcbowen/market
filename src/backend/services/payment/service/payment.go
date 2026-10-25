@@ -82,13 +82,21 @@ func (s *PaymentService) reloadPayConfig() {
 	s.applyPayConfig(&row)
 }
 
+// cashCreateLocks 现金/货到付款建单的订单级分段锁。
+// 现金单「创建即已支付」，不走待支付占位键（pending_flag 仅随 status=1 落库），
+// 库级唯一索引保护不到它；「GetPayment 查重 → 创建 → 提交」在并发双击下非原子，
+// 同订单可落两笔已支付现金流水（交班营业额双计）。进程内按 orderID 取模串行化收口：
+// 单容器 all-in-one 部署即完备；如未来多实例，需升级为库级串行手段（如订单行 SELECT FOR UPDATE）
+var cashCreateLocks [64]sync.Mutex
+
 // CreatePayment 创建支付单并生成第三方支付调起参数
 // 现金(4)/货到付款(3)无需第三方调起参数，创建成功后直接同步订单状态为已支付
 // （同步 RPC 在支付单事务提交之后发出，失败落异常待办交由对账扫描补同步，见 syncOfflineOrderPaid）；
 // 收银台全额优惠的 0 元单（pay_type=4 且 amount=0）同样落支付单，保持「订单必有支付记录」的统一口径；
 // 付款码支付(5/6)只创建待支付单（无调起参数、不动订单状态），扣款由收银员扫顾客付款码后
 // 通过 PayByAuthCode 完成（两步化，见 codepay.go），渠道不支持 0 元扣款
-// 幂等策略：订单已有支付成功记录时拒绝创建；已有同方式同金额的待支付单时直接复用该记录
+// 幂等策略：订单已有支付成功记录时拒绝创建；已有同方式同金额的待支付单时直接复用该记录；
+// 现金/货到付款在订单级分段锁内执行整个「查重→创建」过程，封堵并发双击的双流水
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建支付请求
@@ -105,6 +113,12 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	case 1, 2, 3, 4, 5, 6:
 	default:
 		return nil, "", bizerr.New(codes.InvalidArgument, "不支持的支付方式")
+	}
+	// 现金/货到付款：锁持有到本函数返回（创建事务已提交），并发第二单在锁内查重即被拒
+	if req.PayType == 3 || req.PayType == 4 {
+		mu := &cashCreateLocks[uint64(req.OrderId)%uint64(len(cashCreateLocks))]
+		mu.Lock()
+		defer mu.Unlock()
 	}
 	// 付款码支付依赖渠道真实扣款，渠道不受理 0 元交易；全额优惠单收银台应改用现金方式
 	if (req.PayType == 5 || req.PayType == 6) && req.Amount <= 0 {

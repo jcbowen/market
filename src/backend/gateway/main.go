@@ -425,6 +425,9 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			// 付款码收款（两步化第二步）与 PAYING 在途轮询：均为收银动作，权限与下单一致（order:create）
 			authAdmin.POST("/pos/orders/:id/pay-code", gwMiddleware.RequirePermission("order:create"), adminHandler.PayPosOrderByCode)
 			authAdmin.GET("/pos/orders/:id/pay-code", gwMiddleware.RequirePermission("order:create"), adminHandler.GetPosOrderPayStatus)
+			// 待支付订单继续收款：改用现金（关遗留支付单后建现金单）/ 重建付款码会话（复用待支付单幂等）
+			authAdmin.POST("/pos/orders/:id/pay-cash", gwMiddleware.RequirePermission("order:create"), adminHandler.PayPosOrderByCash)
+			authAdmin.POST("/pos/orders/:id/pay-code-session", gwMiddleware.RequirePermission("order:create"), adminHandler.EnsurePosCodePaySession)
 			authAdmin.POST("/pos/held-orders", gwMiddleware.RequirePermission("order:create"), adminHandler.CreatePosHeldOrder)
 			authAdmin.GET("/pos/held-orders", gwMiddleware.RequirePermission("order:view"), adminHandler.ListPosHeldOrders)
 			authAdmin.DELETE("/pos/held-orders/:id", gwMiddleware.RequirePermission("order:create"), adminHandler.DeletePosHeldOrder)

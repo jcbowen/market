@@ -1,0 +1,470 @@
+<template>
+  <div class="direct-pay-tab">
+    <div class="pay-panel">
+      <div class="panel-hint">直接收款：输入金额后收款，不关联商品（按到店消费记录）</div>
+
+      <!-- 金额展示与输入 -->
+      <div class="amount-box" @click="focusAmount">
+        <span class="amount-label">收款金额</span>
+        <n-input
+          ref="amountInputRef"
+          :value="amountText"
+          size="large"
+          placeholder="0.00"
+          class="amount-input"
+          :input-props="{ inputmode: 'decimal' }"
+          @keydown="onAmountKeydown"
+          @update:value="sanitizeAmount"
+        >
+          <template #prefix>￥</template>
+        </n-input>
+      </div>
+
+      <!-- 数字小键盘（触屏收银机点按） -->
+      <number-pad dot @input="onPadInput" @backspace="onPadBackspace" @clear="clearAmount" />
+
+      <!-- 收款动作 -->
+      <n-space vertical :size="10" class="pay-actions">
+        <n-button
+          v-if="codePayMethod"
+          type="primary"
+          size="large"
+          block
+          class="pay-btn-main"
+          :loading="creating"
+          :disabled="!amountValid"
+          @click="onCodePay"
+        >
+          付款码收款 ￥{{ formatAmount(amount) }}（F2）
+        </n-button>
+        <n-button
+          size="large"
+          block
+          type="warning"
+          secondary
+          :loading="creating"
+          :disabled="!amountValid"
+          @click="onCashPay"
+        >
+          现金收款（F3）
+        </n-button>
+      </n-space>
+    </div>
+
+    <!-- 付款码扫码弹窗（与商品下单共用） -->
+    <code-pay-dialog
+      v-model:show="showCodePay"
+      :order-id="codePayOrderId"
+      :order-no="codePayOrderNo"
+      :amount="codePayAmount"
+      :payment-no="codePayPaymentNo"
+      @paid="onCodePaid"
+      @close-abandoned="onAbandoned"
+    />
+
+    <!-- 收银成功小票弹窗 -->
+    <receipt-modal v-model:show="showPaid" :receipt="receipt" />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
+import { useDialog, useMessage } from 'naive-ui'
+import { createPosOrder, ensurePosCodePaySession, listPosPayMethods } from '@/api/order'
+import NumberPad from '@/components/NumberPad.vue'
+import CodePayDialog from './CodePayDialog.vue'
+import ReceiptModal, { type PaidReceipt } from './ReceiptModal.vue'
+import { PAY_TYPE } from '@/constants/order'
+
+/**
+ * 直接收款 Tab（无商品快速收款）
+ * 输入金额（物理键盘/触屏小键盘双通道）→ 付款码收款（建无商品到店单后扫码扣款）
+ * 或现金收款（确认即完结）。金额即成交金额，不参与券/满减/库存，订单可在订单查询继续处理
+ */
+
+const message = useMessage()
+const dialog = useDialog()
+
+/** 金额输入（字符串形式，含小数点；空串显示占位） */
+const amountText = ref('')
+const amountInputRef = ref<{ focus: () => void } | null>(null)
+const creating = ref(false)
+
+/** 收款金额（非法输入按 0 处理） */
+const amount = computed(() => {
+  const v = Number.parseFloat(amountText.value)
+  return Number.isFinite(v) ? Math.round(v * 100) / 100 : 0
+})
+/** 金额有效性：大于 0 才可收款 */
+const amountValid = computed(() => amount.value > 0)
+
+// --- 支付方式：现金恒可用；付款码按渠道配置出现（与商品下单同口径） ---
+const codePayMethod = ref<{ label: string; value: number } | null>(null)
+
+/**
+ * 拉取收银台可用支付方式，取第一个非现金方式作为付款码入口
+ */
+async function loadPayMethods() {
+  codePayMethod.value = null
+  try {
+    const res = await listPosPayMethods()
+    if (res.data.code !== 0) return
+    const list = (res.data.data.list || []).map((m) => ({ label: m.label, value: m.pay_type }))
+    codePayMethod.value = list.find((m) => m.value !== PAY_TYPE.CASH) ?? null
+  } catch {
+    // 拉取失败降级为仅现金，服务端渠道校验兜底
+  }
+}
+
+// --- 金额输入 ---
+
+/**
+ * 小键盘输入：写入金额字符串（最多两位小数）
+ * @param char 按键字符（数字/小数点）
+ */
+function onPadInput(char: string) {
+  if (char === '.') {
+    if (amountText.value.includes('.')) return
+    amountText.value = (amountText.value || '0') + '.'
+    return
+  }
+  // 限制两位小数
+  const dotIdx = amountText.value.indexOf('.')
+  if (dotIdx >= 0 && amountText.value.length - dotIdx > 2) return
+  // 防止前导零堆积（"00" -> "0"）
+  const next = amountText.value === '0' ? char : amountText.value + char
+  amountText.value = next.length > 9 ? amountText.value : next
+}
+
+/**
+ * 小键盘退格：删一位
+ */
+function onPadBackspace() {
+  amountText.value = amountText.value.slice(0, -1)
+}
+
+/**
+ * 清空金额
+ */
+function clearAmount() {
+  amountText.value = ''
+}
+
+/**
+ * 输入净化（v-model 与粘贴的统一白名单出口，2026-10-25 审查 P2）：
+ * 只保留数字与小数点（单点、最多两位小数、总长 ≤9），
+ * 防止 "12ab" 之类被 parseFloat 静默截断成 12 造成展示与实收不一致
+ * @param v 输入框最新值
+ */
+function sanitizeAmount(v: string) {
+  let s = v.replace(/[^0-9.]/g, '')
+  const firstDot = s.indexOf('.')
+  if (firstDot >= 0) {
+    s = s.slice(0, firstDot + 1) + s.slice(firstDot + 1).replace(/\./g, '')
+    const [int, dec] = s.split('.')
+    s = int + '.' + dec.slice(0, 2)
+  }
+  if (s.length > 9) s = s.slice(0, 9)
+  amountText.value = s
+}
+
+/**
+ * 物理键盘：数字/小数点/退格直接写入，Enter 触发付款码收款（无付款码渠道时触发现金确认）
+ * @param e 键盘事件
+ */
+function onAmountKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    if (codePayMethod.value) onCodePay()
+    else onCashPay()
+    return
+  }
+  if (/^\d$/.test(e.key)) {
+    onPadInput(e.key)
+    e.preventDefault()
+    return
+  }
+  if (e.key === '.') {
+    onPadInput('.')
+    e.preventDefault()
+    return
+  }
+  if (e.key === 'Backspace') {
+    onPadBackspace()
+    e.preventDefault()
+  }
+}
+
+/** 让金额输入框聚焦（点金额区域即聚焦） */
+function focusAmount() {
+  amountInputRef.value?.focus()
+}
+
+// --- F2/F3 全局收款快捷键 ---
+
+/**
+ * 全局 F2/F3：F2 付款码收款、F3 现金收款（弹窗打开时忽略，避免重复建单）
+ * @param e 键盘事件
+ */
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key !== 'F2' && e.key !== 'F3') return
+  if (showCodePay.value || showPaid.value || cashConfirmOpen.value) return
+  e.preventDefault()
+  if (!amountValid.value) {
+    message.warning('请先输入收款金额')
+    return
+  }
+  if (e.key === 'F2') onCodePay()
+  else onCashPay()
+}
+
+// --- 付款码收款 ---
+
+const showCodePay = ref(false)
+const codePayOrderId = ref(0)
+const codePayOrderNo = ref('')
+const codePayAmount = ref(0)
+const codePayPaymentNo = ref('')
+
+/** 现金确认弹窗是否打开（全局快捷键与付款码入口的互斥守卫） */
+const cashConfirmOpen = ref(false)
+/** 确认弹窗聚焦定时器（组件卸载时清理，避免已卸载实例操作 DOM） */
+let dialogFocusTimer: number | undefined
+/**
+ * 放弃扫码遗留的待支付单快照：同金额再次发起付款码收款时复用，
+ * 避免直接收款页重复建单（key 为本次收款请求的序列化，判定同一笔业务）
+ */
+const abandonedPending = ref<{
+  orderId: number
+  orderNo: string
+  paymentNo: string
+  amount: number
+  key: string
+} | null>(null)
+
+/**
+ * 弹窗渲染后聚焦确认按钮，回车即确认（不依赖鼠标）
+ * @param selector 确认按钮选择器
+ */
+function focusDialogConfirm(selector = '.n-dialog__action button:last-of-type') {
+  if (dialogFocusTimer !== undefined) window.clearTimeout(dialogFocusTimer)
+  dialogFocusTimer = window.setTimeout(() => {
+    dialogFocusTimer = undefined
+    const btn = document.querySelector(selector) as HTMLButtonElement | null
+    btn?.focus()
+  }, 150)
+}
+
+/**
+ * 直接收款单：付款码收款：建无商品到店待支付单 → 打开扫码窗（无需确认弹窗，金额已明示）；
+ * 放弃扫码后同金额再按 F2 复用遗留单（pay-code-session），不重复建待支付单
+ */
+async function onCodePay() {
+  if (!codePayMethod.value || creating.value) return
+  if (showCodePay.value || cashConfirmOpen.value) return
+  if (!amountValid.value) {
+    message.warning('请先输入收款金额')
+    return
+  }
+  creating.value = true
+  try {
+    const key = JSON.stringify({ amount: amount.value, pay_type: codePayMethod.value.value })
+    if (abandonedPending.value && abandonedPending.value.key === key) {
+      const reused = await ensurePosCodePaySession(abandonedPending.value.orderId)
+      if (reused.data.code !== 0) return
+      const p = abandonedPending.value
+      codePayOrderId.value = p.orderId
+      codePayOrderNo.value = p.orderNo
+      codePayAmount.value = p.amount
+      codePayPaymentNo.value = reused.data.data.payment_no || p.paymentNo
+      showCodePay.value = true
+      return
+    }
+    const res = await createPosOrder({
+      user_id: 0,
+      delivery_type: 3,
+      pay_type: codePayMethod.value.value,
+      manual_amount: amount.value,
+      items: [],
+    })
+    if (res.data.code !== 0) return
+    codePayOrderId.value = res.data.data.id
+    codePayOrderNo.value = res.data.data.order_no
+    codePayAmount.value = res.data.data.pay_amount
+    codePayPaymentNo.value = res.data.data.payment_no || ''
+    abandonedPending.value = {
+      orderId: codePayOrderId.value,
+      orderNo: codePayOrderNo.value,
+      paymentNo: codePayPaymentNo.value,
+      amount: codePayAmount.value,
+      key,
+    }
+    showCodePay.value = true
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    creating.value = false
+  }
+}
+
+// --- 现金收款 ---
+
+const showPaid = ref(false)
+const receipt = ref<PaidReceipt | null>(null)
+
+/**
+ * 组装直接收款小票快照（无商品明细）
+ * @param payLabel 支付方式文案
+ */
+function buildReceipt(payLabel: string) {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  receipt.value = {
+    order_no: '',
+    pay_amount: amount.value,
+    channel_label: '到店消费',
+    pay_label: payLabel,
+    member_label: '散客',
+    items: [],
+    total_amount: amount.value,
+    coupon_discount: 0,
+    manual_discount: 0,
+    time: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
+  }
+}
+
+/**
+ * 现金收款：确认后建无商品到店单（现金创建即收款完结，服务端自动流转已完成）
+ * 确认弹窗打开后自动聚焦确认按钮，回车即确认（不依赖鼠标）
+ */
+function onCashPay() {
+  if (creating.value) return
+  if (showCodePay.value || cashConfirmOpen.value) return
+  if (!amountValid.value) {
+    message.warning('请先输入收款金额')
+    return
+  }
+  cashConfirmOpen.value = true
+  dialog.warning({
+    title: '现金收款',
+    content: `确认已收现金 ￥${formatAmount(amount.value)}？（回车确认，Esc 取消）`,
+    positiveText: '确认收款',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      // 收款进行中保持弹窗打开，避免重复提交建单
+      if (creating.value) return false
+      creating.value = true
+      try {
+        const res = await createPosOrder({
+          user_id: 0,
+          delivery_type: 3,
+          pay_type: PAY_TYPE.CASH,
+          manual_amount: amount.value,
+          items: [],
+        })
+        if (res.data.code === 0) {
+          buildReceipt('现金')
+          receipt.value!.order_no = res.data.data.order_no
+          showPaid.value = true
+          message.success('收款成功')
+          clearAmount()
+        }
+      } catch {
+        // 错误提示由请求拦截器统一弹出
+      } finally {
+        creating.value = false
+      }
+    },
+    // 覆盖所有关闭路径（确认/取消/Esc），关闭动画结束即释放快捷键守卫
+    onAfterLeave: () => {
+      cashConfirmOpen.value = false
+    },
+  })
+  // 回车确认：弹窗渲染后聚焦确认按钮，原生回车触发其 click
+  focusDialogConfirm()
+}
+
+/**
+ * 付款码收款成功收尾：出小票、清金额
+ * @param payload 收款结果（payLabel 渠道文案）
+ */
+function onCodePaid(payload: { payLabel: string; via: 'code' | 'cash' }) {
+  showCodePay.value = false
+  abandonedPending.value = null
+  buildReceipt(payload.payLabel)
+  receipt.value!.order_no = codePayOrderNo.value
+  showPaid.value = true
+  message.success('收款成功')
+  clearAmount()
+}
+
+/**
+ * 收银员放弃扫码：订单保留待支付，提示去订单查询处理
+ */
+function onAbandoned() {
+  message.info(`订单 ${codePayOrderNo.value} 已创建未收款，可在「订单查询」继续收款`)
+}
+
+onMounted(() => {
+  void loadPayMethods()
+  window.addEventListener('keydown', onGlobalKeydown)
+  void focusAmount()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  if (dialogFocusTimer !== undefined) {
+    window.clearTimeout(dialogFocusTimer)
+    dialogFocusTimer = undefined
+  }
+})
+</script>
+
+<style lang="scss" scoped>
+.direct-pay-tab {
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.pay-panel {
+  width: 400px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.panel-hint {
+  text-align: center;
+  font-size: 13px;
+  color: #999;
+}
+.amount-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.amount-label {
+  font-size: 14px;
+  color: #666;
+}
+.amount-input {
+  :deep(input) {
+    font-size: 30px;
+    font-weight: 700;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+}
+.pay-actions {
+  margin-top: 4px;
+}
+.pay-btn-main {
+  height: 52px;
+  font-size: 17px;
+}
+</style>

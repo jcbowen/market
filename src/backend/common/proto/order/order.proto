@@ -208,6 +208,10 @@ message CreateOrderReq {
   double manual_discount = 15;
   // 收银班次 ID（source=2 收银单必填，下单时由网关校验进行中班次后传入；0=非收银单）
   int64 shift_id = 16;
+  // 直接收款金额（收银台「直接收款」无商品单专用）：>0 时订单不含商品明细，
+  // total_amount=pay_amount 以此金额为准，跳过商品计价/库存扣减/满减/券；
+  // 仅允许 source=2 且 delivery_type=3（到店即收，即买即走）
+  double manual_amount = 17;
 }
 
 // --- 免配送费试算 ---

@@ -37,6 +37,7 @@
 
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getSeckillList, createSeckill, updateSeckill } from '@/api/marketing'
@@ -49,7 +50,7 @@ const pageSize = 10
 const columns: DataTableColumns<Seckill> = [
   { title: 'ID', key: 'id', width: 60 },
   { title: '商品', key: 'product_name', width: 140, ellipsis: { tooltip: true } },
-  { title: '秒杀价', key: 'seckill_price', width: 100, render(row) { return `¥${row.seckill_price.toFixed(2)}` } },
+  { title: '秒杀价', key: 'seckill_price', width: 100, render(row) { return `¥${formatAmount(row.seckill_price)}` } },
   { title: '库存', key: 'stock', width: 80 },
   { title: '开始时间', key: 'start_time', width: 160, render: (row) => formatDateTime(row.start_time) },
   { title: '结束时间', key: 'end_time', width: 160, render: (row) => formatDateTime(row.end_time) },

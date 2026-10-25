@@ -95,21 +95,21 @@
                 <n-tag v-if="item.price_modified" size="tiny" type="warning" :bordered="false" class="mod-tag">已改价</n-tag>
               </span>
               <span class="item-price">
-                ￥{{ item.price.toFixed(2) }}
-                <span v-if="item.price_modified" class="origin">￥{{ (item.original_price ?? item.price).toFixed(2) }}</span>
+                ￥{{ formatAmount(item.price) }}
+                <span v-if="item.price_modified" class="origin">￥{{ formatAmount(item.original_price ?? item.price) }}</span>
               </span>
               <span class="item-qty">x{{ item.quantity }}</span>
-              <span class="item-subtotal">￥{{ item.total_amount.toFixed(2) }}</span>
+              <span class="item-subtotal">￥{{ formatAmount(item.total_amount) }}</span>
             </div>
           </div>
 
           <!-- 金额构成 -->
           <div class="amount-block">
-            <div class="amount-row"><span>商品总额</span><span>￥{{ detail.total_amount.toFixed(2) }}</span></div>
-            <div v-if="detail.discount_amount > 0" class="amount-row"><span>系统优惠</span><span>-￥{{ detail.discount_amount.toFixed(2) }}</span></div>
-            <div v-if="(detail.manual_discount ?? 0) > 0" class="amount-row"><span>收银优惠（改价/抹零）</span><span>-￥{{ detail.manual_discount?.toFixed(2) }}</span></div>
-            <div v-if="detail.delivery_fee > 0" class="amount-row"><span>配送费</span><span>+￥{{ detail.delivery_fee.toFixed(2) }}</span></div>
-            <div class="amount-row strong"><span>实付</span><span>￥{{ detail.pay_amount.toFixed(2) }}</span></div>
+            <div class="amount-row"><span>商品总额</span><span>￥{{ formatAmount(detail.total_amount) }}</span></div>
+            <div v-if="detail.discount_amount > 0" class="amount-row"><span>系统优惠</span><span>-￥{{ formatAmount(detail.discount_amount) }}</span></div>
+            <div v-if="(detail.manual_discount ?? 0) > 0" class="amount-row"><span>收银优惠（改价/抹零）</span><span>-￥{{ formatAmount(detail.manual_discount) }}</span></div>
+            <div v-if="detail.delivery_fee > 0" class="amount-row"><span>配送费</span><span>+￥{{ formatAmount(detail.delivery_fee) }}</span></div>
+            <div class="amount-row strong"><span>实付</span><span>￥{{ formatAmount(detail.pay_amount) }}</span></div>
           </div>
 
           <!-- 售后记录（每次退款单：类型/金额/状态/时间） -->
@@ -119,7 +119,7 @@
               <div v-for="refund in detail.refunds" :key="refund.id" class="refund-row">
                 <span class="refund-no">{{ refund.refund_no }}</span>
                 <n-tag size="tiny" :type="refundTypeTagType(refund.type)" :bordered="false">{{ refundTypeText(refund.type) }}</n-tag>
-                <span class="refund-amount">￥{{ refund.amount.toFixed(2) }}</span>
+                <span class="refund-amount">￥{{ formatAmount(refund.amount) }}</span>
                 <n-tag size="tiny" :type="refundStatusTagType(refund.status)" :bordered="false">{{ refundStatusText(refund.status) }}</n-tag>
                 <span class="refund-time">{{ formatDateTime(refund.refund_time || refund.created_at) }}</span>
               </div>
@@ -128,6 +128,14 @@
 
           <!-- 处理操作（按状态与权限显示，全部弹窗内完成） -->
           <n-space justify="end" class="detail-actions">
+            <n-button
+              v-if="canRepay"
+              size="small"
+              type="warning"
+              @click="openRepay(detail)"
+            >
+              继续收款
+            </n-button>
             <n-button
               v-if="canCancel"
               size="small"
@@ -160,6 +168,39 @@
       </n-spin>
     </n-modal>
 
+    <!-- 继续收款弹窗（待支付单：付款码 / 现金两路） -->
+    <n-modal
+      v-model:show="showRepay"
+      preset="card"
+      title="继续收款"
+      style="width: 380px; max-width: 92vw"
+    >
+      <div v-if="repayOrder" class="repay-wrap">
+        <div class="repay-amount">￥{{ formatAmount(repayOrder.pay_amount) }}</div>
+        <div class="repay-order muted">{{ repayOrder.order_no }}</div>
+        <n-space vertical :size="10">
+          <n-button type="primary" block size="large" :loading="repayPreparing" @click="onRepayByCode">
+            扫顾客付款码收款
+          </n-button>
+          <n-button block size="large" type="warning" secondary @click="onRepayByCash">
+            收现金（顾客改用现金）
+          </n-button>
+        </n-space>
+        <n-text depth="3" style="font-size: 12px">付款码收款失败可在弹窗内改用现金收款</n-text>
+      </div>
+    </n-modal>
+
+    <!-- 付款码扫码弹窗（待支付单继续收款，与商品下单共用） -->
+    <code-pay-dialog
+      v-model:show="showRepayCodePay"
+      :order-id="repayOrder?.id ?? 0"
+      :order-no="repayOrder?.order_no ?? ''"
+      :amount="repayOrder?.pay_amount ?? 0"
+      :payment-no="repayPaymentNo"
+      @paid="onRepayPaid"
+      @close-abandoned="onRepayAbandoned"
+    />
+
     <!-- 取消订单弹窗 -->
     <n-modal
       v-model:show="showCancelModal"
@@ -186,28 +227,38 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
-import { NButton, useMessage } from 'naive-ui'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
+import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { cancelOrder, getOrderDetail, getOrderList, verifyPickup } from '@/api/order'
+import { cancelOrder, ensurePosCodePaySession, getOrderDetail, getOrderList, payPosOrderCash, verifyPickup } from '@/api/order'
 import type { Order, OrderDetail } from '@/api/types'
 import { ORDER_STATUS, QUERY_STATUS, canAdminRefund, deliveryTypeText, orderSourceFilterOptions, orderSourceText, orderStatusTagType, payTypeText, refundStatusText, refundStatusTagType, refundTypeText, refundTypeTagType } from '@/constants/order'
 import { useAuthStore } from '@/stores/auth'
+import { usePosStore } from '@/stores/pos'
 import { formatDateTime } from '@/utils/datetime'
 import RefundModal from '@/views/order/components/RefundModal.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import OrderDetailModal from '@/views/order/detail.vue'
+import CodePayDialog from './CodePayDialog.vue'
 import { reopenModal } from '@/utils/modal'
 
 /**
  * 订单查询 Tab（收银台内）
- * 单号精确搜索 + 状态/来源筛选 + 分页；详情弹窗内完成取消/代客退款/自提核销，
+ * 单号精确搜索 + 状态/来源筛选 + 分页；详情弹窗内完成继续收款/取消/代客退款/自提核销，
  * 处理按钮按状态与权限显示（取消/核销=order:update，退款=refund:update），不打断收银流程跳后台；
+ * 待支付单支持「继续收款」（付款码/现金两路，扣款失败可换现金）；
+ * 「引用到收银台」把订单商品写入 posStore 待引用清单并切回商品下单 Tab；
  * 代客退款与后台共用 RefundModal（整单/部分商品/仅金额退，金额可调低），详情弹窗内展示每次售后记录
  */
 
 const message = useMessage()
+const dialog = useDialog()
 const authStore = useAuthStore()
+const posStore = usePosStore()
+
+/** 引用到收银台事件（父组件切回商品下单 Tab） */
+const emit = defineEmits<{ (e: 'import-to-cashier'): void }>()
 
 // --- 列表查询 ---
 const query = ref({ order_no: '', status: null as number | null, source: null as number | null })
@@ -306,6 +357,135 @@ const canRefund = computed(() => !!detail.value && hasRefundPermission.value && 
 const canVerify = computed(
   () => !!detail.value && hasUpdatePermission.value && detail.value.status === ORDER_STATUS.PAID && detail.value.delivery_type === 1,
 )
+/** 可继续收款：待支付收银台单（与后端 pay-cash/pay-code-session 口径一致） */
+const canRepay = computed(
+  () => !!detail.value && detail.value.status === ORDER_STATUS.PENDING_PAY && detail.value.source === 2,
+)
+
+// --- 继续收款（待支付单：付款码/现金两路） ---
+const showRepay = ref(false)
+const showRepayCodePay = ref(false)
+const repayOrder = ref<Order | OrderDetail | null>(null)
+const repayPaymentNo = ref('')
+const repayPreparing = ref(false)
+
+/** 确认弹窗聚焦定时器（组件卸载时清理，避免已卸载实例操作 DOM） */
+let dialogFocusTimer: number | undefined
+
+/**
+ * 弹窗渲染后聚焦确认按钮，回车即确认（不依赖鼠标）
+ * @param selector 确认按钮选择器
+ */
+function focusDialogConfirm(selector = '.n-dialog__action button:last-of-type') {
+  if (dialogFocusTimer !== undefined) window.clearTimeout(dialogFocusTimer)
+  dialogFocusTimer = window.setTimeout(() => {
+    dialogFocusTimer = undefined
+    const btn = document.querySelector(selector) as HTMLButtonElement | null
+    btn?.focus()
+  }, 150)
+}
+
+/**
+ * 打开继续收款弹窗（详情弹窗或列表行入口）
+ * @param order 订单行/详情
+ */
+function openRepay(order: Order | OrderDetail) {
+  repayOrder.value = order
+  repayPaymentNo.value = ''
+  showRepay.value = true
+}
+
+/**
+ * 付款码路径：先向后端要收款会话（复用遗留待支付单，out_trade_no 不变），
+ * 再打开扫码窗；渠道未开启时后端提示改现金
+ */
+async function onRepayByCode() {
+  if (!repayOrder.value || repayPreparing.value) return
+  repayPreparing.value = true
+  try {
+    const res = await ensurePosCodePaySession(repayOrder.value.id)
+    if (res.data.code !== 0) return
+    repayPaymentNo.value = res.data.data.payment_no
+    showRepayCodePay.value = true
+    showRepay.value = false
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    repayPreparing.value = false
+  }
+}
+
+/**
+ * 现金路径：确认后调 pay-cash（后端关遗留待支付单后收现金，订单自动完结）
+ */
+function onRepayByCash() {
+  if (!repayOrder.value) return
+  const order = repayOrder.value
+  dialog.warning({
+    title: '现金收款',
+    content: `确认已收现金 ￥${formatAmount(order.pay_amount)}（订单 ${order.order_no}）？（回车确认）`,
+    positiveText: '确认收款',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      const res = await payPosOrderCash(order.id)
+      if (res.data.code === 0) {
+        message.success(`订单 ${order.order_no} 现金收款成功`)
+        showRepay.value = false
+        showDetail.value = false
+        void loadOrders()
+      }
+    },
+  })
+  // 回车确认：弹窗渲染后聚焦确认按钮
+  focusDialogConfirm()
+}
+
+/**
+ * 待支付单付款码收款成功：刷新列表
+ */
+function onRepayPaid() {
+  showRepayCodePay.value = false
+  message.success('收款成功')
+  void loadOrders()
+}
+
+/**
+ * 收银员放弃扫码：订单保留待支付
+ */
+function onRepayAbandoned() {
+  message.info(`订单 ${repayOrder.value?.order_no ?? ''} 已保留待支付，可稍后继续收款或取消`)
+}
+
+// --- 引用到收银台 ---
+
+/**
+ * 把订单商品引用到收银台：拉详情取商品快照写入 posStore 待引用清单，
+ * 通知父组件切回商品下单 Tab（OrderTab 挂载时消费，追加到当前小票）
+ * @param row 订单行（列表入口）
+ */
+async function importToCashier(row: Order) {
+  try {
+    const res = await getOrderDetail(row.id)
+    const d = res.data.data
+    const items = (d.items || []).map((it) => ({
+      sku_id: it.sku_id,
+      quantity: it.quantity,
+      product_name: it.sku_name ? `${it.product_name}（${it.sku_name}）` : it.product_name,
+      spec_name: it.sku_name || '',
+      // 改价单取档案价快照，改价不带入（"再来一单"按当前档案价成交）
+      price: it.price_modified ? (it.original_price ?? it.price) : it.price,
+    }))
+    if (!items.length) {
+      message.warning('该订单没有商品明细（直接收款单无需引用）')
+      return
+    }
+    posStore.setPendingImport(items)
+    message.success(`已引用订单 ${d.order_no} 的 ${items.length} 项商品`)
+    emit('import-to-cashier')
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  }
+}
 
 /**
  * 打开详情弹窗并加载完整详情
@@ -411,7 +591,7 @@ function openUserOrders(row: Pick<Order, 'user_id' | 'user_name'>) {
   openUserOrdersOf({ id: row.user_id, nickname: row.user_name })
 }
 
-/** 表格列定义（行点击打开详情） */
+/** 表格列定义（行点击打开详情；状态列彩色标签；待支付可继续收款，全部可引用到收银台） */
 const columns = computed<DataTableColumns<Order>>(() => [
   { title: '订单号', key: 'order_no', width: 190, ellipsis: { tooltip: true } },
   {
@@ -429,7 +609,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
           )
         : row.user_name || '散客',
   },
-  { title: '实付', key: 'pay_amount', width: 90, render: (row) => `￥${row.pay_amount.toFixed(2)}` },
+  { title: '实付', key: 'pay_amount', width: 90, render: (row) => `￥${formatAmount(row.pay_amount)}` },
   {
     title: '支付方式',
     key: 'pay_type',
@@ -437,10 +617,12 @@ const columns = computed<DataTableColumns<Order>>(() => [
     render: (row) => row.pay_type_text || (row.pay_type ? payTypeText(row.pay_type) : '-'),
   },
   {
+    // 支付/订单状态彩色标签：与详情弹窗同口径（待支付黄/已支付蓝/完成绿/退款红）
     title: '状态',
     key: 'status',
     width: 90,
-    render: (row) => h('span', null, row.status_text),
+    render: (row) =>
+      h(NTag, { size: 'small', type: orderStatusTagType(row.status), bordered: false }, { default: () => row.status_text }),
   },
   {
     title: '来源',
@@ -453,17 +635,43 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 80,
-    render: (row) =>
-      h(
-        NButton,
-        { size: 'tiny', type: 'primary', quaternary: true, onClick: () => openDetail(row) },
-        { default: () => '详情' },
-      ),
+    width: 120,
+    render: (row) => {
+      const btns = [
+        h(
+          NButton,
+          { size: 'tiny', type: 'primary', quaternary: true, onClick: () => openDetail(row) },
+          { default: () => '详情' },
+        ),
+        h(
+          NButton,
+          { size: 'tiny', type: 'info', quaternary: true, onClick: () => void importToCashier(row) },
+          { default: () => '引用' },
+        ),
+      ]
+      // 待支付收银台单：列表直达继续收款
+      if (row.status === ORDER_STATUS.PENDING_PAY && row.source === 2) {
+        btns.push(
+          h(
+            NButton,
+            { size: 'tiny', type: 'warning', quaternary: true, onClick: () => openRepay(row) },
+            { default: () => '收款' },
+          ),
+        )
+      }
+      return btns
+    },
   },
 ])
 
 onMounted(loadOrders)
+
+onBeforeUnmount(() => {
+  if (dialogFocusTimer !== undefined) {
+    window.clearTimeout(dialogFocusTimer)
+    dialogFocusTimer = undefined
+  }
+})
 </script>
 
 <style lang="scss" scoped>
@@ -591,6 +799,23 @@ onMounted(loadOrders)
 }
 .detail-actions {
   margin-top: 16px;
+}
+.repay-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+.repay-amount {
+  font-size: 32px;
+  font-weight: 700;
+  color: #d03050;
+}
+.repay-order {
+  font-size: 12px;
+}
+.muted {
+  color: #999;
 }
 .refund-list {
   border: 1px solid #efeff5;

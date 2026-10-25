@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { h, onMounted, reactive, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { NButton, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getCategoryList, getProductList } from '@/api/product'
@@ -187,7 +188,7 @@ const productColumns: DataTableColumns<Product> = [
     key: 'price',
     width: 100,
     render(row) {
-      return `¥${(row.min_price ?? row.price ?? 0).toFixed(2)}`
+      return `¥${formatAmount(row.min_price ?? row.price)}`
     },
   },
   {

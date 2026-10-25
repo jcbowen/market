@@ -75,9 +75,22 @@ function packageRelease() {
   fs.rmSync(DIST_DIR, { recursive: true, force: true });
   fs.mkdirSync(path.join(DIST_DIR, 'bin', 'static'), { recursive: true });
 
-  // 复制二进制与静态资源
+  // 复制二进制与静态资源：白名单口径，只入服务器所需的构建产物与配置。
+  // 严禁整目录搬运 bin/——其中 data/ssl（密码传输 RSA 私钥）、runtime（支付配置等
+  // 运行态回写）、logs、attachment（用户上传）均为本机运行数据，随包分发即泄漏密钥，
+  // 服务器上应全新落盘（首启自动生成私钥、挂载目录自动创建）。
+  // darwin/windows 产物与 bin 根下的本机调试二进制与 Linux 部署无关，不入包。
+  const BIN_ALLOWLIST = new Set([
+    'static',
+    'linux-arm64',
+    'linux-amd64',
+    'config.yaml',
+    'config.docker.yaml',
+    'config.allinone.yaml',
+  ]);
   if (fs.existsSync(path.join(ROOT_DIR, 'bin'))) {
     for (const name of fs.readdirSync(path.join(ROOT_DIR, 'bin'))) {
+      if (!BIN_ALLOWLIST.has(name)) continue;
       fs.cpSync(path.join(ROOT_DIR, 'bin', name), path.join(DIST_DIR, 'bin', name), { recursive: true, force: true });
     }
   }

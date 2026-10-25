@@ -74,6 +74,9 @@ type stubPosPaymentClient struct {
 	cfg          *payment.PayConfig
 	createCalled bool
 	createReq    *payment.CreatePaymentReq
+	closeCalled  bool
+	closeReq     *payment.ClosePaymentsReq
+	closeErr     error
 }
 
 func (s *stubPosPaymentClient) GetPayConfig(ctx context.Context, in *payment.GetPayConfigReq, opts ...grpc.CallOption) (*payment.PayConfig, error) {
@@ -84,6 +87,15 @@ func (s *stubPosPaymentClient) CreatePayment(ctx context.Context, in *payment.Cr
 	s.createCalled = true
 	s.createReq = in
 	return &payment.CreatePaymentResp{PaymentNo: "ZFPOSTEST"}, nil
+}
+
+func (s *stubPosPaymentClient) ClosePayments(ctx context.Context, in *payment.ClosePaymentsReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+	s.closeCalled = true
+	s.closeReq = in
+	if s.closeErr != nil {
+		return nil, s.closeErr
+	}
+	return &common.CommonResponse{}, nil
 }
 
 func (s *stubPosPaymentClient) SyncPaymentFromChannel(ctx context.Context, in *payment.SyncPaymentReq, opts ...grpc.CallOption) (*payment.SyncPaymentResp, error) {
@@ -257,4 +269,274 @@ func TestGetPosOrderPayStatusPaidFamily(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPayPosOrderByCash 待支付订单改用现金收款（扣款失败换现金场景）
+// 编排口径：先关遗留待支付支付单（防旧付款码事后仍可扣款），再创建现金支付单
+func TestPayPosOrderByCash(t *testing.T) {
+	pendingPosOrder := &order.OrderInfo{Id: 300, OrderNo: "POSTEST-C", CommunityId: 1, Status: 1, Source: 2, PayAmount: 12.5, UserId: 0}
+
+	t.Run("非收银台订单拒绝", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 301, CommunityId: 1, Status: 1, Source: 1, PayAmount: 10}}
+		payStub := &stubPosPaymentClient{}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/301/pay-cash", nil)
+		c.Params = gin.Params{{Key: "id", Value: "301"}}
+		h.PayPosOrderByCash(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.OperationNotAllowed {
+			t.Fatalf("C 端订单应收银台代收限制拒绝，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if payStub.closeCalled || payStub.createCalled {
+			t.Fatal("拒绝路径不得触达支付服务")
+		}
+	})
+
+	t.Run("非待支付订单拒绝", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 302, CommunityId: 1, Status: 2, Source: 2, PayAmount: 10}}
+		payStub := &stubPosPaymentClient{}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/302/pay-cash", nil)
+		c.Params = gin.Params{{Key: "id", Value: "302"}}
+		h.PayPosOrderByCash(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.OperationNotAllowed {
+			t.Fatalf("非待支付单应拒绝，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if payStub.closeCalled {
+			t.Fatal("已收款订单不得关闭其支付单")
+		}
+	})
+
+	t.Run("成功路径先关旧单再建现金单", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{orderInfo: pendingPosOrder}
+		payStub := &stubPosPaymentClient{}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/300/pay-cash", nil)
+		c.Params = gin.Params{{Key: "id", Value: "300"}}
+		h.PayPosOrderByCash(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.Success {
+			t.Fatalf("现金收款应成功，code = %d(%s)", resp.Code, resp.Message)
+		}
+		// 先关遗留待支付单：付款码失败后换现金，旧 payment_no 必须先失效，杜绝双通道重复收款
+		if !payStub.closeCalled || payStub.closeReq.GetOrderId() != 300 {
+			t.Fatalf("必须先关闭订单遗留待支付支付单: %+v", payStub.closeReq)
+		}
+		if !payStub.createCalled {
+			t.Fatal("应创建现金支付单")
+		}
+		if payStub.createReq.GetPayType() != posPayTypeCash || payStub.createReq.GetAmount() != 12.5 {
+			t.Fatalf("现金支付单参数错误: %+v", payStub.createReq)
+		}
+		if paid, _ := resp.Data["paid"].(bool); !paid {
+			t.Error("现金收款应立即回 paid=true")
+		}
+	})
+
+	t.Run("关旧单失败时不建现金单", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{orderInfo: pendingPosOrder}
+		payStub := &stubPosPaymentClient{closeErr: context.DeadlineExceeded}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/300/pay-cash", nil)
+		c.Params = gin.Params{{Key: "id", Value: "300"}}
+		h.PayPosOrderByCash(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code == errcode.Success {
+			t.Fatal("关闭遗留支付单失败时应报错而非继续收款")
+		}
+		if payStub.createCalled {
+			t.Fatal("关旧单失败不得创建现金支付单（避免旧码+现金并存）")
+		}
+	})
+}
+
+// TestEnsurePosCodePaySession 待支付订单重建付款码收款会话（订单查询「继续收款」入口）
+func TestEnsurePosCodePaySession(t *testing.T) {
+	t.Run("两渠道均未配置时拒绝", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 400, OrderNo: "POSTEST-S", CommunityId: 1, Status: 1, Source: 2, PayAmount: 8}}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/400/pay-code-session", nil)
+		c.Params = gin.Params{{Key: "id", Value: "400"}}
+		h.EnsurePosCodePaySession(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.OperationNotAllowed {
+			t.Fatalf("付款码未开启应拒绝，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if payStub.createCalled {
+			t.Fatal("渠道未开启时不得创建支付单")
+		}
+	})
+
+	t.Run("两渠道齐备时以占位 5 重建会话", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 400, OrderNo: "POSTEST-S", CommunityId: 1, Status: 1, Source: 2, PayAmount: 8}}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{EnabledChannels: []string{"wechat", "alipay"}, WechatPaymentReady: true, AlipayReady: true}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/400/pay-code-session", nil)
+		c.Params = gin.Params{{Key: "id", Value: "400"}}
+		h.EnsurePosCodePaySession(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.Success {
+			t.Fatalf("重建会话应成功，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if !payStub.createCalled || payStub.createReq.GetPayType() != posPayTypeWechatCode {
+			t.Fatalf("应以占位 pay_type=5 创建/复用待支付单: %+v", payStub.createReq)
+		}
+		if payStub.createReq.GetAmount() != 8 {
+			t.Errorf("金额应取订单应付: %+v", payStub.createReq)
+		}
+		if no, _ := resp.Data["payment_no"].(string); no != "ZFPOSTEST" {
+			t.Errorf("应回传支付单号供扫码窗使用，got %v", resp.Data["payment_no"])
+		}
+	})
+}
+
+// TestCreatePosOrderManualAmount 直接收款单（manual_amount>0 无商品单）入参校验
+// 直接收款是 2026-10-25 新增形态：金额即成交金额，仅限到店，不叠加券/手动优惠
+func TestCreatePosOrderManualAmount(t *testing.T) {
+	t.Run("非到店模式拒绝", func(t *testing.T) {
+		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":1,"manual_amount":5}`)
+		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
+		h.CreatePosOrder(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.ParamError {
+			t.Fatalf("直接收款应仅限到店模式，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if orderStub.createCalled {
+			t.Fatal("校验失败不得建单")
+		}
+	})
+
+	t.Run("金额超出单笔上限拒绝", func(t *testing.T) {
+		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3,"manual_amount":1000000}`)
+		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
+		h.CreatePosOrder(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.ParamError {
+			t.Fatalf("超上限应拒绝，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if orderStub.createCalled {
+			t.Fatal("校验失败不得建单")
+		}
+	})
+
+	t.Run("金额低于下限拒绝", func(t *testing.T) {
+		// 0.004 会在服务端四舍五入成 0 元完结单，网关须拒绝（0 元口径属全额优惠特例）
+		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3,"manual_amount":0.004}`)
+		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
+		h.CreatePosOrder(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.ParamError {
+			t.Fatalf("低于 0.01 元应拒绝，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if orderStub.createCalled {
+			t.Fatal("校验失败不得建单")
+		}
+	})
+
+	t.Run("直接收款带商品明细拒绝", func(t *testing.T) {
+		// manual_amount 与 items 互斥：若放行，服务端按明细扣库存但不建 order_items，
+		// 取消单回补不到明细造成库存永久泄漏
+		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3,"manual_amount":8.8,"items":[{"sku_id":3,"quantity":1}]}`)
+		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
+		h.CreatePosOrder(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.ParamError {
+			t.Fatalf("直接收款带明细应拒绝，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if orderStub.createCalled || payStub.createCalled {
+			t.Fatal("校验失败不得建单/建支付单")
+		}
+	})
+
+	t.Run("常规单无商品无金额拒绝", func(t *testing.T) {
+		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3}`)
+		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
+		h.CreatePosOrder(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.ParamError {
+			t.Fatalf("无商品且非直接收款应拒绝，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if orderStub.createCalled {
+			t.Fatal("校验失败不得建单")
+		}
+	})
+
+	t.Run("现金直接收款正常建单且券/优惠被清零", func(t *testing.T) {
+		// 券挂在会员名下，直接收款不允许叠加：即使带 user_id 与 coupon_id 也应被清零
+		body := []byte(`{"user_id":55,"pay_type":4,"delivery_type":3,"manual_amount":8.8,"coupon_id":9,"manual_discount":1}`)
+		orderStub := &stubPosOrderClient{
+			shift:     &order.PosShiftInfo{Id: 1},
+			orderInfo: &order.OrderInfo{Id: 95, OrderNo: "POSTEST-M", PayAmount: 8.8},
+		}
+		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
+		h := newPosTestHandler(orderStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
+		h.CreatePosOrder(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.Success {
+			t.Fatalf("直接收款应成功，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if !orderStub.createCalled {
+			t.Fatal("应创建订单")
+		}
+		if got := orderStub.createReq.GetManualAmount(); got != 8.8 {
+			t.Errorf("manual_amount 应原样透传，got %v", got)
+		}
+		if n := len(orderStub.createReq.GetItems()); n != 0 {
+			t.Errorf("直接收款单不应有商品明细，got %d 项", n)
+		}
+		if got := orderStub.createReq.GetCouponId(); got != 0 {
+			t.Errorf("直接收款单不允许用券，coupon_id 应清零，got %v", got)
+		}
+		if got := orderStub.createReq.GetManualDiscount(); got != 0 {
+			t.Errorf("直接收款单不允许手动优惠，manual_discount 应清零，got %v", got)
+		}
+		if !payStub.createCalled || payStub.createReq.GetPayType() != posPayTypeCash || payStub.createReq.GetAmount() != 8.8 {
+			t.Fatalf("现金直接收款应创建即收款的现金支付单: %+v", payStub.createReq)
+		}
+		if paid, _ := resp.Data["paid"].(bool); !paid {
+			t.Error("现金直接收款应立即回 paid=true")
+		}
+	})
 }

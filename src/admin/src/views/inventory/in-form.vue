@@ -46,7 +46,7 @@
                     <n-space v-else vertical size="small">
                       <SkuPicker v-model="item.sku_id" @change="(sku) => onSkuChange(index, sku)" />
                       <n-text v-if="skuInfoOf(item.sku_id)" depth="3" style="font-size: 12px">
-                        当前库存 {{ skuInfoOf(item.sku_id)!.stock }} · 成本 ¥{{ Number(skuInfoOf(item.sku_id)!.cost_price || 0).toFixed(2) }}
+                        当前库存 {{ skuInfoOf(item.sku_id)!.stock }} · 成本 ¥{{ formatAmount(skuInfoOf(item.sku_id)!.cost_price) }}
                       </n-text>
                     </n-space>
                   </td>
@@ -93,6 +93,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockInForm' })
 import { computed, onMounted, ref } from 'vue'
+import { formatAmount } from '@/utils/format'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import SkuPicker from './components/SkuPicker.vue'

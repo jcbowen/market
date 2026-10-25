@@ -56,8 +56,11 @@ type CreatePosOrderReq struct {
 	Remark         string `json:"remark"`
 	CouponID       int64  `json:"coupon_id"`
 	// 手动优惠总额（收银台抹零/整单改价折算）：服务端校验不可超应付
-	ManualDiscount float64           `json:"manual_discount"`
-	Items          []PosOrderItemReq `json:"items" binding:"required,min=1"`
+	ManualDiscount float64 `json:"manual_discount"`
+	// 直接收款金额（「直接收款」无商品单专用）：>0 时 items 可为空，
+	// 订单不含商品明细，金额即成交金额；仅支持到店（delivery_type=3），不参与券/满减/手动优惠
+	ManualAmount float64           `json:"manual_amount"`
+	Items        []PosOrderItemReq `json:"items"`
 }
 
 // CreatePosOrder 代客下单（收银台）
@@ -84,6 +87,34 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 	case posPayTypeCash, posPayTypeWechatCode, posPayTypeAlipayCode:
 	default:
 		response.Error(c, errcode.ParamError, "该支付方式暂未开通，请选择现金收款")
+		return
+	}
+
+	// 直接收款单（无商品，manual_amount>0）：仅到店，金额即成交金额，
+	// 不允许叠加商品明细/券/手动优惠（order 服务同口径兜底，防绕过网关直调 RPC 扣库存不建明细）；
+	// 常规单必须带商品明细
+	isManualOrder := req.ManualAmount > 0
+	if isManualOrder {
+		if req.DeliveryType != 3 {
+			response.Error(c, errcode.ParamError, "直接收款仅支持到店模式")
+			return
+		}
+		if req.ManualAmount < 0.01 {
+			response.Error(c, errcode.ParamError, "收款金额不能低于 0.01 元")
+			return
+		}
+		if req.ManualAmount >= 1000000 {
+			response.Error(c, errcode.ParamError, "收款金额超出单笔上限")
+			return
+		}
+		if len(req.Items) > 0 {
+			response.Error(c, errcode.ParamError, "直接收款单不支持商品明细，请走商品结账或使用订单查询继续收款")
+			return
+		}
+		req.CouponID = 0
+		req.ManualDiscount = 0
+	} else if len(req.Items) == 0 {
+		response.Error(c, errcode.ParamError, "订单商品不能为空")
 		return
 	}
 
@@ -147,6 +178,7 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 		ContactAddress: req.ContactAddress,
 		ManualDiscount: req.ManualDiscount,
 		ShiftId:        shiftResp.Id,
+		ManualAmount:   req.ManualAmount,
 	})
 	if err != nil {
 		log.Printf("收银台创建订单失败: %v", err)
@@ -501,4 +533,138 @@ func (h *AdminHandler) DeletePosHeldOrder(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"id": id})
+}
+
+// PosPayableOrder 收银台待支付订单校验：读取订单并确认可继续收款
+// 口径：本社区 + 收银台来源(source=2) + 待支付(status=1)。
+// C 端待支付单不在收银台代收范围（用户侧已有在线支付入口，双通道并发收款风险大于收益）
+// 参数：
+//   - c: gin 上下文（社区语境与操作人）
+//   - id: 订单 ID
+//
+// 返回值：
+//   - *order.OrderInfo: 校验通过的订单
+//   - bool: 校验是否通过（未通过时已直接写响应，调用方须立即 return）
+func (h *AdminHandler) PosPayableOrder(c *gin.Context, id int64) (*order.OrderInfo, bool) {
+	o, err := h.orderInCommunity(c, id)
+	if err != nil {
+		response.Error(c, errcode.NoPermission, err.Error())
+		return nil, false
+	}
+	if o.Source != 2 {
+		response.Error(c, errcode.OperationNotAllowed, "仅收银台订单支持继续收款，C 端订单请联系顾客线上支付")
+		return nil, false
+	}
+	if o.Status != 1 {
+		response.Error(c, errcode.OperationNotAllowed, "订单已不在待支付状态，请刷新后查看")
+		return nil, false
+	}
+	return o, true
+}
+
+// PayPosOrderByCash 收银台待支付订单改用现金收款（扣款失败换现金/订单查询继续收现金）
+// 编排：关闭订单遗留的待支付支付单（含付款码单，防止旧码事后仍可扣款）→ 创建现金支付单
+// （现金创建即成功，payment 服务事务提交后自动同步订单为已支付，到店单由 order 侧自动完结）。
+// 不校验进行中班次：订单已归属创建时班次，跨班次补收属既有交班统计口径的自然延伸
+//
+// 接口: POST /api/v1/admin/pos/orders/:id/pay-cash
+//
+// 参数：
+//   - c: gin 上下文，路径 :id 为订单 ID
+func (h *AdminHandler) PayPosOrderByCash(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	o, ok := h.PosPayableOrder(c, id)
+	if !ok {
+		return
+	}
+
+	// 先关遗留待支付支付单：付款码单关掉后旧 payment_no 不可再扣款，杜绝双通道重复收款。
+	// 关单失败不建现金单（避免旧码+现金并存），报错让收银员重试
+	if _, err := h.paymentClient.ClosePayments(c.Request.Context(), &payment.ClosePaymentsReq{OrderId: id}); err != nil {
+		log.Printf("收银台现金收款关闭遗留支付单失败 order_id=%d: %v", id, err)
+		response.Error(c, errcode.InternalServerError, "关闭原待支付单失败，请重试")
+		return
+	}
+
+	// 创建现金支付单：payment 侧创建即置为已支付，事务提交后自动同步订单状态（3 次重试 + 异常队列兜底）
+	if _, err := h.paymentClient.CreatePayment(c.Request.Context(), &payment.CreatePaymentReq{
+		OrderId:     id,
+		CommunityId: o.CommunityId,
+		OrderNo:     o.OrderNo,
+		UserId:      o.UserId,
+		PayType:     posPayTypeCash,
+		Amount:      o.PayAmount,
+	}); err != nil {
+		log.Printf("收银台现金收款创建支付单失败 order_id=%d: %v", id, err)
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"paid":       true,
+		"order_id":   id,
+		"order_no":   o.OrderNo,
+		"pay_amount": o.PayAmount,
+		"pay_type":   posPayTypeCash,
+	})
+}
+
+// EnsurePosCodePaySession 收银台待支付订单重建付款码收款会话（订单查询「继续收款」入口）
+// 复用 CreatePayment 的幂等语义：同渠道同金额的待支付单直接复用（out_trade_no 不变），
+// 遗留待支付单金额不符/渠道变化时服务端自动关旧建新。
+// 现金收款走 PayPosOrderByCash，不经过本接口
+//
+// 接口: POST /api/v1/admin/pos/orders/:id/pay-code-session
+//
+// 参数：
+//   - c: gin 上下文，路径 :id 为订单 ID
+func (h *AdminHandler) EnsurePosCodePaySession(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	o, ok := h.PosPayableOrder(c, id)
+	if !ok {
+		return
+	}
+
+	// 占位 pay_type 与 ListPosPayMethods 下发口径一致：两渠道齐备以 5 占位（渠道按码前缀识别）、
+	// 仅支付宝可用下发 6。此处按渠道就绪情况选占位值，渠道未配置时报错提示改现金
+	codePayType := posPayTypeWechatCode
+	cfg, err := h.paymentClient.GetPayConfig(c.Request.Context(), &payment.GetPayConfigReq{})
+	if err != nil {
+		response.Error(c, errcode.InternalServerError, "支付配置读取失败，请改用现金收款")
+		return
+	}
+	if !isChannelUsable("wechat", cfg) {
+		if !isChannelUsable("alipay", cfg) {
+			response.Error(c, errcode.OperationNotAllowed, "付款码收款未开启，请使用现金收款")
+			return
+		}
+		codePayType = posPayTypeAlipayCode
+	}
+
+	resp, err := h.paymentClient.CreatePayment(c.Request.Context(), &payment.CreatePaymentReq{
+		OrderId:     id,
+		CommunityId: o.CommunityId,
+		OrderNo:     o.OrderNo,
+		UserId:      o.UserId,
+		PayType:     codePayType,
+		Amount:      o.PayAmount,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"payment_no": resp.PaymentNo,
+		"pay_type":   codePayType,
+		"order_id":   id,
+		"order_no":   o.OrderNo,
+		"pay_amount": o.PayAmount,
+	})
 }

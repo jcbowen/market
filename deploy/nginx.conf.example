@@ -1,5 +1,5 @@
 # Nginx 示例配置
-# 将 www.jiuchet.com 的 /s 映射到 C 端 H5 与 API，/b 映射到管理端与 admin API
+# 将 market.jiuchet.com 的 /s 映射到 C 端 H5 与 API，/b 映射到管理端与 admin API
 # 使用前请替换域名、SSL 证书路径及 upstream 地址
 
 upstream market_gateway {
@@ -9,7 +9,7 @@ upstream market_gateway {
 server {
     listen 80;
     listen [::]:80;
-    server_name www.jiuchet.com;
+    server_name market.jiuchet.com;
 
     # 强制 HTTPS：生产环境必须开启（登录/改密接口已启用 RSA 密文传输，但 TLS 才是防中间人的根本）；
     # 网关侧另有兜底：APP_ENV=production 时密码类接口直接拒绝非 HTTPS 请求（返回 11011）。
@@ -90,7 +90,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     http2 on;
-    server_name www.jiuchet.com;
+    server_name market.jiuchet.com;
 
     # 证书（Let's Encrypt 或云厂商签发；与登录加密的 RSA 密钥对无关，两者互不影响）
     ssl_certificate /path/to/cert.pem;

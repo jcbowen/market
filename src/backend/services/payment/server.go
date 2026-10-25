@@ -62,6 +62,15 @@ func (s *server) PayByAuthCode(ctx stdctx.Context, req *payment.PayByAuthCodeReq
 	return resp, nil
 }
 
+// ClosePayments 关闭订单遗留的全部待支付支付单（取消订单/收银台换支付方式前置）
+// 释放 pending_flag 占位键后同订单才可创建新待支付单；已关单不再可扣款
+func (s *server) ClosePayments(ctx stdctx.Context, req *payment.ClosePaymentsReq) (*common.CommonResponse, error) {
+	if err := s.paymentService.ClosePayments(ctx, req); err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return &common.CommonResponse{Code: 0, Message: "success"}, nil
+}
+
 // GetPayment 查询支付记录
 func (s *server) GetPayment(ctx stdctx.Context, req *payment.GetPaymentReq) (*payment.PaymentInfo, error) {
 	p, err := s.paymentService.GetPayment(ctx, req.OrderId)
