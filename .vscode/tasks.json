@@ -24,6 +24,10 @@
 					"value": "--fast"
 				},
 				{
+					"label": "快速构建 + 清理 MySQL/Redis 数据（--fast --clean）",
+					"value": "--fast --clean"
+				},
+				{
 					"label": "构建镜像不使用 Docker 缓存（--no-cache）",
 					"value": "--no-cache"
 				}
