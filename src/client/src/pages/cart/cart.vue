@@ -58,7 +58,7 @@
                 <view class="item-bottom">
                   <text class="item-price">{{ formatPrice(item.price) }}</text>
                   <!-- 不用 v-model + @change：u-number-box 的 change 同步触发、v-model 回写在
-                       nextTick 之后，change 回调里读 item.quantity 会拿到旧值，导致提交旧数量被弹回；
+                       nextTick 之后，change 回调里读 item.quantity 会拿到旧值，提交旧数量会与服务端状态冲突；
                        改用 @update:modelValue 显式接收新值（与 category.vue 弹层同模式） -->
                   <u-number-box
                     v-if="!item.invalid"
@@ -159,12 +159,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { ref, computed, watch } from 'vue'
+import { onShow, onHide } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
 import { getCommunityList } from '@/api/user'
-import { getCart, updateCartItem, removeCartItem, selectAllCartItems, addCartItem, clearInvalidItems } from '@/api/cart'
+import { getCart, updateCartItem, removeCartItem, selectAllCartItems, addCartItem, clearInvalidItems, type CartWriteData } from '@/api/cart'
+import type { ApiResponse } from '@/api/request'
 import { getFrequentProducts, type FrequentProduct } from '@/api/order'
 import { formatPrice } from '@/utils/format'
 import { goHome, goOrderConfirm, goLogin, goProductDetail } from '@/utils/navigate'
@@ -176,7 +177,6 @@ const cartStore = useCartStore()
 
 const items = ref<CartItem[]>([])
 const communities = ref<Community[]>([])
-const totalAmount = ref(0)
 
 /** 切换规格：待替换的购物车项与弹窗状态 */
 const switchItem = ref<CartItem | null>(null)
@@ -200,6 +200,24 @@ const invalidItems = computed(() => items.value.filter((item) => item.invalid))
 
 /** 有效商品列表（全选与合计口径） */
 const validItems = computed(() => items.value.filter((item) => !item.invalid))
+
+/** 总件数（含失效项，与 gateway GetCart 汇总口径一致） */
+const totalCount = computed(() => items.value.reduce((sum, item) => sum + item.quantity, 0))
+
+/** 选中件数（失效项服务端强制未选中，此处基于有效项统计） */
+const selectedCount = computed(() =>
+  validItems.value.filter((item) => item.selected).reduce((sum, item) => sum + item.quantity, 0),
+)
+
+/** 合计金额（选中且有效商品的 price × quantity 求和，与 gateway GetCart 口径一致） */
+const totalAmount = computed(() =>
+  validItems.value.filter((item) => item.selected).reduce((sum, item) => item.price * item.quantity, 0),
+)
+
+// 汇总随 items/选中态即时重算（含乐观更新的本地变化），tabBar 角标同步跟进
+watch([totalCount, selectedCount], ([total, selected]) => {
+  cartStore.setCount(total, selected)
+})
 
 /** 社区 ID -> 社区名称映射 */
 const communityMap = computed(() => {
@@ -252,6 +270,11 @@ onShow(() => {
   loadFrequentProducts()
 })
 
+// 切走页面（切 tab、进详情）时把防抖窗口内未发出的数量提交立即落库
+onHide(() => {
+  flushQuantityCommits()
+})
+
 /** 常买商品列表（登录后加载，按购买次数降序） */
 const frequentProducts = ref<FrequentProduct[]>([])
 
@@ -277,12 +300,9 @@ async function onAddFrequent(p: FrequentProduct) {
     goProductDetail(p.product_id)
     return
   }
-  try {
-    await addCartItem(p.product_id, p.sku_id, 1, userStore.communityInfo?.id)
+  const r = await commitWrite(addCartItem(p.product_id, p.sku_id, 1, userStore.communityInfo?.id))
+  if (r.ok) {
     uni.showToast({ title: '已加入购物车', icon: 'success' })
-    loadCart()
-  } catch {
-    // 请求拦截器已统一提示
   }
 }
 
@@ -299,74 +319,189 @@ async function loadCommunities() {
 }
 
 /**
+ * 用服务端购物车全量项回写本地列表
+ * 写接口响应与 loadCart 共用此入口；合计/角标由 watch(totalCount/selectedCount) 自动同步
+ * @param list 服务端返回的购物车项列表，非数组时保留当前列表
+ */
+function applyItems(list?: CartItem[]) {
+  // 契约漂移（缺 items 字段）下保持原状，不能让购物车显示成空的
+  if (!Array.isArray(list)) return
+  items.value = list
+}
+
+/** 写请求序号：仅采纳最新一次写请求的响应，防止慢请求后到回退新状态 */
+let writeSeq = 0
+
+/** 写请求提交结果：ok 为请求成败；latest 表示响应是否仍为最新一次写请求（并发写下旧响应 latest=false） */
+interface CommitResult {
+  ok: boolean
+  latest: boolean
+}
+
+/**
+ * 提交购物车写请求并用响应中的全量购物车项回写本地
+ * 服务端所有写接口（更新/删除/全选/加购/清失效）响应即处理后的最新购物车快照
+ * （含失效判定、实时价格与库存），直接替换本地列表，替代原先"写请求 + 全量 GET"的双请求；
+ * 序号防护：并发写时旧响应不回写，调用方据 latest 决定是否回滚本地乐观值
+ * @param request 写请求 Promise
+ * @returns CommitResult（ok: 请求是否成功；latest: 响应是否为最新一次写请求）
+ */
+async function commitWrite(request: Promise<ApiResponse<CartWriteData>>): Promise<CommitResult> {
+  const seq = ++writeSeq
+  try {
+    const res = await request
+    const latest = seq === writeSeq
+    if (latest && res.data) {
+      applyItems(res.data.items)
+    }
+    return { ok: true, latest }
+  } catch {
+    // 失败提示由请求拦截器统一处理
+    return { ok: false, latest: seq === writeSeq }
+  }
+}
+
+/**
  * 加载购物车数据（获取全部社区的商品）
+ * 仅进入页面（onShow）时调用作为兜底同步；页内变更走 commitWrite 响应回写，不再重复拉取
  */
 async function loadCart() {
   try {
     const res = await getCart()
     if (res.data) {
-      items.value = res.data.items || []
-      totalAmount.value = res.data.total_amount || 0
-      cartStore.setCount(res.data.total_count, res.data.selected_count)
+      applyItems(res.data.items)
     }
   } catch {
     items.value = []
-    totalAmount.value = 0
   }
 }
 
 /**
  * 切换单个商品选中状态
+ * u-checkbox v-model 已先行翻转 item.selected（乐观更新），失败时回滚并触发列表重算
  * @param item 购物车项
  */
 async function onSelect(item: CartItem) {
-  try {
-    await updateCartItem(item.id, { selected: item.selected })
-    loadCart()
-  } catch {
+  const r = await commitWrite(updateCartItem(item.id, { selected: item.selected }))
+  if (!r.ok && r.latest) {
     item.selected = !item.selected
+    // 浅拷贝触发 groupedItems 重算，分组勾选框回弹真实状态
+    items.value = [...items.value]
   }
 }
 
 /**
  * 切换整个社区分组的选中状态
+ * 社区 ID > 0 时走批量选中接口（一次请求替代逐项 PUT 的 N+1）；
+ * community_id 为 0 的兜底分组无法按社区过滤（0 表示全部），保留逐项更新
  * @param group 社区分组
  */
 async function onGroupSelectChange(group: { community_id: number; items: CartItem[] }) {
   const target = group.items.some((item) => !item.selected)
-  try {
-    for (const item of group.items) {
-      if (item.selected !== target) {
-        await updateCartItem(item.id, { selected: target })
-      }
+  if (group.community_id > 0) {
+    const r = await commitWrite(selectAllCartItems(target, group.community_id))
+    if (!r.ok) {
+      // 失败时触发重算，分组勾选框回弹真实状态
+      items.value = [...items.value]
     }
-    loadCart()
-  } catch {
-    // ignore
+    return
   }
+  for (const item of group.items) {
+    if (item.selected !== target) {
+      // 逐项兜底：不等逐项结果，任一失败由拦截器提示，最终状态以下次进页同步为准
+      await commitWrite(updateCartItem(item.id, { selected: target }))
+    }
+  }
+}
+
+/** 数量提交防抖间隔（ms）：连点加减在该窗口内合并为一次请求 */
+const QTY_COMMIT_DEBOUNCE_MS = 300
+
+/** 挂起的数量提交 */
+interface PendingQtyCommit {
+  /** 防抖定时器 */
+  timer: ReturnType<typeof setTimeout>
+  /** 待落库数量（本轮连点的最后一次点击值） */
+  quantity: number
+  /** 提交失败时的回滚基准（本轮连点首次点击前的数量，即服务端已同步值） */
+  rollback: number
+}
+
+/** 待提交的数量写入（购物车项 ID -> 挂起提交） */
+const qtyPendingCommits = new Map<number, PendingQtyCommit>()
+
+/**
+ * 提交某条购物车项的数量，失败时把展示值回滚到已同步基准
+ * 按 ID 在当前列表里找回滚目标：定时器触发时闭包持有的 item 对象可能已被前一次写的
+ * 响应快照替换（脱离了 items 列表），改那个旧对象界面上看不出来
+ * @param id 购物车项 ID（sku_id）
+ * @param commit 挂起提交（含待落库数量与回滚基准）
+ */
+async function submitQuantity(id: number, commit: PendingQtyCommit) {
+  const r = await commitWrite(updateCartItem(id, { quantity: commit.quantity }))
+  if (!r.ok && r.latest) {
+    const live = items.value.find((item) => item.id === id)
+    if (live) {
+      live.quantity = commit.rollback
+    }
+  }
+}
+
+/**
+ * 取消某条购物车项尚未发出的数量提交
+ * 删除/换规格会让该项退出购物车，放任挂起的定时器继续触发就会对已不存在的 SKU 发 PUT，
+ * 服务端返回「购物车项不存在」并向用户弹出与其操作无关的错误提示
+ * @param id 购物车项 ID（sku_id）
+ */
+function cancelQuantityCommit(id: number) {
+  const commit = qtyPendingCommits.get(id)
+  if (!commit) return
+  clearTimeout(commit.timer)
+  qtyPendingCommits.delete(id)
+}
+
+/**
+ * 立即发出全部挂起的数量提交
+ * 页面隐藏（切 tab、进详情）时调用，避免用户最后一次改数量停在本地而丢提交
+ */
+function flushQuantityCommits() {
+  const pending = [...qtyPendingCommits.entries()]
+  qtyPendingCommits.clear()
+  pending.forEach(([id, commit]) => {
+    clearTimeout(commit.timer)
+    submitQuantity(id, commit)
+  })
 }
 
 /**
  * 数量变化，最低数量受 min_buy 限制
  * 数值由组件 @update:modelValue 显式传入：u-number-box 的 change 事件先于
- * v-model 回写触发，此处不能读 item.quantity（旧值），否则提交旧数量后会被 loadCart 弹回
+ * v-model 回写触发，此处不能读 item.quantity（旧值），否则提交旧数量会与服务端状态冲突
+ * 本地即时乐观更新数量（合计/角标由 watch 同步重算），提交走 300ms 防抖合并连点，
+ * 仅最后一次数量落库；提交失败时回滚到本轮连点前的已同步值
  * @param item 购物车项
  * @param val 变更后的数量
  */
-async function onQuantityChange(item: CartItem, val: number) {
+function onQuantityChange(item: CartItem, val: number) {
   const minBuy = item.min_buy || 1
   if (val < minBuy) {
     uni.showToast({ title: `最低购买 ${minBuy} 份`, icon: 'none' })
     item.quantity = minBuy
     return
   }
+  // 本轮连点首次点击取当前值作为回滚基准，后续点击沿用首个基准
+  const rollback = qtyPendingCommits.get(item.id)?.rollback ?? item.quantity
+  cancelQuantityCommit(item.id)
   item.quantity = val
-  try {
-    await updateCartItem(item.id, { quantity: val })
-    loadCart()
-  } catch {
-    // 请求失败时本地临时值会在下次 loadCart 时与服务端状态对齐
-  }
+  qtyPendingCommits.set(item.id, {
+    quantity: val,
+    rollback,
+    timer: setTimeout(() => {
+      const commit = qtyPendingCommits.get(item.id)
+      qtyPendingCommits.delete(item.id)
+      if (commit) submitQuantity(item.id, commit)
+    }, QTY_COMMIT_DEBOUNCE_MS),
+  })
 }
 
 /** 删除确认弹窗进行中标志：长按连减会连续触发 overlimit，防止重复弹窗 */
@@ -393,13 +528,10 @@ function onQuantityOverlimit(item: CartItem, type: 'minus' | 'plus') {
     confirmText: '删除',
     success: async (res) => {
       if (res.confirm) {
-        try {
-          await removeCartItem(item.id)
+        cancelQuantityCommit(item.id)
+        const r = await commitWrite(removeCartItem(item.id))
+        if (r.ok) {
           uni.showToast({ title: '已删除', icon: 'success' })
-        } catch {
-          // 请求拦截器已统一提示
-        } finally {
-          loadCart()
         }
       }
       deleteConfirmPending = false
@@ -415,12 +547,8 @@ function onQuantityOverlimit(item: CartItem, type: 'minus' | 'plus') {
  * @param id 购物车项 ID
  */
 async function onSwipeClick(id: number) {
-  try {
-    await removeCartItem(id)
-    loadCart()
-  } catch {
-    // ignore
-  }
+  cancelQuantityCommit(id)
+  await commitWrite(removeCartItem(id))
 }
 
 /**
@@ -435,8 +563,8 @@ function onSwitchSku(item: CartItem) {
 
 /**
  * 切换规格确认回调：删旧购物车项 + 按新 SKU 重新加购
- * 服务端同 SKU 已存在时自动累加合并；
- * 无论成功与否最后都刷新购物车列表，保证与服务端状态一致
+ * 服务端同 SKU 已存在时自动累加合并；两步均以写接口响应快照回写本地，
+ * 删除成功而加购失败时列表也会反映服务端真实状态（旧项已删）
  * @param product 组件内兜底加载后的完整商品对象
  * @param sku 切换后的 SKU
  * @param quantity 数量
@@ -444,27 +572,23 @@ function onSwitchSku(item: CartItem) {
 async function onSkuConfirm({ product, sku, quantity }: { product: Product; sku: Sku; quantity: number }) {
   const item = switchItem.value
   if (!item) return
-  try {
-    await removeCartItem(item.id)
-    await addCartItem(product.id, sku.id, quantity, userStore.communityInfo?.id)
+  // 旧项的数量提交作废：新项按弹窗选择的 SKU 与数量重新加购，旧 SKU 即将被删除
+  cancelQuantityCommit(item.id)
+  await commitWrite(removeCartItem(item.id))
+  const r = await commitWrite(addCartItem(product.id, sku.id, quantity, userStore.communityInfo?.id))
+  if (r.ok) {
     showSkuSelector.value = false
-  } catch {
-    // 请求拦截器已统一提示
-  } finally {
-    loadCart()
   }
 }
 
 /**
  * 清空失效商品
- * 成功后刷新购物车列表，失败由请求拦截器统一提示
+ * 成功后以响应快照回写列表，失败由请求拦截器统一提示
  */
 async function onClearInvalid() {
-  try {
-    await clearInvalidItems()
+  const r = await commitWrite(clearInvalidItems())
+  if (r.ok) {
     uni.showToast({ title: '已清空失效商品', icon: 'success' })
-  } finally {
-    loadCart()
   }
 }
 
@@ -474,11 +598,10 @@ async function onClearInvalid() {
  */
 async function toggleSelectAll(selected?: boolean) {
   const target = selected !== undefined ? selected : !isAllSelected.value
-  try {
-    await selectAllCartItems(target)
-    loadCart()
-  } catch {
-    // ignore
+  const r = await commitWrite(selectAllCartItems(target))
+  if (!r.ok) {
+    // 失败时触发重算，全选框回弹真实状态
+    items.value = [...items.value]
   }
 }
 

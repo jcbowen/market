@@ -63,7 +63,8 @@ const maxCartItemQty = 999
 // AddItem 添加商品到购物车
 // 若同一用户同一 SKU 已存在记录，则累加数量并置为选中；否则新建记录。
 // 交易入口校验三件事：加购社区=SKU 归属社区（P0-4）、SKU 启用（规格未失效）、商品可售（P1-4）；
-// 不校验 min_buy（与既有口径一致，由结算/下单侧把关）
+// 不校验 min_buy：起订份数是下单门槛，由订单服务 CreateOrder 统一拦截
+// （购物车允许暂存低于起订量的数量，用户可继续加购到门槛）
 //
 // 参数：
 //   - ctx: 上下文
@@ -193,7 +194,8 @@ func (s *server) RemoveItem(ctx stdctx.Context, req *cart.RemoveItemReq) (*cart.
 }
 
 // SelectAll 全选/取消全选
-// 更新当前用户全部购物车项的选中状态。
+// 更新当前用户购物车项的选中状态；
+// community_id > 0 时仅更新该社区的购物车项（购物车页分组全选），为 0 时更新全部（整页全选）
 //
 // 参数：
 //   - ctx: 上下文
@@ -204,12 +206,15 @@ func (s *server) RemoveItem(ctx stdctx.Context, req *cart.RemoveItemReq) (*cart.
 //   - error: 错误信息
 func (s *server) SelectAll(ctx stdctx.Context, req *cart.SelectAllReq) (*cart.CartResp, error) {
 	now := time.Now().Format("2006-01-02 15:04:05")
-	if err := s.db.GetDb().WithContext(ctx).Model(&model.Cart{}).
-		Where("user_id = ?", req.UserId).
-		Updates(map[string]interface{}{
-			"selected":   req.Selected,
-			"updated_at": now,
-		}).Error; err != nil {
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Cart{}).
+		Where("user_id = ?", req.UserId)
+	if req.CommunityId > 0 {
+		db = db.Where("community_id = ?", req.CommunityId)
+	}
+	if err := db.Updates(map[string]interface{}{
+		"selected":   req.Selected,
+		"updated_at": now,
+	}).Error; err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
 

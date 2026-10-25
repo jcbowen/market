@@ -273,10 +273,14 @@ func (x *RemoveItemReq) GetUserId() int64 {
 	return 0
 }
 
+// 全选/取消全选。
+// community_id > 0 时仅更新该社区的购物车项（购物车页分组全选），
+// 为 0 时更新全部购物车项（整页全选）
 type SelectAllReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	Selected      bool                   `protobuf:"varint,2,opt,name=selected,proto3" json:"selected,omitempty"`
+	CommunityId   int64                  `protobuf:"varint,3,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -323,6 +327,13 @@ func (x *SelectAllReq) GetSelected() bool {
 		return x.Selected
 	}
 	return false
+}
+
+func (x *SelectAllReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
 }
 
 type ClearCartReq struct {
@@ -689,10 +700,11 @@ const file_cart_cart_proto_rawDesc = "" +
 	"\bselected\x18\x04 \x01(\bR\bselected\"8\n" +
 	"\rRemoveItemReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\"C\n" +
+	"\auser_id\x18\x02 \x01(\x03R\x06userId\"f\n" +
 	"\fSelectAllReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1a\n" +
-	"\bselected\x18\x02 \x01(\bR\bselected\"'\n" +
+	"\bselected\x18\x02 \x01(\bR\bselected\x12!\n" +
+	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\"'\n" +
 	"\fClearCartReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\".\n" +
 	"\x13GetSelectedItemsReq\x12\x17\n" +

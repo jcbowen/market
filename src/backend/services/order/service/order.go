@@ -223,6 +223,14 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 				return nil, bizerr.New(codes.FailedPrecondition, "商品已失效，请刷新后重新下单")
 			}
 
+			// 起订份数收口（仅 C 端单）：min_buy 是线上订单的下单门槛，前端数量框只是体验约束，
+			// 加购、再来一单、直调下单接口都能带进低于起订量的数量，统一在此拦下。
+			// 收银台（source=2）不校验：店员按件线下收款，用起订量拦截会挡住正常交易
+			if req.Source != 2 && productInfo.MinBuy > 1 && item.Quantity < productInfo.MinBuy {
+				return nil, bizerr.New(codes.InvalidArgument,
+					fmt.Sprintf("商品 %s 最低购买 %d 份", productInfo.Name, productInfo.MinBuy))
+			}
+
 			// 优先使用生效的秒杀价
 			price := skuInfo.Price
 			if flashPrice := flashPriceByID[item.SkuId]; flashPrice > 0 {

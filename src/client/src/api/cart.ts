@@ -15,6 +15,15 @@ export interface CartData {
 }
 
 /**
+ * 写操作响应数据
+ * 服务端所有购物车写接口（加购/更新/删除/全选/清失效）均返回处理后的全量购物车项，
+ * 前端直接用该列表回写本地，无需再发 GET /cart（合计金额/件数由前端本地计算）
+ */
+export interface CartWriteData {
+  items: CartItem[]
+}
+
+/**
  * 获取当前用户购物车
  * @param communityId 社区 ID（可选）
  * @returns 购物车数据
@@ -31,7 +40,7 @@ export function getCart(communityId?: number) {
  * @param communityId 社区 ID（可选）
  */
 export function addCartItem(productId: number, skuId: number, quantity = 1, communityId?: number) {
-  return post<CartItem>('/cart/items', {
+  return post<CartWriteData>('/cart/items', {
     product_id: productId,
     sku_id: skuId,
     quantity,
@@ -48,7 +57,7 @@ export function updateCartItem(
   id: number,
   data: { quantity?: number; selected?: boolean },
 ) {
-  return put<CartItem>(`/cart/items/${id}`, data)
+  return put<CartWriteData>(`/cart/items/${id}`, data)
 }
 
 /**
@@ -56,15 +65,19 @@ export function updateCartItem(
  * @param id 购物车项 ID
  */
 export function removeCartItem(id: number) {
-  return del(`/cart/items/${id}`)
+  return del<CartWriteData>(`/cart/items/${id}`)
 }
 
 /**
  * 全选/取消全选购物车商品
  * @param selected 是否选中
+ * @param communityId 社区 ID（可选，>0 时仅对该社区批量选中，用于购物车页分组全选）
  */
-export function selectAllCartItems(selected: boolean) {
-  return post('/cart/select', { selected })
+export function selectAllCartItems(selected: boolean, communityId?: number) {
+  return post<CartWriteData>('/cart/select', {
+    selected,
+    community_id: communityId,
+  })
 }
 
 /**
@@ -72,5 +85,5 @@ export function selectAllCartItems(selected: boolean) {
  * @returns 清空后的剩余购物车项列表
  */
 export function clearInvalidItems() {
-  return del<CartItem[]>('/cart/invalid')
+  return del<CartWriteData>('/cart/invalid')
 }

@@ -185,8 +185,10 @@ func (h *CartHandler) RemoveItem(c *gin.Context) {
 }
 
 // SelectAllReq 购物车全选/取消全选请求
+// CommunityID 从 body 读取（与 AddItem 同模式）：>0 时仅对该社区批量选中（购物车页分组全选），0 为全部
 type SelectAllReq struct {
-	Selected bool `json:"selected"`
+	Selected    bool  `json:"selected"`
+	CommunityID int64 `json:"community_id"`
 }
 
 // SelectAll 购物车全选或取消全选
@@ -201,8 +203,9 @@ func (h *CartHandler) SelectAll(c *gin.Context) {
 
 	uc := appcontext.GetUserContext(c)
 	resp, err := h.cartClient.SelectAll(c.Request.Context(), &cart.SelectAllReq{
-		UserId:   uc.UserID,
-		Selected: req.Selected,
+		UserId:      uc.UserID,
+		Selected:    req.Selected,
+		CommunityId: req.CommunityID,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

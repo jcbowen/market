@@ -55,6 +55,10 @@ bin/release/
 .env.local
 .env.*.local
 
+# === 小程序本机构建覆盖（卖方专用，见 src/client/scripts/build-mp.js）===
+src/client/src/manifest.local.json
+src/client/src/.manifest.json.bak
+
 # === 日志 ===
 *.log
 npm-debug.log*

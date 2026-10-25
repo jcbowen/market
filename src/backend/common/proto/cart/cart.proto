@@ -45,9 +45,13 @@ message RemoveItemReq {
   int64 user_id = 2;
 }
 
+// 全选/取消全选。
+// community_id > 0 时仅更新该社区的购物车项（购物车页分组全选），
+// 为 0 时更新全部购物车项（整页全选）
 message SelectAllReq {
   int64 user_id = 1;
   bool selected = 2;
+  int64 community_id = 3;
 }
 
 message ClearCartReq {
