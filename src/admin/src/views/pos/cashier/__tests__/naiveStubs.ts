@@ -13,7 +13,9 @@ export const NModal = defineComponent({
 })
 
 /**
- * n-input 替身：原生 input 承载 v-model 与 keydown 透传（回车提交、Enter/Esc 键盘化测试用）
+ * n-input 替身：原生 input 承载 v-model 与键盘事件透传（回车提交、Enter/Esc 键盘化测试用）
+ * keyup 与 keydown 均透传：OrderTab 搜索框回车走 @keyup.enter（扫码枪等价键盘输入+回车），
+ * DirectPayTab 快捷键走 @keydown
  * 注意 naive-ui 的 model prop 是 `value`（v-model:value 用法），与原生 Vue 约定不同
  */
 export const NInput = defineComponent({
@@ -22,7 +24,7 @@ export const NInput = defineComponent({
     disabled: { type: Boolean, default: false },
     placeholder: { type: String, default: '' },
   },
-  emits: ['update:value', 'keydown'],
+  emits: ['update:value', 'keydown', 'keyup'],
   // 被 ref 引用时（inputRef.value?.focus()）需要暴露 focus
   methods: {
     focus() {},
@@ -34,6 +36,7 @@ export const NInput = defineComponent({
     :value="value"
     @input="$emit('update:value', $event.target.value)"
     @keydown="$emit('keydown', $event)"
+    @keyup="$emit('keyup', $event)"
   />`,
 })
 

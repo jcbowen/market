@@ -5,7 +5,7 @@
       <div class="search-bar">
         <n-input
           v-model:value="keyword"
-          placeholder="搜索商品名 / 拼音首字母 / 扫条码"
+          placeholder="搜索商品名 / 拼音首字母 / 全拼 / 扫条码"
           clearable
           size="large"
           class="search"
@@ -15,16 +15,23 @@
             <n-icon><SearchOutline /></n-icon>
           </template>
         </n-input>
-        <!-- A-Z 首字母筛选：按商品名首个字拼音首字母过滤（通讯录式） -->
-        <div class="letter-bar">
-          <span class="letter" :class="{ active: activeLetter === '' }" @click="activeLetter = ''">全部</span>
-          <span
-            v-for="l in LETTERS"
-            :key="l"
-            class="letter"
-            :class="{ active: activeLetter === l }"
-            @click="activeLetter = activeLetter === l ? '' : l"
-          >{{ l }}</span>
+        <div class="search-sub">
+          <!-- A-Z 首字母筛选：按商品名首个字拼音首字母过滤（通讯录式） -->
+          <div class="letter-bar">
+            <span class="letter" :class="{ active: activeLetter === '' }" @click="activeLetter = ''">全部</span>
+            <span
+              v-for="l in LETTERS"
+              :key="l"
+              class="letter"
+              :class="{ active: activeLetter === l }"
+              @click="activeLetter = activeLetter === l ? '' : l"
+            >{{ l }}</span>
+          </div>
+          <!-- 仅看有货：一键隐藏缺货商品（缺货商品在普通视图仍置灰不可购） -->
+          <div class="stock-filter">
+            <n-switch v-model:value="onlyInStock" size="small" />
+            <span class="stock-label" @click="onlyInStock = !onlyInStock">仅看有货</span>
+          </div>
         </div>
       </div>
       <div class="product-area">
@@ -350,6 +357,7 @@ import { formatDateTime } from '@/utils/datetime'
  * 选会员（可散客，支持现场注册新会员）→ 分类/首字母定位商品 → 卡片选商品 → 支持单品改价/整单备注/抹零/整单改价
  * （均仅对本次订单生效，不改商品档案价）→ 券优惠预估与明细 → 挂单暂存/恢复/删除
  * → 双按钮结账（付款码 F2 / 现金 F3，结账即收款，免选支付方式）→ 成功可打印 58mm 热敏小票。
+ * 商品搜索支持商品名/拼音首字母/拼音全拼三通道本地匹配 + 纯数字条码回车直达加购 + 「仅看有货」开关。
  * 支持订单查询「引用到收银台」（posStore 待引用清单挂载时消费）。最终金额以服务端结算为准。
  */
 
@@ -368,11 +376,13 @@ const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 const activeLetter = ref('')
 /** 当前选中的分类 ID（0=全部） */
 const activeCategory = ref(0)
+/** 仅看有货：开启后隐藏库存为 0 的商品（缺货商品在普通视图仍置灰展示） */
+const onlyInStock = ref(false)
 
 /**
  * 拉取本社区全部在售商品（status=1）：分页循环拉全量。
- * 搜索/分类/首字母均在前端本地过滤（含拼音首字母匹配），关键词不传后端，
- * 否则后端 name LIKE 会对拼音首字母关键词返回空列表，导致本地过滤无数据可滤。
+ * 搜索/分类/首字母均在前端本地过滤（含拼音首字母与全拼匹配），关键词不传后端，
+ * 否则后端 name LIKE 会对拼音关键词返回空列表，导致本地过滤无数据可滤。
  */
 async function searchProducts() {
   productLoading.value = true
@@ -429,45 +439,48 @@ async function onSearchEnter() {
 }
 
 /**
- * 商品名首个字的拼音首字母（非汉字取原字符），A-Z 筛选分组用
+ * 商品名整串全拼（无声调去空格大写），关键词全拼搜索用（如输入 "kele" 匹配「可乐」）
  * @param name 商品名
  */
-function firstLetterOf(name: string): string {
-  const first = pinyin(name, { pattern: 'first', toneType: 'none' }).charAt(0)
-  return /[A-Z]/i.test(first) ? first.toUpperCase() : '#'
+function fullPinyinOf(name: string): string {
+  return pinyin(name, { toneType: 'none' }).replace(/\s+/g, '').toUpperCase()
 }
 
 /**
- * 商品名整串拼音首字母（去空格大写），关键词首字母搜索用（如输入 "kl" 匹配「可乐」）
- * @param name 商品名
+ * 商品名拼音映射（products 变化时重算，避免渲染期反复计算拼音）；
+ * 首字母串一次 pinyin(pattern:'first') 调用同时导出 letter 与 initials（如 "kl" → letter=K、initials=KL）
  */
-function initialsOf(name: string): string {
-  return pinyin(name, { pattern: 'first', toneType: 'none' }).replace(/\s+/g, '').toUpperCase()
-}
-
-/** 商品名首字母映射（products 变化时重算，避免渲染期反复计算拼音） */
 const letterMap = computed(() => {
-  const map = new Map<number, { letter: string; initials: string }>()
+  const map = new Map<number, { letter: string; initials: string; full: string }>()
   for (const p of products.value) {
-    map.set(p.id, { letter: firstLetterOf(p.name), initials: initialsOf(p.name) })
+    const first = pinyin(p.name, { pattern: 'first', toneType: 'none' })
+    const head = first.charAt(0)
+    map.set(p.id, {
+      letter: /[A-Z]/i.test(head) ? head.toUpperCase() : '#',
+      initials: first.replace(/\s+/g, '').toUpperCase(),
+      full: fullPinyinOf(p.name),
+    })
   }
   return map
 })
 
-/** 纯字母关键词：同时按名称与拼音首字母匹配 */
+/** 纯字母关键词：同时按名称/拼音首字母/拼音全拼匹配 */
 const keywordLetters = computed(() => (/^[a-zA-Z]+$/.test(keyword.value.trim()) ? keyword.value.trim().toUpperCase() : ''))
 
-/** 按分类 + 首字母 + 关键词过滤后的商品列表 */
+/** 按分类 + 首字母 + 关键词 + 是否有货过滤后的商品列表 */
 const filteredProducts = computed(() => {
   return products.value.filter((p) => {
     if (activeCategory.value > 0 && p.category_id !== activeCategory.value) return false
     const meta = letterMap.value.get(p.id)
     if (activeLetter.value && meta?.letter !== activeLetter.value) return false
+    // 仅看有货：隐藏库存为 0 的商品（关闭时缺货商品仍展示但置灰不可购）
+    if (onlyInStock.value && p.stock <= 0) return false
     const kw = keyword.value.trim().toLowerCase()
     if (kw) {
       const hitName = p.name.toLowerCase().includes(kw)
       const hitInitials = !!keywordLetters.value && !!meta?.initials.includes(keywordLetters.value)
-      if (!hitName && !hitInitials) return false
+      const hitFull = !!keywordLetters.value && !!meta?.full.includes(keywordLetters.value)
+      if (!hitName && !hitInitials && !hitFull) return false
     }
     return true
   })
@@ -1261,6 +1274,28 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
   .search {
     margin-bottom: 8px;
+  }
+}
+// 首字母条 + 仅看有货开关同行：字母条自适应占满，开关右侧固定
+.search-sub {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  .letter-bar {
+    flex: 1;
+    min-width: 0;
+  }
+  .stock-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    .stock-label {
+      font-size: 13px;
+      color: #666;
+      cursor: pointer;
+      user-select: none;
+    }
   }
 }
 // A-Z 首字母筛选条：横向可滚动，选中绿底白字

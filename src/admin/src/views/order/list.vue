@@ -39,7 +39,7 @@
             <span class="f-label">订单号</span>
             <n-input
               v-model:value="filters.order_no"
-              placeholder="模糊匹配"
+              placeholder="订单号前缀匹配"
               clearable
               class="w-order"
               @keyup.enter="onSearch"
