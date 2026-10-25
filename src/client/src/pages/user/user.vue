@@ -1,13 +1,14 @@
 <template>
   <view class="user-page">
-    <!-- 用户信息卡片 -->
+    <!-- 用户信息卡片：已登录点击头像/昵称进入个人资料，未登录点击去登录 -->
     <view class="user-card">
-      <view v-if="userStore.isLogin" class="user-info">
+      <view v-if="userStore.isLogin" class="user-info" @click="goUserProfile()">
         <image class="avatar" :src="userStore.userInfo?.avatar || '/static/default-avatar.png'" mode="aspectFill" />
         <view class="info">
           <text class="nickname">{{ userStore.userInfo?.nickname || '用户' }}</text>
           <text class="phone">{{ maskPhone(userStore.userInfo?.phone || '') }}</text>
         </view>
+        <u-icon class="info-arrow" name="arrow-right" size="16" color="rgba(255, 255, 255, 0.85)" />
       </view>
       <view v-else class="user-info" @click="goLogin()">
         <image class="avatar" src="/static/default-avatar.png" mode="aspectFill" />
@@ -15,6 +16,7 @@
           <text class="nickname">点击登录</text>
           <text class="phone">登录后享受更多服务</text>
         </view>
+        <u-icon class="info-arrow" name="arrow-right" size="16" color="rgba(255, 255, 255, 0.85)" />
       </view>
     </view>
 
@@ -61,7 +63,6 @@
       <u-cell-group>
         <!-- 履约工作台（B）：仅履约人员可见（onShow 实时查询身份） -->
         <u-cell v-if="isFulfiller" icon="server-man" title="履约工作台" value="送货 · 核销" isLink @click="goFulfillment" />
-        <u-cell icon="account" title="个人资料" value="昵称 · 性别 · 生日" isLink @click="goUserProfile" />
         <u-cell icon="map" title="收货地址" @click="goAddressList" />
         <u-cell icon="coupon" title="优惠券包" @click="goCoupon" />
         <u-cell icon="clock" title="限时秒杀" @click="goFlash" />
@@ -276,8 +277,15 @@ function onLogout() {
 
 .info {
   display: flex;
+  flex: 1;
   flex-direction: column;
   margin-left: 24rpx;
+}
+
+/* 进入个人资料的右侧箭头 */
+.info-arrow {
+  flex-shrink: 0;
+  margin-left: 16rpx;
 }
 
 .nickname {

@@ -164,8 +164,10 @@ async function uploadAvatarAndSave(filePath: string) {
   uni.showLoading({ title: '上传中' })
   try {
     const up = await uploadUserAvatar(filePath)
-    await updateUserProfile({ avatar: up.data.url })
-    form.value.avatar = up.data.url
+    const url = up.data?.url
+    if (!url) return
+    await updateUserProfile({ avatar: url })
+    form.value.avatar = url
     uni.showToast({ title: '头像已更新', icon: 'success' })
     userStore.fetchUserInfo()
   } catch {
