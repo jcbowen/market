@@ -9,12 +9,18 @@ import { naiveTestComponents } from './naiveStubs'
  * F2/F3 快捷键守卫、收款成功清零、无付款码渠道降级
  */
 
-const { createPosOrder, listPosPayMethods } = vi.hoisted(() => ({
+const { createPosOrder, ensurePosCodePaySession, listPosPayMethods } = vi.hoisted(() => ({
   createPosOrder: vi.fn(),
+  ensurePosCodePaySession: vi.fn(),
   listPosPayMethods: vi.fn(),
 }))
 
-vi.mock('@/api/order', () => ({ createPosOrder, listPosPayMethods, bindOrderUser: vi.fn() }))
+vi.mock('@/api/order', () => ({
+  createPosOrder,
+  ensurePosCodePaySession,
+  listPosPayMethods,
+  bindOrderUser: vi.fn(),
+}))
 
 // ReceiptModal 新增散客补绑入口后 import 链引入 stores/auth（→ api/auth → request.ts 顶层
 // createDiscreteApi 依赖 naive-ui 完整包）与 UserPicker（→ api/user 同链），测试内统一阻断
@@ -239,11 +245,12 @@ describe('DirectPayTab 会员选择', () => {
     created_at: '2026-10-25 10:00:00',
   }
 
-  /** 经 UserPicker 弹窗选会员（点击选会员/更换会员按钮后由弹窗 select 回传） */
+  /** 经 UserPicker 弹窗选会员（点击选会员/更换会员按钮后由弹窗回传；真实组件单选选中即回传并关闭，update:show 须同步模拟，否则守卫拦截后续收款） */
   async function pickMember(wrapper: ReturnType<typeof mountTab>, u: typeof memberA) {
     await wrapper.findAll('button').find((b) => b.text().includes('会员') && !b.text().includes('收款'))!.trigger('click')
     const picker = wrapper.findComponent({ name: 'UserPicker' })
     picker.vm.$emit('select', u)
+    picker.vm.$emit('update:show', false)
     await flushPromises()
   }
 
@@ -364,5 +371,20 @@ describe('DirectPayTab F2/F3 快捷键', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2' }))
     await flushPromises()
     expect(createPosOrder).toHaveBeenCalledTimes(1)
+  })
+
+  it('会员选择弹窗打开期间快捷键忽略（防绕过选会员直接建单）', async () => {
+    const wrapper = mountTab()
+    await flushPromises()
+    await tapPad(wrapper, '2')
+    await wrapper.findAll('button').find((b) => b.text().includes('选会员'))!.trigger('click')
+
+    // 选会员弹窗已开（n-modal 挡不住 window 级 keydown），F2/F3 均不得建单
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2' }))
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3' }))
+    await flushPromises()
+    expect(createPosOrder).not.toHaveBeenCalled()
+    expect(capturedDialog).toBeNull()
   })
 })

@@ -254,12 +254,13 @@ function focusAmount() {
 // --- F2/F3 全局收款快捷键 ---
 
 /**
- * 全局 F2/F3：F2 付款码收款、F3 现金收款（弹窗打开时忽略，避免重复建单）
+ * 全局 F2/F3：F2 付款码收款、F3 现金收款（任一弹窗打开时忽略，避免重复建单；
+ * n-modal 挡得住鼠标但挡不住 window 级 keydown，会员选择弹窗须一并纳入守卫）
  * @param e 键盘事件
  */
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.key !== 'F2' && e.key !== 'F3') return
-  if (showCodePay.value || showPaid.value || cashConfirmOpen.value) return
+  if (showCodePay.value || showPaid.value || cashConfirmOpen.value || showUserPicker.value) return
   e.preventDefault()
   if (!amountValid.value) {
     message.warning('请先输入收款金额')
@@ -312,7 +313,7 @@ function focusDialogConfirm(selector = '.n-dialog__action button:last-of-type') 
  */
 async function onCodePay() {
   if (!codePayMethod.value || creating.value) return
-  if (showCodePay.value || cashConfirmOpen.value) return
+  if (showCodePay.value || showUserPicker.value || cashConfirmOpen.value) return
   if (!amountValid.value) {
     message.warning('请先输入收款金额')
     return
@@ -410,7 +411,7 @@ function buildReceipt(payLabel: string) {
  */
 function onCashPay() {
   if (creating.value) return
-  if (showCodePay.value || cashConfirmOpen.value) return
+  if (showCodePay.value || showUserPicker.value || cashConfirmOpen.value) return
   if (!amountValid.value) {
     message.warning('请先输入收款金额')
     return
