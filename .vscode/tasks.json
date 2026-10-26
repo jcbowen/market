@@ -53,6 +53,21 @@
 				"cwd": "${workspaceFolder}"
 			},
 			"detail": "依赖检查 → 前后端构建 → 镜像构建 → 启动服务 → 初始化数据（首次会弹出启动模式选择）"
+		},
+		{
+			"type": "shell",
+			"label": "pull-deps（拉取本地依赖最新代码）",
+			"command": "node pull-deps.mjs",
+			"problemMatcher": [],
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"detail": "读取 src/backend/go.mod 的本地 replace，逐个 git pull --ff-only；有未提交改动的仓库跳过并提示"
 		}
 	]
 }
