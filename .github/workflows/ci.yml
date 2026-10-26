@@ -1,21 +1,24 @@
-# CI 流水线：后端（vet/test/build/lint）+ 前端（admin/client 构建）+ tag 触发自动发布 Release
+# CI 发布流水线：tag 触发自动发布 Release。
+# 分工（2026-10-26）：日常检查在 Gitea（.gitea/workflows/ci.yml），本文件只负责发版。
+#   - 触发：仅 v* tag 与手动 workflow_dispatch；分支推送与 PR 不再触发；
+#   - 检查类 job（backend / golangci / admin-build / client-build）保留作为手动兜底：
+#     dispatch 到分支时才会执行，它们的 services 用 127.0.0.1 端口映射，
+#     在 NAS 上不可用（宿主 3306 已被 mysql-1 占用），日常检查请改 .gitea 那份；
+#   - 本文件与 Gitea 侧不得同时响应同一 tag：两端各发一次 Release 会附件互踩、:latest 指向漂移。
 # Release 产物：linux/darwin/windows × amd64/arm64 共 6 平台包（tar.gz，Windows 为 zip），内含 6 个服务二进制 + 前端产物 + config.yaml；
 # 镜像产物：allinone 一体化镜像（单容器全栈）+ market-app 应用镜像（多容器部署，单镜像多容器），
 # 均为 linux amd64/arm64 双架构，GHCR + Docker Hub 双发
 # 说明：后端 Go module 位于 src/backend，前端位于 src/admin 与 src/client
-# Gitea Actions 与 GitHub Actions 语法兼容，本文件在 GitHub 与 Gitea（act_runner）上均可运行；
 # 注意 checkout v5、setup-go v6、setup-node v5、golangci-lint-action v9、docker 三件套
 # （setup-qemu/setup-buildx/login v4 起）与 artifact 两件套（upload v6+/download v7+）的
-# Action 运行时均为 Node 24，要求 act_runner ≥ 2.327.1，Gitea 侧 runner 过旧需先升级；
-# tag 发布步骤已做平台适配（API 域名差异见「创建 Release 并上传产物」步骤注释）
+# Action 运行时均为 Node 24，Gitea 侧对应要求 act_runner ≥ 2.327.1；
+# tag 发布步骤保留了双平台 API 适配（域名差异见「创建 Release 并上传产物」步骤注释）
 name: CI
 
 on:
   push:
-    branches: [main, master]
     tags: ['v*']
-  pull_request:
-    branches: [main, master]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}

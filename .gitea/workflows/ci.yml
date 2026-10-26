@@ -1,0 +1,249 @@
+# Gitea 日常检查流水线（push main / PR）。与 .github/workflows/ci.yml 分工：
+#   - 本文件：日常检查（后端 vet/test/build、管理端与 H5 构建），只在推送与 PR 时跑；
+#   - .github/workflows/ci.yml：tag 发布（6 平台产物 + 双架构镜像 + Release），只在 GitHub 跑。
+# 本文件**不得**出现 tag 触发：同一 tag 两端各发一次 Release 会附件互踩、:latest 指向漂移。
+#
+# 与 GitHub 版本的 5 处环境差异（均为 NAS 环境所迫，改动前先读）：
+#   1. services 不映射宿主端口：宿主 3306 已被 mysql-1 占用，job 与 service 同网络，
+#      直接用服务名（mysql / redis）访问；
+#   2. MySQL health-retries 提到 60（≈10 分钟）：NAS 上冷启动实测 325 秒，
+#      沿用 GitHub 的 10 次（100 秒）会先被判 unhealthy，等不到就绪；
+#   3. setup-go 锁精确版本 1.26.5：指定 go-download-base-url 后会跳过版本清单，
+#      别名写法（如 '1.26'）在该模式下解析不了；
+#   4. setup-node 用 npmmirror 的 node 镜像：nodejs.org 从 NAS 拉取很慢；
+#      npm 依赖本身由 lockfile 的 mirrors.tencent.com 提供，无需额外配置；
+#   5. golangci 用 install-mode: goinstall：默认 binary 模式要从 github.com releases
+#      下预编译 tar.gz，runner.github_mirror 只代理 action 仓库、不覆盖 action 运行时的下载。
+#      goinstall 模式的代价是每次 job 现场编译 1–2 分钟，且该模式硬编码 CGO_ENABLED=1，需要 gcc。
+#
+# 前置（runner config.yaml，缺一项会静默失效）：
+#   - container.service_ready_timeout: 10m  等待带 healthcheck 的 service
+#   - runner.envs 注入 GOPROXY / npm_config_registry（本文件在 job env 再显式声明一份兜底）
+#
+# 首次运行重点观察三处：service 服务名能否解析（smoke 已验证 redis/mysql 可达）、
+# setup-go 是否命中 golang.google.cn 与缓存、golangci 的现场编译耗时与 gcc 是否就位。
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端 go vet/test/build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # 集成测试依赖：MySQL/Redis 以 service 容器提供，与 job 同网络，
+    # 通过服务名访问（不映射宿主端口，宿主 3306 已被 mysql-1 占用）
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-mysql
+          MYSQL_DATABASE: market
+          # 库容器时区与生产（MySQL 容器 TZ=Asia/Shanghai）及测试进程对齐：
+          # 库里 NOW() 与 Go 侧按进程时区写入的时间串比较（券过期、对账时间窗）
+          # 必须同一口径，否则整体偏移 8 小时。时钟一致性由
+          # services/product/service/db_clock_test.go 显式守卫并打印取证字段
+          TZ: Asia/Shanghai
+        # retries=60 ≈ 10 分钟，覆盖 NAS 上 MySQL 冷启动（实测 325 秒）；
+        # 与 runner 的 container.service_ready_timeout 一致，两者任一偏小都会提前失败
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-mysql"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=60
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      TEST_MYSQL_HOST: mysql
+      TEST_MYSQL_PORT: '3306'
+      TEST_MYSQL_USER: root
+      TEST_MYSQL_PASSWORD: ci-mysql
+      TEST_MYSQL_DBNAME: market
+      TEST_REDIS_ADDR: redis:6379
+      # 测试进程时区与生产（容器 TZ=Asia/Shanghai）对齐，DSN parseTime=True 下
+      # driver 读回的 time.Time 挂进程时区，「读回实体再 Save 全量写回」经 RFC3339
+      # 转换时 UTC 会产生 MySQL DATETIME 不接受的 Z 后缀（Error 1292），+08:00 偏移则可被接受
+      TZ: Asia/Shanghai
+      # runner 已全局注入同一组值，此处显式声明避免依赖 runner 配置
+      GOPROXY: https://goproxy.cn,direct
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          # 必须写精确补丁号：设置 go-download-base-url 后不再读取版本清单
+          go-version: '1.26.5'
+          go-download-base-url: https://golang.google.cn/dl
+          cache-dependency-path: src/backend/go.sum
+
+      # jcbaseGo / wego / alipay-sdk-go-all 已在 GitHub 公开发布对应 tag，
+      # 本地开发经 go.mod replace 指向本机仓库目录；
+      # CI 统一 drop replace，从公共 Go proxy 拉取已发布版本。
+      # 新增本地 replace 依赖时必须同步在此处补 dropreplace，否则 CI 上不存在
+      # ../../../ 仓库外路径，go mod tidy 会直接报 replacement directory does not exist。
+      - name: 移除本地 replace 指令
+        run: |
+          go mod edit -dropreplace github.com/jcbowen/jcbaseGo
+          go mod edit -dropreplace github.com/jcbowen/wego
+          go mod edit -dropreplace github.com/jcbowen/alipay-sdk-go-all
+
+      - name: 下载依赖
+        run: go mod tidy
+
+      # healthcheck 已声明时 runner 会等到 healthy 再进步骤，这里再兜一层：
+      # job 容器内直接探 TCP，失败时能明确区分「服务没起来」与「测试用例失败」
+      - name: 等待 MySQL / Redis 可达
+        run: |
+          wait_tcp() {
+            local host=$1 port=$2 label=$3 start
+            start=$(date +%s)
+            for _ in $(seq 1 60); do
+              if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${host}/${port}" 2>/dev/null; then
+                echo "OK   ${label} 就绪，耗时 $(( $(date +%s) - start ))s"
+                return 0
+              fi
+              sleep 10
+            done
+            echo "FAIL ${label} 10 分钟内不可达（检查 service 是否启动、服务名是否解析）"
+            return 1
+          }
+          wait_tcp mysql 3306 MySQL
+          wait_tcp redis 6379 Redis
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+      - name: go build
+        run: go build ./...
+
+  golangci:
+    name: 代码静态检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+          go-download-base-url: https://golang.google.cn/dl
+          cache-dependency-path: src/backend/go.sum
+
+      # goinstall 模式在 action 源码里硬编码 CGO_ENABLED=1（src/install.ts），
+      # 没有 C 编译器会直接失败；镜像自带就跳过，省一次 apt
+      - name: 确保 C 工具链
+        run: |
+          if command -v gcc >/dev/null 2>&1; then
+            echo "OK   gcc 已就绪：$(gcc --version | head -1)"
+            exit 0
+          fi
+          echo "gcc 缺失，安装 build-essential ..."
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential
+
+      # 与 backend job 一致：drop 本地 replace 后从公共 Go proxy 拉取已发布版本，
+      # 否则 CI 上不存在 ../../../jcbaseGo 本地目录，typecheck 直接报错
+      - name: 移除本地 replace 指令
+        working-directory: src/backend
+        run: |
+          go mod edit -dropreplace github.com/jcbowen/jcbaseGo
+          go mod edit -dropreplace github.com/jcbowen/wego
+          go mod edit -dropreplace github.com/jcbowen/alipay-sdk-go-all
+
+      # 仓库提交的 go.sum 基于 replace 状态生成，不含 jcbaseGo/wego 条目，
+      # 需 tidy 补全后 lint 才能完成 typecheck
+      - name: 下载依赖
+        working-directory: src/backend
+        run: go mod tidy
+
+      # goinstall 模式让 action 执行 go install（走 goproxy.cn），
+      # 不碰 github.com releases；该模式下 version 原样透传给 go install，
+      # 故写全补丁号，避免前缀查询带来的解析歧义。
+      # 配置文件位于仓库根目录 .golangci.yml（v2 格式），action 会自 working-directory 逐级向上查找
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          install-mode: goinstall
+          working-directory: src/backend
+
+  admin-build:
+    name: 后台管理前端构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src/admin
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          # nodejs.org 从 NAS 拉取很慢，改用 npmmirror 的 node 分发目录
+          mirror: https://npmmirror.com/mirrors/node
+          cache: npm
+          cache-dependency-path: src/admin/package-lock.json
+
+      - name: 安装依赖
+        env:
+          npm_config_registry: https://registry.npmmirror.com
+        run: |
+          for i in 1 2 3; do
+            if npm ci; then break; fi
+            echo "npm ci 第 ${i} 次失败（多为网络抖动），10s 后重试"
+            if [[ ${i} -eq 3 ]]; then exit 1; fi
+            sleep 10
+          done
+
+      - name: 构建（含 vue-tsc 类型检查）
+        run: npm run build
+
+  client-build:
+    name: 用户端 H5 构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src/client
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          mirror: https://npmmirror.com/mirrors/node
+          cache: npm
+          cache-dependency-path: src/client/package-lock.json
+
+      - name: 安装依赖
+        env:
+          npm_config_registry: https://registry.npmmirror.com
+        run: |
+          for i in 1 2 3; do
+            if npm ci; then break; fi
+            echo "npm ci 第 ${i} 次失败（多为网络抖动），10s 后重试"
+            if [[ ${i} -eq 3 ]]; then exit 1; fi
+            sleep 10
+          done
+
+      - name: 构建 H5
+        run: npm run build:h5
