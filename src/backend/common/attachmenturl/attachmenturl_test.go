@@ -61,6 +61,47 @@ func TestFallbackURL(t *testing.T) {
 	}
 }
 
+// TestRelPathIn 验证自定义 local_dir 下的前缀归一：配置目录优先、默认 uploads 兜底
+func TestRelPathIn(t *testing.T) {
+	cases := []struct {
+		name        string
+		dir         string
+		in          string
+		rel         string
+		passthrough bool
+	}{
+		{"配置目录前缀剥离", "media", "media/images/a.jpg", "images/a.jpg", false},
+		{"配置目录站内路径剥离", "media", "/media/seed/products/p.png", "seed/products/p.png", false},
+		{"默认uploads旧前缀仍剥离", "media", "/uploads/images/a.jpg", "images/a.jpg", false},
+		{"默认uploads相对前缀仍剥离", "media", "uploads/images/a.jpg", "images/a.jpg", false},
+		{"空目录回默认", "", "uploads/images/a.jpg", "images/a.jpg", false},
+		{"外链透传", "media", "https://other.example.com/x.jpg", "https://other.example.com/x.jpg", true},
+		{"未知绝对路径透传", "media", "/static/logo.png", "/static/logo.png", true},
+	}
+	for _, c := range cases {
+		rel, passthrough := RelPathIn(c.dir, c.in)
+		if rel != c.rel || passthrough != c.passthrough {
+			t.Errorf("%s: got (%q, %v) want (%q, %v)", c.name, rel, passthrough, c.rel, c.passthrough)
+		}
+	}
+}
+
+// TestFallbackURLIn 验证自定义 local_dir 下的兜底路径段与配置目录一致
+func TestFallbackURLIn(t *testing.T) {
+	if got := FallbackURLIn("media", "images/a.jpg"); got != "/media/images/a.jpg" {
+		t.Errorf("相对路径应补 /media/ 前缀: %q", got)
+	}
+	if got := FallbackURLIn("media", "/media/images/a.jpg"); got != "/media/images/a.jpg" {
+		t.Errorf("/media/ 前缀应归一为 /media/: %q", got)
+	}
+	if got := FallbackURLIn("media", "/uploads/images/a.jpg"); got != "/media/images/a.jpg" {
+		t.Errorf("旧 /uploads/ 前缀应按新目录兜底重拼: %q", got)
+	}
+	if got := FallbackURLIn("media", "https://other.example.com/x.jpg"); got != "https://other.example.com/x.jpg" {
+		t.Errorf("外链应原样返回: %q", got)
+	}
+}
+
 func TestNewConverter(t *testing.T) {
 	if conv := NewConverter(nil); conv != nil {
 		t.Error("nil 配置应返回 nil 转换器")
@@ -114,6 +155,7 @@ func TestLocalDirName(t *testing.T) {
 func TestSourcePath(t *testing.T) {
 	cfg := &Config{StorageType: "local", VisitDomain: "https://m.example.com"}
 	cdnCfg := &Config{StorageType: "oss", OssCustomVisitDomain: "https://cdn.example.com/"}
+	mediaCfg := &Config{StorageType: "local", LocalDir: "media", VisitDomain: "https://m.example.com"}
 
 	cases := []struct {
 		name string
@@ -130,6 +172,9 @@ func TestSourcePath(t *testing.T) {
 		{"外链原样保留", cfg, "https://placehold.co/300x300?text=Tomato", "https://placehold.co/300x300?text=Tomato"},
 		{"OSS自定义域名剥离为Key", cdnCfg, "https://cdn.example.com/images/a.jpg", "images/a.jpg"},
 		{"OSS未命中候选域名原样", cdnCfg, "https://other-bucket.oss-cn-beijing.aliyuncs.com/images/a.jpg", "https://other-bucket.oss-cn-beijing.aliyuncs.com/images/a.jpg"},
+		{"自定义目录前缀剥离", mediaCfg, "/media/images/a.jpg", "images/a.jpg"},
+		{"自定义目录URL剥离", mediaCfg, "https://m.example.com/media/images/a.jpg", "images/a.jpg"},
+		{"自定义目录下旧uploads前缀仍剥离", mediaCfg, "/uploads/images/a.jpg", "images/a.jpg"},
 	}
 	for _, c := range cases {
 		if got := SourcePath(c.cfg, c.in); got != c.want {
@@ -159,5 +204,16 @@ func TestRestoreURLSemantics(t *testing.T) {
 		if got := l.RestoreURL(context.Background(), c.in); got != c.want {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
 		}
+	}
+
+	// 自定义 local_dir：URL 路径段跟随配置目录，旧默认前缀存量仍归一
+	lm := &Loader{ttl: DefaultCacheTTL}
+	lm.cached = &Config{StorageType: "local", LocalDir: "media", VisitDomain: "https://new.example.com"}
+	lm.cachedAt = time.Now()
+	if got := lm.RestoreURL(context.Background(), "images/a.jpg"); got != "https://new.example.com/media/images/a.jpg" {
+		t.Errorf("自定义目录拼装不符: %q", got)
+	}
+	if got := lm.RestoreURL(context.Background(), "https://old.example.com/uploads/images/a.jpg"); got != "https://new.example.com/media/images/a.jpg" {
+		t.Errorf("旧默认前缀应按新目录重拼: %q", got)
 	}
 }

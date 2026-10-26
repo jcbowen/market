@@ -129,7 +129,7 @@ await runWithRepair(
 );
 
 console.log('==> 准备本地附件共享目录（不存在时自动创建）...');
-fs.mkdirSync(path.join(ROOT_DIR, 'bin', 'attachment'), { recursive: true });
+fs.mkdirSync(path.join(ROOT_DIR, 'bin', 'uploads'), { recursive: true });
 
 // GeoIP 定位库缺失只告警，不阻断发布构建
 await ensureGeoipDatabase(ctx);

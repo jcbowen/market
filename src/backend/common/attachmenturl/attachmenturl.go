@@ -63,6 +63,37 @@ func LocalDirName(dir string) string {
 	return strings.Trim(dir, "/")
 }
 
+// DirOf 取配置的规范化本地目录名（cfg 为 nil 回默认 uploads）
+//
+// 参数:
+//   - cfg: 附件配置（可为 nil）
+//
+// 返回值:
+//   - string: 目录名（不含首尾斜杠，形如 uploads）
+func DirOf(cfg *Config) string {
+	if cfg == nil {
+		return DefaultLocalDir
+	}
+	return LocalDirName(cfg.LocalDir)
+}
+
+// dirCandidates 目录前缀剥离候选序列：配置目录优先、默认 uploads 兜底。
+// local_dir 变更后存量 URL 仍是旧前缀（或默认前缀），两种形态都必须能归一，
+// 否则归一化失败会把「目录名/路径」整段当相对路径入库，拼 URL 时出现双目录前缀
+//
+// 参数:
+//   - dir: 配置的本地目录名
+//
+// 返回值:
+//   - []string: 去重后的候选目录名列表
+func dirCandidates(dir string) []string {
+	dir = LocalDirName(dir)
+	if dir == DefaultLocalDir {
+		return []string{DefaultLocalDir}
+	}
+	return []string{dir, DefaultLocalDir}
+}
+
 // configRow attachment_config 单行的轻量读取模型（各服务共享同一 market 库）
 type configRow struct {
 	StorageType          string `gorm:"column:storage_type"`
@@ -226,13 +257,15 @@ func (c *Converter) ToMedia(rel string) string {
 // 返回值:
 //   - string: 完整访问 URL
 func (l *Loader) MediaURL(ctx context.Context, src string) string {
-	rel, passthrough := RelPath(src)
+	cfg := l.Get(ctx)
+	dir := DirOf(cfg)
+	rel, passthrough := RelPathIn(dir, src)
 	if passthrough {
 		return rel
 	}
-	conv := NewConverter(l.Get(ctx))
+	conv := NewConverter(cfg)
 	if conv == nil {
-		return FallbackURL(src)
+		return FallbackURLIn(dir, src)
 	}
 	return conv.ToMedia(rel)
 }
@@ -270,6 +303,7 @@ func (l *Loader) SourcePath(ctx context.Context, src string) string {
 }
 
 // SourcePath 纯函数版入库归一化（配置由调用方提供，可离线测试）
+// 剥离前缀候选：配置的 local_dir 目录名 + 默认 uploads（兼容 local_dir 变更前的旧前缀）
 //
 // 参数:
 //   - cfg: 附件配置（可为 nil，此时仅剥离本站路径，OSS 候选域名不可用）
@@ -281,12 +315,15 @@ func SourcePath(cfg *Config, src string) string {
 	if src == "" {
 		return ""
 	}
+	dirs := dirCandidates(DirOf(cfg))
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		// 本站附件：path 以 /uploads/ 开头直接提取相对路径（query/锚点丢弃），与域名无关，
-		// 任何历史按请求域名拼出的存量 URL 都能归一
+		// 本站附件：path 以 /<目录>/ 开头直接提取相对路径（query/锚点丢弃），与域名无关，
+		// 任何历史按请求域名拼出的存量 URL 都能归一；候选含默认 uploads，兼容 local_dir 变更后的旧前缀
 		if u, err := url.Parse(src); err == nil {
-			if rel, ok := strings.CutPrefix(u.Path, "/uploads/"); ok {
-				return rel
+			for _, d := range dirs {
+				if rel, ok := strings.CutPrefix(u.Path, "/"+d+"/"); ok {
+					return rel
+				}
 			}
 		}
 		// OSS/CDN：域名命中附件配置候选时剥离为对象 Key，未命中的外链原样保存
@@ -297,19 +334,29 @@ func SourcePath(cfg *Config, src string) string {
 				if domain == "" || domain == "/" || !strings.HasPrefix(src, domain) {
 					continue
 				}
-				return strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(src, domain), "/"), "uploads/")
+				rest := strings.TrimPrefix(strings.TrimPrefix(src, domain), "/")
+				for _, d := range dirs {
+					if rel, ok := strings.CutPrefix(rest, d+"/"); ok {
+						return rel
+					}
+				}
+				return rest
 			}
 		}
 		return src
 	}
-	// 纯路径形态：剥离开头的 / 与 uploads/ 目录前缀
-	if _, rest, ok := strings.Cut(strings.Trim(src, "/"), "uploads/"); ok {
-		return rest
+	// 纯路径形态：剥离开头的 / 与目录前缀（配置目录与默认 uploads 均可）
+	trimmed := strings.Trim(src, "/")
+	for _, d := range dirs {
+		if rest, ok := strings.CutPrefix(trimmed, d+"/"); ok {
+			return rest
+		}
 	}
 	return src
 }
 
-// RelPath 将任意形态的附件地址归一化为拼接前置形态
+// RelPath 将任意形态的附件地址归一化为拼接前置形态（默认目录 uploads）
+// 需跟随自定义 local_dir 时请用 RelPathIn
 //
 // 参数:
 //   - src: 相对路径、/uploads/... 站内路径、uploads/... 前缀路径或完整 URL
@@ -319,19 +366,43 @@ func SourcePath(cfg *Config, src string) string {
 //     /uploads/ 与 uploads/ 前缀剥离为相对路径，其余视为已是相对路径
 //   - passthrough: true 表示 rel 无需拼接、应原样返回
 func RelPath(src string) (rel string, passthrough bool) {
+	return RelPathIn(DefaultLocalDir, src)
+}
+
+// RelPathIn RelPath 的目录参数版：按配置目录（与默认 uploads 兜底）剥离前缀
+// local_dir 改为非 uploads 时，落盘与 URL 路径段同步变化，归一化必须吃同一目录名；
+// 剥离候选恒含默认 uploads，旧前缀存量 URL 仍可归一
+//
+// 参数:
+//   - dir: 配置的本地存储目录名（空值回默认 uploads）
+//   - src: 相对路径、/<dir>/... 站内路径、<dir>/... 前缀路径或完整 URL
+//
+// 返回值:
+//   - rel: 归一化结果：外链与未知 / 开头绝对路径原样透传，
+//     目录前缀剥离为相对路径，其余视为已是相对路径
+//   - passthrough: true 表示 rel 无需拼接、应原样返回
+func RelPathIn(dir, src string) (rel string, passthrough bool) {
 	if src == "" || IsExternalMediaRef(src) {
 		return src, true
 	}
-	// / 开头：/uploads/ 剥离为相对路径参与拼接（含 /uploads/seed 演示素材），
+	dirs := dirCandidates(dir)
+	// / 开头：/<目录>/ 剥离为相对路径参与拼接（含 /<目录>/seed 演示素材），
 	// 其余未知绝对路径不强行拼接，原样透传
 	if strings.HasPrefix(src, "/") {
-		if rest, ok := strings.CutPrefix(src, "/uploads/"); ok {
-			return rest, false
+		for _, d := range dirs {
+			if rest, ok := strings.CutPrefix(src, "/"+d+"/"); ok {
+				return rest, false
+			}
 		}
 		return src, true
 	}
-	// 存量 uploads/ 目录前缀形态归一为相对路径
-	return strings.TrimPrefix(src, "uploads/"), false
+	// 存量目录前缀形态归一为相对路径
+	for _, d := range dirs {
+		if rest, ok := strings.CutPrefix(src, d+"/"); ok {
+			return rest, false
+		}
+	}
+	return src, false
 }
 
 // IsExternalMediaRef 判断是否为外部完整 URL（http/https/协议相对）
@@ -350,7 +421,8 @@ func IsExternalMediaRef(src string) bool {
 var fallbackWarnOnce sync.Once
 
 // FallbackURL 附件访问域名不可用时的兜底拼装（配置缺失/补写未完成的异常窗口）
-// 返回站内绝对路径 /uploads/<path>：网关 /uploads 静态路由承接，且不随浏览器当前页面
+// 默认目录 uploads 版；自定义 local_dir 请用 FallbackURLIn
+// 返回站内绝对路径 /<dir>/<path>：网关对应静态路由承接，且不随浏览器当前页面
 // 路径解析（SPA 子路径如 /b/ 下不会错拼成 /b/images/...）；首次触发记告警日志
 //
 // 参数:
@@ -359,14 +431,26 @@ var fallbackWarnOnce sync.Once
 // 返回值:
 //   - string: 站内绝对路径；外链或未知绝对路径原样返回
 func FallbackURL(src string) string {
-	rel, passthrough := RelPath(src)
+	return FallbackURLIn(DefaultLocalDir, src)
+}
+
+// FallbackURLIn FallbackURL 的目录参数版：兜底路径段与配置目录一致
+//
+// 参数:
+//   - dir: 配置的本地存储目录名（空值回默认 uploads）
+//   - src: 相对路径或存量完整 URL
+//
+// 返回值:
+//   - string: 站内绝对路径；外链或未知绝对路径原样返回
+func FallbackURLIn(dir, src string) string {
+	rel, passthrough := RelPathIn(dir, src)
 	if passthrough {
 		return rel
 	}
 	fallbackWarnOnce.Do(func() {
 		log.Printf("[WARN] 附件访问域名未就绪，图片地址降级为站内相对路径（网关会自动补写 visit_domain）: %s", rel)
 	})
-	return "/uploads/" + rel
+	return "/" + LocalDirName(dir) + "/" + rel
 }
 
 // ensureTrailingSlash 确保域名以 / 结尾

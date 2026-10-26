@@ -103,6 +103,7 @@ func (q *exportQuery) toListOrdersReq() *order.ListOrdersReq {
 //   - error: 任务超限或落库失败
 //
 // 使用示例：
+//
 //	id, err := svc.CreateExportTask(ctx, req)
 func (s *ExportTaskService) CreateExportTask(ctx context.Context, req *order.CreateExportTaskReq) (int64, error) {
 	if req.ExportType != model.ExportTypeOrders {
@@ -238,7 +239,7 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 	// 过期时间从生成完成时刻起算 3 天（创建时的临时过期时间仅兜底失败/中断任务）
 	exp := time.Now().AddDate(0, 0, model.ExportRetentionDays).Format("2006-01-02 15:04:05")
 	updates := map[string]interface{}{
-		"status":     model.ExportTaskStatusDone,
+		"status": model.ExportTaskStatusDone,
 		// file_path 与实际写入路径一致（相对导出根目录的文件名）：
 		// root 已是 …/uploads/exports，再带 exports/ 前缀会让下载与清理落到
 		// …/exports/exports/ 下找不到文件（删除函数两个路径都删正是历史矛盾的痕迹）

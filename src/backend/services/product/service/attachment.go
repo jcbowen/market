@@ -1036,25 +1036,12 @@ func commonAttachmentConfig(cfg *model.AttachmentConfig) *attachmenturl.Config {
 	}
 }
 
-// mediaConverter 取当前可用的图片 URL 转换器
-// 配置缺失，或 local 模式未填访问域名（补写尚未完成的异常窗口）时返回 nil，
-// 调用方按 fallbackMediaURL 以 /uploads/<path> 站内绝对路径临时兜底并告警
-//
-// 参数:
-//   - ctx: 上下文
-//
-// 返回值:
-//   - *attachmenturl.Converter: 转换器；不可用时返回 nil
-func (s *AttachmentService) mediaConverter(ctx context.Context) *attachmenturl.Converter {
-	return attachmenturl.NewConverter(commonAttachmentConfig(s.getConfigCached(ctx)))
-}
-
 // ToMediaURL 将入库相对路径补全为完整访问 URL
 // 拼装规则（均无需迁移存量记录）：
 //  1. 外链 URL（http/https/协议相对）与未知 / 开头绝对路径原样返回
-//  2. 其余形态（相对路径、/uploads/ 与 uploads/ 前缀路径，含 /uploads/seed 演示素材）
-//     归一为相对路径后拼接：<域名>/uploads/<path>（local）或 <域名>/<path>（oss）
-//  3. local 模式 visit_domain 未就绪（补写尚未完成）→ 临时拼站内相对路径 /uploads/<path> 并告警
+//  2. 其余形态（相对路径、/<local_dir>/ 与 <local_dir>/ 前缀路径，含 /<local_dir>/seed 演示素材）
+//     归一为相对路径后拼接：<域名>/<local_dir>/<path>（local）或 <域名>/<path>（oss）
+//  3. local 模式 visit_domain 未就绪（补写尚未完成）→ 临时拼站内相对路径 /<local_dir>/<path> 并告警
 //
 // 参数:
 //   - ctx: 上下文
@@ -1063,13 +1050,15 @@ func (s *AttachmentService) mediaConverter(ctx context.Context) *attachmenturl.C
 // 返回值:
 //   - string: 完整访问 URL
 func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
-	rel, passthrough := attachmenturl.RelPath(src)
+	pub := commonAttachmentConfig(s.getConfigCached(ctx))
+	dir := attachmenturl.DirOf(pub)
+	rel, passthrough := attachmenturl.RelPathIn(dir, src)
 	if passthrough {
 		return rel
 	}
-	conv := s.mediaConverter(ctx)
+	conv := attachmenturl.NewConverter(pub)
 	if conv == nil {
-		return attachmenturl.FallbackURL(src)
+		return attachmenturl.FallbackURLIn(dir, src)
 	}
 	return conv.ToMedia(rel)
 }
@@ -1087,16 +1076,18 @@ func (s *AttachmentService) ToMediaURLs(ctx context.Context, list []string) []st
 	if len(list) == 0 {
 		return list
 	}
-	conv := s.mediaConverter(ctx)
+	pub := commonAttachmentConfig(s.getConfigCached(ctx))
+	dir := attachmenturl.DirOf(pub)
+	conv := attachmenturl.NewConverter(pub)
 	out := make([]string, 0, len(list))
 	for _, src := range list {
-		rel, passthrough := attachmenturl.RelPath(src)
+		rel, passthrough := attachmenturl.RelPathIn(dir, src)
 		if passthrough {
 			out = append(out, rel)
 			continue
 		}
 		if conv == nil {
-			out = append(out, attachmenturl.FallbackURL(src))
+			out = append(out, attachmenturl.FallbackURLIn(dir, src))
 			continue
 		}
 		out = append(out, conv.ToMedia(rel))

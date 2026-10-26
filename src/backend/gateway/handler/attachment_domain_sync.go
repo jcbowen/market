@@ -18,6 +18,10 @@ import (
 // 未配置域名的全新部署在首次请求后即触发补写；已配置的部署每 10 分钟多一次轻量配置读取
 const attachmentDomainSyncInterval = 10 * time.Minute
 
+// attachmentDomainSyncTimeout 单次补写 RPC 的超时预算
+// 请求 ctx 可能随客户端断连取消，补写脱离取消信号另行限时；失败等下一轮节流窗口重试
+const attachmentDomainSyncTimeout = 3 * time.Second
+
 // AttachmentDomainSync 附件访问域名（visit_domain）惰性补写中间件
 // 背景：附件 URL 由 product 服务统一拼为「配置的附件域名 + 附件路径」的完整地址，
 // local 模式依赖 visit_domain 恒有值。站点设置保存时已有一次联动补写（site.go），
@@ -53,18 +57,19 @@ func (s *AttachmentDomainSync) Middleware() gin.HandlerFunc {
 }
 
 // trySync 节流触发附件访问域名补写
-// 加互斥锁串行化：并发请求只允许一个进入补写，其余直接放行，避免瞬时放大 RPC 调用
+// 互斥锁只圈住节流判定与时间戳推进，RPC 在锁外执行：本中间件挂在网关全局路由上，
+// 持锁跨网络往返会让全站请求排队等这一次补写；并发请求最多只有一个进入补写，其余直接放行
 //
 // 参数:
 //   - c: gin 上下文
 func (s *AttachmentDomainSync) trySync(c *gin.Context) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !s.last.IsZero() && time.Since(s.last) < attachmentDomainSyncInterval {
+		s.mu.Unlock()
 		return
 	}
 	s.last = time.Now()
+	s.mu.Unlock()
 
 	// 域名兜底链与用户口径一致：站点域名（brand 缓存，含站点设置/SITE_BASE_URL）为空时
 	// 用当前访问域名兜底，保证 visit_domain 总能补上值
@@ -75,7 +80,10 @@ func (s *AttachmentDomainSync) trySync(c *gin.Context) {
 	if base == "" {
 		return
 	}
-	syncAttachmentVisitDomainBy(s.productClient, c.Request.Context(), base)
+	// 补写脱离请求的取消信号（客户端断连不该让补写必败）并限时，失败等下一轮节流窗口
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), attachmentDomainSyncTimeout)
+	defer cancel()
+	syncAttachmentVisitDomainBy(s.productClient, ctx, base)
 }
 
 // syncAttachmentVisitDomainBy 附件域名补写核心：local 存储且 visit_domain 为空时补写为 baseURL

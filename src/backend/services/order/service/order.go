@@ -281,21 +281,21 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 				totalPrice: totalPrice,
 			})
 
-		orderItems = append(orderItems, &model.OrderItem{
-			ProductID:   skuInfo.ProductId,
-			SkuID:       item.SkuId,
-			ProductName: productInfo.Name,
-			SpecName:    skuInfo.SpecName,
-			// 图片快照入库归一为相对路径（product 响应为完整 URL），出库按当前附件配置重拼，
-			// 域名/存储模式变更后存量订单图片不失效
-			ProductImage:  s.attachmentLoader.SourcePath(ctx, productInfo.CoverImage),
-			Price:         price,
-			Quantity:      item.Quantity,
-			TotalPrice:    totalPrice,
-			OriginalPrice: originalPrice,
-			PriceModified: priceModified,
-			CreatedAt:     now,
-		})
+			orderItems = append(orderItems, &model.OrderItem{
+				ProductID:   skuInfo.ProductId,
+				SkuID:       item.SkuId,
+				ProductName: productInfo.Name,
+				SpecName:    skuInfo.SpecName,
+				// 图片快照入库归一为相对路径（product 响应为完整 URL），出库按当前附件配置重拼，
+				// 域名/存储模式变更后存量订单图片不失效
+				ProductImage:  s.attachmentLoader.SourcePath(ctx, productInfo.CoverImage),
+				Price:         price,
+				Quantity:      item.Quantity,
+				TotalPrice:    totalPrice,
+				OriginalPrice: originalPrice,
+				PriceModified: priceModified,
+				CreatedAt:     now,
+			})
 		}
 	}
 

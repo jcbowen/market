@@ -258,7 +258,7 @@ services:
       # 运行时配置持久化：支付设置等写回 ./bin/runtime/config.yaml，容器重启不丢失
       - ./bin/runtime:/app/runtime
       # 本地附件共享目录：与 product-service 挂载同一宿主目录，
-      # /uploads 静态路由（<exe 同级>/attachment）读取 product 落盘的附件
+      # /uploads 静态路由（<exe 同级>/<local_dir>，默认 uploads）读取 product 落盘的附件
       - ./bin/uploads:/app/uploads
       # IP 定位数据库（GeoLite2-City）：由 geoip-download（go run ./cmd/geoip-download
       # 或发布包内二进制）下载更新（不入 git），目录未初始化时 IP 定位接口优雅降级；
