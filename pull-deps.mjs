@@ -11,7 +11,8 @@
 //   - 目录缺失 / 不是 git 仓库 → 记为失败（项目必然构建不过）
 //   - 分离头指针 / 当前分支无上游 / 工作区有未提交改动 → 跳过并说明原因
 //   - 本地与远端已分叉 → pull --ff-only 失败，保留现场，不自动 merge / stash
-// 单个仓库失败不影响其余仓库，全部处理完后再汇总，有失败时以退出码 1 结束。
+// 单个仓库失败不影响其余仓库，全部处理完后再汇总，有失败时以退出码 1 结束；
+// 每个仓库额外输出最新 tag、提交摘要与提交时间，便于换机器后快速确认依赖版本。
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -148,6 +149,35 @@ const STATUS_TEXT = {
 };
 
 /**
+ * 读取仓库 HEAD 的 tag、提交摘要与提交时间，用于在结果里展示版本信息。
+ * tag 取离 HEAD 最近的标签；HEAD 已越过该标签时补上落后的提交数，避免把旧 tag 误当成当前版本。
+ *
+ * @param {string} dir 仓库目录（绝对路径）
+ * @returns {Promise<{tag: string, subject: string, time: string}|null>} 非 git 仓库或读取失败返回 null
+ * @throws 不抛异常
+ * @example await describeHead('/path/to/wego')
+ *          // { tag: 'v0.2.0（+2 个提交）', subject: 'chore: ...', time: '2026-10-25 10:00:00 +0800' }
+ */
+async function describeHead(dir) {
+  if (!fs.existsSync(path.join(dir, '.git'))) return null;
+
+  // 用 NUL 分隔提交摘要与时间：摘要本身可能含空格、冒号等，用普通分隔符会切错
+  const log = await git(dir, ['log', '-1', '--format=%s%x00%ci']);
+  if (!log.ok || !log.output) return null;
+  const [subject, time] = log.output.split('\x00');
+
+  const tag = await git(dir, ['describe', '--tags', '--abbrev=0']);
+  let tagText = '无';
+  if (tag.ok && tag.output) {
+    tagText = tag.output;
+    const ahead = await git(dir, ['rev-list', '--count', `${tag.output}..HEAD`]);
+    if (ahead.ok && ahead.output && ahead.output !== '0') tagText += `（+${ahead.output} 个提交）`;
+  }
+
+  return { tag: tagText, subject, time };
+}
+
+/**
  * 入口：读取 go.mod 的本地 replace 清单 → 逐个拉取 → 打印结果与汇总。
  *
  * @returns {Promise<void>} 处理完全部仓库后结束；存在失败仓库时 process.exitCode 置 1
@@ -173,6 +203,15 @@ async function main() {
   for (const dep of deps) {
     const result = await updateRepo(dep);
     console.log(`  [${STATUS_TEXT[result.status]}] ${result.name}（${dep.raw}）：${result.message}`);
+
+    // 跳过（脏工作区 / 分离头指针 / 无上游）时没有与远端核对，标注为本地状态以免误读成远端最新
+    const info = await describeHead(dep.dir);
+    if (info) {
+      const local = result.status === 'skipped' ? '本地' : '最新';
+      console.log(`      ${local} tag：${info.tag}`);
+      console.log(`      ${local}提交：${info.subject}`);
+      console.log(`      提交时间：${info.time}`);
+    }
     if (result.detail) {
       for (const line of result.detail.split('\n')) console.error(`      ${line}`);
     }
