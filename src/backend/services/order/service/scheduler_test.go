@@ -673,7 +673,7 @@ func TestSchedulerCancelVsPayCallbackRace(t *testing.T) {
 
 		// 渠道已收款但回调二阶段尚未同步订单（订单仍停留抢占态）——正是取消前反查要拦的场景
 		env.payment.markPaid(orderID)
-		if err := env.sched.cancelOrderTx(ctx, o, 1); !errors.Is(err, errOrderAlreadyPaid) {
+		if _, err := env.sched.cancelOrderTx(ctx, o, 1); !errors.Is(err, errOrderAlreadyPaid) {
 			t.Fatalf("已收款订单取消应返回 errOrderAlreadyPaid, got %v", err)
 		}
 		if st, _, _ := orderSchedStatus(t, db, orderID); st != 2 {
@@ -689,9 +689,12 @@ func TestSchedulerCancelVsPayCallbackRace(t *testing.T) {
 		seedSchedItem(t, db, orderID, 44001, 1)
 		o := claimForCancelTest(t, env, orderID)
 
-		if err := env.sched.cancelOrderTx(ctx, o, 1); err != nil {
+		// 生产链路：取消事务提交成功后由调用方回补库存，测试同口径
+		eff, err := env.sched.cancelOrderTx(ctx, o, 1)
+		if err != nil {
 			t.Fatalf("未收款订单取消失败: %v", err)
 		}
+		releaseCancelledOrder(ctx, env.sched.db, eff)
 		if st, _, _ := orderSchedStatus(t, db, orderID); st != 6 {
 			t.Fatalf("订单应被取消(6), got %d", st)
 		}
@@ -732,7 +735,13 @@ func TestSchedulerCancelVsPayCallbackRace(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				time.Sleep(cancelDelay)
-				cancelErr = env.sched.cancelOrderTx(ctx, o, 1)
+				eff, e := env.sched.cancelOrderTx(ctx, o, 1)
+				if e == nil {
+					// 与生产同口径：取消事务提交成功后才回补库存
+					releaseCancelledOrder(ctx, env.sched.db, eff)
+				} else {
+					cancelErr = e
+				}
 			}()
 			go func() {
 				defer wg.Done()
@@ -806,7 +815,7 @@ func TestSchedulerCancelGuardConfirmsChannel(t *testing.T) {
 		env.payment.markChannelPaid(orderID)
 
 		o := claimForCancelTest(t, env, orderID)
-		if err := env.sched.cancelOrderTx(ctx, o, 1); !errors.Is(err, errOrderAlreadyPaid) {
+		if _, err := env.sched.cancelOrderTx(ctx, o, 1); !errors.Is(err, errOrderAlreadyPaid) {
 			t.Fatalf("渠道已收款时取消应被放弃, got %v", err)
 		}
 		if st, _, _ := orderSchedStatus(t, db, orderID); st != 2 {
@@ -839,9 +848,12 @@ func TestSchedulerCancelGuardConfirmsChannel(t *testing.T) {
 		env.payment.markChannelPaid(orderID)
 
 		o := claimForCancelTest(t, env, orderID)
-		if err := env.sched.cancelOrderTx(ctx, o, 1); err != nil {
+		// 生产链路：取消事务提交成功后由调用方回补库存，测试同口径
+		eff, err := env.sched.cancelOrderTx(ctx, o, 1)
+		if err != nil {
 			t.Fatalf("开关关闭时订单应照常取消, got %v", err)
 		}
+		releaseCancelledOrder(ctx, env.sched.db, eff)
 		if st, _, _ := orderSchedStatus(t, db, orderID); st != 6 {
 			t.Fatalf("订单应被取消(6), got %d", st)
 		}
@@ -870,6 +882,7 @@ func TestShouldRecordOrder(t *testing.T) {
 		{"自提单自动完成即记录", orderStat{pickup: 1}, true},
 		{"卡单退款重试成功即记录", orderStat{refundOK: 1}, true},
 		{"超时退款自动审批即记录", orderStat{approved: 1}, true},
+		{"取消收尾回补重放成功即记录", orderStat{released: 1}, true},
 		{"失败即记录", orderStat{failed: 1}, true},
 		{"panic 即记录", orderStat{panics: 1}, true},
 	}
@@ -886,7 +899,8 @@ func TestOrderStatMerge(t *testing.T) {
 	total.merge(orderStat{cancelled: 1, completed: 2})
 	total.merge(orderStat{pickup: 1, refundOK: 1, failed: 1})
 	total.merge(orderStat{approved: 1, recovered: 3, panics: 1})
-	want := orderStat{recovered: 3, cancelled: 1, completed: 2, pickup: 1, refundOK: 1, approved: 1, failed: 1, panics: 1}
+	total.merge(orderStat{released: 2})
+	want := orderStat{recovered: 3, cancelled: 1, completed: 2, pickup: 1, refundOK: 1, approved: 1, released: 2, failed: 1, panics: 1}
 	if total != want {
 		t.Errorf("merge 结果 = %+v, 期望 %+v", total, want)
 	}

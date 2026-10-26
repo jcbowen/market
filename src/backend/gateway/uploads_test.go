@@ -8,10 +8,12 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 )
 
 /**
- * 网关 /uploads 静态路由分流测试（离线，不连数据库）
+ * 网关 /<local_dir> 静态路由分流测试（离线，不连数据库）
  *
  * 运行方式：
  *   go test ./gateway/ -run TestRegisterUploads -v
@@ -24,6 +26,7 @@ import (
  */
 
 // newUploadsTestRouter 用两个临时目录构造只注册了 /uploads 的 gin 引擎
+// localDir 取默认值 uploads（与常规部署一致）
 // 参数：
 //   - t: 测试上下文
 //
@@ -40,7 +43,7 @@ func newUploadsTestRouter(t *testing.T) (*gin.Engine, string, string) {
 	// 两个根目录同父级，敏感夹具放在父级：目录穿越若成功会读到它
 	base := t.TempDir()
 	seedRoot := filepath.Join(base, "seed")
-	attachmentRoot := filepath.Join(base, "attachment")
+	attachmentRoot := filepath.Join(base, attachmenturl.DefaultLocalDir)
 
 	// 种子素材：/uploads/seed/products/latiao.png
 	if err := os.MkdirAll(filepath.Join(seedRoot, "products"), 0o755); err != nil {
@@ -62,7 +65,7 @@ func newUploadsTestRouter(t *testing.T) (*gin.Engine, string, string) {
 	}
 
 	r := gin.New()
-	registerUploads(r, seedRoot, attachmentRoot)
+	registerUploads(r, seedRoot, attachmentRoot, attachmenturl.DefaultLocalDir)
 	return r, seedRoot, attachmentRoot
 }
 

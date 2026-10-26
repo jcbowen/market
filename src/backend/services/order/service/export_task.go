@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -186,7 +187,7 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 	}
 	q.IncludeDeleted = true // 后台导出与列表口径一致：看全量（含用户软删单）
 
-	// 打开输出文件（attachment/exports 目录，与 gateway /uploads 静态目录同级但不走公开访问）
+	// 打开输出文件（uploads/exports 目录，与 gateway /uploads 静态目录同级但不走公开访问）
 	root, err := exportRootDir()
 	if err != nil {
 		s.failExport(task.ID, err.Error())
@@ -239,7 +240,7 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 	updates := map[string]interface{}{
 		"status":     model.ExportTaskStatusDone,
 		// file_path 与实际写入路径一致（相对导出根目录的文件名）：
-		// root 已是 …/attachment/exports，再带 exports/ 前缀会让下载与清理落到
+		// root 已是 …/uploads/exports，再带 exports/ 前缀会让下载与清理落到
 		// …/exports/exports/ 下找不到文件（删除函数两个路径都删正是历史矛盾的痕迹）
 		"file_path":  task.FileName,
 		"file_size":  info.Size(),
@@ -675,8 +676,10 @@ func shortTaskNo(taskNo string) string {
 	return taskNo
 }
 
-// exportRootDir 导出文件根目录：<exe>/attachment/exports
-// 与 gateway /uploads 静态目录同级但独立子目录，下载一律走鉴权接口流式下发，不公开访问
+// exportRootDir 导出文件根目录：<exe>/<默认本地目录>/exports
+// 目录名跟随附件 local_dir 默认值（common/attachmenturl.DefaultLocalDir），
+// 与附件共享宿主挂载 volume；导出为服务端私有临时文件，下载走鉴权接口流式下发，
+// 不参与 URL 拼装——local_dir 被改为非常规值时（设置页不暴露，属高级操作）需同步调整挂载
 // 返回值：
 //   - string: 目录绝对路径（不存在时自动创建）
 //   - error: 定位可执行文件失败
@@ -685,7 +688,7 @@ func exportRootDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("定位可执行文件失败: %w", err)
 	}
-	dir := filepath.Join(filepath.Dir(exe), "attachment", "exports")
+	dir := filepath.Join(filepath.Dir(exe), attachmenturl.DefaultLocalDir, "exports")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("创建导出目录失败: %w", err)
 	}

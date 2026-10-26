@@ -8,7 +8,7 @@ import { adminLogin } from '../../helpers/e2e';
  *  - 批量按钮按选中项状态动态显隐（全在售只出「批量下架」，混合时两个都出）
  *  - 确认弹窗文案与「取消不生效 / 确定生效」两条分支
  *  - 批量成功后 message 提示、行状态标签刷新，且 loadData 回调清空多选（按钮随之消失）
- *  - 状态 Tab 与列表联动：下架后商品从「在售中」Tab 消失、出现在「仓库中」Tab
+ *  - 状态 Tab 与列表联动：下架后商品从「出售中」Tab 消失、出现在「仓库中」Tab
  *    （当前因前端 :tabs 误用未渲染，用例 5 标 fixme 保留断言，待修复后自动生效）
  *  - 行内改名：空值与未变更静默退出且不发请求；成功改名回显新名称；
  *    接口失败（超 100 字）保留编辑态与草稿供修正
@@ -246,7 +246,7 @@ test.describe.serial('商品列表批量上下架与行内改名', () => {
     await dialog.getByRole('button', { name: '取消' }).click();
 
     await expect(dialog).toBeHidden();
-    await expect(rowOf(page, idA).getByText('在售中')).toBeVisible();
+    await expect(rowOf(page, idA).getByText('出售中')).toBeVisible();
     await expect(rowOf(page, idB).getByText('仓库中')).toBeVisible();
   });
 
@@ -262,13 +262,13 @@ test.describe.serial('商品列表批量上下架与行内改名', () => {
     await expect(page.getByRole('button', { name: '批量下架' })).toHaveCount(0);
   });
 
-  test('5. 状态 Tab 联动：下架商品从「在售中」消失、在「仓库中」可见', async ({ page }) => {
+  test('5. 状态 Tab 联动：下架商品从「出售中」消失、在「仓库中」可见', async ({ page }) => {
     // fixme：状态 Tab 当前在页面上完全不渲染（看不到 4 个标签，也无法点选切换），
     // 根因是 list.vue 用了 NTabs 不存在的 `tabs` 属性传参（naive-ui 2.43.2 tabsProps 无此 prop，
     // 实际渲染为 tab 文本为空的空壳），需改回 <n-tab-pane> 子节点写法后本用例方可生效。
     // 缺陷取证见本轮验收记录；产品代码修复未获本轮授权，故标记 fixme 而非删除断言。
     test.fixme(true, '商品列表状态 Tab 因 :tabs 误用未渲染，待前端修复');
-    await page.locator('.n-tabs-tab').filter({ hasText: '在售中' }).click();
+    await page.locator('.n-tabs-tab').filter({ hasText: '出售中' }).click();
     await expect(rowOf(page, idA)).toHaveCount(0);
     await expect(rowOf(page, idB)).toHaveCount(0);
 
@@ -277,14 +277,14 @@ test.describe.serial('商品列表批量上下架与行内改名', () => {
     await expect(rowOf(page, idB).getByText('仓库中')).toBeVisible();
   });
 
-  test('6. 批量上架：两商品回到在售中且状态标签同步', async ({ page }) => {
+  test('6. 批量上架：两商品回到出售中且状态标签同步', async ({ page }) => {
     await toggleRowCheckbox(page, idA);
     await toggleRowCheckbox(page, idB);
     await runBatch(page, '批量上架', true);
 
     await expectMessage(page, '已上架 2 件商品');
-    await expect(rowOf(page, idA).getByText('在售中')).toBeVisible();
-    await expect(rowOf(page, idB).getByText('在售中')).toBeVisible();
+    await expect(rowOf(page, idA).getByText('出售中')).toBeVisible();
+    await expect(rowOf(page, idB).getByText('出售中')).toBeVisible();
   });
 
   test('7. 行内改名：草稿为空或未变更时不发请求并退出编辑态', async ({ page }) => {

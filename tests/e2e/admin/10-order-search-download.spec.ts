@@ -87,15 +87,19 @@ test.describe.serial('订单搜索与下载中心', () => {
   test('商品选择器选中后回显商品标签', async ({ page }) => {
     await page.getByRole('button', { name: /更多筛选/ }).click();
     await page.getByRole('button', { name: '+ 选择商品' }).click();
-    // 商品搜索弹窗：按名称搜索后出现商品行，点第一行完成选择
-    await page.getByPlaceholder('按商品名搜索').fill('a');
+    // 弹窗打开即加载首屏（keyword 为空），先取首行商品名再回推搜索词：
+    // 演示商品名是中文，硬编码字母关键字会随当前社区数据命中 0 行，导致行被卸载、点击永远等不到稳定元素
     const firstRow = page.locator('.product-row').first();
     await expect(firstRow).toBeVisible({ timeout: 10_000 });
-    const productName = (await firstRow.locator('.name').innerText()).trim();
-    await firstRow.click();
+    const seed = (await firstRow.locator('.name').innerText()).trim().slice(0, 2);
+    await page.getByPlaceholder('按商品名搜索').fill(seed);
+    const target = page.locator('.product-row').filter({ hasText: seed }).first();
+    await expect(target).toBeVisible({ timeout: 10_000 });
+    const productName = (await target.locator('.name').innerText()).trim();
+    await target.click();
     // 选中回显为可关闭标签（清掉以便后续用例不受商品过滤影响）
     const tag = page.locator('.more-area .n-tag');
-    await expect(tag).toHaveText(new RegExp(productName));
+    await expect(tag).toHaveText(new RegExp(productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     await tag.locator('.n-base-close').click();
     await expect(page.getByRole('button', { name: '+ 选择商品' })).toBeVisible();
   });

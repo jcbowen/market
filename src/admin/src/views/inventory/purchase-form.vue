@@ -213,6 +213,8 @@ async function submit(submitNow: boolean) {
       })),
     }
     let id = editId
+    // 创建接口带 submit_now 时已在服务端同事务置为已下单，不能再补提交一次
+    let createdSubmitted = false
     if (isEdit.value) {
       const res = await updatePurchaseOrder(editId, payload)
       if (res.data.code !== 0) return
@@ -221,19 +223,27 @@ async function submit(submitNow: boolean) {
       const res = await createPurchaseOrder({ ...payload, submit_now: submitNow })
       if (res.data.code === 0) {
         id = res.data.data.info.id
+        createdSubmitted = submitNow
       } else {
         return
       }
     }
-    if (submitNow) {
+    // 仅「编辑草稿单后提交」需要单独调用提交接口：
+    // 新建并直接提交的场景此前会重复提交一次，第二次必然被状态机拒（已非草稿），
+    // 失败提示盖过成功结果、又落回列表页，用户以为没提交而反复点
+    if (submitNow && !createdSubmitted) {
       const res = await submitPurchaseOrder(id)
-      if (res.data.code === 0) {
-        message.success('采购单已提交')
-        router.push(`/stock/purchase/${id}`)
-        return
-      }
+      if (res.data.code !== 0) return
+      message.success('采购单已提交')
+      router.push(`/stock/purchase/${id}`)
+      return
     }
-    message.success(submitNow ? '已提交' : '草稿已保存')
+    if (submitNow) {
+      message.success('采购单已提交')
+      router.push(`/stock/purchase/${id}`)
+      return
+    }
+    message.success('草稿已保存')
     router.push('/stock/purchase')
   } finally {
     submitting.value = false

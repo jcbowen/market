@@ -547,7 +547,7 @@ func (x *GetExportTaskFileReq) GetCommunityId() int64 {
 
 type GetExportTaskFileResp struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// 文件绝对路径（服务端 <exe>/attachment 下，gateway 凭此流式读取）
+	// 文件绝对路径（服务端 <exe>/uploads 下，gateway 凭此流式读取）
 	FilePath      string `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	FileName      string `protobuf:"bytes,2,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
 	unknownFields protoimpl.UnknownFields

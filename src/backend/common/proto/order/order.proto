@@ -162,7 +162,7 @@ message GetExportTaskFileReq {
 }
 
 message GetExportTaskFileResp {
-  // 文件绝对路径（服务端 <exe>/attachment 下，gateway 凭此流式读取）
+  // 文件绝对路径（服务端 <exe>/uploads 下，gateway 凭此流式读取）
   string file_path = 1;
   string file_name = 2;
 }

@@ -98,7 +98,27 @@ func (s *server) ListCategories(ctx stdctx.Context, req *product.ListCategoriesR
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return &product.ListCategoriesResp{List: service.BuildCategoryTree(list)}, nil
+	return &product.ListCategoriesResp{List: s.fillCategoryIconURLs(ctx, service.BuildCategoryTree(list))}, nil
+}
+
+// fillCategoryIconURLs 递归补全分类图标的完整访问 URL（出库统一拼接，外链原样）
+//
+// 参数:
+//   - ctx: 上下文
+//   - list: 分类树（原地修改各节点 Icon）
+//
+// 返回值:
+//   - []*product.CategoryInfo: 原列表（便于链式返回）
+func (s *server) fillCategoryIconURLs(ctx stdctx.Context, list []*product.CategoryInfo) []*product.CategoryInfo {
+	for _, info := range list {
+		if info != nil {
+			info.Icon = s.attachmentService.ToMediaURL(ctx, info.Icon)
+			if len(info.Children) > 0 {
+				s.fillCategoryIconURLs(ctx, info.Children)
+			}
+		}
+	}
+	return list
 }
 
 // BatchSortCategories 分类批量排序（管理端拖拽后整表提交）
@@ -115,25 +135,35 @@ func (s *server) GetCategory(ctx stdctx.Context, req *product.GetCategoryReq) (*
 	if err != nil {
 		return nil, readError(err, "分类")
 	}
-	return service.ToCategoryInfo(c), nil
+	info := service.ToCategoryInfo(c)
+	s.fillCategoryIconURLs(ctx, []*product.CategoryInfo{info})
+	return info, nil
 }
 
 // CreateCategory 创建分类
 func (s *server) CreateCategory(ctx stdctx.Context, req *product.CreateCategoryReq) (*product.CategoryInfo, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.Icon = s.attachmentService.ToSourcePath(ctx, req.Icon)
 	c, err := s.categoryService.CreateCategory(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToCategoryInfo(c), nil
+	info := service.ToCategoryInfo(c)
+	s.fillCategoryIconURLs(ctx, []*product.CategoryInfo{info})
+	return info, nil
 }
 
 // UpdateCategory 更新分类
 func (s *server) UpdateCategory(ctx stdctx.Context, req *product.UpdateCategoryReq) (*product.CategoryInfo, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.Icon = s.attachmentService.ToSourcePath(ctx, req.Icon)
 	c, err := s.categoryService.UpdateCategory(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToCategoryInfo(c), nil
+	info := service.ToCategoryInfo(c)
+	s.fillCategoryIconURLs(ctx, []*product.CategoryInfo{info})
+	return info, nil
 }
 
 // DeleteCategory 删除分类
@@ -392,20 +422,28 @@ func (s *server) SearchSkus(ctx stdctx.Context, req *product.SearchSkusReq) (*pr
 
 // CreateSku 创建 SKU
 func (s *server) CreateSku(ctx stdctx.Context, req *product.CreateSkuReq) (*product.SkuInfo, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.Image = s.attachmentService.ToSourcePath(ctx, req.Image)
 	sku, err := s.skuService.CreateSku(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToSkuInfo(sku), nil
+	info := service.ToSkuInfo(sku)
+	info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+	return info, nil
 }
 
 // UpdateSku 更新 SKU
 func (s *server) UpdateSku(ctx stdctx.Context, req *product.UpdateSkuReq) (*product.SkuInfo, error) {
+	// 入库统一归一化：本站附件剥为相对路径，外链 URL 原样保存
+	req.Image = s.attachmentService.ToSourcePath(ctx, req.Image)
 	sku, err := s.skuService.UpdateSku(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToSkuInfo(sku), nil
+	info := service.ToSkuInfo(sku)
+	info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+	return info, nil
 }
 
 // GetSkuById 根据 ID 获取 SKU

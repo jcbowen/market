@@ -5,7 +5,7 @@
       <n-button type="primary" :loading="loading" @click="loadData">查询</n-button>
       <n-button type="primary" @click="router.push('/stock/in/create')">直接入库</n-button>
     </n-space>
-    <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" @update:page="onPageChange" />
+    <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" remote @update:page="onPageChange" />
   </n-card>
 </template>
 

@@ -239,11 +239,12 @@ func dropLegacySkuBarcodeIndex(db *mysql.Instance) error {
 	return nil
 }
 
-// backfillProductSummary 回填商品汇总字段的存量数据
-// min_price/max_price/stock 列由规格保存流程回写维护；历史上线前存量的商品
-// 这三列均为默认值 0，此处按启用 SKU 一次性回填（价格必须大于 0，故以
-// min_price = 0 作为"未回写过"的判断条件，回填后不会重复执行）。
-// 仅记录日志不中断启动：回填失败不影响服务运行，可重新启动重试。
+// backfillProductSummary 校正商品汇总列（min_price/max_price/stock）
+// 汇总列由 syncProductAggregates 维护：规格保存与扣减/回补/入库/出库/盘点都在
+// 同事务内回写。本函数是启动期兜底对账，把改动前遗留的存量漂移（旧版本只在保存
+// 规格时回写，交易链路不更新）一次校正掉，只写实际不一致的行，可重复执行。
+// 划线价 min_original_price 随价格配置变更、仅由规格保存链路回写，不参与本对账。
+// 仅记录日志不中断启动：校正失败不影响服务运行，可重新启动重试。
 //
 // 参数：
 //   - db: MySQL 实例
@@ -257,14 +258,14 @@ JOIN (
     GROUP BY product_id
 ) s ON s.product_id = p.id
 SET p.min_price = s.min_p, p.max_price = s.max_p, p.stock = s.total
-WHERE p.min_price = 0`
+WHERE p.min_price <> s.min_p OR p.max_price <> s.max_p OR p.stock <> s.total`
 
 	result := db.GetDb().Exec(sql)
 	if result.Error != nil {
-		log.Printf("回填商品汇总字段失败: %v", result.Error)
+		log.Printf("校正商品汇总字段失败: %v", result.Error)
 		return
 	}
 	if result.RowsAffected > 0 {
-		log.Printf("已回填 %d 个商品的汇总价格与库存", result.RowsAffected)
+		log.Printf("已校正 %d 个商品的汇总价格与库存", result.RowsAffected)
 	}
 }

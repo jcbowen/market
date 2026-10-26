@@ -222,7 +222,16 @@ func (s *OrderService) CompleteDelivery(ctx context.Context, req *order.Complete
 		return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许送达完成: %d", o.Status))
 	}
 
-	proofJSON, err := json.Marshal(req.ProofImages)
+	// 入库统一为附件相对路径（common/attachmenturl 口径）：本站任意域名 URL 剥离归一、
+	// 外链原样保留；域名/存储模式变更后出库按当前配置重拼完整地址，存量数据不受影响
+	proofs := make([]string, 0, len(req.ProofImages))
+	for _, img := range req.ProofImages {
+		if img == "" {
+			continue
+		}
+		proofs = append(proofs, s.attachmentLoader.SourcePath(ctx, img))
+	}
+	proofJSON, err := json.Marshal(proofs)
 	if err != nil {
 		return fmt.Errorf("签收照片序列化失败: %w", err)
 	}

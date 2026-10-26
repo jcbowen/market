@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -76,6 +77,20 @@ func normalizeBaseURL(raw string) (string, error) {
 // 全平台单行配置（site_configs 固定 id=1），仅超管经网关写入
 type SiteService struct {
 	db *mysql.Instance
+	// attachmentLoader 附件配置读取器：logo/favicon 等品牌资源入库归一与出库拼接共用
+	attachmentLoader *attachmenturl.Loader
+}
+
+// MediaURL 附件地址出库拼接完整 URL（外链原样返回）
+//
+// 参数:
+//   - ctx: 上下文
+//   - src: 相对路径或完整 URL
+//
+// 返回值:
+//   - string: 完整访问 URL
+func (s *SiteService) MediaURL(ctx context.Context, src string) string {
+	return s.attachmentLoader.MediaURL(ctx, src)
 }
 
 // NewSiteService 创建站点设置业务服务
@@ -86,7 +101,7 @@ type SiteService struct {
 // 返回值：
 //   - *SiteService: 站点设置业务服务实例
 func NewSiteService(db *mysql.Instance) *SiteService {
-	return &SiteService{db: db}
+	return &SiteService{db: db, attachmentLoader: attachmenturl.NewLoader(db.GetDb())}
 }
 
 // getOrCreateRow 读取站点设置单行，不存在时创建
@@ -176,8 +191,10 @@ func (s *SiteService) SaveSiteConfig(ctx context.Context, req *user.SaveSiteConf
 	}
 	row.BaseURL = baseURL
 	row.SiteName = siteName
-	row.LogoURL = logoURL
-	row.FaviconURL = faviconURL
+	// logo/favicon 入库归一为附件相对路径（common/attachmenturl 口径）：站内图剥为相对
+	// 路径，域名/存储模式变更后出库自动按新配置重拼；外链原样保存（见 validateAssetURL）
+	row.LogoURL = s.attachmentLoader.SourcePath(ctx, logoURL)
+	row.FaviconURL = s.attachmentLoader.SourcePath(ctx, faviconURL)
 	row.FooterHTML = footerHTML
 	row.SeoDescription = strings.TrimSpace(req.SeoDescription)
 	row.SeoKeywords = strings.TrimSpace(req.SeoKeywords)
@@ -215,15 +232,15 @@ func validateAssetURL(raw string) error {
 // footerTagAttrs 页脚富文本标签白名单（值为允许保留的属性列表）
 // 覆盖基础排版所需：加粗/斜体/下划线/段落/换行/行内容器与安全链接
 var footerTagAttrs = map[string][]string{
-	"a":     {"href"},
-	"b":     {},
+	"a":      {"href"},
+	"b":      {},
 	"strong": {},
-	"i":     {},
-	"em":    {},
-	"u":     {},
-	"p":     {},
-	"br":    {},
-	"span":  {},
+	"i":      {},
+	"em":     {},
+	"u":      {},
+	"p":      {},
+	"br":     {},
+	"span":   {},
 }
 
 // footerVoidTags 无需闭合标签的自闭合元素

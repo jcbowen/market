@@ -12603,6 +12603,7 @@ type AttachmentConfig struct {
 	OssCustomVisitDomain string                 `protobuf:"bytes,7,opt,name=oss_custom_visit_domain,json=ossCustomVisitDomain,proto3" json:"oss_custom_visit_domain,omitempty"` // OSS 自定义访问域名（CDN），可空
 	MaxSize              int64                  `protobuf:"varint,8,opt,name=max_size,json=maxSize,proto3" json:"max_size,omitempty"`                                           // 图片大小上限（字节），0 表示使用默认 5MB
 	UpdatedAt            string                 `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`                                      // 更新时间，兼作版本号
+	LocalDir             string                 `protobuf:"bytes,10,opt,name=local_dir,json=localDir,proto3" json:"local_dir,omitempty"`                                        // 本地存储目录名（落盘目录与 URL 路径段共用，空回默认 uploads）；只读字段，保存接口不受理
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -12696,6 +12697,13 @@ func (x *AttachmentConfig) GetMaxSize() int64 {
 func (x *AttachmentConfig) GetUpdatedAt() string {
 	if x != nil {
 		return x.UpdatedAt
+	}
+	return ""
+}
+
+func (x *AttachmentConfig) GetLocalDir() string {
+	if x != nil {
+		return x.LocalDir
 	}
 	return ""
 }
@@ -13341,6 +13349,7 @@ type AttachmentMigrateItemInfo struct {
 	VerifiedAt     string                 `protobuf:"bytes,11,opt,name=verified_at,json=verifiedAt,proto3" json:"verified_at,omitempty"`               // 验证通过时间
 	LocalDeletedAt string                 `protobuf:"bytes,12,opt,name=local_deleted_at,json=localDeletedAt,proto3" json:"local_deleted_at,omitempty"` // 本地文件删除时间
 	CreatedAt      string                 `protobuf:"bytes,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                  // 入库时间
+	Url            string                 `protobuf:"bytes,14,opt,name=url,proto3" json:"url,omitempty"`                                               // 完整访问 URL（服务端按附件配置拼接，前端不得自行拼装）
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -13462,6 +13471,13 @@ func (x *AttachmentMigrateItemInfo) GetLocalDeletedAt() string {
 func (x *AttachmentMigrateItemInfo) GetCreatedAt() string {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *AttachmentMigrateItemInfo) GetUrl() string {
+	if x != nil {
+		return x.Url
 	}
 	return ""
 }
@@ -14945,7 +14961,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\r_community_id\"D\n" +
 	"\x0fDeleteBannerReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
-	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"\xf2\x02\n" +
+	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"\x8f\x03\n" +
 	"\x10AttachmentConfig\x12!\n" +
 	"\fstorage_type\x18\x01 \x01(\tR\vstorageType\x12!\n" +
 	"\fvisit_domain\x18\x02 \x01(\tR\vvisitDomain\x12)\n" +
@@ -14956,7 +14972,9 @@ const file_product_product_proto_rawDesc = "" +
 	"\x17oss_custom_visit_domain\x18\a \x01(\tR\x14ossCustomVisitDomain\x12\x19\n" +
 	"\bmax_size\x18\b \x01(\x03R\amaxSize\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\tR\tupdatedAt\"\xa8\x01\n" +
+	"updated_at\x18\t \x01(\tR\tupdatedAt\x12\x1b\n" +
+	"\tlocal_dir\x18\n" +
+	" \x01(\tR\blocalDir\"\xa8\x01\n" +
 	"\x13UploadImageLocalReq\x12\x19\n" +
 	"\badmin_id\x18\x01 \x01(\x03R\aadminId\x12\x1a\n" +
 	"\bfilename\x18\x02 \x01(\tR\bfilename\x12!\n" +
@@ -15017,7 +15035,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\x04list\x18\x01 \x03(\v2\x17.product.AttachmentInfoR\x04list\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x03R\x05total\x12\x12\n" +
 	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\"\xe9\x02\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\"\xfb\x02\n" +
 	"\x19AttachmentMigrateItemInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
@@ -15035,7 +15053,8 @@ const file_product_product_proto_rawDesc = "" +
 	"verifiedAt\x12(\n" +
 	"\x10local_deleted_at\x18\f \x01(\tR\x0elocalDeletedAt\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\r \x01(\tR\tcreatedAt\"\xb5\x02\n" +
+	"created_at\x18\r \x01(\tR\tcreatedAt\x12\x10\n" +
+	"\x03url\x18\x0e \x01(\tR\x03url\"\xb5\x02\n" +
 	"\x19AttachmentMigrateOverview\x12\x14\n" +
 	"\x05total\x18\x01 \x01(\x05R\x05total\x12\x18\n" +
 	"\apending\x18\x02 \x01(\x05R\apending\x12\x1c\n" +

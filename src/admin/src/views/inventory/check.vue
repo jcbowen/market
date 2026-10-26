@@ -4,7 +4,7 @@
       <n-space>
         <n-button type="primary" @click="createVisible = true">新建盘点</n-button>
       </n-space>
-      <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" />
+      <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" remote @update:page="onPageChange" />
     </n-space>
 
     <!-- 新建盘点弹窗：创建后直接进入详情录入实盘数据 -->
@@ -88,6 +88,15 @@ async function create() {
   } finally {
     creating.value = false
   }
+}
+
+/**
+ * 翻页：数据由服务端按页返回，此处接线页码事件并重新拉取
+ * （此前未接 @update:page，点第 2 页仍显示第 1 页内容）
+ */
+function onPageChange(page: number) {
+  pagination.value.page = page
+  loadData()
 }
 
 onMounted(loadData)

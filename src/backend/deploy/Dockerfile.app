@@ -57,7 +57,7 @@ COPY bin/static ./static
 COPY bin/config.docker.yaml ./config.yaml
 COPY src/backend/deploy/entrypoint-app.sh /entrypoint-app.sh
 
-# 演示种子：素材打进镜像由 gateway 直接服务 /uploads/seed/**（不能放 /app/attachment，
+# 演示种子：素材打进镜像由 gateway 直接服务 /uploads/seed/**（不能放 /app/uploads，
 # 该目录部署时被宿主目录挂载、会遮蔽镜像内容）；init.dev.sql 与 seed-init.sh 供
 # SERVICE_NAME=seed-init 一次性任务在 APP_ENV=stage 且库为空时导入
 COPY deploy/seed-assets/products ./seed/products

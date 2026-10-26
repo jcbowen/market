@@ -6,8 +6,10 @@
 # 与 GitHub 版本的 5 处环境差异（均为 NAS 环境所迫，改动前先读）：
 #   1. services 不映射宿主端口：宿主 3306 已被 mysql-1 占用，job 与 service 同网络，
 #      直接用服务名（mysql / redis）访问；
-#   2. MySQL health-retries 提到 60（≈10 分钟）：NAS 上冷启动实测 325 秒，
-#      沿用 GitHub 的 10 次（100 秒）会先被判 unhealthy，等不到就绪；
+#   2. services 不声明 healthcheck：runner 的 service_ready_timeout 到点会直接判 job 失败
+#      （默认 5m，NAS 侧调成 10m 也被 2026-10-26 的一次运行撞穿），且该配置项放错缩进会被
+#      静默忽略。改为 job 内的 wait_tcp 显式轮询 MySQL/Redis 端口：预算 20 分钟、
+#      每 60 秒打一次进度，失败时 dump 服务容器的 docker 状态与日志（job 容器挂着宿主 docker.sock）；
 #   3. setup-go 锁精确版本 1.26.5：指定 go-download-base-url 后会跳过版本清单，
 #      别名写法（如 '1.26'）在该模式下解析不了；
 #   4. 前端不用 actions/setup-node，改 curl 直下 Node tarball（npmmirror CDN）：
@@ -21,12 +23,14 @@
 #      下预编译 tar.gz，runner.github_mirror 只代理 action 仓库、不覆盖 action 运行时的下载。
 #      goinstall 模式的代价是每次 job 现场编译 1–2 分钟，且该模式硬编码 CGO_ENABLED=1，需要 gcc。
 #
-# 前置（runner config.yaml，缺一项会静默失效）：
-#   - container.service_ready_timeout: 10m  等待带 healthcheck 的 service
+# 前置（runner config.yaml）：
 #   - runner.envs 注入 GOPROXY / npm_config_registry（本文件在 job env 再显式声明一份兜底）
+#   - container.service_ready_timeout 已不影响本文件（services 无 healthcheck）；
+#     job 容器需要能拿到宿主 docker.sock 才能在失败时 dump 服务容器日志（runner 默认自动挂）
 #
-# 首次运行重点观察三处：service 服务名能否解析（smoke 已验证 redis/mysql 可达）、
-# setup-go 是否命中 golang.google.cn 与缓存、golangci 的现场编译耗时与 gcc 是否就位。
+# 首次运行重点观察：MySQL 冷启动耗时（wait_tcp 会打印）、
+# setup-go 是否命中 golang.google.cn 与缓存、golangci 的现场编译耗时与 gcc 是否就位、
+# 前端 Node 直下的用时。
 name: CI
 
 on:
@@ -43,9 +47,12 @@ jobs:
   backend:
     name: 后端 go vet/test/build
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # 20 分钟等 MySQL + 完整测试与构建，留足余量（runner 侧的 service_ready_timeout 不再参与）
+    timeout-minutes: 60
     # 集成测试依赖：MySQL/Redis 以 service 容器提供，与 job 同网络，
-    # 通过服务名访问（不映射宿主端口，宿主 3306 已被 mysql-1 占用）
+    # 通过服务名访问（不映射宿主端口，宿主 3306 已被 mysql-1 占用）。
+    # 不写 options/healthcheck：MySQL 初始化阶段只开 socket 不开 3306，
+    # 用 mysqladmin + TCP 探活才能真正反映「可连接」；就绪判定统一交给下面的 wait_tcp。
     services:
       mysql:
         image: mysql:8.0
@@ -57,20 +64,8 @@ jobs:
           # 必须同一口径，否则整体偏移 8 小时。时钟一致性由
           # services/product/service/db_clock_test.go 显式守卫并打印取证字段
           TZ: Asia/Shanghai
-        # retries=60 ≈ 10 分钟，覆盖 NAS 上 MySQL 冷启动（实测 325 秒）；
-        # 与 runner 的 container.service_ready_timeout 一致，两者任一偏小都会提前失败
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-mysql"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=60
       redis:
         image: redis:7-alpine
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
     env:
       TEST_MYSQL_HOST: mysql
       TEST_MYSQL_PORT: '3306'
@@ -111,25 +106,54 @@ jobs:
       - name: 下载依赖
         run: go mod tidy
 
-      # healthcheck 已声明时 runner 会等到 healthy 再进步骤，这里再兜一层：
-      # job 容器内直接探 TCP，失败时能明确区分「服务没起来」与「测试用例失败」
+      # services 没有 healthcheck，runner 不会等；就绪与否全看这里。
+      # MySQL 初始化阶段只监听 socket、不开 3306，所以 TCP 能连上就等于「初始化已完成」。
+      # NAS 上冷启动波动很大（实测 325s，2026-10-26 有一次 10 分钟仍未就绪），预算给 20 分钟；
+      # 失败时把服务容器的 docker 状态与日志打进 job 日志：job 容器挂着宿主 docker.sock，
+      # 足以区分「初始化太慢」「容器崩了」「OOMKilled」三种情况，不必再去 NAS 上翻。
       - name: 等待 MySQL / Redis 可达
         run: |
+          dump_service_logs() {
+            local pattern=$1 label=$2 ids id
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "（job 容器内无 docker CLI，跳过 ${label} 容器日志）"
+              return 0
+            fi
+            ids=$(docker ps -a --format '{{.ID}}|{{.Image}}|{{.Status}}' | grep -i "$pattern" | cut -d'|' -f1 || true)
+            if [ -z "$ids" ]; then
+              echo "（未找到镜像名含 ${pattern} 的容器，可能已被 runner 清理）"
+              return 0
+            fi
+            for id in $ids; do
+              echo "----- ${label} 容器 ${id} -----"
+              docker inspect -f 'status={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}}' "$id" 2>&1 || true
+              docker logs --tail 100 "$id" 2>&1 || true
+            done
+          }
+
           wait_tcp() {
-            local host=$1 port=$2 label=$3 start
+            local host=$1 port=$2 label=$3 pattern=$4 start i
             start=$(date +%s)
-            for _ in $(seq 1 60); do
+            for i in $(seq 1 120); do
               if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${host}/${port}" 2>/dev/null; then
-                echo "OK   ${label} 就绪，耗时 $(( $(date +%s) - start ))s"
+                echo "OK   ${label} 可连接，耗时 $(( $(date +%s) - start ))s"
                 return 0
+              fi
+              if [ $(( i % 6 )) -eq 0 ]; then
+                echo "WAIT ${label} 尚未就绪，已等 $(( $(date +%s) - start ))s"
               fi
               sleep 10
             done
-            echo "FAIL ${label} 10 分钟内不可达（检查 service 是否启动、服务名是否解析）"
+            echo "FAIL ${label} 20 分钟内 ${host}:${port} 不可达"
+            dump_service_logs "$pattern" "$label"
             return 1
           }
-          wait_tcp mysql 3306 MySQL
-          wait_tcp redis 6379 Redis
+
+          fail=0
+          # 用精确镜像名匹配，避免把宿主上同类容器（如 mysql-1 的 5.7）的日志混进来
+          wait_tcp mysql 3306 MySQL 'mysql:8.0' || fail=1
+          wait_tcp redis 6379 Redis 'redis:7-alpine' || fail=1
+          exit $fail
 
       - name: go vet
         run: go vet ./...

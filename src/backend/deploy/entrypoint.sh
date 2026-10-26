@@ -19,7 +19,7 @@
 # 数据持久化（bind mount，容器/镜像重装不丢失）：
 #   /var/lib/mysql      MySQL 数据
 #   /data               Redis 数据
-#   /app/attachment     附件上传目录（product 落盘 + gateway /uploads 共用）
+#   /app/uploads     附件上传目录（product 落盘 + gateway /uploads 共用）
 #   /app/runtime        运行时配置快照 + 超管凭证文件
 #   /app/logs           业务日志
 #   /app/data/geoip     IP 定位库（可选，缺失时自动下载，失败优雅降级）
@@ -157,7 +157,7 @@ trap shutdown TERM INT
 # ---------- 目录授权 ----------
 
 prepare_dir "$RUNTIME_DIR" 10001
-prepare_dir "$APP_DIR/attachment" 10001
+prepare_dir "$APP_DIR/uploads" 10001
 prepare_dir "$APP_DIR/logs" 10001
 prepare_dir "$APP_DIR/data/geoip" 10001
 # 登录密码加密 RSA 私钥目录：gateway 首启自动生成落盘（bin/config.allinone.yaml 的

@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/errcode"
-	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
@@ -205,12 +204,8 @@ func (h *AdminHandler) syncPayCallbackURLs(ctx context.Context, baseURL string) 
 	})
 }
 
-// syncAttachmentVisitDomain 站点域名联动补空附件访问域名
-// 附件配置为本地存储且未配置访问域名时，补写为生效部署域名（站点设置 > SITE_BASE_URL），
-// 让附件 URL 能拼出带域名的完整地址。单向同步、只补空：
-//   - visit_domain 一旦有值（手填或历史联动）即视为显式配置，站点域名后续修改/清空均不回写；
-//   - OSS 模式访问域名由 OSS 配置派生，无需联动；
-//   - 补写失败仅记日志，不阻断站点设置保存（ToMediaURL 仍有 /uploads/ 站内路径兜底）。
+// syncAttachmentVisitDomain 站点域名联动补空附件访问域名（站点设置保存路径的触发点）
+// 核心逻辑在 syncAttachmentVisitDomainBy；运行期惰性补写见 attachment_domain_sync.go 中间件
 //
 // 参数：
 //   - ctx: 上下文
@@ -219,20 +214,5 @@ func (h *AdminHandler) syncPayCallbackURLs(ctx context.Context, baseURL string) 
 // 返回值：
 //   - bool: 是否发生了补写
 func (h *AdminHandler) syncAttachmentVisitDomain(ctx context.Context, baseURL string) bool {
-	cfg, err := h.productClient.GetAttachmentConfig(ctx, &common.Empty{})
-	if err != nil {
-		log.Printf("联动附件访问域名前读取附件配置失败: %v", err)
-		return false
-	}
-	if cfg.StorageType != "local" || cfg.VisitDomain != "" {
-		return false
-	}
-
-	cfg.VisitDomain = baseURL
-	if _, err := h.productClient.SaveAttachmentConfig(ctx, cfg); err != nil {
-		log.Printf("按站点部署域名补写附件访问域名失败: %v", err)
-		return false
-	}
-	log.Printf("附件访问域名未配置，已按生效部署域名自动补写: %s", baseURL)
-	return true
+	return syncAttachmentVisitDomainBy(h.productClient, ctx, baseURL)
 }

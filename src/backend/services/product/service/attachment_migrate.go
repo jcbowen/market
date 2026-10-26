@@ -45,7 +45,7 @@ func (s *AttachmentService) ScanAttachmentMigrate(ctx context.Context) (*product
 		return nil, err
 	}
 
-	root, err := attachmentRootDir()
+	root, err := attachmentRootDir(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (s *AttachmentService) ListAttachmentMigrateItems(ctx context.Context, req 
 
 	list := make([]*product.AttachmentMigrateItemInfo, 0, len(items))
 	for _, item := range items {
-		list = append(list, toProtoMigrateItem(item))
+		list = append(list, s.toProtoMigrateItem(ctx, item))
 	}
 
 	overview, err := s.countMigrateOverview(ctx, 0)
@@ -232,7 +232,7 @@ func (s *AttachmentService) MigrateAttachmentItem(ctx context.Context, id int64)
 		return nil, err
 	}
 
-	root, err := attachmentRootDir()
+	root, err := attachmentRootDir(s.getConfigCached(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +328,7 @@ func (s *AttachmentService) DeleteAttachmentLocal(ctx context.Context, id int64)
 	if item.Status != model.MigrateStatusVerified {
 		return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("仅验证成功的条目可删除本地文件（当前状态：%s）", migrateStatusLabel(item.Status)))
 	}
-	if err = removeLocalAttachmentFile(item.Path); err != nil {
+	if err = removeLocalAttachmentFile(s.getConfigCached(ctx), item.Path); err != nil {
 		return nil, err
 	}
 
@@ -365,8 +365,9 @@ func (s *AttachmentService) DeleteAttachmentLocalVerified(ctx context.Context) (
 
 	deleted := int32(0)
 	ids := make([]int64, 0, len(items))
+	cfg := s.getConfigCached(ctx)
 	for _, item := range items {
-		if err := removeLocalAttachmentFile(item.Path); err != nil {
+		if err := removeLocalAttachmentFile(cfg, item.Path); err != nil {
 			log.Printf("删除本地文件失败（跳过）path=%s: %v", item.Path, err)
 			continue
 		}
@@ -421,7 +422,7 @@ func (s *AttachmentService) getMigrateItemInfo(ctx context.Context, id int64) (*
 	if err != nil {
 		return nil, err
 	}
-	return toProtoMigrateItem(item), nil
+	return s.toProtoMigrateItem(ctx, item), nil
 }
 
 // loadMigrateItem 按 path 查询迁移条目（扫描 upsert 用），不存在不算错误
@@ -578,12 +579,13 @@ func verifyMigrateObject(ctx context.Context, client *remote.OSSClient, item *mo
 // removeLocalAttachmentFile 删除本地附件文件（文件不存在视为已删除，不报错）
 //
 // 参数:
+//   - cfg: 附件配置（决定本地存储目录名 local_dir）
 //   - path: 对象相对路径
 //
 // 返回值:
 //   - error: 删除失败时返回错误
-func removeLocalAttachmentFile(path string) error {
-	root, err := attachmentRootDir()
+func removeLocalAttachmentFile(cfg *model.AttachmentConfig, path string) error {
+	root, err := attachmentRootDir(cfg)
 	if err != nil {
 		return err
 	}
@@ -650,13 +652,15 @@ func pathKeys(files map[string]int64) []string {
 }
 
 // toProtoMigrateItem 将迁移条目模型转换为 proto 信息
+// url 由服务端按附件配置拼为完整访问地址，前端不得自行拼装
 //
 // 参数:
+//   - ctx: 上下文
 //   - item: 条目模型
 //
 // 返回值:
 //   - *product.AttachmentMigrateItemInfo: proto 信息
-func toProtoMigrateItem(item *model.AttachmentMigrateItem) *product.AttachmentMigrateItemInfo {
+func (s *AttachmentService) toProtoMigrateItem(ctx context.Context, item *model.AttachmentMigrateItem) *product.AttachmentMigrateItemInfo {
 	return &product.AttachmentMigrateItemInfo{
 		Id:             item.ID,
 		Path:           item.Path,
@@ -671,6 +675,7 @@ func toProtoMigrateItem(item *model.AttachmentMigrateItem) *product.AttachmentMi
 		VerifiedAt:     item.VerifiedAt,
 		LocalDeletedAt: item.LocalDeletedAt,
 		CreatedAt:      item.CreatedAt,
+		Url:            s.ToMediaURL(ctx, item.Path),
 	}
 }
 

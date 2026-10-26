@@ -9,6 +9,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/services/order/model"
@@ -24,6 +25,8 @@ import (
 // PosHeldService 收银台挂单业务服务
 type PosHeldService struct {
 	db *mysql.Instance
+	// attachmentLoader 附件配置缓存读取器：挂单商品图快照入库归一与出库拼完整地址共用
+	attachmentLoader *attachmenturl.Loader
 }
 
 // NewPosHeldService 创建收银台挂单业务服务
@@ -33,7 +36,7 @@ type PosHeldService struct {
 // 返回值：
 //   - *PosHeldService: 挂单业务服务实例
 func NewPosHeldService(db *mysql.Instance) *PosHeldService {
-	return &PosHeldService{db: db}
+	return &PosHeldService{db: db, attachmentLoader: attachmenturl.NewLoader(db.GetDb())}
 }
 
 // Create 创建挂单：商品明细快照落库，合计金额按快照价计算（结账时以服务端实时计价为准）
@@ -52,10 +55,25 @@ func (s *PosHeldService) Create(ctx context.Context, req *order.CreatePosHeldOrd
 		return nil, bizerr.New(codes.InvalidArgument, "挂单商品不能为空")
 	}
 
-	raw, err := json.Marshal(req.Items)
+	// 商品图快照入库归一为附件相对路径（common/attachmenturl 口径），出库按当前配置重拼
+	// proto 消息含内部状态锁，必须逐字段构造新对象，不能值拷贝
+	items := make([]*order.PosHeldOrderItem, 0, len(req.Items))
+	for _, item := range req.Items {
+		items = append(items, &order.PosHeldOrderItem{
+			SkuId:        item.SkuId,
+			Quantity:     item.Quantity,
+			ProductName:  item.ProductName,
+			SpecName:     item.SpecName,
+			ProductImage: s.attachmentLoader.SourcePath(ctx, item.ProductImage),
+			Price:        item.Price,
+		})
+	}
+
+	raw, err := json.Marshal(items)
 	if err != nil {
 		return nil, bizerr.New(codes.Internal, "挂单明细序列化失败")
 	}
+	req.Items = items
 
 	var total float64
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -78,7 +96,9 @@ func (s *PosHeldService) Create(ctx context.Context, req *order.CreatePosHeldOrd
 	if err := s.db.GetDb().WithContext(ctx).Create(m).Error; err != nil {
 		return nil, err
 	}
-	return ToPosHeldOrderInfo(m), nil
+	info := ToPosHeldOrderInfo(m)
+	s.restoreItemImages(ctx, info.Items)
+	return info, nil
 }
 
 // List 挂单列表：按社区语境（必选）+ 可选收银员过滤，最新在前
@@ -105,9 +125,23 @@ func (s *PosHeldService) List(ctx context.Context, req *order.ListPosHeldOrdersR
 
 	resp := make([]*order.PosHeldOrderInfo, 0, len(list))
 	for _, m := range list {
-		resp = append(resp, ToPosHeldOrderInfo(m))
+		info := ToPosHeldOrderInfo(m)
+		s.restoreItemImages(ctx, info.Items)
+		resp = append(resp, info)
 	}
 	return resp, nil
+}
+
+// restoreItemImages 就地还原挂单明细商品图快照的完整访问地址
+// 快照入库为相对路径（存量完整 URL 自动归一），出库按当前附件配置重拼
+//
+// 参数：
+//   - ctx: 上下文
+//   - items: 挂单明细
+func (s *PosHeldService) restoreItemImages(ctx context.Context, items []*order.PosHeldOrderItem) {
+	for _, item := range items {
+		item.ProductImage = s.attachmentLoader.RestoreURL(ctx, item.ProductImage)
+	}
 }
 
 // Delete 删除挂单（恢复结账/顾客放弃后调用）；community_id>0 时校验归属防跨社区删除

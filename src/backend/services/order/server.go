@@ -49,13 +49,45 @@ func newServer(db *mysql.Instance, paymentClient payment.PaymentServiceClient, c
 	}
 }
 
+// toOrderInfo 订单模型转 proto，并还原快照型附件的完整访问地址
+// 签收凭证入库为相对路径（存量完整 URL 自动归一），出库按当前附件配置重拼
+//
+// 参数：
+//   - ctx: 上下文
+//   - o: 订单模型
+//
+// 返回值：
+//   - *order.OrderInfo: 订单 proto 信息
+func (s *server) toOrderInfo(ctx stdctx.Context, o *model.Order) *order.OrderInfo {
+	info := ToOrderInfo(o)
+	for i, img := range info.DeliveryProofImages {
+		info.DeliveryProofImages[i] = s.orderService.RestoreAttachmentURL(ctx, img)
+	}
+	return info
+}
+
+// toOrderItemInfo 订单商品项模型转 proto，并还原商品图快照的完整访问地址
+// 快照入库为相对路径（存量完整 URL 自动归一），出库按当前附件配置重拼
+//
+// 参数：
+//   - ctx: 上下文
+//   - item: 订单商品项模型
+//
+// 返回值：
+//   - *order.OrderItemInfo: 订单商品项 proto 信息
+func (s *server) toOrderItemInfo(ctx stdctx.Context, item *model.OrderItem) *order.OrderItemInfo {
+	info := ToOrderItemInfo(item)
+	info.ProductImage = s.orderService.RestoreAttachmentURL(ctx, info.ProductImage)
+	return info
+}
+
 // CreateOrder 创建订单
 func (s *server) CreateOrder(ctx stdctx.Context, req *order.CreateOrderReq) (*order.OrderInfo, error) {
 	o, err := s.orderService.CreateOrder(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return ToOrderInfo(o), nil
+	return s.toOrderInfo(ctx, o), nil
 }
 
 // GetOrder 获取订单详情（含商品明细、状态流转与每次售后记录）
@@ -68,7 +100,7 @@ func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.Or
 	}
 
 	detail := &order.OrderDetail{
-		Order:      ToOrderInfo(o),
+		Order:      s.toOrderInfo(ctx, o),
 		Items:      make([]*order.OrderItemInfo, 0, len(items)),
 		StatusLogs: make([]*order.OrderStatusLog, 0, len(logs)),
 		Refunds:    make([]*order.RefundInfo, 0, len(refunds)),
@@ -76,7 +108,7 @@ func (s *server) GetOrder(ctx stdctx.Context, req *order.GetOrderReq) (*order.Or
 	// 详情不做额外聚合统计，明细行数即 len(items)，与列表口径保持一致
 	detail.Order.ItemCount = int32(len(items))
 	for _, item := range items {
-		detail.Items = append(detail.Items, ToOrderItemInfo(item))
+		detail.Items = append(detail.Items, s.toOrderItemInfo(ctx, item))
 	}
 	for _, log := range logs {
 		detail.StatusLogs = append(detail.StatusLogs, ToOrderStatusLog(log))
@@ -111,7 +143,7 @@ func (s *server) ListOrders(ctx stdctx.Context, req *order.ListOrdersReq) (*orde
 		},
 	}
 	for _, o := range list {
-		resp.List = append(resp.List, ToOrderInfo(o))
+		resp.List = append(resp.List, s.toOrderInfo(ctx, o))
 	}
 	return resp, nil
 }
@@ -250,7 +282,7 @@ func (s *server) ListFulfillmentOrders(ctx stdctx.Context, req *order.ListFulfil
 		},
 	}
 	for _, o := range list {
-		resp.List = append(resp.List, ToOrderInfo(o))
+		resp.List = append(resp.List, s.toOrderInfo(ctx, o))
 	}
 	return resp, nil
 }

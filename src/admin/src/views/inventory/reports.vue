@@ -12,9 +12,9 @@
               placeholder="商品名 / SKU 编码"
               style="width: 200px"
               clearable
-              @keyup.enter="loadSummary"
+              @keyup.enter="onSummarySearch"
             />
-            <n-button type="primary" :loading="summaryLoading" @click="loadSummary">查询</n-button>
+            <n-button type="primary" :loading="summaryLoading" @click="onSummarySearch">查询</n-button>
           </n-space>
         </n-space>
         <n-data-table
@@ -22,6 +22,7 @@
           :data="summaryList"
           :loading="summaryLoading"
           :pagination="summaryPagination"
+          remote
           @update:page="onSummaryPageChange"
         />
       </n-tab-pane>
@@ -37,9 +38,9 @@
               placeholder="商品名 / SKU 编码"
               style="width: 200px"
               clearable
-              @keyup.enter="loadProfit"
+              @keyup.enter="onProfitSearch"
             />
-            <n-button type="primary" :loading="profitLoading" @click="loadProfit">查询</n-button>
+            <n-button type="primary" :loading="profitLoading" @click="onProfitSearch">查询</n-button>
           </n-space>
         </n-space>
         <n-data-table
@@ -47,6 +48,7 @@
           :data="profitList"
           :loading="profitLoading"
           :pagination="profitPagination"
+          remote
           @update:page="onProfitPageChange"
         />
       </n-tab-pane>
@@ -147,6 +149,15 @@ function onSummaryPageChange(page: number) {
   loadSummary()
 }
 
+/**
+ * 进销存汇总查询：条件变化后回到第 1 页
+ * 停在末页改关键词时新结果可能不足该页，表格只剩空白行
+ */
+function onSummarySearch() {
+  summaryPagination.value.page = 1
+  loadSummary()
+}
+
 // ---------- 毛利分析 ----------
 const profitDateRange = ref<[number, number] | null>(null)
 const profitKeyword = ref('')
@@ -215,6 +226,14 @@ async function loadProfit() {
 
 function onProfitPageChange(page: number) {
   profitPagination.value.page = page
+  loadProfit()
+}
+
+/**
+ * 毛利分析查询：与汇总页签同口径，条件变化后回到第 1 页再加载
+ */
+function onProfitSearch() {
+  profitPagination.value.page = 1
   loadProfit()
 }
 

@@ -18,7 +18,6 @@ import (
 	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
-	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/order/model"
 )
@@ -57,6 +56,11 @@ const (
 	// refundMaxRetry 累计核查上限，达到即停止自动重试并转人工待办；
 	// 按 10min 一次折算约 4 小时，足以覆盖渠道异步退款的正常收敛窗口
 	refundMaxRetry = 24
+	// cancelReleaseMaxRetry 取消收尾回补重放上限，与 retryFailures 的 retry_count < 5 同口径；
+	// 每分钟一轮折算约 5 分钟，覆盖商品服务短时抖动/重启，仍失败则只剩人工补做
+	cancelReleaseMaxRetry = 5
+	// cancelReleaseBatch 每轮最多重放的取消收尾记录数（与其余重试任务同用 Limit(100)）
+	cancelReleaseBatch = 100
 )
 
 // orderStat 单轮订单调度统计：debugger 进程记录的落库判定与摘要字段的唯一依据
@@ -67,6 +71,7 @@ type orderStat struct {
 	pickup        int // 自提单支付超时自动完成
 	refundOK      int // 卡单退款重试成功
 	approved      int // 超时退款自动审批
+	released      int // 取消收尾回补（库存/优惠券）重放成功
 	exportCleaned int // 过期导出任务清理数（文件 + 记录）
 	failed        int // 本轮失败（含扫描/抢占/事务/重试/审批出错）
 	panics        int // 本轮被 runOnce 恢复的 panic 次数（正常为 0 或 1）
@@ -78,7 +83,7 @@ type orderStat struct {
 // 返回值：
 //   - bool: true 表示有实质动作
 func (s orderStat) hasAction() bool {
-	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.exportCleaned+s.failed+s.panics > 0
+	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.released+s.exportCleaned+s.failed+s.panics > 0
 }
 
 // merge 把另一份统计并入本轮（子任务结果汇总）
@@ -91,6 +96,7 @@ func (s *orderStat) merge(other orderStat) {
 	s.pickup += other.pickup
 	s.refundOK += other.refundOK
 	s.approved += other.approved
+	s.released += other.released
 	s.exportCleaned += other.exportCleaned
 	s.failed += other.failed
 	s.panics += other.panics
@@ -109,7 +115,7 @@ func shouldRecordOrder(stat orderStat) bool {
 }
 
 // Scheduler 订单定时任务调度器
-// 负责超时未支付订单自动取消、发货后超时自动完成、卡单退款自动重试、过期导出任务清理
+// 负责超时未支付订单自动取消、取消收尾回补重放、发货后超时自动完成、卡单退款自动重试、过期导出任务清理
 // 采用 Redis 分布式锁 + 数据库原子抢占 + 失败回滚重试机制
 type Scheduler struct {
 	db            *mysql.Instance
@@ -202,6 +208,7 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 	// 兜底恢复：进程异常中断导致回滚未执行的订单，先恢复原状态再进入本轮调度
 	stat.merge(s.recoverStuckOrders(ctx))
 	stat.merge(s.cancelTimeoutOrders(ctx, orderTimeout))
+	stat.merge(s.retryCancelReleases(ctx))
 	stat.merge(s.autoCompleteOrders(ctx, autoCompleteDays))
 	stat.merge(s.autoCompletePickupOrders(ctx, autoCompleteDays))
 	stat.merge(s.retryStuckRefunds(ctx))
@@ -228,6 +235,7 @@ func (s *Scheduler) recordRound(start time.Time, stat orderStat) {
 		"pickup":         stat.pickup,
 		"refund_ok":      stat.refundOK,
 		"approved":       stat.approved,
+		"cancel_release": stat.released,
 		"export_cleaned": stat.exportCleaned,
 		"failed":         stat.failed,
 		"panics":         stat.panics,
@@ -441,7 +449,8 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) o
 
 	// 3. 处理抢占到的订单；失败时回滚原状态，避免订单永久卡在处理中
 	for _, o := range orders {
-		if err := s.cancelOrderTx(ctx, o, 1); err != nil {
+		eff, err := s.cancelOrderTx(ctx, o, 1)
+		if err != nil {
 			if errors.Is(err, errOrderAlreadyPaid) {
 				// 已收款订单已流转为已支付（或补同步失败等待下轮重试），不可回滚覆盖
 				log.Printf("[order-scheduler] 订单 %d 取消前反查到已收款，跳过取消", o.ID)
@@ -458,6 +467,8 @@ func (s *Scheduler) cancelTimeoutOrders(ctx context.Context, orderTimeout int) o
 			stat.failed++
 			continue
 		}
+		// 取消成功后回补库存与优惠券（失败入重试队列，不回滚已提交的取消）
+		releaseCancelledOrder(ctx, s.db, eff)
 		// 取消成功后关闭待支付支付单，防迟到回调误置已支付
 		closePendingPayments(ctx, o.ID)
 		// 兜底复核：取消事务提交与支付回调二阶段之间存在极窄竞态窗口，
@@ -485,6 +496,57 @@ func (s *Scheduler) auditPaidAfterCancel(ctx context.Context, orderID int64) {
 	if paid {
 		log.Printf("[CRITICAL] 订单 %d 取消后复核发现已收款（取消与支付回调竞态窗口），需人工对账并发起退款", orderID)
 	}
+}
+
+// retryCancelReleases 重放「取消已提交、远端回补未成功」的收尾动作
+// 取消事务提交后回补库存/优惠券重试仍失败时，落 task_type=cancel_release 的失败记录（订单已是终态 6，
+// 不能像旧实现那样靠「取消整体失败回滚」来重试，否则会造成一物两卖）。
+// 本任务按幂等号 cancel:{orderID} 重放：product 侧唯一键保证重复回补只生效一次，重放安全；
+// 达 cancelReleaseMaxRetry 次仍未收敛的记录停止自动重放（每轮已打 [CRITICAL]，转人工按幂等槽位补做）。
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) retryCancelReleases(ctx context.Context) orderStat {
+	var stat orderStat
+	lockKey := "scheduler:order:cancel:release:lock"
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
+		return stat
+	}
+	defer s.releaseLock(ctx, lockKey, lockValue)
+
+	var failures []*model.SchedulerFailure
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("task_type = ? AND status = ? AND retry_count < ?", taskTypeCancelRelease, 1, cancelReleaseMaxRetry).
+		Order("id asc").
+		Limit(cancelReleaseBatch).
+		Find(&failures).Error; err != nil {
+		log.Printf("[order-scheduler] 查询取消收尾回补失败记录出错: %v", err)
+		stat.failed++
+		return stat
+	}
+
+	for _, f := range failures {
+		eff, err := loadCancelEffect(ctx, s.db, f.OrderID)
+		if err != nil {
+			log.Printf("[order-scheduler] 重放订单 %d 取消收尾时读取订单失败: %v", f.OrderID, err)
+			s.incrementFailureRetry(ctx, f.ID, err.Error())
+			stat.failed++
+			continue
+		}
+		if err := runCancelEffects(ctx, eff); err != nil {
+			s.incrementFailureRetry(ctx, f.ID, err.Error())
+			log.Printf("[order-scheduler] 重放订单 %d 取消收尾回补仍失败: %v", f.OrderID, err)
+			stat.failed++
+			continue
+		}
+		s.markFailureStatus(ctx, f.ID, 2)
+		stat.released++
+		log.Printf("[order-scheduler] 订单 %d 取消收尾回补重放成功", f.OrderID)
+	}
+	return stat
 }
 
 // autoCompleteOrders 自动完成已发货超时的订单
@@ -571,10 +633,12 @@ func (s *Scheduler) claimOrders(ctx context.Context, fromStatus, processingStatu
 	return orders
 }
 
-// cancelOrderTx 在事务中取消订单并释放库存
+// cancelOrderTx 在事务中取消订单，返回提交后需回补的远端副作用清单
 // 取消前反查支付单守卫：支付回调两阶段同步失败时订单仍停留待支付，
 // 若直接取消会造成"已收款但被取消"的资损；反查到成功支付单则改走补同步并跳过取消；
 // 支付服务不可达等不确定情况放弃本轮取消，下轮重试（宁可延迟取消，不可误取消已收款单）
+// 库存/优惠券回补不在事务内发起：远端已提交的回补撤不回，本地若回滚就成了
+// 「订单仍待支付而库存已放走」的一物两卖，故由调用方在提交成功后执行。
 //
 // 参数：
 //   - ctx: 上下文
@@ -582,13 +646,14 @@ func (s *Scheduler) claimOrders(ctx context.Context, fromStatus, processingStatu
 //   - fromStatus: 流转起点状态（真实原状态，用于状态日志）
 //
 // 返回值：
+//   - *cancelEffect: 提交后需回补的清单（失败时为 nil）
 //   - error: errOrderAlreadyPaid 表示订单已收款跳过取消（订单状态已被补同步或待下轮重试）；
 //     errOrderStateConflict 表示抢占态已被并发流转（如补同步先到置为已支付），跳过且不记失败；其余为取消失败
-func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatus int32) error {
+func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatus int32) (*cancelEffect, error) {
 	if grpcclient.PaymentClient != nil {
 		paid, pErr := isOrderPaid(ctx, o.ID)
 		if pErr != nil {
-			return fmt.Errorf("取消前反查支付单失败: %w", pErr)
+			return nil, fmt.Errorf("取消前反查支付单失败: %w", pErr)
 		}
 		if !paid {
 			// 本地没有成功支付单不等于用户没付：回调可能丢失或验签失败。
@@ -614,11 +679,12 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 			} else {
 				log.Printf("[order-scheduler] 订单 %d 已收款但状态未同步，已补为已支付并跳过取消", o.ID)
 			}
-			return errOrderAlreadyPaid
+			return nil, errOrderAlreadyPaid
 		}
 	}
 
-	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var eff *cancelEffect
+	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().Format("2006-01-02 15:04:05")
 		// 条件更新防并发覆盖：仅当订单仍处于本实例抢占态(100)或回滚后的原状态(1)时生效。
 		// 若并发场景下订单已被置为其他状态（如补同步先到置为已支付、用户已自行取消），
@@ -647,19 +713,9 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 		if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
 			return err
 		}
-		// 与 C 端取消/后台取消共用整单回补：此前本路径只回补主库存，
+		// 与 C 端取消/后台取消共用整单回补清单：此前本路径只回补主库存，
 		// 命中秒杀的超时单会把活动池扣减永久悬空（下单时扣了、取消时不补）
-		if err := releaseOrderStock(ctx, o.ID, items); err != nil {
-			return err
-		}
-
-		// 回补优惠券：与 CancelOrder/cancelOrderInTx 同口径，防止超时取消吞券；
-		// ReleaseCoupon 服务端幂等（按 order_id+status 条件更新，重复调用安全），事务回滚后重试不会二次回补
-		if o.CouponID > 0 {
-			if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
-				return fmt.Errorf("回补优惠券失败: %w", err)
-			}
-		}
+		eff = &cancelEffect{OrderID: o.ID, Items: items, CouponID: o.CouponID}
 
 		log := &model.OrderStatusLog{
 			OrderID:      o.ID,
@@ -672,6 +728,10 @@ func (s *Scheduler) cancelOrderTx(ctx context.Context, o *model.Order, fromStatu
 		}
 		return tx.Create(log).Error
 	})
+	if err != nil {
+		return nil, err
+	}
+	return eff, nil
 }
 
 // isOrderPaid 反查支付服务判断订单是否已收款成功（仅 status=2 支付成功视为已支付）
@@ -831,13 +891,14 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 		}
 
 		var err error
+		var eff *cancelEffect
 		switch taskType {
 		case "timeout_cancel":
 			if o.Status != 1 {
 				s.markFailureStatus(ctx, f.ID, 2)
 				continue
 			}
-			err = s.cancelOrderTx(ctx, &o, 1)
+			eff, err = s.cancelOrderTx(ctx, &o, 1)
 		case "auto_complete":
 			if o.Status != 4 {
 				s.markFailureStatus(ctx, f.ID, 2)
@@ -875,6 +936,8 @@ func (s *Scheduler) retryFailures(ctx context.Context, taskType string, autoComp
 			continue
 		}
 		s.markFailureStatus(ctx, f.ID, 2)
+		// 取消重试成功后回补库存与优惠券（非 timeout_cancel 的 eff 为 nil，内部直接跳过）
+		releaseCancelledOrder(ctx, s.db, eff)
 		// 成功计数按任务类型归集，与上面的 switch 同一套取值
 		switch taskType {
 		case "timeout_cancel":
@@ -1013,18 +1076,7 @@ func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) orderStat {
 //   - taskType: 任务类型
 //   - errMsg: 错误信息
 func (s *Scheduler) recordFailure(ctx context.Context, orderID int64, taskType string, errMsg string) {
-	now := time.Now().Format("2006-01-02 15:04:05")
-	failure := &model.SchedulerFailure{
-		OrderID:   orderID,
-		TaskType:  taskType,
-		Status:    1,
-		ErrorMsg:  errMsg,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.db.GetDb().WithContext(ctx).Create(failure).Error; err != nil {
-		log.Printf("[order-scheduler] 记录失败订单 %d 出错: %v", orderID, err)
-	}
+	recordSchedulerFailure(ctx, s.db, orderID, taskType, errMsg)
 }
 
 // markFailureStatus 更新失败记录状态

@@ -7,9 +7,9 @@
           placeholder="商品名 / 编码 / 条形码"
           style="width: 240px"
           clearable
-          @keyup.enter="load"
+          @keyup.enter="onSearch"
         />
-        <n-button type="primary" :loading="loading" @click="load">查询</n-button>
+        <n-button type="primary" :loading="loading" @click="onSearch">查询</n-button>
         <n-text depth="3">勾选商品后点「添加所选」，一次带入多行明细</n-text>
       </n-space>
       <n-data-table
@@ -17,6 +17,7 @@
         :data="list"
         :loading="loading"
         :pagination="pagination"
+        remote
         :row-key="(row: Sku) => row.id"
         :checked-row-keys="checkedKeys"
         max-height="420px"
@@ -101,6 +102,15 @@ async function load() {
 
 function onPageChange(page: number) {
   pagination.value.page = page
+  load()
+}
+
+/**
+ * 查询：关键词变化后回到第 1 页
+ * 停在第 N 页换关键词时，新结果不足 N 页会显示为空，看起来像「搜不到货」
+ */
+function onSearch() {
+  pagination.value.page = 1
   load()
 }
 

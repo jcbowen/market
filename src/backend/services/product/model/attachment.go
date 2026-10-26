@@ -18,6 +18,11 @@ type AttachmentConfig struct {
 	// 存储类型：local / oss（预留 cos）
 	StorageType string `gorm:"column:storage_type;type:varchar(16);not null;default:'local';comment:存储类型：local / oss（预留 cos）" json:"storage_type"`
 
+	// 本地存储目录名（对齐 jcbaseGo AttachmentStruct.LocalDir 设计）：
+	// 物理落盘目录（<可执行文件同级>/<local_dir>/）与 URL 路径段（/<local_dir>/...）共用同一字段，
+	// 默认 uploads；后台设置页暂不暴露（改动会导致历史 URL 前缀与宿主挂载目录失配）
+	LocalDir string `gorm:"column:local_dir;type:varchar(64);not null;default:'uploads';comment:本地存储目录名，落盘目录与 URL 路径段共用，默认 uploads" json:"local_dir"`
+
 	// 自定义访问域名，空则本地模式按请求域名动态拼接、OSS 用 bucket 域名
 	VisitDomain string `gorm:"column:visit_domain;type:varchar(255);not null;default:'';comment:自定义访问域名，商品/Banner 等图片字段出库时按此域名拼接完整 URL，本地模式必填（OSS 模式图片走 oss_custom_visit_domain/bucket 域名，可空）" json:"visit_domain"`
 

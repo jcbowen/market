@@ -145,7 +145,12 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(body.code, `保存站点设置失败: ${body.message}`).toBe(0);
 
     const saved = await readSite();
-    expect(saved, '品牌与 SEO 字段应逐项回读一致').toMatchObject(brand);
+    const { footer_html: _footer, ...rest } = brand;
+    expect(saved, '品牌与 SEO 字段应逐项回读一致').toMatchObject(rest);
+    // footer 中的 <a> 由消毒器统一追加 target/rel/style，整串等值不成立，改断言稳定片段
+    expect(saved.footer_html, '页脚文本应原样保留').toContain('© AUTO-TEST 社区商超 版权所有');
+    expect(saved.footer_html, '备案号链接应保留').toContain('https://beian.miit.gov.cn/');
+    expect(saved.footer_html).toContain('京ICP备');
     expect(saved.version, `版本号应在 ${before} 基础上递增`).toBeGreaterThan(before);
     expect(saved.updated_at, '更新时间应刷新').not.toBe(original?.updated_at);
   });

@@ -269,9 +269,23 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 			return nil, err
 		}
 	}
+	// SKU 的归属社区以商品为准：本接口可独立建 SKU，若不校验商品存在与归属，
+	// 会造出「他社区商品 + 本社区 SKU」的漂移行——SearchSkus 按 SKU 社区过滤，
+	// 会把其他社区的商品名带进本社区结果
+	var prod model.Product
+	if err := s.db.GetDb().WithContext(ctx).Where("id = ? AND status <> ?", req.ProductId, 2).
+		First(&prod).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, bizerr.New(codes.NotFound, "商品不存在或已删除")
+		}
+		return nil, err
+	}
+	if err := EnsureScope(req.CommunityId, prod.CommunityID, "商品"); err != nil {
+		return nil, err
+	}
 	sku := &model.Sku{
-		ProductID:   req.ProductId,
-		CommunityID: req.CommunityId,
+		ProductID:   prod.ID,
+		CommunityID: prod.CommunityID,
 		SkuCode:     req.SkuCode,
 		SpecName:    req.SpecName,
 		SpecJSON:    specJSON,
@@ -290,7 +304,7 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 		// （库级函数索引按 社区+条码 唯一，与商品无关；商品保存链路才需要排除自身商品，
 		// 因为它在同一事务里整批重写本商品的 SKU）
 		if barcode != "" {
-			if err := ensureSkuBarcodeAvailable(tx, req.CommunityId, 0, barcode); err != nil {
+			if err := ensureSkuBarcodeAvailable(tx, prod.CommunityID, 0, barcode); err != nil {
 				return err
 			}
 		}
@@ -299,11 +313,11 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 		}
 		if req.Stock > 0 {
 			now := time.Now().Format("2006-01-02 15:04:05")
-			if _, err := createInitBatch(tx, req.CommunityId, sku.ID, req.Stock, req.CostPrice, "INIT", now); err != nil {
+			if _, err := createInitBatch(tx, prod.CommunityID, sku.ID, req.Stock, req.CostPrice, "INIT", now); err != nil {
 				return err
 			}
 		}
-		return nil
+		return syncProductAggregates(tx, []int64{prod.ID})
 	}); err != nil {
 		return nil, err
 	}
@@ -372,7 +386,11 @@ func (s *SkuService) UpdateSku(ctx context.Context, req *product.UpdateSkuReq) (
 			}
 			sku.Barcode = barcode
 		}
-		return tx.Save(sku).Error
+		if err := tx.Save(sku).Error; err != nil {
+			return err
+		}
+		// 售价与禁用状态会移动商品的价格区间/汇总库存，须同事务回写汇总列
+		return syncProductAggregates(tx, []int64{sku.ProductID})
 	}); err != nil {
 		return nil, err
 	}

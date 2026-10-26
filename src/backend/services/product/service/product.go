@@ -54,6 +54,11 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 	if pageSize < 1 {
 		pageSize = 10
 	}
+	// 服务层兜底上限：HTTP 网关已按 maxPageSize=100 收敛，但 gRPC 可被内部或直连调用
+	// 传入超大值导致全表拉取，这里独立设限
+	if pageSize > 200 {
+		pageSize = 200
+	}
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{})
 	switch req.StatusFilter {

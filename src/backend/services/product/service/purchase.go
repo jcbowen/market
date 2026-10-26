@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -32,7 +31,7 @@ func NewPurchaseService(db *mysql.Instance) *PurchaseService {
 // 返回值：
 //   - string: 采购单号
 func generatePurchaseNo() string {
-	return "PO" + time.Now().Format("20060102150405") + fmt.Sprintf("%04d", time.Now().Nanosecond()/1e5)
+	return generateBillNo("PO")
 }
 
 // CreatePurchaseOrder 创建采购单

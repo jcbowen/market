@@ -348,14 +348,3 @@ export function submitInventoryCheck(id: number, items: Array<{ sku_id: number; 
     data: { items },
   })
 }
-
-/**
- * 获取商品下的 SKU 列表（盘点选品用）
- */
-export function getSkuList(productId: number) {
-  return request<ApiResult<Sku[]>>({
-    url: '/api/v1/skus',
-    method: 'GET',
-    params: { product_id: productId },
-  })
-}

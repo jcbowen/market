@@ -1593,6 +1593,7 @@ message AttachmentConfig {
   string oss_custom_visit_domain = 7;  // OSS 自定义访问域名（CDN），可空
   int64 max_size = 8;                  // 图片大小上限（字节），0 表示使用默认 5MB
   string updated_at = 9;               // 更新时间，兼作版本号
+  string local_dir = 10;               // 本地存储目录名（落盘目录与 URL 路径段共用，空回默认 uploads）；只读字段，保存接口不受理
 }
 
 // UploadImageLocalReq 本地模式图片上传请求
@@ -1692,6 +1693,7 @@ message AttachmentMigrateItemInfo {
   string verified_at = 11;     // 验证通过时间
   string local_deleted_at = 12; // 本地文件删除时间
   string created_at = 13;      // 入库时间
+  string url = 14;             // 完整访问 URL（服务端按附件配置拼接，前端不得自行拼装）
 }
 
 // AttachmentMigrateOverview 迁移任务概览统计

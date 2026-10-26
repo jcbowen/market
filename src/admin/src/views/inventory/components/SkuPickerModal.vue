@@ -23,6 +23,7 @@
         :row-key="(row: Sku) => row.id"
         max-height="420px"
         size="small"
+        remote
         @update:page="onPageChange"
       />
     </n-space>

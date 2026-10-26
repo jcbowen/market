@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -19,6 +20,9 @@ import (
 // UserService 用户业务服务
 type UserService struct {
 	db *mysql.Instance
+	// attachmentLoader 附件配置读取器（共享 market 库直读，60s 缓存）：
+	// 头像等附件字段入库归一（SourcePath）与出库拼接（MediaURL）共用
+	attachmentLoader *attachmenturl.Loader
 }
 
 // NewUserService 创建用户业务服务
@@ -28,7 +32,19 @@ type UserService struct {
 // 返回：
 //   - *UserService: 用户业务服务实例
 func NewUserService(db *mysql.Instance) *UserService {
-	return &UserService{db: db}
+	return &UserService{db: db, attachmentLoader: attachmenturl.NewLoader(db.GetDb())}
+}
+
+// MediaURL 附件地址出库拼接完整 URL（外链原样返回）
+//
+// 参数:
+//   - ctx: 上下文
+//   - src: 相对路径或完整 URL
+//
+// 返回值:
+//   - string: 完整访问 URL
+func (s *UserService) MediaURL(ctx context.Context, src string) string {
+	return s.attachmentLoader.MediaURL(ctx, src)
 }
 
 // GetUserById 根据 ID 查询用户（无社区语境，服务间/自身调用使用）
@@ -157,7 +173,9 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 	if u.Nickname == "" {
 		u.Nickname = orValue(req.Nickname, defaultNickname(req.Phone))
 	}
-	u.Avatar = orValue(req.Avatar, u.Avatar)
+	// 头像入库归一为附件相对路径（common/attachmenturl 口径）：C 端头像上传提交的
+	// 站内完整 URL 剥为相对路径，域名/存储模式变更后不失效；微信头像等外链原样保存
+	u.Avatar = orValue(s.attachmentLoader.SourcePath(ctx, req.Avatar), u.Avatar)
 	u.Gender = req.Gender
 	if req.CommunityId > 0 {
 		u.CommunityID = req.CommunityId
@@ -213,7 +231,8 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, req *user.UpdateUse
 		u.Nickname = req.Nickname
 	}
 	if req.Avatar != "" {
-		u.Avatar = req.Avatar
+		// 入库归一：站内附件剥为相对路径（外链原样），见 Upsert 同字段注释
+		u.Avatar = s.attachmentLoader.SourcePath(ctx, req.Avatar)
 	}
 	// 仅接受 1男/2女；0=未传，其他正值是非法输入，不能覆盖既有资料
 	if req.Gender == 1 || req.Gender == 2 {

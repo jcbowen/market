@@ -46,7 +46,7 @@ test.describe.serial('API 全流程：后台建品 → C 端消费 → 后台核
   let skuId = 0;
   let orderId = 0;
   let pickupCode = '';
-
+  let productName = '';
   test('1. 后台创建分类', async () => {
     const resp = await adminApi.post('/api/v1/admin/categories', { data: { name: autoName('全流程分类') } });
     const body = (await resp.json()) as ApiResponse<Category>;
@@ -55,10 +55,11 @@ test.describe.serial('API 全流程：后台建品 → C 端消费 → 后台核
   });
 
   test('2. 后台创建并上架商品', async () => {
+    productName = autoName('全流程商品');
     const resp = await adminApi.post('/api/v1/admin/products', {
       data: {
         category_id: categoryId,
-        name: autoName('全流程商品'),
+        name: productName,
         unit: '份',
         is_multi_spec: false,
         sku_items: [{ price: 6.6, stock: 50, safety_stock: 5 }],
@@ -79,7 +80,10 @@ test.describe.serial('API 全流程：后台建品 → C 端消费 → 后台核
   });
 
   test('3. C 端商品列表可见新商品', async () => {
-    const resp = await clientApi.get('/api/v1/products', { params: { page: 1, page_size: 50, status: 1 } });
+    // 列表缺省按 sort 降序，新建商品 sort=0 会排在演示商品之后，改用 keyword 定向检索
+    const resp = await clientApi.get('/api/v1/products', {
+      params: { page: 1, page_size: 50, status: 1, keyword: productName },
+    });
     const body = (await resp.json()) as ApiResponse<PageData<Product>>;
     expect(body.code).toBe(0);
     expect(asList<Product>(body.data).some((p) => p.id === productId)).toBe(true);

@@ -69,7 +69,7 @@ services:
     volumes:
       - ./data/mysql:/var/lib/mysql
       - ./data/redis:/data
-      - ./data/attachment:/app/attachment
+      - ./data/uploads:/app/uploads
       - ./data/runtime:/app/runtime
       - ./data/logs:/app/logs
     healthcheck:

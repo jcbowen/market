@@ -74,7 +74,7 @@ func (s *ProductService) saveSpecsAndSkus(tx *gorm.DB, p *model.Product, specs [
 	if err := s.releaseStaleSkus(tx, p, skuItems); err != nil {
 		return err
 	}
-	keepSkuIDs, minPrice, maxPrice, minOriginalPrice, totalStock, err := s.saveSkus(tx, p, skuItems, tempMap, specNameMap, valueNameMap, valueSpecMap)
+	keepSkuIDs, err := s.saveSkus(tx, p, skuItems, tempMap, specNameMap, valueNameMap, valueSpecMap)
 	if err != nil {
 		return err
 	}
@@ -90,12 +90,113 @@ func (s *ProductService) saveSpecsAndSkus(tx *gorm.DB, p *model.Product, specs [
 	}
 
 	// 回写商品汇总字段
+	return syncProductAggregates(tx, []int64{p.ID})
+}
+
+// productSkuAggregate SKU 实时聚合结果（商品汇总列的唯一计算口径）
+type productSkuAggregate struct {
+	ProductID  int64   `gorm:"column:product_id"`
+	MinPrice   float64 `gorm:"column:min_price"`
+	MaxPrice   float64 `gorm:"column:max_price"`
+	TotalStock int32   `gorm:"column:total_stock"`
+}
+
+// syncProductAggregates 按启用 SKU 的实时值回写 products 的 min_price / max_price /
+// min_original_price / stock 四个汇总列。
+// 后台商品列表的「已售罄 / 库存紧张」Tab 与状态统计直接读 products.stock
+// （见 ListProducts 的 status_filter），而扣减、回补、入库、出库、盘点只更新
+// product_skus.stock，故这些路径必须在同一事务内显式回写，否则汇总列长期失真。
+// 存活口径与保存规格时一致：仅统计 status=1 的 SKU。
+//
+// 参数：
+//   - tx: GORM 事务对象（调用方须已在本事务内完成 SKU 写入）
+//   - productIDs: 受影响的商品 ID 列表（空列表直接返回）
+//
+// 返回值：
+//   - error: 聚合查询或回写失败
+//
+// 使用示例：
+//
+//	if err := syncProductAggregates(tx, []int64{sku.ProductID}); err != nil {
+//		return err
+//	}
+func syncProductAggregates(tx *gorm.DB, productIDs []int64) error {
+	if len(productIDs) == 0 {
+		return nil
+	}
+
+	var aggs []*productSkuAggregate
+	if err := tx.Table("product_skus").
+		Select("product_id, MIN(price) AS min_price, MAX(price) AS max_price, COALESCE(SUM(stock), 0) AS total_stock").
+		Where("product_id IN ? AND status = 1", productIDs).
+		Group("product_id").
+		Scan(&aggs).Error; err != nil {
+		return err
+	}
+
+	// 划线价取最低价 SKU 的划线价，与列表展示口径（price=min_price）保持同一规格；
+	// 同价 SKU 取最小划线价，保证多次回写结果稳定
+	type originalPrice struct {
+		ProductID     int64   `gorm:"column:product_id"`
+		OriginalPrice float64 `gorm:"column:original_price"`
+	}
+	lowest := tx.Table("product_skus").
+		Select("product_id, MIN(price) AS min_price").
+		Where("product_id IN ? AND status = 1", productIDs).
+		Group("product_id")
+
+	var prices []*originalPrice
+	if err := tx.Table("product_skus AS s").
+		Select("s.product_id, MIN(s.original_price) AS original_price").
+		Joins("JOIN (?) AS m ON m.product_id = s.product_id AND m.min_price = s.price", lowest).
+		Where("s.product_id IN ? AND s.status = 1", productIDs).
+		Group("s.product_id").
+		Scan(&prices).Error; err != nil {
+		return err
+	}
+	originalPriceByProduct := make(map[int64]float64, len(prices))
+	for _, row := range prices {
+		originalPriceByProduct[row.ProductID] = row.OriginalPrice
+	}
+
+	// 无启用 SKU 的商品（全部禁用/软删）聚合行缺失，汇总值按 0 回写，避免残留旧值继续判「有货」
+	seen := make(map[int64]bool, len(aggs))
+	for _, agg := range aggs {
+		seen[agg.ProductID] = true
+		if err := updateProductAggregate(tx, agg.ProductID, agg.MinPrice, agg.MaxPrice,
+			originalPriceByProduct[agg.ProductID], agg.TotalStock); err != nil {
+			return err
+		}
+	}
+	for _, id := range productIDs {
+		if seen[id] {
+			continue
+		}
+		if err := updateProductAggregate(tx, id, 0, 0, 0, 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// updateProductAggregate 写入单个商品的四个汇总列
+// 参数：
+//   - tx: GORM 事务对象
+//   - productID: 商品 ID
+//   - minPrice: 最低价
+//   - maxPrice: 最高价
+//   - originalPrice: 最低价 SKU 的划线价
+//   - totalStock: 汇总库存
+//
+// 返回值：
+//   - error: 更新失败
+func updateProductAggregate(tx *gorm.DB, productID int64, minPrice, maxPrice, originalPrice float64, totalStock int32) error {
 	return tx.Model(&model.Product{}).
-		Where("id = ?", p.ID).
+		Where("id = ?", productID).
 		Updates(map[string]interface{}{
 			"min_price":          minPrice,
 			"max_price":          maxPrice,
-			"min_original_price": minOriginalPrice,
+			"min_original_price": originalPrice,
 			"stock":              totalStock,
 		}).Error
 }
@@ -199,7 +300,7 @@ func (s *ProductService) saveSpecTree(
 	return keepSpecIDs, keepValueIDs, nil
 }
 
-// saveSkus 保存 SKU 组合并统计价格区间与汇总库存
+// saveSkus 保存 SKU 组合（不落商品汇总列，汇总统一由 syncProductAggregates 回写）
 // 逐条写入是有意的、不做整批插入：每行新建后需立即用其 ID 建初始批次（createInitBatch），
 // 批量插入只能靠切片顺序反查 ID，映射易错而 SKU 本就只有数个到数十个，收益低于回归风险
 // 参数：
@@ -213,10 +314,6 @@ func (s *ProductService) saveSpecTree(
 //
 // 返回值：
 //   - []int64: 本次保留的 SKU ID 列表
-//   - float64: 最低价
-//   - float64: 最高价
-//   - float64: 划线价（最低价 SKU 的划线价，0 表示未配置）
-//   - int32: 汇总库存
 //   - error: 校验或落库错误信息
 func (s *ProductService) saveSkus(
 	tx *gorm.DB,
@@ -225,16 +322,12 @@ func (s *ProductService) saveSkus(
 	tempMap map[string]int64,
 	specNameMap, valueNameMap map[int64]string,
 	valueSpecMap map[int64]int64,
-) ([]int64, float64, float64, float64, int32, error) {
+) ([]int64, error) {
 	var (
-		keepSkuIDs       = make([]int64, 0, len(skuItems))
-		minPrice         = 0.0
-		maxPrice         = 0.0
-		minOriginalPrice = 0.0
-		totalStock       = int32(0)
-		seenCombo        = make(map[string]bool)
-		seenBarcode      = make(map[string]bool)
-		defaultSkuID     = int64(0)
+		keepSkuIDs   = make([]int64, 0, len(skuItems))
+		seenCombo    = make(map[string]bool)
+		seenBarcode  = make(map[string]bool)
+		defaultSkuID = int64(0)
 	)
 
 	// 单规格：定位现有默认 SKU（spec_value_ids 为空/NULL 且启用），避免重复创建
@@ -242,17 +335,25 @@ func (s *ProductService) saveSkus(
 	if !p.IsMultiSpec {
 		id, err := findDefaultSkuID(tx, p.ID)
 		if err != nil {
-			return nil, 0, 0, 0, 0, err
+			return nil, err
 		}
 		defaultSkuID = id
 	}
 
 	for i, item := range skuItems {
 		if item.Price <= 0 {
-			return nil, 0, 0, 0, 0, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的价格必须大于 0", i+1))
+			return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的价格必须大于 0", i+1))
 		}
 		if item.Stock < 0 {
-			return nil, 0, 0, 0, 0, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的库存不能为负数", i+1))
+			return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的库存不能为负数", i+1))
+		}
+		// 划线价低于售价会在 C 端展示成「优惠为负」的误导信息；0 表示不展示划线价，允许
+		if item.OriginalPrice > 0 && item.OriginalPrice < item.Price {
+			return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的划线价不能低于售价", i+1))
+		}
+		// 负成本会直接污染毛利报表（ReportService 按 cost_price 计成本）
+		if item.CostPrice < 0 {
+			return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的成本价不能为负数", i+1))
 		}
 
 		// 解析规格值 ID：临时 ID 替换为真实 ID
@@ -260,7 +361,7 @@ func (s *ProductService) saveSkus(
 		for _, raw := range item.SpecValueIds {
 			id, err := resolveSpecValueID(raw, tempMap, valueNameMap)
 			if err != nil {
-				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
+				return nil, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
 			}
 			resolved = append(resolved, id)
 		}
@@ -270,7 +371,7 @@ func (s *ProductService) saveSkus(
 		comboKey := joinSpecValueIDs(resolved)
 		if comboKey != "" {
 			if seenCombo[comboKey] {
-				return nil, 0, 0, 0, 0, bizerr.New(codes.InvalidArgument, fmt.Sprintf("SKU 规格组合重复: %s", skuDisplayName(resolved, valueNameMap)))
+				return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("SKU 规格组合重复: %s", skuDisplayName(resolved, valueNameMap)))
 			}
 			seenCombo[comboKey] = true
 		}
@@ -281,15 +382,15 @@ func (s *ProductService) saveSkus(
 		barcode := strings.TrimSpace(item.Barcode)
 		if barcode != "" {
 			if err := validateBarcode(barcode); err != nil {
-				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
+				return nil, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
 			}
 			if seenBarcode[barcode] {
-				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1,
+				return nil, fmt.Errorf("第 %d 个 SKU：%w", i+1,
 					bizerr.New(codes.InvalidArgument, fmt.Sprintf("条形码 %s 在本商品内重复", barcode)))
 			}
 			seenBarcode[barcode] = true
 			if err := ensureSkuBarcodeAvailable(tx, p.CommunityID, p.ID, barcode); err != nil {
-				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
+				return nil, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
 			}
 		}
 
@@ -334,17 +435,17 @@ func (s *ProductService) saveSkus(
 			if err := tx.Select("id", "stock", "cost_price", "sku_code", "community_id").
 				Where("id = ? AND product_id = ?", skuID, p.ID).
 				Take(&old).Error; err != nil {
-				return nil, 0, 0, 0, 0, bizerr.New(codes.NotFound, fmt.Sprintf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID))
+				return nil, bizerr.New(codes.NotFound, fmt.Sprintf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID))
 			}
 			if err := tx.Model(&model.Sku{}).
 				Where("id = ? AND product_id = ?", skuID, p.ID).
 				Updates(updates).Error; err != nil {
-				return nil, 0, 0, 0, 0, err
+				return nil, err
 			}
 			// 表单直接改汇总库存：调大补「表单调整」批次，调小按 FEFO 扣回批次，
 			// 保证 product_skus.stock 恒等于 Σ 在库批次 quantity（否则后续扣减必失败）
 			if err := syncSkuStockBatches(tx, p.CommunityID, &old, item.Stock); err != nil {
-				return nil, 0, 0, 0, 0, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
+				return nil, fmt.Errorf("第 %d 个 SKU：%w", i+1, err)
 			}
 		} else {
 			row := &model.Sku{
@@ -364,30 +465,21 @@ func (s *ProductService) saveSkus(
 				Status:        1,
 			}
 			if err := tx.Create(row).Error; err != nil {
-				return nil, 0, 0, 0, 0, err
+				return nil, err
 			}
 			skuID = row.ID
 			// 建品即带初始库存：生成初始批次，保证汇总库存可被 FEFO 扣减
 			if item.Stock > 0 {
 				now := time.Now().Format("2006-01-02 15:04:05")
 				if _, err := createInitBatch(tx, p.CommunityID, skuID, item.Stock, batchUnitCost(item.CostPrice, 0), "INIT", now); err != nil {
-					return nil, 0, 0, 0, 0, err
+					return nil, err
 				}
 			}
 		}
 
 		keepSkuIDs = append(keepSkuIDs, skuID)
-		// 划线价取最低价 SKU 的划线价，与列表展示口径（price=min_price）保持同一规格
-		if minPrice == 0 || item.Price < minPrice {
-			minPrice = item.Price
-			minOriginalPrice = item.OriginalPrice
-		}
-		if item.Price > maxPrice {
-			maxPrice = item.Price
-		}
-		totalStock += item.Stock
 	}
-	return keepSkuIDs, minPrice, maxPrice, minOriginalPrice, totalStock, nil
+	return keepSkuIDs, nil
 }
 
 // batchUnitCost 批次单位成本取值：表单未填成本（<=0）时回落既有成本，

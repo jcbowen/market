@@ -3763,10 +3763,12 @@ func (h *AdminHandler) GeneratePurchaseOrder(c *gin.Context) {
 }
 
 // SubmitStockCheckReq 提交盘点单请求
+// ActualStock 用指针接收：实盘 0（该 SKU 已清空）是合法盘点结果，
+// 非指针 int32 + required 会把 0 判成「未填」直接报参数错误，导致零库存永远盘不掉
 type SubmitStockCheckReq struct {
 	Items []struct {
-		SkuID       int64 `json:"sku_id" binding:"required"`
-		ActualStock int32 `json:"actual_stock" binding:"required"`
+		SkuID       int64  `json:"sku_id" binding:"required"`
+		ActualStock *int32 `json:"actual_stock" binding:"required"`
 	} `json:"items" binding:"required"`
 }
 
@@ -3785,12 +3787,16 @@ func (h *AdminHandler) SubmitStockCheck(c *gin.Context) {
 		response.Error(c, errcode.ParamError)
 		return
 	}
+	if len(req.Items) == 0 {
+		response.Error(c, errcode.ParamError, "盘点明细不能为空")
+		return
+	}
 
 	items := make([]*product.StockCheckItem, 0, len(req.Items))
 	for _, item := range req.Items {
 		items = append(items, &product.StockCheckItem{
 			SkuId:       item.SkuID,
-			ActualStock: item.ActualStock,
+			ActualStock: *item.ActualStock,
 		})
 	}
 

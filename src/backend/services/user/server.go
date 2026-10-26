@@ -53,7 +53,7 @@ func (s *server) GetUserById(ctx stdctx.Context, req *user.GetUserByIdReq) (*use
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	return service.ToUserInfo(u), nil
+	return s.toUserInfoOut(ctx, u), nil
 }
 
 // GetUserByPhone 根据手机号获取用户信息
@@ -62,7 +62,7 @@ func (s *server) GetUserByPhone(ctx stdctx.Context, req *user.GetUserByPhoneReq)
 	if err != nil {
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
-	return service.ToUserInfo(u), nil
+	return s.toUserInfoOut(ctx, u), nil
 }
 
 // CreateOrUpdateUser 创建或更新用户
@@ -71,7 +71,7 @@ func (s *server) CreateOrUpdateUser(ctx stdctx.Context, req *user.CreateUserReq)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToUserInfo(u), nil
+	return s.toUserInfoOut(ctx, u), nil
 }
 
 // UpdateUserCommunity 更新用户所属社区
@@ -88,7 +88,7 @@ func (s *server) UpdateUserProfile(ctx stdctx.Context, req *user.UpdateUserProfi
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToUserInfo(u), nil
+	return s.toUserInfoOut(ctx, u), nil
 }
 
 // UpdateMember 后台编辑会员基础资料（昵称/性别/生日，社区语境校验）
@@ -97,7 +97,7 @@ func (s *server) UpdateMember(ctx stdctx.Context, req *user.UpdateMemberReq) (*u
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToUserInfo(u), nil
+	return s.toUserInfoOut(ctx, u), nil
 }
 
 // ListUsers 获取会员列表（按社区关联过滤，返回过滤语境社区名称）
@@ -121,7 +121,7 @@ func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.Li
 		},
 	}
 	for _, u := range list {
-		info := service.ToUserInfo(u)
+		info := s.toUserInfoOut(ctx, u)
 		info.CommunityName = communityName
 		resp.List = append(resp.List, info)
 	}
@@ -137,7 +137,7 @@ func (s *server) BatchGetUsers(ctx stdctx.Context, req *user.BatchGetUsersReq) (
 	}
 	infos := make([]*user.UserInfo, 0, len(list))
 	for _, u := range list {
-		infos = append(infos, service.ToUserInfo(u))
+		infos = append(infos, s.toUserInfoOut(ctx, u))
 	}
 	return &user.BatchGetUsersResp{List: infos}, nil
 }
@@ -182,7 +182,7 @@ func (s *server) CreateMember(ctx stdctx.Context, req *user.CreateMemberReq) (*u
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return &user.CreateMemberResp{User: service.ToUserInfo(u), IsNew: isNew}, nil
+	return &user.CreateMemberResp{User: s.toUserInfoOut(ctx, u), IsNew: isNew}, nil
 }
 
 // ListAddresses 获取地址列表（附带社区名称，供 C 端按社区分组）
@@ -736,7 +736,7 @@ func (s *server) GetSiteConfig(ctx stdctx.Context, req *user.GetSiteConfigReq) (
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToSiteConfigInfo(row), nil
+	return s.toSiteConfigOut(ctx, row), nil
 }
 
 // SaveSiteConfig 保存站点设置，版本号递增以驱动网关缓存失效
@@ -745,5 +745,40 @@ func (s *server) SaveSiteConfig(ctx stdctx.Context, req *user.SaveSiteConfigReq)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	return service.ToSiteConfigInfo(row), nil
+	return s.toSiteConfigOut(ctx, row), nil
+}
+
+// toSiteConfigOut 出库统一补全品牌资源的完整访问 URL（logo/favicon，外链原样）
+//
+// 参数:
+//   - ctx: 上下文
+//   - row: 站点设置行
+//
+// 返回值:
+//   - *user.SiteConfigInfo: proto 站点设置（附件地址已拼完整 URL）
+func (s *server) toSiteConfigOut(ctx stdctx.Context, row *model.SiteConfig) *user.SiteConfigInfo {
+	info := service.ToSiteConfigInfo(row)
+	if info == nil {
+		return nil
+	}
+	info.LogoUrl = s.siteService.MediaURL(ctx, info.LogoUrl)
+	info.FaviconUrl = s.siteService.MediaURL(ctx, info.FaviconUrl)
+	return info
+}
+
+// toUserInfoOut 出库统一补全头像的完整访问 URL（外链原样）
+//
+// 参数:
+//   - ctx: 上下文
+//   - u: 用户模型
+//
+// 返回值:
+//   - *user.UserInfo: proto 用户信息（头像已拼完整 URL）
+func (s *server) toUserInfoOut(ctx stdctx.Context, u *model.User) *user.UserInfo {
+	info := service.ToUserInfo(u)
+	if info == nil {
+		return nil
+	}
+	info.Avatar = s.userService.MediaURL(ctx, info.Avatar)
+	return info
 }

@@ -279,6 +279,8 @@ export interface AttachmentMigrateItem {
   verified_at: string
   local_deleted_at: string
   created_at: string
+  /** 完整访问 URL（服务端按附件配置拼接，前端不自行拼装） */
+  url: string
 }
 
 /** 附件迁移条目列表响应 */

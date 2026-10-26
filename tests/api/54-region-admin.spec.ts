@@ -5,10 +5,12 @@ import { newAdminContext, assertOk, asList, type ApiResponse, type PageData } fr
  * 模块 54：行政区划管理
  * 覆盖（管理端 GET /admin/regions，需超管语境）：
  *   - 分页结构合法（page/page_size/total 与 items 一致）
- *   - keyword 筛选：名称（广东）与编码（44）双通道 LIKE
- *   - parent_code 筛选：北京市(11) 下级均为 level=2 且 parent_code=11
+ *   - keyword 筛选：名称（重庆）与编码（5001）双通道 LIKE
+ *   - parent_code 筛选：重庆市(50) 下级均为 level>=2 且 parent_code=50
  *   - level 筛选：level=1 均为省级
  *   - status 筛选：status=1 均为启用
+ * 数据口径：deploy/init.dev.sql 精简种子后 regions 仅保留重庆市（1 省级 + 37 区县），
+ * 用例一律以重庆为锚点；需要全国数据时在后台「行政区划 → 检查更新」同步
  * 覆盖（C 端 GET /regions/locate）：
  *   - 结构合法：code=0、province/city 为 null（回环定位未命中）、longitude/latitude 数字
  * 探索性（更新任务闭环，环境需访问外网数据源，失败不阻断）：
@@ -87,38 +89,36 @@ test.describe.serial('行政区划管理', () => {
   });
 
   test('2. keyword 名称与编码双通道筛选', async () => {
-    // 名称通道：广东
-    const byName = await listRegions({ page: 1, page_size: 50, keyword: '广东' });
-    expect(byName.total, '关键词「广东」应命中广东省').toBeGreaterThanOrEqual(1);
+    // 名称通道：重庆
+    const byName = await listRegions({ page: 1, page_size: 50, keyword: '重庆' });
+    expect(byName.total, '关键词「重庆」应命中重庆市').toBeGreaterThanOrEqual(1);
     for (const row of byName.items) {
-      const hit = String(row.name).includes('广东') || String(row.code).includes('广东');
+      const hit = String(row.name).includes('重庆') || String(row.code).includes('重庆');
       expect(hit, `命中行 ${row.code}/${row.name} 应与关键词相关`).toBe(true);
     }
-    // 编码通道：44（广东省前缀）
-    const byCode = await listRegions({ page: 1, page_size: 50, keyword: '44' });
+    // 编码通道：5001（重庆市辖区县码前缀）
+    const byCode = await listRegions({ page: 1, page_size: 50, keyword: '5001' });
     expect(byCode.total).toBeGreaterThanOrEqual(1);
     for (const row of byCode.items) {
-      const hit = String(row.code).includes('44') || String(row.name).includes('44');
+      const hit = String(row.code).includes('5001') || String(row.name).includes('5001');
       expect(hit, `命中行 ${row.code}/${row.name} 应与关键词相关`).toBe(true);
     }
   });
 
-  test('3. parent_code 筛选：北京市(11) 下级 parent_code 严格命中', async () => {
-    const children = await listRegions({ page: 1, page_size: 50, parent_code: '11' });
-    expect(children.total, '北京市应有下级区划').toBeGreaterThanOrEqual(1);
+  test('3. parent_code 筛选：重庆市(50) 下级 parent_code 严格命中', async () => {
+    const children = await listRegions({ page: 1, page_size: 50, parent_code: '50' });
+    expect(children.total, '重庆市应有下级区划').toBeGreaterThanOrEqual(1);
     for (const row of children.items) {
-      expect(row.parent_code, '父编码应全为 11').toBe('11');
-      expect(row.level, '下级层级应不低于 2（数据源存在直辖县挂省级下的 level=3 行）').toBeGreaterThanOrEqual(2);
+      expect(row.parent_code, '父编码应全为 50').toBe('50');
+      expect(row.level, '下级层级应不低于 2（直辖市口径：区县直接挂省级下，为 level=3）').toBeGreaterThanOrEqual(2);
     }
   });
 
-  test('4. level 筛选：level=1 均为省级且含北京/广东', async () => {
+  test('4. level 筛选：level=1 均为省级且含重庆市', async () => {
     const provinces = await listRegions({ page: 1, page_size: 100, level: 1 });
-    expect(provinces.total, '省级区划应存在').toBeGreaterThanOrEqual(2);
+    expect(provinces.total, '省级区划应存在').toBeGreaterThanOrEqual(1);
     for (const row of provinces.items) expect(row.level, '筛选 level=1 应严格命中').toBe(1);
-    const names = provinces.items.map((r) => r.name);
-    expect(names).toContain('北京市');
-    expect(names).toContain('广东省');
+    expect(provinces.items.map((r) => r.name)).toContain('重庆市');
   });
 
   test('5. status 筛选：status=1 均为启用', async () => {

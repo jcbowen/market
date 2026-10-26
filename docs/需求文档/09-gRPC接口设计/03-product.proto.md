@@ -411,7 +411,7 @@ message GetSkuByIdReq {
 
 message CreateSkuReq {
   int64 product_id = 1;
-  int64 community_id = 2;
+  int64 community_id = 2; // 仅作调用方的社区语境：落库的 SKU 归属社区取商品的 community_id（2026-10-26 加固，先校验商品存在/未软删且在权限范围内）
   string sku_code = 3;
   string spec_name = 4;
   string spec_json = 5;
@@ -574,12 +574,12 @@ message CreateStockCheckReq {
 
 message StockCheckItem {
   int64 sku_id = 1;
-  int32 actual_stock = 2;
+  int32 actual_stock = 2; // 实盘库存：0 是合法结果（该 SKU 已清空），负数拒绝；同一单内 sku_id 不能重复
 }
 
 message SubmitStockCheckReq {
   int64 id = 1;
-  repeated StockCheckItem items = 2;
+  repeated StockCheckItem items = 2; // 空明细拒绝
 }
 
 message StockCheckInfo {
@@ -1244,7 +1244,9 @@ message AttachmentMigrateDeleteBatchResp {
 - `DeleteAttachmentLocalVerified`：批量删除所有 verified 条目的本地文件，单个失败跳过不中断，返回实际删除数。
 - `ReleaseCoupon`：订单取消/退款时按 `order_id` 定位已核销的 user_coupon 回补（状态回未使用、UsedCount 原子递减），幂等可重入。
 - `GrantCoupon`：后台手动发放，逐人独立校验限领/总量/发放状态，单人不合格不影响其他人；`ListCouponRecords` 按社区语境过滤领取/发放记录，防跨社区泄露。
-- `DeductStock`/`ReleaseStock` 幂等：以 `stock_op_logs` 表 `uk_stock_op_order_sku_biz(order_id, sku_id, op_type, biz_no)` 复合唯一索引约束同一业务操作，同一业务号的重复扣减/释放请求（如 gRPC 超时重试）只会生效一次，防止重复扣减或重复回补。`ReleaseStockReq.biz_no` 为幂等业务号，由调用方按业务场景区分：退款释放传退款单号，取消/超时关单传 `cancel:{order_id}`，下单失败补偿传 `comp:{order_id}:{sku_id}`，使同一订单同一 SKU 的多笔部分释放各自独立生效（旧数据 `biz_no` 为空串，与 `DeductStock` 的缺省口径一致）。
+- `DeductStock`/`ReleaseStock` 幂等：以 `stock_op_logs` 表 `uk_stock_op_order_sku_biz(order_id, sku_id, op_type, biz_no)` 复合唯一索引约束同一业务操作，同一业务号的重复扣减/释放请求（如 gRPC 超时重试）只会生效一次，防止重复扣减或重复回补。`ReleaseStockReq.biz_no` 为幂等业务号，由调用方按业务场景区分：退款释放传退款单号，取消/超时关单传 `cancel:{order_id}`，下单失败补偿传 `comp:{order_id}`（整单一个槽位，2026-10-26 起随批量回补收敛），使同一订单同一 SKU 的多笔部分释放各自独立生效（旧数据 `biz_no` 为空串，与 `DeductStock` 的缺省口径一致）。
+- 回补入参校验（2026-10-26）：`releaseSkuLocked` 拒绝 `quantity <= 0`（`stock_op_logs.quantity` 是有符号 int，0/负数不会报错，会静默写进流水并让「释放」变成一次扣减，故在服务层直接拒绝）；`order_id != 0` 时按订单维度校验**累计回补 ≤ 累计扣减**（`assertReleaseWithinDeduct`，统计含本次）——唯一索引只防同一 `biz_no` 重放，跨槽位（取消 + 退款 + 补偿各占独立 `biz_no`）的重复回补必须由这道净上限拦住，否则货到付款单「先部分退款、再整单取消」会把同一 SKU 回补两次。`order_id = 0` 的表单调整类回补不适用该口径。
+- 库存交易与商品汇总列：扣减/回补（单条与批量）、入库、出库、盘点在同一事务内调用 `syncProductAggregates` 回写 `products` 的 `stock/min_price/max_price/min_original_price`，后台商品列表的「已售罄/库存紧张」Tab 直接依赖该列。
 - 免配送费四 RPC（List/Create/Update/GetActive）：活动按社区隔离，门槛与排除范围全量提交；`GetActiveFreeShipping` 供 C 端确认页与 order 服务 `PreviewFreeShipping` 试算共用。
 
 对应网关路由（admin，需 JWT）：

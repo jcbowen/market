@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -60,8 +59,10 @@ func (s *StockCheckService) CreateStockCheck(ctx context.Context, req *product.C
 //   - error: 错误信息
 func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.SubmitStockCheckReq) error {
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 单头加行锁（与采购/出入库同口径）：不加锁时两个并发提交都能通过 status=1 校验，
+		// 各建一份盘点明细并复写单据汇总
 		var check model.StockCheck
-		if err := tx.First(&check, req.Id).Error; err != nil {
+		if err := tx.Clauses(lockClause()).First(&check, req.Id).Error; err != nil {
 			return err
 		}
 		// 社区隔离强校验：管理端提交必传 community_id（>0 时校验盘点单归属社区），
@@ -82,7 +83,16 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 		// N 次加锁往返压成 1 次。归属社区取盘点单自身，杜绝把其他社区的 SKU
 		// 塞进本单以改写其库存
 		skuIDs := make([]int64, 0, len(req.Items))
+		seenSku := make(map[int64]bool, len(req.Items))
 		for _, item := range req.Items {
+			if item.ActualStock < 0 {
+				return invalidArg("实盘库存不能为负数")
+			}
+			// 同单重复 SKU 会被前一行改后的库存当作系统库存算差异，明细与差异口径双双失真
+			if seenSku[item.SkuId] {
+				return invalidArg("同一盘点单内 SKU 不能重复盘点")
+			}
+			seenSku[item.SkuId] = true
 			skuIDs = append(skuIDs, item.SkuId)
 		}
 		locked, err := lockSkus(tx, skuIDs, check.CommunityID)
@@ -160,11 +170,22 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 			}
 		}
 
-		check.Status = 2
-		check.TotalItems = int32(totalItems)
-		check.DiffItems = int32(diffItems)
-		check.UpdatedAt = now
-		return tx.Save(&check).Error
+		// 条件更新做二次守卫：单头虽已加锁，仍确保只有草稿态被本事务改走，
+		// RowsAffected=0 说明单据在锁等待期间已被并发提交或撤销
+		res := tx.Model(&model.StockCheck{}).Where("id = ? AND status = 1", check.ID).
+			Updates(map[string]interface{}{
+				"status":      2,
+				"total_items": int32(totalItems),
+				"diff_items":  int32(diffItems),
+				"updated_at":  now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.FailedPrecondition, "盘点单状态已变更，请刷新后重试")
+		}
+		return syncAggregatesForSkus(tx, locked)
 	})
 }
 
@@ -298,5 +319,5 @@ func ToStockCheckInfo(c *model.StockCheck) *product.StockCheckInfo {
 // 返回值：
 //   - string: 盘点单号
 func generateCheckNo() string {
-	return "PD" + time.Now().Format("20060102150405") + fmt.Sprintf("%04d", time.Now().Nanosecond()/1e5)
+	return generateBillNo("PD")
 }

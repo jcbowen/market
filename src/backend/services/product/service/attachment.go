@@ -17,7 +17,6 @@ import (
 	_ "golang.org/x/image/webp" // 注册 WebP 解码器
 	"log"
 	"math/big"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,10 +25,9 @@ import (
 
 	"google.golang.org/grpc/codes"
 
-	"github.com/jcbowen/jcbaseGo"
-	"github.com/jcbowen/jcbaseGo/component/attachment"
 	"github.com/jcbowen/jcbaseGo/component/attachment/remote"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"gorm.io/gorm"
 
@@ -249,7 +247,7 @@ func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.Attachm
 //   - req: 上传请求（含 admin_id、文件名与内容）
 //
 // 返回值:
-//   - *product.AttachmentInfo: 附件信息（url 为空，由 gateway 按请求域名拼接）
+//   - *product.AttachmentInfo: 附件信息（url 已按附件配置拼为完整地址）
 //   - error: 校验或保存失败时返回错误
 func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.UploadImageLocalReq) (*product.AttachmentInfo, error) {
 	cfg := s.getConfigCached(ctx)
@@ -289,6 +287,7 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 	if err == nil {
 		return &product.AttachmentInfo{
 			AttachId:   fmt.Sprintf("%d", hit.ID),
+			Url:        s.ToMediaURL(ctx, hit.Path),
 			RemotePath: hit.Path,
 			Size:       hit.Size,
 			Width:      int32(hit.Width),
@@ -302,8 +301,8 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 		return nil, err
 	}
 
-	// 落盘目录与 gateway 静态路由约定一致：<可执行文件目录>/attachment/<relPath>
-	root, err := attachmentRootDir()
+	// 落盘目录由附件配置 local_dir 驱动：<可执行文件目录>/<local_dir>/<relPath>
+	root, err := attachmentRootDir(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -335,6 +334,7 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 
 	return &product.AttachmentInfo{
 		AttachId:   fmt.Sprintf("%d", rec.ID),
+		Url:        s.ToMediaURL(ctx, rec.Path),
 		RemotePath: rec.Path,
 		Size:       rec.Size,
 		Width:      int32(rec.Width),
@@ -681,6 +681,7 @@ func toProtoConfigMasked(row *model.AttachmentConfig) *product.AttachmentConfig 
 	}
 	return &product.AttachmentConfig{
 		StorageType:          row.StorageType,
+		LocalDir:             row.LocalDir,
 		VisitDomain:          row.VisitDomain,
 		OssAccessKeyId:       row.OssAccessKeyId,
 		OssAccessKeySecret:   secret,
@@ -729,14 +730,16 @@ func buildOSSConfig(cfg *model.AttachmentConfig) (*remote.OSSConfig, error) {
 }
 
 // buildVisitURL 按配置拼接最终访问 URL
-// OSS 模式优先自定义访问域名，否则使用 bucket 域名；本地模式配置了域名同样拼接
+// OSS 模式优先自定义访问域名，否则使用 bucket 域名；本地模式拼 <visit_domain>/uploads/<path>，
+// 与 gateway /uploads 静态路由及 ToMediaURL 转换器口径一致
 //
 // 参数:
 //   - cfg: 附件配置行
 //   - relPath: 对象相对路径
 //
 // 返回值:
-//   - string: 访问 URL（本地模式未配置域名时返回空串，由 gateway 按请求域名拼接）
+//   - string: 访问 URL（local 模式 visit_domain 为空时返回空串；正常部署下 gateway
+//     会按部署域名自动补写 visit_domain，见 gateway syncAttachmentVisitDomain）
 func buildVisitURL(cfg *model.AttachmentConfig, relPath string) string {
 	if cfg.StorageType == "oss" {
 		if cfg.OssCustomVisitDomain != "" {
@@ -745,7 +748,8 @@ func buildVisitURL(cfg *model.AttachmentConfig, relPath string) string {
 		return fmt.Sprintf("https://%s.%s/", cfg.OssBucketName, cfg.OssEndpoint) + relPath
 	}
 	if cfg.VisitDomain != "" {
-		return cfg.VisitDomain + relPath
+		// URL 路径段与落盘目录共用 local_dir（jcbaseGo LocalDir 设计）
+		return ensureTrailingSlash(cfg.VisitDomain) + attachmenturl.LocalDirName(cfg.LocalDir) + "/" + relPath
 	}
 	return ""
 }
@@ -792,17 +796,25 @@ func buildObjectPath(ext string, now time.Time) (string, error) {
 }
 
 // attachmentRootDir 获取本地附件根目录
-// 固定为可执行文件同级 attachment/ 目录，与 gateway 静态路由 /uploads 的映射保持一致
+// 目录名由附件配置 local_dir 驱动（对齐 jcbaseGo LocalDir 设计：落盘目录名 = URL 路径段），
+// 与 gateway 静态路由的挂载保持一致；配置不可用时回默认 uploads
+//
+// 参数:
+//   - cfg: 附件配置，可为 nil（回默认目录名）
 //
 // 返回值:
 //   - string: 附件根目录绝对路径
 //   - error: 定位可执行文件失败时返回错误
-func attachmentRootDir() (string, error) {
+func attachmentRootDir(cfg *model.AttachmentConfig) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("定位可执行文件失败: %w", err)
 	}
-	return filepath.Join(filepath.Dir(exe), "attachment"), nil
+	dir := attachmenturl.DefaultLocalDir
+	if cfg != nil && cfg.LocalDir != "" {
+		dir = strings.Trim(cfg.LocalDir, "/")
+	}
+	return filepath.Join(filepath.Dir(exe), dir), nil
 }
 
 // fileMD5 计算文件内容的 MD5（32 位小写十六进制）
@@ -998,62 +1010,51 @@ func ensureTrailingSlash(domain string) string {
 }
 
 // ==================== 图片 URL 统一转换 ====================
-// 数据库仅存附件相对路径（remote_path 形态，如 images/2026/10/11/xxx.jpg，不含 uploads 目录前缀）：
-// 入库前经 ToSourcePath 剥离域名，出库前经 ToMediaURL 拼接完整访问地址。
-// local 模式拼接为 <visit_domain>/uploads/<path>（与 gateway /uploads 静态路由一致），
-// 未配置 visit_domain 时兜底为站内绝对路径 /uploads/<path>，
-// oss 模式拼接为 <自定义 CDN 域名或 bucket 域名>/<path>
+// 口径总纲与实现见 common/attachmenturl 包（全系统公共能力，order 等服务共用）：
+// 数据库仅存附件相对路径，入库前经 SourcePath 剥离，出库前经 ToMediaURL 拼完整地址。
+// 本服务保留的方法是公共能力的薄委托：配置读取继续走本服务的 getConfigCached
+// （与上传/保存共用同一份缓存与失效联动），转换与归一化全部下沉到公共包
 
-// attachmentConverter 按附件配置构造 jcbaseGo 附件转换器
-// 直接以字面量构造 Attachment（不走 New），BaseConfig 字段由本方法保证规范性
+// commonAttachmentConfig 将附件配置行转换为公共包配置结构
 //
 // 参数:
-//   - cfg: 附件配置行，nil 时返回 nil（调用方需兜底原样返回）
+//   - cfg: 附件配置行
 //
 // 返回值:
-//   - *attachment.Attachment: 附件转换器实例
-func attachmentConverter(cfg *model.AttachmentConfig) *attachment.Attachment {
+//   - *attachmenturl.Config: 公共配置；入参 nil 时返回 nil
+func commonAttachmentConfig(cfg *model.AttachmentConfig) *attachmenturl.Config {
 	if cfg == nil {
 		return nil
 	}
-	base := &jcbaseGo.AttachmentStruct{
-		StorageType:      cfg.StorageType,
-		LocalDir:         "uploads",
-		LocalVisitDomain: ensureTrailingSlash(cfg.VisitDomain),
+	return &attachmenturl.Config{
+		StorageType:          cfg.StorageType,
+		LocalDir:             cfg.LocalDir,
+		VisitDomain:          cfg.VisitDomain,
+		OssCustomVisitDomain: cfg.OssCustomVisitDomain,
+		OssBucketName:        cfg.OssBucketName,
+		OssEndpoint:          cfg.OssEndpoint,
 	}
-	if cfg.StorageType == "oss" {
-		domain := cfg.OssCustomVisitDomain
-		if domain == "" {
-			domain = fmt.Sprintf("https://%s.%s/", cfg.OssBucketName, cfg.OssEndpoint)
-		}
-		base.VisitDomain = ensureTrailingSlash(domain)
-	}
-	return &attachment.Attachment{BaseConfig: base}
 }
 
 // mediaConverter 取当前可用的图片 URL 转换器
-// 配置缺失，或 local 模式未填访问域名时返回 nil，调用方按 fallbackMediaURL 以
-// /uploads/<path> 站内绝对路径兜底
+// 配置缺失，或 local 模式未填访问域名（补写尚未完成的异常窗口）时返回 nil，
+// 调用方按 fallbackMediaURL 以 /uploads/<path> 站内绝对路径临时兜底并告警
 //
 // 参数:
 //   - ctx: 上下文
 //
 // 返回值:
-//   - *attachment.Attachment: 附件转换器；不可用时返回 nil
-func (s *AttachmentService) mediaConverter(ctx context.Context) *attachment.Attachment {
-	conv := attachmentConverter(s.getConfigCached(ctx))
-	if conv == nil || (conv.BaseConfig.StorageType != "oss" && conv.BaseConfig.LocalVisitDomain == "") {
-		return nil
-	}
-	return conv
+//   - *attachmenturl.Converter: 转换器；不可用时返回 nil
+func (s *AttachmentService) mediaConverter(ctx context.Context) *attachmenturl.Converter {
+	return attachmenturl.NewConverter(commonAttachmentConfig(s.getConfigCached(ctx)))
 }
 
 // ToMediaURL 将入库相对路径补全为完整访问 URL
-// 拼装优先级（三层递进，均无需迁移存量记录）：
-//  1. 空值与 http(s)/协议相对完整 URL、/ 开头的站内绝对路径（含 /uploads/seed 演示素材）原样返回，
-//     避免被转换器二次拼接出 /uploads/uploads/ 双前缀（ToMedia 会剥 / 后重补 uploads/ 目录）
-//  2. 配置了访问域名（local 的 visit_domain / OSS 的自定义或 bucket 域名）→ 拼 <域名>/uploads/<path> 或 <域名>/<path>
-//  3. local 未配置访问域名或配置缺失 → 拼站内绝对路径 /uploads/<path>（网关静态路由兜底，浏览器不随页面路径解析）
+// 拼装规则（均无需迁移存量记录）：
+//  1. 外链 URL（http/https/协议相对）与未知 / 开头绝对路径原样返回
+//  2. 其余形态（相对路径、/uploads/ 与 uploads/ 前缀路径，含 /uploads/seed 演示素材）
+//     归一为相对路径后拼接：<域名>/uploads/<path>（local）或 <域名>/<path>（oss）
+//  3. local 模式 visit_domain 未就绪（补写尚未完成）→ 临时拼站内相对路径 /uploads/<path> 并告警
 //
 // 参数:
 //   - ctx: 上下文
@@ -1062,46 +1063,15 @@ func (s *AttachmentService) mediaConverter(ctx context.Context) *attachment.Atta
 // 返回值:
 //   - string: 完整访问 URL
 func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
-	if src == "" || isAbsoluteMediaRef(src) {
-		return src
+	rel, passthrough := attachmenturl.RelPath(src)
+	if passthrough {
+		return rel
 	}
-	// 存量 uploads/ 目录前缀形态归一为相对路径（转换器/兜底统一补 /uploads/ 前缀）
-	src = strings.TrimPrefix(src, "uploads/")
 	conv := s.mediaConverter(ctx)
 	if conv == nil {
-		return "/uploads/" + src
+		return attachmenturl.FallbackURL(src)
 	}
-	return conv.ToMedia(src)
-}
-
-// isAbsoluteMediaRef 判断是否为无需拼装的绝对引用形态
-// 完整 URL（http/https/协议相对）与 / 开头的站内绝对路径（含 /uploads/seed/** 演示素材）原样可用
-//
-// 参数:
-//   - src: 附件地址
-//
-// 返回值:
-//   - bool: 绝对引用返回 true
-func isAbsoluteMediaRef(src string) bool {
-	return strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") ||
-		strings.HasPrefix(src, "//") || strings.HasPrefix(src, "/")
-}
-
-// fallbackMediaURL 附件访问域名不可用时的兜底拼装
-// 返回站内绝对路径 /uploads/<path>：网关 /uploads 静态路由承接，且不随浏览器当前页面
-// 路径解析（SPA 子路径如 /b/ 下不会错拼成 /b/images/...）
-//
-// 参数:
-//   - src: 相对路径或存量完整 URL
-//
-// 返回值:
-//   - string: 站内绝对路径；已是完整 URL 或 / 开头路径时原样返回
-func fallbackMediaURL(src string) string {
-	if src == "" || isAbsoluteMediaRef(src) {
-		return src
-	}
-	// uploads/ 目录前缀形态归一为 /uploads/，其余相对路径补 /uploads/ 前缀
-	return "/uploads/" + strings.TrimPrefix(src, "uploads/")
+	return conv.ToMedia(rel)
 }
 
 // ToMediaURLs ToMediaURL 的批量版本
@@ -1120,27 +1090,22 @@ func (s *AttachmentService) ToMediaURLs(ctx context.Context, list []string) []st
 	conv := s.mediaConverter(ctx)
 	out := make([]string, 0, len(list))
 	for _, src := range list {
-		if src == "" {
-			out = append(out, src)
+		rel, passthrough := attachmenturl.RelPath(src)
+		if passthrough {
+			out = append(out, rel)
 			continue
 		}
 		if conv == nil {
-			out = append(out, fallbackMediaURL(src))
+			out = append(out, attachmenturl.FallbackURL(src))
 			continue
 		}
-		out = append(out, conv.ToMedia(src))
+		out = append(out, conv.ToMedia(rel))
 	}
 	return out
 }
 
 // ToSourcePath 将图片地址归一化为入库相对路径（remote_path 形态，不含 uploads 前缀）
-// 规则：
-//   - 本站附件地址（path 以 /uploads/ 开头，或纯路径以 uploads/ 开头）→ 剥离为相对路径
-//   - OSS/CDN URL（域名命中附件配置候选）→ 剥离为对象 Key
-//   - 其他外链 URL（如 placehold.co 占位图）→ 原样保存，出库时同样原样返回，保证外链图可用
-//
-// 未复用 jcbaseGo ToSource 全量逻辑的原因：其域名候选依赖附件配置中的固定域名，
-// 剥不掉按请求域名动态拼接的存量 URL，本站路径改由 url.Parse 提取，配置候选仅用于 OSS 域名剥离
+// 实现下沉在 common/attachmenturl.SourcePath（全系统公共口径），本方法为薄委托
 //
 // 参数:
 //   - ctx: 上下文
@@ -1156,33 +1121,7 @@ func (s *AttachmentService) ToMediaURLs(ctx context.Context, list []string) []st
 //	ToSourcePath("https://cdn.example.com/images/a.jpg")（CDN 域名已配置）  => "images/a.jpg"
 //	ToSourcePath("https://placehold.co/300x300?text=Tomato")               => 原样返回
 func (s *AttachmentService) ToSourcePath(ctx context.Context, src string) string {
-	if src == "" {
-		return ""
-	}
-	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		// 本站附件：path 以 /uploads/ 开头，直接提取相对路径（query/锚点丢弃）
-		if u, err := url.Parse(src); err == nil {
-			if rel, ok := strings.CutPrefix(u.Path, "/uploads/"); ok {
-				return rel
-			}
-		}
-		// OSS/CDN：域名命中附件配置候选时剥离为对象 Key，未命中的外链原样保存
-		// （不用 ToSource：其未命中候选也会剥除查询参数，会破坏外链 URL）
-		if conv := attachmentConverter(s.getConfigCached(ctx)); conv != nil {
-			for _, domain := range []string{conv.BaseConfig.VisitDomain, conv.BaseConfig.LocalVisitDomain} {
-				if domain == "" || domain == "/" || !strings.HasPrefix(src, domain) {
-					continue
-				}
-				return strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(src, domain), "/"), "uploads/")
-			}
-		}
-		return src
-	}
-	// 纯路径形态：剥离开头的 / 与 uploads/ 目录前缀
-	if _, rest, ok := strings.Cut(strings.Trim(src, "/"), "uploads/"); ok {
-		return rest
-	}
-	return src
+	return attachmenturl.SourcePath(commonAttachmentConfig(s.getConfigCached(ctx)), src)
 }
 
 // ToSourcePaths ToSourcePath 的批量版本

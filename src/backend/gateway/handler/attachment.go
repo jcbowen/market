@@ -83,7 +83,7 @@ func limitUploadBody(c *gin.Context) {
 
 // UploadImage 本地模式图片上传
 // 接收 multipart 文件后转发给 product 服务落盘并写附件记录；
-// 本地模式访问 URL 由本方法按请求域名动态拼接（<scheme>://<host>/uploads/<path>）
+// url 由 product 服务按附件配置统一拼为完整地址，本方法直接透传
 //
 // 接口: POST /api/v1/admin/upload/image（multipart，字段名 file）
 //
@@ -124,15 +124,10 @@ func (h *AttachmentHandler) UploadImage(c *gin.Context) {
 		return
 	}
 
-	// 本地模式 url 为空，按当前请求域名动态拼接，域名变更无需迁移记录
-	url := resp.Url
-	if url == "" && resp.RemotePath != "" {
-		url = baseURLOf(c) + "/uploads/" + resp.RemotePath
-	}
-
+	// url 已由 product 服务按附件配置拼为完整地址，直接透传
 	response.Success(c, gin.H{
 		"attach_id":   resp.AttachId,
-		"url":         url,
+		"url":         resp.Url,
 		"remote_path": resp.RemotePath,
 		"size":        resp.Size,
 		"width":       resp.Width,
@@ -220,19 +215,6 @@ func (h *AttachmentHandler) ListAttachments(c *gin.Context) {
 		return
 	}
 	response.Success(c, resp)
-}
-
-// baseURLOf 获取附件外链的基础地址
-// 一律以生效的部署域名为准（站点设置优先，未配置时回落 SITE_BASE_URL，再回落按当前请求现推），
-// 保证后台/POS 与 C 端拿到的外链在同一域名下，跨端口访问不会拼出错误 host
-//
-// 参数:
-//   - c: gin 上下文
-//
-// 返回值:
-//   - string: 形如 http(s)://host 的基础地址
-func baseURLOf(c *gin.Context) string {
-	return platformBaseURL(c)
 }
 
 // --- 附件迁移（本地 → OSS） ---

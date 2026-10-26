@@ -145,7 +145,8 @@ const columns: DataTableColumns<AttachmentMigrateItem> = [
         return h('div', { class: 'thumb-placeholder' }, row.status === 'orphan' ? '孤儿' : '已删除')
       }
       return h('img', {
-        src: `/uploads/${row.path}`, class: 'thumb',
+        // 完整 URL 由服务端按附件配置拼接（本地模式未配域名时为站内 /uploads/ 路径）
+        src: row.url, class: 'thumb',
         onError: (e: Event) => { (e.target as HTMLImageElement).style.visibility = 'hidden' },
       })
     },

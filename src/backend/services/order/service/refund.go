@@ -1343,7 +1343,7 @@ func (s *RefundService) queryRefundFlowStatus(ctx context.Context, refund *model
 // 事务内调 RPC 会让退款单/订单的行锁横跨网络往返（并发退款互相阻塞、连接池被拖垮），
 // 更糟的是「RPC 已成功、事务随后回滚」会在 product 侧留下无对应的回补流水。
 // 事务内只组装事实（订单 ID、明细、幂等槽位、是否整单退），提交后再统一调用，
-// 失败由 runRefundEffect 有限重试并打 [CRITICAL] 告警
+// 失败由 runPostCommitEffect 有限重试并打 [CRITICAL] 告警
 // 参数：
 //   - ctx: 上下文
 //   - refund: 退款单（须处于退款中状态）
@@ -1447,10 +1447,10 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 	}
 
 	// 事务提交成功后再执行跨服务副作用与销量回退（失败均不回滚已提交的退款）
-	_ = runRefundEffect(ctx, "回补库存", fmt.Sprintf("order_id=%d biz_no=%s", stockOrderID, stockBizNo),
+	_ = runPostCommitEffect(ctx, "回补库存", fmt.Sprintf("order_id=%d biz_no=%s", stockOrderID, stockBizNo),
 		func(c context.Context) error { return releaseStockBatch(c, stockOrderID, stockItems, stockBizNo) })
 	if couponOrderID > 0 {
-		_ = runRefundEffect(ctx, "回补优惠券", fmt.Sprintf("order_id=%d", couponOrderID),
+		_ = runPostCommitEffect(ctx, "回补优惠券", fmt.Sprintf("order_id=%d", couponOrderID),
 			func(c context.Context) error {
 				_, err := grpcclient.ProductClient.ReleaseCoupon(c, &product.ReleaseCouponReq{OrderId: couponOrderID})
 				return err
@@ -1464,22 +1464,26 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 	return nil
 }
 
-// 退款收尾跨服务调用的重试节奏
+// 事务提交后跨服务副作用的重试节奏
 const (
-	// refundEffectRetry 单笔副作用的最大尝试次数
-	refundEffectRetry = 3
-	// refundEffectRetryGap 重试间隔；product 侧抖动通常在百毫秒级恢复
-	refundEffectRetryGap = 100 * time.Millisecond
+	// postEffectRetry 单项收尾动作的最大尝试次数
+	postEffectRetry = 3
+	// postEffectRetryGap 重试间隔；product 侧抖动通常在百毫秒级恢复
+	postEffectRetryGap = 100 * time.Millisecond
+	// postEffectTimeout 收尾动作的整体预算：调用方 ctx 可能已因客户端断连被取消，
+	// 收尾必须脱离该信号另行计时，否则「事务已提交、收尾必然失败」会留下永久错账
+	postEffectTimeout = 5 * time.Second
 )
 
-// runRefundEffect 在退款主事务提交后执行一项跨服务副作用（库存回补 / 优惠券回补）
-// 只做「有限次重试 + 失败告警」，绝不回滚已提交的退款：退款钱已经退给用户，
-// 收尾动作不能让调用方误以为退款失败而重复退款。
+// runPostCommitEffect 在本地事务提交后执行一项跨服务副作用（库存回补 / 优惠券回补）
+// 只做「有限次重试 + 失败告警」，绝不回滚已提交的本地事务：钱已退、单已取消，
+// 收尾动作不能让调用方误以为业务失败而重复操作。
 // product 侧以 order_id+sku_id+op_type+biz_no 唯一键去重（退款场景 biz_no=退款单号，
 // 优惠券按 order_id+status 幂等），因此重复调用只生效一次，重试是安全的；
-// 三次仍失败时打 [CRITICAL] 日志并带上幂等槽位，运维按同一 biz_no 手工补做即可对齐
+// 三次仍失败时打 [CRITICAL] 日志并带上幂等槽位：调用方若已把它接入调度器重试队列
+// （取消收尾 cancel_release 即如此）则等自动重放，否则按同一 biz_no 手工补做即可对齐
 // 参数：
-//   - ctx: 上下文
+//   - ctx: 上下文（内部会脱离取消信号，调用方断连不影响收尾）
 //   - name: 动作名，用于日志定位（如「回补库存」）
 //   - detail: 定位信息（订单号 / 退款单号 / 幂等槽位），写进日志便于人工补做
 //   - fn: 实际的跨服务调用
@@ -1488,22 +1492,45 @@ const (
 //   - error: 全部尝试失败时返回最后一次错误；任一成功即返回 nil
 //
 // 使用示例：
-//   - err := runRefundEffect(ctx, "回补库存", "order_id=12 biz_no=RF20261021001",
+//   - err := runPostCommitEffect(ctx, "回补库存", "order_id=12 biz_no=RF20261021001",
 //   - func(c context.Context) error { return releaseStockBatch(c, 12, items, "RF20261021001") })
-func runRefundEffect(ctx context.Context, name, detail string, fn func(context.Context) error) error {
+func runPostCommitEffect(ctx context.Context, name, detail string, fn func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postEffectTimeout)
+	defer cancel()
+
 	var last error
-	for i := 0; i < refundEffectRetry; i++ {
+	for i := 0; i < postEffectRetry; i++ {
 		if last = fn(ctx); last == nil {
 			return nil
 		}
-		log.Printf("[refund] 退款收尾%s失败（第 %d/%d 次）%s: %v", name, i+1, refundEffectRetry, detail, last)
-		if i == refundEffectRetry-1 {
+		log.Printf("[order] 收尾%s失败（第 %d/%d 次）%s: %v", name, i+1, postEffectRetry, detail, last)
+		if i == postEffectRetry-1 {
 			break
 		}
-		time.Sleep(refundEffectRetryGap)
+		if err := sleepWithContext(ctx, postEffectRetryGap); err != nil {
+			break
+		}
 	}
-	log.Printf("[CRITICAL] 退款收尾%s最终失败，退款单已置成功而该项未生效，请按幂等槽位人工补做：%s: %v", name, detail, last)
+	log.Printf("[CRITICAL] 收尾%s最终失败，本地事务已提交而该项未生效，请按幂等槽位补做（自动重放队列已接住的记录会自行重试）：%s: %v", name, detail, last)
 	return last
+}
+
+// sleepWithContext 可被上下文取消的短暂等待（收尾重试间隔）
+// 参数：
+//   - ctx: 上下文
+//   - d: 等待时长
+//
+// 返回值：
+//   - error: 上下文结束（取消/超时）时返回其错误
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // adjustRefundSales 退款成功后按明细回退销量（净成交口径）

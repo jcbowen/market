@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
 
@@ -16,10 +17,10 @@ import (
  *
  * 覆盖（对应 E4「附件配置真内存缓存」后的行为契约）：
  *   - configCacheFresh 有效期内命中缓存、过期后失效（列表逐行取 URL 不再每行查库的前提）
- *   - ToMediaURL local 模式拼 <访问域名>/uploads/<相对路径>
+ *   - ToMediaURL local 模式拼 <访问域名>/uploads/<相对路径>（含 /uploads/seed 演示素材归一重拼）
  *   - ToMediaURL oss 模式优先自定义 CDN 域名，缺省回落 bucket.endpoint 域名
- *   - ToMediaURL 对空值、存量完整 URL、/ 开头站内绝对路径原样返回（优先于转换器，防 /uploads/ 二次拼接）
- *   - local 未配置访问域名/配置缺失时兜底拼 /uploads/<相对路径>，不原样返回裸相对路径
+ *   - ToMediaURL 对空值、外链完整 URL、未知 / 开头绝对路径原样返回
+ *   - local 未配置访问域名（补写未完成的异常窗口）时兜底拼 /uploads/<相对路径>，不原样返回裸相对路径
  *   - 存量 uploads/ 目录前缀形态统一归一：配置域名时单次拼接、兜底时归一为 /uploads/
  *   - ToMediaURLs 整批共用一次配置读取，降级时逐项兜底
  *
@@ -101,9 +102,9 @@ func TestAttachmentToMediaURL(t *testing.T) {
 		if got := svc.ToMediaURL(ctx, "uploads/images/a.jpg"); got != "https://m.example.com/uploads/images/a.jpg" {
 			t.Errorf("uploads/ 目录前缀应归一后单次拼接: %q", got)
 		}
-		// / 开头站内绝对路径（含 /uploads/seed 演示素材）原样返回，转换器不得二次拼接
-		if got := svc.ToMediaURL(ctx, "/uploads/seed/products/pickle.png"); got != "/uploads/seed/products/pickle.png" {
-			t.Errorf("/ 开头站内绝对路径应原样返回: %q", got)
+		// /uploads/ 前缀（含 /uploads/seed 演示素材）归一为相对路径后按配置拼接为完整地址
+		if got := svc.ToMediaURL(ctx, "/uploads/seed/products/pickle.png"); got != "https://m.example.com/uploads/seed/products/pickle.png" {
+			t.Errorf("/uploads/ 前缀应归一后拼接完整地址: %q", got)
 		}
 		if got := svc.ToMediaURL(ctx, ""); got != "" {
 			t.Errorf("空路径应返回空串: %q", got)
@@ -131,23 +132,23 @@ func TestAttachmentToMediaURL(t *testing.T) {
 	})
 
 	t.Run("降级纯函数口径", func(t *testing.T) {
-		// fallbackMediaURL 为纯函数，配置缺失/无法连库等任何走不到转换器的场景共用此口径
-		if got := fallbackMediaURL("images/a.jpg"); got != "/uploads/images/a.jpg" {
+		// FallbackURL 为纯函数（common/attachmenturl），配置缺失/补写未完成等任何走不到转换器的场景共用此口径
+		if got := attachmenturl.FallbackURL("images/a.jpg"); got != "/uploads/images/a.jpg" {
 			t.Errorf("相对路径应补 /uploads/ 前缀: %q", got)
 		}
-		if got := fallbackMediaURL("uploads/images/a.jpg"); got != "/uploads/images/a.jpg" {
+		if got := attachmenturl.FallbackURL("uploads/images/a.jpg"); got != "/uploads/images/a.jpg" {
 			t.Errorf("uploads/ 目录前缀应归一为 /uploads/: %q", got)
 		}
-		if got := fallbackMediaURL("https://other.example.com/x.jpg"); got != "https://other.example.com/x.jpg" {
+		if got := attachmenturl.FallbackURL("https://other.example.com/x.jpg"); got != "https://other.example.com/x.jpg" {
 			t.Errorf("完整 URL 应原样返回: %q", got)
 		}
-		if got := fallbackMediaURL("//cdn.example.com/x.jpg"); got != "//cdn.example.com/x.jpg" {
+		if got := attachmenturl.FallbackURL("//cdn.example.com/x.jpg"); got != "//cdn.example.com/x.jpg" {
 			t.Errorf("协议相对 URL 应原样返回: %q", got)
 		}
-		if got := fallbackMediaURL("/uploads/seed/products/a.png"); got != "/uploads/seed/products/a.png" {
-			t.Errorf("/ 开头站内绝对路径应原样返回: %q", got)
+		if got := attachmenturl.FallbackURL("/uploads/seed/products/a.png"); got != "/uploads/seed/products/a.png" {
+			t.Errorf("/uploads/ 前缀应归一为 /uploads/: %q", got)
 		}
-		if got := fallbackMediaURL(""); got != "" {
+		if got := attachmenturl.FallbackURL(""); got != "" {
 			t.Errorf("空值应返回空串: %q", got)
 		}
 	})

@@ -65,7 +65,7 @@ func CanVerifyAttachmentStatus(status string) bool {
 }
 
 // AttachmentMigrateItem 本地附件迁移 OSS 任务条目模型
-// 由「附件配置 → 本地附件迁移」工具维护：扫描本地 attachment/ 目录与
+// 由「附件配置 → 本地附件迁移」工具维护：扫描本地 uploads/ 目录（local_dir，默认 uploads）与
 // attachment 表匹配后生成清单，迁移/验证/删除本地文件均按条目逐个执行，
 // 状态机见上方 MigrateStatus* 常量；孤儿文件同样入表（orphan 状态）便于前端展示
 //

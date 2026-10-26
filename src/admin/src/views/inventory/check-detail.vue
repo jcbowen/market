@@ -26,7 +26,7 @@
 <script setup lang="ts">
 import { ref, onMounted, h } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NInputNumber } from 'naive-ui'
+import { NButton, NInputNumber, createDiscreteApi } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getInventoryCheckDetail, submitInventoryCheck } from '@/api/inventory'
 import SkuPicker from './components/SkuPicker.vue'
@@ -39,6 +39,7 @@ import type { Sku, StockCheckDetail, StockCheckItem } from '@/api/types'
  */
 const route = useRoute()
 const tabsStore = useTabsStore()
+const { message, dialog } = createDiscreteApi(['message', 'dialog'])
 const id = Number(route.params.id)
 const detail = ref<StockCheckDetail | null>(null)
 const submitting = ref(false)
@@ -136,7 +137,29 @@ function removeItem(index: number) {
   detail.value.items.splice(index, 1)
 }
 
-async function submit() {
+/**
+ * 提交盘点结果：先拦空明细，再二次确认
+ * 盘点按差异直接改写库存（并影响移动加权成本），提交后不可撤销，
+ * 误点一次就可能把整单账面库存清零，故必须确认；空明细服务端同样会拒，前置提示更省事
+ */
+function submit() {
+  if (!detail.value) return
+  if (detail.value.items.length === 0) {
+    message.warning('请先添加盘点项')
+    return
+  }
+  dialog.warning({
+    title: '确认提交盘点结果',
+    content: `本次盘点共 ${detail.value.items.length} 个 SKU，提交后系统库存将按差异立即调整且不可撤销，确认提交？`,
+    positiveText: '确认提交',
+    negativeText: '再看看',
+    onPositiveClick: () => {
+      void doSubmit()
+    },
+  })
+}
+
+async function doSubmit() {
   if (!detail.value) return
   const items = detail.value.items.map((item) => ({
     sku_id: item.sku_id,

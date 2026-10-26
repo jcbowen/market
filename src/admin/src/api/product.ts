@@ -211,15 +211,3 @@ export function getProductByBarcode(code: string) {
     method: 'GET',
   })
 }
-
-/**
- * 获取商品 SKU 列表
- * @param productId 商品 ID
- * @returns SKU 列表
- */
-export function getSkuList(productId: number) {
-  return request<ApiResult<Sku[]>>({
-    url: `/api/v1/admin/products/${productId}/skus`,
-    method: 'GET',
-  })
-}

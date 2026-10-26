@@ -5,7 +5,7 @@ services:
   # 全部服务统一 restart: unless-stopped：宿主机重启或 OOM 后自愈，
   # 与 docs/需求文档/10-部署方案 中 all-in-one 的 --restart unless-stopped 口径一致
   # 微服务容器以非 root（UID 10001）运行：Linux 部署时宿主写目录需执行
-  # chown -R 10001:10001 bin/runtime bin/attachment（Docker Desktop 无需处理）
+  # chown -R 10001:10001 bin/runtime bin/uploads（Docker Desktop 无需处理）
   mysql:
     image: mysql:8.0
     container_name: market-mysql
@@ -99,7 +99,7 @@ services:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
       # 本地附件共享目录：product 落盘与 gateway /uploads 静态服务共用同一宿主目录，
       # 目录不存在时由启动脚本或 Docker 自动创建
-      - ./bin/attachment:/app/attachment
+      - ./bin/uploads:/app/uploads
     command: >
       sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
 
@@ -135,7 +135,7 @@ services:
       # 本地附件共享目录：order 导出 CSV 落盘与 gateway 下载流式下发共用同一宿主目录，
       # 与 product-service 的挂载保持一致；缺此挂载时导出文件写进容器临时层，
       # gateway 侧 c.File 找不到文件，下载恒 404（2026-10-24 下载中心联调实测）
-      - ./bin/attachment:/app/attachment
+      - ./bin/uploads:/app/uploads
     command: >
       sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
 
@@ -259,7 +259,7 @@ services:
       - ./bin/runtime:/app/runtime
       # 本地附件共享目录：与 product-service 挂载同一宿主目录，
       # /uploads 静态路由（<exe 同级>/attachment）读取 product 落盘的附件
-      - ./bin/attachment:/app/attachment
+      - ./bin/uploads:/app/uploads
       # IP 定位数据库（GeoLite2-City）：由 geoip-download（go run ./cmd/geoip-download
       # 或发布包内二进制）下载更新（不入 git），目录未初始化时 IP 定位接口优雅降级；
       # 挂载可写，缺失时容器内亦可自动补下载

@@ -19,8 +19,8 @@
 #      （admin-init 任务自动初始化超管账号，凭据输出到其容器日志：
 #        docker compose -f docker-compose.prod.yml logs admin-init）
 #   3. Linux 宿主需预先授权挂载写目录（容器以 UID 10001 运行）：
-#        mkdir -p data/logs/{user-service,product-service,order-service,cart-service,payment-service,gateway} data/attachment data/gateway-runtime data/geoip
-#        chown -R 10001:10001 data/logs data/attachment data/gateway-runtime data/geoip
+#        mkdir -p data/logs/{user-service,product-service,order-service,cart-service,payment-service,gateway} data/uploads data/gateway-runtime data/geoip
+#        chown -R 10001:10001 data/logs data/uploads data/gateway-runtime data/geoip
 #
 # 配置定制（可选）：默认各容器从镜像内置模板 config.docker.yaml 自播种（db/redis
 # host 指向本文件的 mysql/redis 服务名，口令经环境变量注入，无需手改配置）。
@@ -117,7 +117,7 @@ services:
         condition: service_healthy
     volumes:
       # 附件共享目录：product 落盘与 gateway /uploads 静态服务共用同一宿主目录
-      - ./data/attachment:/app/attachment
+      - ./data/uploads:/app/uploads
       - ./data/logs/product-service:/app/logs
       # - ./data/config.yaml:/app/config.yaml:ro
     logging: *default_logging
@@ -243,7 +243,7 @@ services:
       # 运行时配置持久化：支付设置等写回 runtime/config.yaml，容器重启不丢失。
       # CONFIG_FILE 已在下方显式指向该文件（入口脚本缺失时自动从模板播种）
       - ./data/gateway-runtime:/app/runtime
-      - ./data/attachment:/app/attachment
+      - ./data/uploads:/app/uploads
       # IP 定位数据库：gateway 容器缺失时后台自动下载（geoip-download），优雅降级
       - ./data/geoip:/app/data/geoip
       - ./data/logs/gateway:/app/logs

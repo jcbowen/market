@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/proto/cart"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -22,6 +23,8 @@ type server struct {
 	cart.UnimplementedCartServiceServer
 	db            *mysql.Instance
 	productClient product.ProductServiceClient
+	// attachmentLoader 附件配置读取器：商品图快照入库归一与出库重拼共用
+	attachmentLoader *attachmenturl.Loader
 }
 
 // newServer 创建购物车服务 gRPC 实现
@@ -32,7 +35,7 @@ type server struct {
 // 返回值：
 //   - *server: gRPC 服务实现
 func newServer(db *mysql.Instance, productClient product.ProductServiceClient) *server {
-	return &server{db: db, productClient: productClient}
+	return &server{db: db, productClient: productClient, attachmentLoader: attachmenturl.NewLoader(db.GetDb())}
 }
 
 // GetCart 获取购物车列表
@@ -126,9 +129,10 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 	}
 
 	if err := s.upsertCartItem(ctx, req.UserId, req.CommunityId, skuInfo.ProductId, req.SkuId, req.Quantity, &cartSnapshot{
-		ProductName:  productInfo.Product.Name,
-		SpecName:     skuInfo.SpecName,
-		ProductImage: productImageOf(skuInfo, productInfo),
+		ProductName: productInfo.Product.Name,
+		SpecName:    skuInfo.SpecName,
+		// 商品图快照入库归一为附件相对路径（common/attachmenturl 口径），出库按当前配置重拼
+		ProductImage: s.attachmentLoader.SourcePath(ctx, productImageOf(skuInfo, productInfo)),
 	}); err != nil {
 		return nil, status.Errorf(codes.Internal, "%v", err)
 	}
@@ -360,12 +364,14 @@ func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartIte
 	}
 
 	return &cart.CartItem{
-		Id:            m.SkuID,
-		ProductId:     m.ProductID,
-		SkuId:         m.SkuID,
-		ProductName:   productName,
-		SpecName:      specName,
-		ProductImage:  productImage,
+		Id:          m.SkuID,
+		ProductId:   m.ProductID,
+		SkuId:       m.SkuID,
+		ProductName: productName,
+		SpecName:    specName,
+		// 出库统一按当前附件配置重拼完整 URL：实时数据已是完整 URL（RestoreURL 幂等归一重拼），
+		// 快照存量完整 URL 自动跟随新域名/存储模式，外链原样
+		ProductImage:  s.attachmentLoader.RestoreURL(ctx, productImage),
 		Price:         price,
 		Stock:         skuInfo.Stock,
 		Quantity:      m.Quantity,

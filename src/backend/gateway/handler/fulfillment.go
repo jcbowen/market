@@ -315,13 +315,10 @@ func (h *FulfillmentUploadHandler) UploadImage(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-	url := resp.Url
-	if url == "" && resp.RemotePath != "" {
-		url = baseURLOf(c) + "/uploads/" + resp.RemotePath
-	}
+	// url 已由 product 服务按附件配置拼为完整地址，直接透传
 	response.Success(c, gin.H{
 		"attach_id":   resp.AttachId,
-		"url":         url,
+		"url":         resp.Url,
 		"remote_path": resp.RemotePath,
 		"size":        resp.Size,
 		"width":       resp.Width,

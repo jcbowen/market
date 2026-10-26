@@ -52,7 +52,10 @@ test.describe.serial('分类管理', () => {
   });
 
   test('更新分类名称生效', async () => {
-    const resp = await api.put(`/api/v1/admin/categories/${catId}`, { data: { name: autoName('改名分类') } });
+    // PUT 为全量覆盖语义：status 必传（指针区分未传与传 0），只发改名会判参数错误
+    const resp = await api.put(`/api/v1/admin/categories/${catId}`, {
+      data: { name: autoName('改名分类'), sort: 99, status: 1 },
+    });
     const body = (await resp.json()) as ApiResponse;
     expect(body.code).toBe(0);
   });
@@ -73,6 +76,7 @@ test.describe.serial('分类管理', () => {
 test.describe.serial('商品管理', () => {
   let catId = 0;
   let productId = 0;
+  let productName = '';
 
   test.beforeAll(async () => {
     // 商品组自备一个专用分类（用后删除）
@@ -88,10 +92,11 @@ test.describe.serial('商品管理', () => {
   });
 
   test('创建单规格商品成功', async () => {
+    productName = autoName('测试商品');
     const resp = await api.post('/api/v1/admin/products', {
       data: {
         category_id: catId,
-        name: autoName('测试商品'),
+        name: productName,
         description: '自动化测试创建的商品',
         unit: '份',
         is_multi_spec: false,
@@ -114,21 +119,22 @@ test.describe.serial('商品管理', () => {
   });
 
   test('管理端商品列表可检索新商品', async () => {
-    const resp = await api.get('/api/v1/admin/products', { params: { page: 1, page_size: 50 } });
+    // 列表缺省按 sort 降序、id 降序，新建商品 sort=0 未必落在首页，改用 keyword 定向检索
+    const resp = await api.get('/api/v1/admin/products', { params: { page: 1, page_size: 50, keyword: productName } });
     const body = (await resp.json()) as ApiResponse<PageData<Product>>;
     expect(body.code).toBe(0);
     expect(asList<Product>(body.data).some((p) => p.id === productId)).toBe(true);
   });
 
   test('更新商品名称生效', async () => {
-    const newName = autoName('改名商品');
+    productName = autoName('改名商品');
     const resp = await api.put(`/api/v1/admin/products/${productId}`, {
-      data: { category_id: catId, name: newName, is_multi_spec: false, sku_items: [{ price: 12.5, stock: 80 }] },
+      data: { category_id: catId, name: productName, is_multi_spec: false, sku_items: [{ price: 12.5, stock: 80 }] },
     });
     const body = (await resp.json()) as ApiResponse;
     expect(body.code).toBe(0);
     const detail = (await (await api.get(`/api/v1/admin/products/${productId}`)).json()) as ApiResponse<Product>;
-    expect(detail.data?.product?.name ?? detail.data?.name).toBe(newName);
+    expect(detail.data?.product?.name ?? detail.data?.name).toBe(productName);
   });
 
   test('表单调整库存落流水(ref_no=FORM)', async () => {
@@ -139,8 +145,9 @@ test.describe.serial('商品管理', () => {
     test.skip(!skuId || beforeStock === undefined || beforeStock < 20, '环境无 SKU 或库存不足 20，跳过表单调库存用例');
 
     const afterStock = beforeStock! - 20;
+    productName = autoName('调库存商品');
     const resp = await api.put(`/api/v1/admin/products/${productId}`, {
-      data: { category_id: catId, name: autoName('调库存商品'), is_multi_spec: false, sku_items: [{ price: 12.5, stock: afterStock }] },
+      data: { category_id: catId, name: productName, is_multi_spec: false, sku_items: [{ price: 12.5, stock: afterStock }] },
     });
     const body = (await resp.json()) as ApiResponse;
     expect(body.code, `表单调库存失败: ${body.message}`).toBe(0);
@@ -172,7 +179,8 @@ test.describe.serial('商品管理', () => {
   });
 
   test('C 端商品列表可见已上架商品', async () => {
-    const resp = await api.get('/api/v1/products', { params: { page: 1, page_size: 50, status: 1 } });
+    // 同列表检索口径：按 keyword 定向命中，避免新建商品 sort=0 排在演示商品之后
+    const resp = await api.get('/api/v1/products', { params: { page: 1, page_size: 50, status: 1, keyword: productName } });
     const body = (await resp.json()) as ApiResponse<PageData<Product>>;
     expect(body.code).toBe(0);
     expect(body.data?.list.some((p) => p.id === productId)).toBe(true);
@@ -188,7 +196,7 @@ test.describe.serial('商品管理', () => {
 
     // 下架后 C 端列表不可见（缺陷④已修复：网关 ListProducts 透传 status 参数）
     const list = (await (
-      await api.get('/api/v1/products', { params: { page: 1, page_size: 50, status: 1 } })
+      await api.get('/api/v1/products', { params: { page: 1, page_size: 50, status: 1, keyword: productName } })
     ).json()) as ApiResponse<PageData<Product>>;
     expect(list.code).toBe(0);
     expect(list.data?.list.some((p) => p.id === productId)).toBe(false);

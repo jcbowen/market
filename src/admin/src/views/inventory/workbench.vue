@@ -4,8 +4,8 @@
       <!-- 库存列表 -->
       <n-tab-pane name="stock" tab="库存列表">
         <n-space style="margin-bottom: 12px">
-          <n-input v-model:value="stockKeyword" placeholder="商品名 / SKU 编码" style="width: 220px" clearable @keyup.enter="loadStocks" />
-          <n-button type="primary" @click="loadStocks">查询</n-button>
+          <n-input v-model:value="stockKeyword" placeholder="商品名 / SKU 编码" style="width: 220px" clearable @keyup.enter="onStockSearch" />
+          <n-button type="primary" @click="onStockSearch">查询</n-button>
           <n-button @click="goPurchase">去补货</n-button>
         </n-space>
         <n-data-table
@@ -13,6 +13,7 @@
           :data="stockList"
           :loading="stockLoading"
           :pagination="stockPagination"
+          remote
           @update:page="onStockPageChange"
         />
       </n-tab-pane>
@@ -42,13 +43,14 @@
         <n-space style="margin-bottom: 12px">
           <n-select v-model:value="recordType" :options="recordTypeOptions" placeholder="变动类型" clearable style="width: 160px" />
           <n-date-picker v-model:value="recordDateRange" type="daterange" clearable />
-          <n-button type="primary" @click="loadRecords">查询</n-button>
+          <n-button type="primary" @click="onRecordSearch">查询</n-button>
         </n-space>
         <n-data-table
           :columns="recordColumns"
           :data="recordList"
           :loading="recordLoading"
           :pagination="recordPagination"
+          remote
           @update:page="onRecordPageChange"
         />
       </n-tab-pane>
@@ -56,15 +58,16 @@
       <!-- 批次库存 -->
       <n-tab-pane name="batches" tab="批次库存">
         <n-space style="margin-bottom: 12px">
-          <n-input v-model:value="batchKeyword" placeholder="商品 / 批次号" style="width: 220px" clearable @keyup.enter="loadBatches" />
+          <n-input v-model:value="batchKeyword" placeholder="商品 / 批次号" style="width: 220px" clearable @keyup.enter="onBatchSearch" />
           <n-checkbox v-model:checked="batchInStockOnly">仅看在库</n-checkbox>
-          <n-button type="primary" @click="loadBatches">查询</n-button>
+          <n-button type="primary" @click="onBatchSearch">查询</n-button>
         </n-space>
         <n-data-table
           :columns="batchColumns"
           :data="batchList"
           :loading="batchLoading"
           :pagination="batchPagination"
+          remote
           @update:page="onBatchPageChange"
         />
       </n-tab-pane>
@@ -143,6 +146,16 @@ async function loadStocks() {
 
 function onStockPageChange(page: number) {
   stockPagination.value.page = page
+  loadStocks()
+}
+
+/**
+ * 库存列表查询：条件变化后必须回到第 1 页
+ * 停在第 3 页改关键词时，服务端按新条件返回的总数可能不足 3 页，
+ * 表格会显示空白（或继续叠加旧页码），用户以为「查不到数据」
+ */
+function onStockSearch() {
+  stockPagination.value.page = 1
   loadStocks()
 }
 
@@ -300,6 +313,14 @@ function onRecordPageChange(page: number) {
   loadRecords()
 }
 
+/**
+ * 库存流水查询：与库存列表同口径，筛选/日期变化后回到第 1 页再加载
+ */
+function onRecordSearch() {
+  recordPagination.value.page = 1
+  loadRecords()
+}
+
 // ---------- 批次库存 ----------
 const batchKeyword = ref('')
 const batchInStockOnly = ref(true)
@@ -361,6 +382,14 @@ async function loadBatches() {
 
 function onBatchPageChange(page: number) {
   batchPagination.value.page = page
+  loadBatches()
+}
+
+/**
+ * 批次库存查询：关键词/在库开关变化后回到第 1 页再加载
+ */
+function onBatchSearch() {
+  batchPagination.value.page = 1
   loadBatches()
 }
 

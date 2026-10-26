@@ -73,7 +73,7 @@ services:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
       # 本地附件共享目录：product 落盘与 gateway /uploads 静态服务共用同一宿主目录，
       # 目录不存在时由启动脚本或 Docker 自动创建
-      - ./bin/attachment:/app/attachment
+      - ./bin/uploads:/app/uploads
     command: >
       sh -c "cp -f /app/config.yaml /app/config.runtime.yaml && CONFIG_FILE=/app/config.runtime.yaml ./service"
 
@@ -237,7 +237,7 @@ services:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
       # 本地附件共享目录：与 product-service 挂载同一宿主目录，
       # /uploads 静态路由（<exe 同级>/attachment）读取 product 落盘的附件
-      - ./bin/attachment:/app/attachment
+      - ./bin/uploads:/app/uploads
       # 登录密码加密 RSA 私钥（安全敏感，不入 git）：首次启动自动生成并落盘持久化，
       # 容器重建 key_id 不变；多实例/负载均衡部署挂载同一宿主文件即共享同一密钥对
       - ./bin/data/ssl:/app/data/ssl

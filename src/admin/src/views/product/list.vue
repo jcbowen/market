@@ -21,7 +21,11 @@
         :loading="loading"
         :pagination="pagination"
         :row-key="rowKey"
+        remote
+        @update:page="onPageChange"
       />
+      <!-- remote 必加：数据由服务端按页返回，缺了 naive 会按当前 20 行本地切片，
+           分页器只剩 1 页，翻页事件根本无从触发（与订单列表同口径） -->
     </n-space>
 
     <!-- 推广弹窗：二维码 + 复制链接 -->
@@ -81,6 +85,15 @@ const showBatchOff = computed(() => selectedRows.value.some((row) => row.status 
  */
 function onSearch() {
   pagination.value.page = 1
+  loadData()
+}
+
+/**
+ * 翻页：表格只托管页码事件，数据始终由服务端按页返回
+ * （此前未接线，点第 2 页仍显示第 1 页内容）
+ */
+function onPageChange(page: number) {
+  pagination.value.page = page
   loadData()
 }
 

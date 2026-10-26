@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
@@ -32,6 +33,9 @@ type OrderService struct {
 	redisClient *redis.Client
 	// cfg 全局配置：取消前置渠道确认开关需要读 business.payment_reconcile
 	cfg *config.Config
+	// attachmentLoader 附件配置缓存读取器（common/attachmenturl）：
+	// 签收凭证/商品图快照入库归一与出库拼完整地址共用
+	attachmentLoader *attachmenturl.Loader
 }
 
 // NewOrderService 创建订单业务服务
@@ -42,7 +46,11 @@ type OrderService struct {
 // 返回值：
 //   - *OrderService: 订单业务服务实例
 func NewOrderService(db *mysql.Instance, cfg *config.Config) *OrderService {
-	return &OrderService{db: db, cfg: cfg}
+	return &OrderService{
+		db:               db,
+		cfg:              cfg,
+		attachmentLoader: attachmenturl.NewLoader(db.GetDb()),
+	}
 }
 
 // WithRedis 注入 Redis 客户端（可选，用于取货码防暴力破解等场景）
@@ -54,6 +62,23 @@ func NewOrderService(db *mysql.Instance, cfg *config.Config) *OrderService {
 func (s *OrderService) WithRedis(client *redis.Client) *OrderService {
 	s.redisClient = client
 	return s
+}
+
+// RestoreAttachmentURL 出库还原附件完整地址（快照口径）
+// 走 common/attachmenturl.RestoreURL：先归一为相对路径再按当前附件配置重拼，
+// 存量完整 URL（任意本站域名）自动跟随新配置，外链原样保留
+//
+// 参数：
+//   - ctx: 上下文
+//   - src: 相对路径、存量完整 URL 或外链
+//
+// 返回值：
+//   - string: 完整访问 URL（空值原样返回）
+func (s *OrderService) RestoreAttachmentURL(ctx context.Context, src string) string {
+	if src == "" {
+		return ""
+	}
+	return s.attachmentLoader.RestoreURL(ctx, src)
 }
 
 // loadOrderItemCatalog 批量预取明细涉及的 SKU 与商品档案
@@ -256,19 +281,21 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 				totalPrice: totalPrice,
 			})
 
-			orderItems = append(orderItems, &model.OrderItem{
-				ProductID:     skuInfo.ProductId,
-				SkuID:         item.SkuId,
-				ProductName:   productInfo.Name,
-				SpecName:      skuInfo.SpecName,
-				ProductImage:  productInfo.CoverImage,
-				Price:         price,
-				Quantity:      item.Quantity,
-				TotalPrice:    totalPrice,
-				OriginalPrice: originalPrice,
-				PriceModified: priceModified,
-				CreatedAt:     now,
-			})
+		orderItems = append(orderItems, &model.OrderItem{
+			ProductID:   skuInfo.ProductId,
+			SkuID:       item.SkuId,
+			ProductName: productInfo.Name,
+			SpecName:    skuInfo.SpecName,
+			// 图片快照入库归一为相对路径（product 响应为完整 URL），出库按当前附件配置重拼，
+			// 域名/存储模式变更后存量订单图片不失效
+			ProductImage:  s.attachmentLoader.SourcePath(ctx, productInfo.CoverImage),
+			Price:         price,
+			Quantity:      item.Quantity,
+			TotalPrice:    totalPrice,
+			OriginalPrice: originalPrice,
+			PriceModified: priceModified,
+			CreatedAt:     now,
+		})
 		}
 	}
 
@@ -464,14 +491,19 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 			}
 			stockDeducted = true
 
-			// 秒杀独立库存：命中秒杀价的商品在 product 侧自动识别扣减（无生效秒杀时 no-op）
-			if _, err := grpcclient.ProductClient.BatchDeductFlashSaleStock(ctx, &product.BatchDeductFlashSaleStockReq{
-				OrderId: orderModel.ID,
-				Items:   stockItems,
-			}); err != nil {
-				return fmt.Errorf("扣减秒杀库存失败: %w", err)
+			// 秒杀独立库存只在秒杀价开关开启时扣减：product 侧按「SKU 有生效活动」自动识别，
+			// 开关关闭时订单仍按原价成交，却会把活动池扣走并因池耗尽（ResourceExhausted）
+			// 拒掉本应有主库存的普通单，故与价格口径共用同一开关。
+			// 回补侧无需同步收紧：无秒杀扣减日志时 product 侧本身就是 no-op。
+			if flashSalePriceEnabled {
+				if _, err := grpcclient.ProductClient.BatchDeductFlashSaleStock(ctx, &product.BatchDeductFlashSaleStockReq{
+					OrderId: orderModel.ID,
+					Items:   stockItems,
+				}); err != nil {
+					return fmt.Errorf("扣减秒杀库存失败: %w", err)
+				}
+				flashDeducted = true
 			}
-			flashDeducted = true
 		}
 
 		if userCouponID > 0 {
@@ -489,33 +521,43 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 		}
 		return s.createStatusLogTx(tx, orderModel.ID, 0, 1, logType, logOperator, "创建订单")
 	}); err != nil {
-		// 补偿路径：释放已扣减的库存，尽力而为不掩盖原错误；
-		// biz_no 用 comp:{orderID} 与取消/退款链路区分，重复补偿重试被幂等约束拦截
+		// 补偿路径：回补已提交到商品服务的远端副作用，尽力而为不掩盖原错误；
+		// biz_no 用 comp:{orderID} 与取消/退款链路区分，重复补偿重试被幂等约束拦截。
+		// 走 runPostCommitEffect：请求 ctx 可能已取消/超时（客户端断开），
+		// 直接用它会令回补必然失败，而本地事务已回滚、远端扣减已生效 → 库存被白占，
+		// 因此脱离取消信号 + 有限次重试，三次仍失败打 [CRITICAL] 供人工按幂等槽位补做。
 		compBizNo := fmt.Sprintf("comp:%d", orderModel.ID)
+		compDetail := fmt.Sprintf("order_id=%d biz_no=%s", orderModel.ID, compBizNo)
 		if stockDeducted {
-			if _, rErr := grpcclient.ProductClient.BatchReleaseStock(ctx, &product.BatchReleaseStockReq{
-				OrderId: orderModel.ID,
-				BizNo:   compBizNo,
-				Items:   stockItems,
-			}); rErr != nil {
-				log.Printf("下单失败补偿释放库存失败（订单 %d）: %v", orderModel.ID, rErr)
-			}
+			_ = runPostCommitEffect(ctx, "下单补偿回补库存", compDetail,
+				func(c context.Context) error {
+					_, rErr := grpcclient.ProductClient.BatchReleaseStock(c, &product.BatchReleaseStockReq{
+						OrderId: orderModel.ID,
+						BizNo:   compBizNo,
+						Items:   stockItems,
+					})
+					return rErr
+				})
 		}
-		// 秒杀库存同样在远端已提交：一并回补（非秒杀商品由 product 侧幂等日志判无后 no-op）
+		// 秒杀库存同样在远端已提交：一并回补（未扣减时 product 侧判无扣减日志后 no-op）
 		if flashDeducted {
-			if _, rErr := grpcclient.ProductClient.BatchReleaseFlashSaleStock(ctx, &product.BatchReleaseFlashSaleStockReq{
-				OrderId: orderModel.ID,
-				BizNo:   compBizNo,
-				Items:   stockItems,
-			}); rErr != nil {
-				log.Printf("下单失败补偿释放秒杀库存失败（订单 %d）: %v", orderModel.ID, rErr)
-			}
+			_ = runPostCommitEffect(ctx, "下单补偿回补秒杀库存", compDetail,
+				func(c context.Context) error {
+					_, rErr := grpcclient.ProductClient.BatchReleaseFlashSaleStock(c, &product.BatchReleaseFlashSaleStockReq{
+						OrderId: orderModel.ID,
+						BizNo:   compBizNo,
+						Items:   stockItems,
+					})
+					return rErr
+				})
 		}
 		// 优惠券核销同样在远端已提交：一并回补，保证换号重试时同一张券可再次使用
 		if userCouponID > 0 {
-			if _, rErr := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: orderModel.ID}); rErr != nil {
-				log.Printf("下单失败补偿回补优惠券失败（订单 %d）: %v", orderModel.ID, rErr)
-			}
+			_ = runPostCommitEffect(ctx, "下单补偿回补优惠券", fmt.Sprintf("order_id=%d", orderModel.ID),
+				func(c context.Context) error {
+					_, rErr := grpcclient.ProductClient.ReleaseCoupon(c, &product.ReleaseCouponReq{OrderId: orderModel.ID})
+					return rErr
+				})
 		}
 		return err
 	}
@@ -931,7 +973,7 @@ func (s *OrderService) isPendingPaymentOrder(ctx context.Context, orderID int64)
 }
 
 // CancelOrder 取消订单
-// 货到付款订单未实际收款，未发货（status∈{2,3}）可直接取消：回滚库存、置已取消，不产生退款流水；
+// 货到付款订单未实际收款，未发货（status∈{2,3}）可直接取消：置已取消并提交后再回补库存，不产生退款流水；
 // 在线支付订单仍仅允许待支付（status=1）取消，已支付走退款审核
 // 参数：
 //   - ctx: 上下文
@@ -964,6 +1006,9 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 	}
 	allowed := cancelableStatuses(s.isCashOnDeliveryOrder(ctx, pre.ID))
 
+	// 待回补清单在事务内收集、提交后再执行：远端回补撤不回，本地回滚会造成
+	// 「订单仍待支付而库存已放走」的一物两卖，故订单置 6 必须先于回补落定
+	var eff *cancelEffect
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o model.Order
 		if err := tx.First(&o, req.Id).Error; err != nil {
@@ -995,20 +1040,13 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
 			return err
 		}
-		if err := releaseOrderStock(ctx, o.ID, items); err != nil {
-			return err
-		}
-
-		// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）
-		if o.CouponID > 0 {
-			if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
-				return fmt.Errorf("回补优惠券失败: %w", err)
-			}
-		}
+		eff = &cancelEffect{OrderID: o.ID, Items: items, CouponID: o.CouponID}
 
 		return s.createStatusLogTx(tx, o.ID, o.Status, 6, "user", req.UserId, req.Reason)
 	})
 	if err == nil {
+		// 取消成功后回补库存与优惠券（失败入重试队列，不回滚已提交的取消）
+		releaseCancelledOrder(ctx, s.db, eff)
 		// 取消成功后关闭待支付支付单，防迟到回调误置已支付
 		closePendingPayments(ctx, req.Id)
 	}
@@ -1139,8 +1177,9 @@ func (s *OrderService) RestoreOrder(ctx context.Context, req *order.RestoreOrder
 // 取消整单时明细数量固定为全量，收口为两次批量 RPC（主库存 + 秒杀库存），
 // 替代原先逐行各一次共 2N 次往返；biz_no 统一为 cancel:{orderID}，
 // 幂等由 product 侧 order_id+sku_id+op_type+biz_no 唯一键保证，重复取消只生效一次。
-// 事务内调用：远端已提交的回补在本地事务回滚后无法撤回，故与扣减侧同样保持
-// 「批量成功即视为已回补」，失败直接返回错误由上层回滚整单取消。
+// 只能在本地取消事务提交后调用（见 releaseCancelledOrder）：早先在事务内调用时，
+// 远端回补一旦提交就撤不回，本地却可能因后续失败回滚，订单仍是待支付而库存已放走，
+// 同一份货能被两个买家各下一单（一物两卖）。
 //
 // 参数：
 //   - ctx: 上下文
@@ -1196,6 +1235,135 @@ func releaseStockBatch(ctx context.Context, orderID int64, stockItems []*product
 	return nil
 }
 
+// cancelEffect 取消链路在本地事务提交后要回补的远端副作用清单
+// 由 cancelOrderInTx / CancelOrder / 调度器超时关单在事务内收集（明细与用券信息），
+// 事务提交成功后交给 releaseCancelledOrder 执行
+// 参数：
+//   - OrderID: 订单 ID（同时是幂等号 cancel:{orderID} 的来源）
+//   - Items: 取消时读到的订单明细（整单全量回补）
+//   - CouponID: 订单占用的用户券 ID，0 表示未用券
+//
+// 使用示例：
+//
+//	var eff *cancelEffect
+//	err := s.db.GetDb().Transaction(func(tx *gorm.DB) error {
+//	    eff, err = s.cancelOrderInTx(tx, &o, ...)
+//	    return err
+//	})
+//	if err == nil {
+//	    releaseCancelledOrder(ctx, s.db, eff)
+//	}
+type cancelEffect struct {
+	OrderID  int64
+	Items    []*model.OrderItem
+	CouponID int64
+}
+
+// taskTypeCancelRelease 取消收尾回补的调度器重试任务类型
+// 取消已提交而回补最终失败时落一条 scheduler_failures，由调度器按幂等号重放到收敛
+const taskTypeCancelRelease = "cancel_release"
+
+// releaseCancelledOrder 取消事务提交后回补库存与优惠券（三条取消入口共用）
+// 口径与退款完成路径一致：本地状态（订单置 6）先提交，远端回补随后尽力而为，
+// 绝不回滚已提交的取消——订单回到待支付而库存已放走才是资损（一物两卖），
+// 而回补失败只是货被暂占（少卖）。商品服务整体不可用时不会拖垮取消本身。
+// 有限次重试仍失败时落 scheduler_failures(cancel_release) 交给调度器重放，
+// 幂等号 cancel:{orderID} 保证重放只生效一次。
+//
+// 参数：
+//   - ctx: 上下文（调用方请求 ctx；runPostCommitEffect 内部已脱离取消信号）
+//   - db: 订单库实例（用于写重试队列）
+//   - eff: 事务内收集的待回补清单，nil 表示无副作用需执行
+func releaseCancelledOrder(ctx context.Context, db *mysql.Instance, eff *cancelEffect) {
+	if eff == nil {
+		return
+	}
+	if err := runCancelEffects(ctx, eff); err != nil {
+		recordSchedulerFailure(ctx, db, eff.OrderID, taskTypeCancelRelease, err.Error())
+	}
+}
+
+// runCancelEffects 执行取消收尾的远端回补（库存 + 优惠券），返回首个最终失败项
+// 单项各自做有限次重试；两项互不阻断（库存回补失败不影响继续回券），
+// 任一失败即返回错误，由调用方决定是否入队重放；重放整单安全（两侧均按幂等号去重）
+//
+// 参数：
+//   - ctx: 上下文
+//   - eff: 待回补清单（非 nil）
+//
+// 返回值：
+//   - error: 任一收尾项重试后仍失败时返回其错误，全部成功返回 nil
+func runCancelEffects(ctx context.Context, eff *cancelEffect) error {
+	var firstErr error
+	if len(eff.Items) > 0 {
+		if err := runPostCommitEffect(ctx, "取消回补库存",
+			fmt.Sprintf("order_id=%d biz_no=cancel:%d", eff.OrderID, eff.OrderID),
+			func(c context.Context) error { return releaseOrderStock(c, eff.OrderID, eff.Items) }); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）；
+	// product 侧按 order_id+status 条件更新幂等，重复调用只生效一次
+	if eff.CouponID > 0 {
+		if err := runPostCommitEffect(ctx, "取消回补优惠券", fmt.Sprintf("order_id=%d", eff.OrderID),
+			func(c context.Context) error {
+				_, err := grpcclient.ProductClient.ReleaseCoupon(c, &product.ReleaseCouponReq{OrderId: eff.OrderID})
+				return err
+			}); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// loadCancelEffect 按订单重建待回补清单（供调度器重放取消收尾回补）
+// 整单取消的回补口径固定为全量明细，订单已置 6 时明细与用券不会再变，重建安全
+//
+// 参数：
+//   - ctx: 上下文
+//   - db: 订单库实例
+//   - orderID: 订单 ID
+//
+// 返回值：
+//   - *cancelEffect: 重建的清单
+//   - error: 明细查询失败
+func loadCancelEffect(ctx context.Context, db *mysql.Instance, orderID int64) (*cancelEffect, error) {
+	var o model.Order
+	if err := db.GetDb().WithContext(ctx).First(&o, orderID).Error; err != nil {
+		return nil, err
+	}
+	var items []*model.OrderItem
+	if err := db.GetDb().WithContext(ctx).Where("order_id = ?", orderID).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return &cancelEffect{OrderID: o.ID, Items: items, CouponID: o.CouponID}, nil
+}
+
+// recordSchedulerFailure 写入调度器失败重试队列（scheduler_failures）
+// 从 Scheduler 方法收口为包级函数，供无调度器实例的订单服务写入同一张重试表；
+// 入队失败只记日志，前置的 [CRITICAL] 日志已保证可观测
+//
+// 参数：
+//   - ctx: 上下文
+//   - db: 数据库实例
+//   - orderID: 订单 ID
+//   - taskType: 任务类型
+//   - errMsg: 错误信息
+func recordSchedulerFailure(ctx context.Context, db *mysql.Instance, orderID int64, taskType string, errMsg string) {
+	now := time.Now().Format("2006-01-02 15:04:05")
+	failure := &model.SchedulerFailure{
+		OrderID:   orderID,
+		TaskType:  taskType,
+		Status:    1,
+		ErrorMsg:  errMsg,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := db.GetDb().WithContext(ctx).Create(failure).Error; err != nil {
+		log.Printf("[order-scheduler] 记录失败订单 %d 出错: %v", orderID, err)
+	}
+}
+
 // closePendingPayments 关闭订单的待支付支付单（订单取消后的收尾动作）
 // 尽力而为：调用失败仅记日志，不阻断取消流程（迟到回调由 handlePaySuccess 终态兜底拦住，
 // 支付单状态不一致可由下次取消或人工处理）
@@ -1248,7 +1416,7 @@ func isTransitionAllowed(from, to int32) bool {
 
 // UpdateOrderStatus 更新订单状态
 // 带状态机校验：仅允许合法流转，退款中/已退款/已取消等状态不可再发货、完成或重新支付。
-// 目标状态为 6（取消）时走独立取消语义：写取消原因/时间并逐行回补库存（后台取消复用）。
+// 目标状态为 6（取消）时走独立取消语义：写取消原因/时间，事务提交后再回补库存与优惠券（后台取消复用）。
 // 全部更新均按 WHERE status=fromStatus 条件执行，并发冲突时返回失败，避免后写覆盖前写。
 // 参数：
 //   - ctx: 上下文
@@ -1272,6 +1440,8 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 	}
 	// 取消前的订单状态（req.Status=6 时用于判断是否回退销量：仅已支付/备货中取消需回退，待支付取消未计销量）
 	var statusBeforeCancel int32
+	// 取消链路提交后待执行的远端回补（库存 + 优惠券）
+	var cancelEff *cancelEffect
 
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o model.Order
@@ -1288,7 +1458,12 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 		// 取消订单：不走通用状态机，需回补库存并记录取消原因/时间
 		if req.Status == 6 {
 			statusBeforeCancel = o.Status
-			return s.cancelOrderInTx(ctx, tx, &o, req.OperatorType, req.OperatorId, req.Remark, isCOD)
+			eff, err := s.cancelOrderInTx(tx, &o, req.OperatorType, req.OperatorId, req.Remark, isCOD)
+			if err != nil {
+				return err
+			}
+			cancelEff = eff
+			return nil
 		}
 
 		if !isTransitionAllowed(o.Status, req.Status) {
@@ -1344,6 +1519,8 @@ func (s *OrderService) UpdateOrderStatus(ctx context.Context, req *order.UpdateO
 			// 支付成功事件：全部支付路径的收口，尽力而为发布供后台 WS 语音通知
 			s.publishOrderPaidEvent(ctx, req.Id)
 		case 6:
+			// 取消成功后回补库存与优惠券（失败入重试队列，不回滚已提交的取消）
+			releaseCancelledOrder(ctx, s.db, cancelEff)
 			// 取消成功后关闭待支付支付单，防迟到回调误置已支付
 			closePendingPayments(ctx, req.Id)
 			// 已支付/备货中取消需回退销量（待支付取消未计销量，不回退）
@@ -1527,10 +1704,11 @@ func (s *OrderService) BindOrderUser(ctx context.Context, req *order.BindOrderUs
 	})
 }
 
-// cancelOrderInTx 在事务中执行取消语义：条件更新状态、写取消原因/时间并逐行回补库存。
+// cancelOrderInTx 在事务中执行取消语义：条件更新状态、写取消原因/时间，并返回待回补清单。
 // 供后台取消（UpdateOrderStatus 特判 status=6）复用；C 端 CancelOrder 有额外的归属校验，不走此方法。
+// 库存/优惠券回补不在本方法内发起（远端已提交无法随本地事务回滚撤回），
+// 由调用方在事务提交成功后把返回值交给 releaseCancelledOrder 执行。
 // 参数：
-//   - ctx: 上下文（用于调用 product-service 释放库存）
 //   - tx: 数据库事务
 //   - o: 已加载的订单
 //   - operatorType: 操作者类型（admin/user/system）
@@ -1539,12 +1717,13 @@ func (s *OrderService) BindOrderUser(ctx context.Context, req *order.BindOrderUs
 //   - isCOD: 是否货到付款（由调用方在事务外预读，避免事务内 RPC）
 //
 // 返回值：
+//   - *cancelEffect: 提交后需回补的清单（明细 + 用券）；失败时为 nil
 //   - error: 错误信息
-func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *model.Order, operatorType string, operatorID int64, reason string, isCOD bool) error {
+func (s *OrderService) cancelOrderInTx(tx *gorm.DB, o *model.Order, operatorType string, operatorID int64, reason string, isCOD bool) (*cancelEffect, error) {
 	// 货到付款单未实际收款，未发货（2/3）也可直接取消（与 C 端 CancelOrder 同口径）
 	allowed := cancelableStatuses(isCOD)
 	if !containsInt32(allowed, o.Status) {
-		return bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许取消: %d", o.Status))
+		return nil, bizerr.New(codes.FailedPrecondition, fmt.Sprintf("订单状态不允许取消: %d", o.Status))
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")
 	res := tx.Model(&model.Order{}).Where("id = ? AND status IN ?", o.ID, allowed).Updates(map[string]interface{}{
@@ -1554,28 +1733,24 @@ func (s *OrderService) cancelOrderInTx(ctx context.Context, tx *gorm.DB, o *mode
 		"cancel_reason": reason,
 	})
 	if res.Error != nil {
-		return res.Error
+		return nil, res.Error
 	}
 	if res.RowsAffected == 0 {
-		return bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
+		return nil, bizerr.New(codes.FailedPrecondition, "订单状态已变更，请刷新后重试")
 	}
 
 	var items []*model.OrderItem
 	if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
-		return err
+		return nil, err
 	}
-	if err := releaseOrderStock(ctx, o.ID, items); err != nil {
-		return err
-	}
+	// 库存与优惠券回补不在事务内做（远端已提交无法随本地回滚撤回），
+	// 交给调用方在事务提交后经 releaseCancelledOrder 执行
+	eff := &cancelEffect{OrderID: o.ID, Items: items, CouponID: o.CouponID}
 
-	// 回补优惠券：取消后把订单占用的用户券复位为未使用（否则券被永久核销）
-	if o.CouponID > 0 {
-		if _, err := grpcclient.ProductClient.ReleaseCoupon(ctx, &product.ReleaseCouponReq{OrderId: o.ID}); err != nil {
-			return fmt.Errorf("回补优惠券失败: %w", err)
-		}
+	if err := s.createStatusLogTx(tx, o.ID, o.Status, 6, operatorType, operatorID, reason); err != nil {
+		return nil, err
 	}
-
-	return s.createStatusLogTx(tx, o.ID, o.Status, 6, operatorType, operatorID, reason)
+	return eff, nil
 }
 
 // createStatusLogTx 在事务中创建订单状态日志
@@ -1979,6 +2154,10 @@ func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.G
 	var rows []*order.FrequentProductItem
 	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
+	}
+	// 商品图快照出库还原完整地址（快照已入库相对路径，存量完整 URL 自动归一重拼）
+	for _, row := range rows {
+		row.ProductImage = s.attachmentLoader.RestoreURL(ctx, row.ProductImage)
 	}
 
 	// 附带每个商品该用户最常买的 SKU（按累计数量取 Top1，供一键加购）

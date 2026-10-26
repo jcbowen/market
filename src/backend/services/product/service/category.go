@@ -144,9 +144,11 @@ func (s *CategoryService) DeleteCategory(ctx context.Context, id, communityId in
 		return bizerr.New(codes.FailedPrecondition, "存在子分类，无法删除")
 	}
 	// 物理删除前校验商品引用：MysqlBaseModel 无 DeletedAt，删了就是真删，
-	// 不拦会让商品 category_id 悬空（列表/详情展示与编辑均失锚）
+	// 不拦会让商品 category_id 悬空（列表/详情展示与编辑均失锚）；
+	// 软删商品（status=2）已不可售且不再出现在任何列表，不应永久卡住分类删除
 	var productCount int64
-	if err := s.db.GetDb().WithContext(ctx).Model(&model.Product{}).Where("category_id = ?", id).Count(&productCount).Error; err != nil {
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.Product{}).
+		Where("category_id = ? AND status <> ?", id, 2).Count(&productCount).Error; err != nil {
 		return err
 	}
 	if productCount > 0 {

@@ -28,6 +28,7 @@
           :data="orderList"
           :loading="orderLoading"
           :pagination="orderPagination"
+          remote
           @update:page="onOrderPageChange"
         />
       </n-tab-pane>
@@ -40,12 +41,12 @@
             placeholder="供应商名称 / 联系人 / 电话"
             style="width: 240px"
             clearable
-            @keyup.enter="loadSuppliers"
+            @keyup.enter="onSupplierSearch"
           />
-          <n-button type="primary" :loading="supplierLoading" @click="loadSuppliers">查询</n-button>
+          <n-button type="primary" :loading="supplierLoading" @click="onSupplierSearch">查询</n-button>
           <n-button type="primary" @click="openSupplierForm()">新增供应商</n-button>
         </n-space>
-        <n-data-table :columns="supplierColumns" :data="supplierList" :loading="supplierLoading" :pagination="supplierPagination" />
+        <n-data-table :columns="supplierColumns" :data="supplierList" :loading="supplierLoading" :pagination="supplierPagination" remote @update:page="onSupplierPageChange" />
       </n-tab-pane>
     </n-tabs>
 
@@ -301,6 +302,22 @@ async function loadSuppliers() {
   } finally {
     supplierLoading.value = false
   }
+}
+
+/**
+ * 供应商列表翻页：数据由服务端按页返回，接上页码事件才会真正翻页
+ */
+function onSupplierPageChange(page: number) {
+  supplierPagination.value.page = page
+  loadSuppliers()
+}
+
+/**
+ * 供应商查询：关键词变化后回到第 1 页，避免停在旧页码看到空列表
+ */
+function onSupplierSearch() {
+  supplierPagination.value.page = 1
+  loadSuppliers()
 }
 
 const supplierFormVisible = ref(false)

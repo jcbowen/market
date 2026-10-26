@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
@@ -197,7 +200,7 @@ func (s *StockBillService) CreateStockInOrder(ctx context.Context, req *product.
 				return err
 			}
 		}
-		return nil
+		return syncAggregatesForSkus(tx, skus)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -489,7 +492,10 @@ func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product
 				CreatedAt:  now,
 			})
 		}
-		return tx.Create(&items).Error
+		if err := tx.Create(&items).Error; err != nil {
+			return err
+		}
+		return syncAggregatesForSkus(tx, locked)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -702,6 +708,7 @@ func (s *StockBillService) getSkuInfoMap(ctx context.Context, skuIDs []int64) ma
 		INNER JOIN products p ON p.id = s.product_id
 		WHERE s.id IN ?
 	`, skuIDs).Scan(&rows).Error; err != nil {
+		log.Printf("[WARN] 批量取 SKU 简介失败，单据将缺失商品名: %v", err)
 		return m
 	}
 	for _, r := range rows {
@@ -710,19 +717,32 @@ func (s *StockBillService) getSkuInfoMap(ctx context.Context, skuIDs []int64) ma
 	return m
 }
 
-// 单号生成（与盘点单号同风格：前缀 + 时间戳 + 毫秒）
-// generatePurchaseNo 定义在 purchase.go
+// 单号生成（前缀 + 时间戳 + 随机后缀，采购/出入库/盘点共用 generateBillNo）
+
+// generateBillNo 生成单据号：前缀 + yyyyMMddHHmmss + 6 位随机后缀
+// 旧口径取 Nanosecond()/1e5（100µs 粒度），同一秒内并发建单可撞号；入库/出库/采购单号列
+// 只有普通索引（存量可能已有重复行，不宜补唯一索引以免 AutoMigrate 启动失败），
+// 撞号后两张不同单据同号，对账与追溯无法区分，故改为随机后缀消碰撞
+//
+// 参数：
+//   - prefix: 单号前缀（IN/OUT/PO/PD）
+//
+// 返回值：
+//   - string: 单据号（长度 <= 23，落在 varchar(30) 内）
+func generateBillNo(prefix string) string {
+	return prefix + time.Now().Format("20060102150405") + strings.ToUpper(uuid.NewString()[:6])
+}
 
 // generateInNo 生成入库单号
 // 返回值：
 //   - string: 入库单号
 func generateInNo() string {
-	return "IN" + time.Now().Format("20060102150405") + fmt.Sprintf("%04d", time.Now().Nanosecond()/1e5)
+	return generateBillNo("IN")
 }
 
 // generateOutNo 生成出库单号
 // 返回值：
 //   - string: 出库单号
 func generateOutNo() string {
-	return "OUT" + time.Now().Format("20060102150405") + fmt.Sprintf("%04d", time.Now().Nanosecond()/1e5)
+	return generateBillNo("OUT")
 }

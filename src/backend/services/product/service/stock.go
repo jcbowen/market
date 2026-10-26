@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"time"
@@ -106,6 +107,29 @@ func insertOpLogsIdempotent(tx *gorm.DB, logs []*model.StockOpLog) (bool, error)
 		return false, invalidArg("库存操作幂等冲突：该订单部分 SKU 已存在同类操作记录")
 	}
 	return false, nil
+}
+
+// syncAggregatesForSkus 回写本事务内改动过的 SKU 所属商品的汇总列
+// 库存交易只更新 product_skus.stock，必须同事务把 products 的汇总列（stock / 价格区间）一并带上，
+// 否则后台商品列表的「已售罄 / 库存紧张」Tab 与状态统计（直接读 products.stock）长期失真
+//
+// 参数：
+//   - tx: GORM 事务对象
+//   - skus: lockSkus 返回的 SKU 映射（key 为 sku_id）
+//
+// 返回值：
+//   - error: 回写失败
+func syncAggregatesForSkus(tx *gorm.DB, skus map[int64]*model.Sku) error {
+	ids := make([]int64, 0, len(skus))
+	seen := make(map[int64]bool, len(skus))
+	for _, sku := range skus {
+		if sku == nil || seen[sku.ProductID] {
+			continue
+		}
+		seen[sku.ProductID] = true
+		ids = append(ids, sku.ProductID)
+	}
+	return syncProductAggregates(tx, ids)
 }
 
 // deductSkuLocked 在已加锁事务内扣减单个 SKU：FEFO 批次扣减、汇总列回落、逐批次落流水
@@ -215,6 +239,9 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 		if err := deductSkuLocked(tx, &sku, req.Quantity, req.OrderId, now); err != nil {
 			return err
 		}
+		if err := syncProductAggregates(tx, []int64{sku.ProductID}); err != nil {
+			return err
+		}
 		success = true
 		remain = sku.Stock
 		return nil
@@ -278,6 +305,9 @@ func (s *StockService) BatchDeductStock(ctx context.Context, req *product.BatchD
 				return err
 			}
 		}
+		if err := syncAggregatesForSkus(tx, skus); err != nil {
+			return err
+		}
 		success = true
 		return nil
 	})
@@ -320,7 +350,10 @@ func (s *StockService) ReleaseStock(ctx context.Context, req *product.ReleaseSto
 		if err := tx.Clauses(lockClause()).First(&sku, req.SkuId).Error; err != nil {
 			return err
 		}
-		return releaseSkuLocked(tx, &sku, req.Quantity, req.OrderId, req.BizNo, now)
+		if err := releaseSkuLocked(tx, &sku, req.Quantity, req.OrderId, req.BizNo, now); err != nil {
+			return err
+		}
+		return syncProductAggregates(tx, []int64{sku.ProductID})
 	})
 }
 
@@ -338,6 +371,14 @@ func (s *StockService) ReleaseStock(ctx context.Context, req *product.ReleaseSto
 // 返回值：
 //   - error: 写入失败
 func releaseSkuLocked(tx *gorm.DB, sku *model.Sku, quantity int32, orderID int64, bizNo, now string) error {
+	if quantity <= 0 {
+		return invalidArg("SKU %s 的回补数量必须大于 0", sku.SkuCode)
+	}
+	// 跨 biz_no 重复回补拦截：取消/退款/补偿各占独立幂等槽位，互不吞并，
+	// 少了这道闸，货到付款单「先部分退款、再整单取消」会把同一 SKU 回补两次
+	if err := assertReleaseWithinDeduct(tx, orderID, sku.ID); err != nil {
+		return err
+	}
 	before := sku.Stock
 	sku.Stock += quantity
 	if err := tx.Model(&model.Sku{}).Where("id = ?", sku.ID).Updates(map[string]interface{}{
@@ -372,6 +413,39 @@ func releaseSkuLocked(tx *gorm.DB, sku *model.Sku, quantity int32, orderID int64
 		CreatedAt:      now,
 	}
 	return tx.Create(record).Error
+}
+
+// assertReleaseWithinDeduct 校验该订单该 SKU 的累计回补不超过累计扣减
+// 调用时本次回补的幂等日志已落库，故统计口径已含本次；由于取消/退款/补偿各占独立
+// biz_no 槽位（唯一索引只防同号重放），这道按订单维度的净上限才能拦住跨业务号的重复回补
+//
+// 参数：
+//   - tx: 事务
+//   - orderID: 订单 ID（0 表示无订单归属，不做拦截）
+//   - skuID: SKU ID
+//
+// 返回值：
+//   - error: 超出净上限或查询失败
+func assertReleaseWithinDeduct(tx *gorm.DB, orderID, skuID int64) error {
+	if orderID == 0 {
+		return nil
+	}
+	var deducted, released int64
+	if err := tx.Model(&model.StockOpLog{}).
+		Where("order_id = ? AND sku_id = ? AND op_type = ?", orderID, skuID, stockOpTypeDeduct).
+		Select("COALESCE(SUM(quantity), 0)").Scan(&deducted).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&model.StockOpLog{}).
+		Where("order_id = ? AND sku_id = ? AND op_type = ?", orderID, skuID, stockOpTypeRelease).
+		Select("COALESCE(SUM(quantity), 0)").Scan(&released).Error; err != nil {
+		return err
+	}
+	if released > deducted {
+		return bizerr.New(codes.FailedPrecondition,
+			fmt.Sprintf("订单 %d 的商品（SKU %d）回补数量 %d 超过扣减数量 %d，已拒绝", orderID, skuID, released, deducted))
+	}
+	return nil
 }
 
 // BatchReleaseStock 批量释放库存（整单明细同一事务、一次往返完成）
@@ -426,7 +500,7 @@ func (s *StockService) BatchReleaseStock(ctx context.Context, req *product.Batch
 				return err
 			}
 		}
-		return nil
+		return syncAggregatesForSkus(tx, skus)
 	})
 }
 
@@ -935,6 +1009,7 @@ func (s *StockService) getProductNames(ctx context.Context, productIDs []int64) 
 	}
 	var products []model.Product
 	if err := s.db.GetDb().WithContext(ctx).Select("id", "name").Where("id IN ?", productIDs).Find(&products).Error; err != nil {
+		log.Printf("[WARN] 批量取商品名称失败，列表将缺失商品名: %v", err)
 		return names
 	}
 	for _, p := range products {

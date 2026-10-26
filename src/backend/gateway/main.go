@@ -16,9 +16,12 @@ import (
 	"github.com/jcbowen/jcbaseGo"
 	jcMiddleware "github.com/jcbowen/jcbaseGo/middleware"
 
+	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
+	"github.com/jcbowen/market/src/backend/common/proto/common"
+	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/response"
 	"github.com/jcbowen/market/src/backend/gateway/brand"
 	"github.com/jcbowen/market/src/backend/gateway/client"
@@ -77,6 +80,9 @@ func main() {
 
 	r.Use(baseMw.SetGPC(r))
 	r.Use(staticCacheMiddleware())
+	// 附件访问域名（visit_domain）惰性补写：全新部署从未保存站点设置时按首个请求兜底，
+	// 保证 product 服务能把附件 URL 拼为「配置的附件域名+路径」完整地址（详见 handler/attachment_domain_sync.go）
+	r.Use(handler.NewAttachmentDomainSync(clients.ProductClient).Middleware())
 
 	// 后台 WebSocket 推送（新订单语音通知）：hub 管理在线连接，
 	// 订阅器接收 order 服务的支付成功事件按社区转发；订阅失败不阻断启动（自动重试）
@@ -601,10 +607,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	r.Static("/s", h5Path)
 	r.Static("/b", adminPath)
 
-	// 本地静态素材分两处：镜像内置的演示种子素材（/uploads/seed/**）与运行期上传附件
-	// （/uploads/**）。种子素材不能放进 attachment 目录——compose/allinone 部署都把该目录
+	// 本地静态素材分两处：镜像内置的演示种子素材（/<local_dir>/seed/**）与运行期上传附件
+	// （/<local_dir>/**）。种子素材不能放进附件目录——compose/allinone 部署都把该目录
 	// 挂载为宿主目录，镜像内的文件会被挂载遮蔽；故单独打包到 <bin>/seed 并在此分流
-	registerUploads(r, resolveSeedDir(), filepath.Join(getBinDir(), "attachment"))
+	// local_dir 为附件配置的本地存储目录名（落盘目录 = URL 路径段，jcbaseGo LocalDir 设计）
+	localDir := resolveAttachmentLocalDir(clients.ProductClient)
+	registerUploads(r, resolveSeedDir(), filepath.Join(getBinDir(), localDir), localDir)
 
 	r.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/b/") {
@@ -630,22 +638,45 @@ func shutdown(srv *http.Server) {
 	}
 }
 
-// registerUploads 注册 /uploads 静态路由，按前缀把演示种子素材与运行期上传附件分流
+// resolveAttachmentLocalDir 启动时经 product 服务读取附件本地存储目录名（local_dir）
+// gateway 静态路由挂载目录与 URL 前缀必须与 product 落盘口径一致，故共享同一配置；
+// 读取失败（product 未就绪等）按默认 uploads 挂载并记日志——默认值即常规部署的实际值
+//
+// 参数:
+//   - pc: product 服务 gRPC 客户端
+//
+// 返回值:
+//   - string: 本地存储目录名（形如 uploads，不含斜杠）
+func resolveAttachmentLocalDir(pc product.ProductServiceClient) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := pc.GetAttachmentConfig(ctx, &common.Empty{})
+	if err != nil || resp == nil {
+		log.Printf("启动读取附件 local_dir 失败，静态路由按默认 %s 挂载: %v", attachmenturl.DefaultLocalDir, err)
+		return attachmenturl.DefaultLocalDir
+	}
+	return attachmenturl.LocalDirName(resp.LocalDir)
+}
+
+// registerUploads 注册 /<local_dir> 静态路由，按前缀把演示种子素材与运行期上传附件分流
 // 参数：
 //   - r: gin 引擎
-//   - seedRoot: 镜像内置的种子素材根目录，对外映射为 /uploads/seed/（如 /app/seed）
-//   - attachmentRoot: 运行期上传附件根目录，对外映射为 /uploads/（如 /app/attachment）
+//   - seedRoot: 镜像内置的种子素材根目录，对外映射为 /<local_dir>/seed/（如 /app/seed）
+//   - attachmentRoot: 运行期上传附件根目录，对外映射为 /<local_dir>/（如 /app/uploads）
+//   - localDir: 附件配置的本地存储目录名，同时是 URL 路径段（与 product 落盘目录同名）
 //
 // 说明：
-//   - 种子素材目录不存在时（裁剪过的发布包）仅 /uploads/seed/** 返回 404，上传附件不受影响
+//   - 种子素材目录不存在时（裁剪过的发布包）仅 /<local_dir>/seed/** 返回 404，上传附件不受影响
 //   - 两个根目录各自交给 http.FileServer 处理：路径由标准库 Clean 并拒绝含 .. 的请求，
 //     请求方无法借 URL 逃出根目录
+//   - local_dir 变更需重启 gateway 生效（路由在启动时注册）
 //
 // 使用示例：
-//   - registerUploads(r, filepath.Join(getBinDir(), "seed"), filepath.Join(getBinDir(), "attachment"))
-func registerUploads(r *gin.Engine, seedRoot, attachmentRoot string) {
-	seedFS := http.StripPrefix("/uploads/seed/", http.FileServer(http.Dir(seedRoot)))
-	attachmentFS := http.StripPrefix("/uploads/", http.FileServer(http.Dir(attachmentRoot)))
+//   - registerUploads(r, filepath.Join(getBinDir(), "seed"), filepath.Join(getBinDir(), "uploads"), "uploads")
+func registerUploads(r *gin.Engine, seedRoot, attachmentRoot, localDir string) {
+	prefix := "/" + localDir + "/"
+	seedFS := http.StripPrefix(prefix+"seed/", http.FileServer(http.Dir(seedRoot)))
+	attachmentFS := http.StripPrefix(prefix, http.FileServer(http.Dir(attachmentRoot)))
 	serve := func(c *gin.Context) {
 		// gin 的 *filepath 带前导斜杠，形如 /seed/products/latiao.png
 		if strings.HasPrefix(c.Param("filepath"), "/seed/") {
@@ -654,8 +685,8 @@ func registerUploads(r *gin.Engine, seedRoot, attachmentRoot string) {
 		}
 		attachmentFS.ServeHTTP(c.Writer, c.Request)
 	}
-	r.GET("/uploads/*filepath", serve)
-	r.HEAD("/uploads/*filepath", serve)
+	r.GET(prefix+"*filepath", serve)
+	r.HEAD(prefix+"*filepath", serve)
 }
 
 // resolveSeedDir 解析演示种子素材根目录
