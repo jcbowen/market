@@ -1,0 +1,182 @@
+# Gitea 环境自检（临时文件，迁移完成后删除）
+# 目的：在改正式流水线之前，一次性验证 5 个 Gitea 侧未知项：
+#   1. job 容器内 docker CLI / buildx 是否可用、能否连上宿主守护进程
+#   2. services 是否可按容器名直连（Gitea 与 GitHub 最大的行为差异）
+#   3. arm64 QEMU 模拟是否可用（多架构镜像构建的前置条件）
+#   4. actions/checkout + upload/download-artifact 是否可解析并工作
+#   5. GITHUB_TOKEN 是否具备 contents:write（Release 发布的前置条件）
+# 触发：推送本文件，或在 Gitea 页面手动运行
+name: Gitea 环境自检
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.gitea/workflows/smoke.yml'
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 不依赖 checkout：即使 action 解析失败，也能先拿到环境信息
+  env:
+    name: 工具链 / 服务 / docker
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-mysql
+          MYSQL_DATABASE: market
+          TZ: Asia/Shanghai
+    steps:
+      - name: 运行上下文
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "GITHUB_SERVER_URL = ${GITHUB_SERVER_URL}"
+          echo "GITHUB_REPOSITORY = ${GITHUB_REPOSITORY}"
+          echo "GITHUB_REF_NAME   = ${GITHUB_REF_NAME}"
+          echo "GITHUB_RUN_ID     = ${GITHUB_RUN_ID}"
+          echo "token 长度        = ${#GITHUB_TOKEN}"
+          echo "--- 注入的环境变量名（仅名字，不含值）---"
+          env | grep -E '^(GITHUB|ACTIONS|GITEA)_' | cut -d= -f1 | sort
+
+      - name: 基础工具
+        run: |
+          for c in docker git tar zip unzip curl; do
+            if command -v "$c" >/dev/null 2>&1; then
+              echo "OK   ${c} -> $(${c} --version 2>&1 | head -1)"
+            else
+              echo "MISS ${c}"
+            fi
+          done
+          if docker buildx version >/dev/null 2>&1; then
+            echo "OK   buildx -> $(docker buildx version 2>&1 | head -1)"
+          else
+            echo "MISS buildx"
+          fi
+
+      - name: docker 守护进程连通（验证 container.options 挂载生效）
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo "OK   docker daemon 可达"
+            docker info 2>/dev/null | sed -n '/Registry Mirrors/,/^$/p'
+          else
+            echo "FAIL docker daemon 不可达：container.options 的 docker.sock 挂载未生效"
+            exit 1
+          fi
+
+      - name: services 连通（容器名即主机名）
+        run: |
+          wait_port() {
+            local host=$1 port=$2
+            for _ in $(seq 1 30); do
+              if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${host}/${port}" 2>/dev/null; then
+                echo "OK   ${host}:${port} 可达"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "FAIL ${host}:${port} 不可达"
+            return 1
+          }
+          rc=0
+          wait_port redis 6379 || rc=1
+          wait_port mysql 3306 || rc=1
+          exit $rc
+
+      - name: arm64 模拟（多架构镜像构建前置）
+        run: |
+          docker run --privileged --rm tonistiigi/binfmt --install arm64
+          # 用 arm64 的 busybox 实跑一条命令，确认 binfmt 真生效而不只是注册成功
+          docker run --rm --platform linux/arm64 busybox uname -m
+
+      - name: buildx 多架构构建器可用
+        run: |
+          docker buildx create --name smoketest --driver docker-container --use
+          docker buildx inspect --bootstrap
+          docker buildx rm smoketest
+
+  actions:
+    name: action 解析 + artifact 上传
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 仓库内容
+        run: |
+          git log -1 --oneline
+          ls -1 | head -20
+
+      - name: 生成待上传文件
+        run: |
+          mkdir -p out
+          date > out/stamp.txt
+          echo hello > out/hello.txt
+          ls -l out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: smoke-artifact
+          path: out
+
+  artifact-down:
+    name: artifact 下载校验
+    runs-on: ubuntu-latest
+    needs: [actions]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: smoke-artifact
+          path: in
+
+      - name: 校验往返
+        run: |
+          ls -l in
+          test -f in/hello.txt
+          grep -q hello in/hello.txt
+          echo "OK   artifact 跨 job 往返成功"
+
+  release:
+    name: Release 权限（自建自删）
+    runs-on: ubuntu-latest
+    needs: [actions]
+    permissions:
+      contents: write
+    steps:
+      - name: 创建并删除临时 Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          API="${GITHUB_SERVER_URL%/}/api/v1"
+          REPO="repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token ${GITHUB_TOKEN}"
+          TAG="smoke-test-$(date +%s)"
+          BODY='{"tag_name":"'"${TAG}"'","name":"'"${TAG}"'","prerelease":true,"body":"环境自检，自动删除"}'
+          RESP=$(curl -sS -X POST "${API}/${REPO}/releases" \
+            -H "$AUTH" -H "Content-Type: application/json" -d "$BODY") || true
+          ID=$(echo "${RESP}" | grep -o '"id": *[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+          if [ -z "${ID}" ]; then
+            echo "FAIL 创建 Release 失败，响应：${RESP}"
+            exit 1
+          fi
+          echo "OK   Release 创建成功 id=${ID} tag=${TAG}"
+
+          # 先删 Release 再删 tag，失败不阻断（留痕在日志里，人工清理即可）
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+            "${API}/${REPO}/releases/${ID}" -H "$AUTH") || CODE="000"
+          echo "删除 Release：HTTP ${CODE}"
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+            "${API}/${REPO}/tags/${TAG}" -H "$AUTH") || CODE="000"
+          echo "删除 tag：HTTP ${CODE}"
+          if [[ "${CODE}" == "204" || "${CODE}" == "200" ]]; then
+            echo "OK   权限具备 contents:write，已自清理"
+          else
+            echo "WARN tag 清理失败，请手动删除 ${TAG}"
+          fi
