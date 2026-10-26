@@ -214,6 +214,55 @@ jobs:
           node --version 2>&1 || true
           docker buildx version 2>&1 | head -1 || true
 
+  # run 622 结论：job 容器里 docker login 报 registry-1.docker.io 连接超时。
+  # 但 push 实际由宿主守护进程执行，容器侧不可达 ≠ 推送不可用，需单独验证；
+  # 顺带验证「未缓存镜像」能否拉取（此前所有镜像都是宿主机已有的，未真正验证过拉取链路）。
+  registry-probe:
+    name: 镜像拉取 / 推送探测
+    runs-on: ubuntu-latest
+    steps:
+      - name: 容器侧出网探测
+        continue-on-error: true
+        run: |
+          for u in https://registry-1.docker.io/v2/ https://auth.docker.io/token; do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "$u" 2>/dev/null) || code="000"
+            echo "HTTP ${code}  ${u}"
+          done
+          env | grep -i _proxy || echo "容器内无代理环境变量"
+
+      - name: 未缓存镜像拉取
+        continue-on-error: true
+        run: |
+          docker rmi busybox:1.36 >/dev/null 2>&1 || true
+          if timeout 180 docker pull busybox:1.36 > /tmp/pull.log 2>&1; then
+            tail -5 /tmp/pull.log
+            echo "RESULT 拉取可用（宿主机 + 镜像源链路正常）"
+          else
+            tail -20 /tmp/pull.log
+            echo "RESULT 拉取失败：镜像源列表里有失效镜像（当前含 registry.docker-cn.com 等历史失效项）"
+          fi
+
+      # 直接写 ~/.docker/config.json 绕过 docker login 的联网校验：
+      # 凭据只需存在于客户端配置，实际推送由宿主守护进程完成
+      - name: 推送探测
+        continue-on-error: true
+        env:
+          U: ${{ secrets.DOCKERHUB_USERNAME }}
+          P: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.docker"
+          auth=$(printf '%s:%s' "$U" "$P" | base64 -w0)
+          printf '{"auths":{"https://index.docker.io/v1/":{"auth":"%s"}}}' "$auth" > "$HOME/.docker/config.json"
+          echo "凭据长度 ${#auth}，用户名 ${U}"
+          docker tag redis:7-alpine "${U}/probe:ci"
+          if timeout 180 docker push "${U}/probe:ci" > /tmp/push.log 2>&1; then
+            tail -8 /tmp/push.log
+            echo "RESULT 推送可用：release-image 可以在 Gitea 侧发布"
+          else
+            tail -20 /tmp/push.log
+            echo "RESULT 推送不可用：镜像发布需留在 GitHub，或改用国内 registry 中转"
+          fi
+
   # 依赖 runner config.yaml 的全局挂载（options + valid_volumes 都必须配，路径必须一致）
   share-write:
     name: 共享卷写入
