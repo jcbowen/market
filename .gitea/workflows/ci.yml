@@ -10,7 +10,12 @@
 #      沿用 GitHub 的 10 次（100 秒）会先被判 unhealthy，等不到就绪；
 #   3. setup-go 锁精确版本 1.26.5：指定 go-download-base-url 后会跳过版本清单，
 #      别名写法（如 '1.26'）在该模式下解析不了；
-#   4. setup-node 用 npmmirror 的 node 镜像：nodejs.org 从 NAS 拉取很慢；
+#   4. 前端不用 actions/setup-node，改 curl 直下 Node tarball（npmmirror CDN）：
+#      该 action 的 mirror 输入只作用于「回退直连」分支，主路径的下载 URL 来自
+#      actions/node-versions 清单、硬编码指向 github.com releases，NAS 出不去必 ETIMEDOUT；
+#      回退分支又要 GET ${mirror}/index.json，而 npmmirror 的 /mirrors/node 对 index.json
+#      返回 302 到 cdn 域，action 的 getJson 不跟随重定向 → 空列表 →
+#      "Unable to find Node version '22'"。直下可绕开整条链路；
 #      npm 依赖本身由 lockfile 的 mirrors.tencent.com 提供，无需额外配置；
 #   5. golangci 用 install-mode: goinstall：默认 binary 模式要从 github.com releases
 #      下预编译 tar.gz，runner.github_mirror 只代理 action 仓库、不覆盖 action 运行时的下载。
@@ -195,13 +200,29 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          # nodejs.org 从 NAS 拉取很慢，改用 npmmirror 的 node 分发目录
-          mirror: https://npmmirror.com/mirrors/node
-          cache: npm
-          cache-dependency-path: src/admin/package-lock.json
+      # setup-node 在本环境不可用（原因见文件头第 4 条），直接拉官方 tarball。
+      # 代价：没有 setup-node 的 npm 缓存，但本仓库 lockfile 的 resolved 指向
+      # mirrors.tencent.com，npm ci 本身够快。升级 Node 时只改 env.NODE_VERSION，
+      # 可用版本见 https://cdn.npmmirror.com/binaries/node/index.json
+      - name: 安装 Node（npmmirror 直下）
+        env:
+          NODE_VERSION: 22.23.4
+        run: |
+          case "$(uname -m)" in
+            x86_64) NODE_ARCH=x64 ;;
+            aarch64|arm64) NODE_ARCH=arm64 ;;
+            *) echo "不支持的架构：$(uname -m)"; exit 1 ;;
+          esac
+          node_dir="$HOME/.local/node-v${NODE_VERSION}-linux-${NODE_ARCH}"
+          url="https://cdn.npmmirror.com/binaries/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz"
+          echo "下载 ${url}"
+          curl -fsSL -L --retry 3 --retry-delay 5 -o /tmp/node.tar.gz "$url"
+          mkdir -p "${node_dir}"
+          tar -xzf /tmp/node.tar.gz -C "${node_dir}" --strip-components=1
+          export PATH="${node_dir}/bin:$PATH"
+          node --version
+          npm --version
+          echo "${node_dir}/bin" >> "$GITHUB_PATH"
 
       - name: 安装依赖
         env:
@@ -227,12 +248,25 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-          mirror: https://npmmirror.com/mirrors/node
-          cache: npm
-          cache-dependency-path: src/client/package-lock.json
+      - name: 安装 Node（npmmirror 直下）
+        env:
+          NODE_VERSION: 22.23.4
+        run: |
+          case "$(uname -m)" in
+            x86_64) NODE_ARCH=x64 ;;
+            aarch64|arm64) NODE_ARCH=arm64 ;;
+            *) echo "不支持的架构：$(uname -m)"; exit 1 ;;
+          esac
+          node_dir="$HOME/.local/node-v${NODE_VERSION}-linux-${NODE_ARCH}"
+          url="https://cdn.npmmirror.com/binaries/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.gz"
+          echo "下载 ${url}"
+          curl -fsSL -L --retry 3 --retry-delay 5 -o /tmp/node.tar.gz "$url"
+          mkdir -p "${node_dir}"
+          tar -xzf /tmp/node.tar.gz -C "${node_dir}" --strip-components=1
+          export PATH="${node_dir}/bin:$PATH"
+          node --version
+          npm --version
+          echo "${node_dir}/bin" >> "$GITHUB_PATH"
 
       - name: 安装依赖
         env:
