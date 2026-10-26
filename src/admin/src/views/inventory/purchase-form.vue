@@ -246,7 +246,7 @@ onMounted(async () => {
   if (isEdit.value) {
     await loadDetail()
   } else {
-    loadReplenishSuggestion()
+    await loadReplenishSuggestion()
   }
 })
 

@@ -172,6 +172,27 @@ let keywordTimer: ReturnType<typeof setTimeout> | null = null
  */
 let loadSeq = 0
 
+/**
+ * 归一化附件地址为可比对的资源键
+ * 上传响应按部署域名拼完整 URL，列表接口按附件配置拼装（未配访问域名时为站内 /uploads/ 路径），
+ * 两种形态指向同一文件，统一剥协议与 host、剥离 /uploads/ 前缀后按相对路径比较；
+ * OSS 场景 CDN/bucket 域名分叉的同一对象 key 也因此能匹配
+ * @param src 附件 URL 或相对路径
+ * @returns 归一化资源键
+ */
+function normalizeMediaKey(src: string): string {
+  if (!src) return ''
+  // 完整 URL：截取 path 段后按纯路径规则继续归一，无 path 段则原样返回
+  if (/^https?:\/\//i.test(src)) {
+    const pathIdx = src.indexOf('/', src.indexOf('://') + 3)
+    if (pathIdx === -1) return src
+    return normalizeMediaKey(src.slice(pathIdx)) || src
+  }
+  // 纯路径：剥离开头的 / 与 uploads/ 目录前缀
+  const trimmed = src.replace(/^\/+/, '')
+  return trimmed.startsWith('uploads/') ? trimmed.slice('uploads/'.length) : trimmed
+}
+
 onUnmounted(() => {
   if (keywordTimer) clearTimeout(keywordTimer)
   keywordTimer = null
@@ -261,15 +282,22 @@ function onDateChange() {
 
 /**
  * 判断 URL 是否处于多选已选集合
+ * 按归一化资源键比对，兼容上传响应完整 URL 与列表站内路径两种形态
  * @param url 图片 URL
  * @returns 已选返回 true
  */
 function isSelected(url: string): boolean {
-  return multiSelected.value.has(url)
+  const key = normalizeMediaKey(url)
+  if (!key) return false
+  for (const sel of multiSelected.value) {
+    if (normalizeMediaKey(sel) === key) return true
+  }
+  return false
 }
 
 /**
  * 点击卡片：单选模式回传并关闭；多选模式切换选中态
+ * 切换按归一化资源键查找既有项，避免同一文件以两种 URL 形态重复入集合
  * @param item 附件条目
  */
 function onPick(item: AttachmentItem) {
@@ -278,8 +306,12 @@ function onPick(item: AttachmentItem) {
     emit('update:show', false)
     return
   }
+  const key = normalizeMediaKey(item.url)
+  const existing = [...multiSelected.value].find((sel) => normalizeMediaKey(sel) === key)
   const next = new Set(multiSelected.value)
-  if (!next.delete(item.url)) {
+  if (existing !== undefined) {
+    next.delete(existing)
+  } else {
     next.add(item.url)
   }
   multiSelected.value = next
@@ -314,7 +346,8 @@ async function handleUpload(options: UploadCustomRequestOptions) {
     if (!props.multiple) {
       emit('select', url)
       emit('update:show', false)
-    } else {
+    } else if (!isSelected(url)) {
+      // 已按归一化资源键存在（重复上传/秒传）时不重复入集合
       multiSelected.value = new Set([...multiSelected.value, url])
     }
     reload()

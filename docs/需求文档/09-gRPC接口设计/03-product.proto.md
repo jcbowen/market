@@ -558,6 +558,7 @@ message PurchaseOrderItem {
 
 message GeneratePurchaseOrderReq {
   int64 community_id = 1;
+  repeated int64 sku_ids = 2;          // 指定仅生成这些 SKU 的补货建议（库存工作台勾选补货）；为空时生成全部低库存建议
 }
 
 message GeneratePurchaseOrderResp {
@@ -1087,7 +1088,7 @@ message DeleteBannerReq {
 // 注意：oss_access_key_secret 写入时为空或掩码值表示保留原值，读取时服务端已脱敏
 message AttachmentConfig {
   string storage_type = 1;             // 存储类型：local / oss（预留 cos）
-  string visit_domain = 2;             // 自定义访问域名，空则本地模式按请求域名动态拼接、OSS 用 bucket 域名
+  string visit_domain = 2;             // 自定义访问域名，选填；local 未配置时按 /uploads/ 站内路径兜底（保存站点设置时自动补写为部署域名）、OSS 用 bucket 域名
   string oss_access_key_id = 3;        // 阿里云 AccessKey ID
   string oss_access_key_secret = 4;    // 阿里云 AccessKey Secret（读取时脱敏）
   string oss_endpoint = 5;             // OSS Endpoint，如 oss-cn-shanghai.aliyuncs.com
