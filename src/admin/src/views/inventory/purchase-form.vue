@@ -85,7 +85,7 @@ import { useMessage } from 'naive-ui'
 import type { FormInst } from 'naive-ui'
 import SkuPicker from './components/SkuPicker.vue'
 import BatchPickerModal from './components/BatchPickerModal.vue'
-import { getSupplierList, getPurchaseOrderDetail, createPurchaseOrder, updatePurchaseOrder, submitPurchaseOrder } from '@/api/inventory'
+import { generatePurchaseOrder, getSupplierList, getPurchaseOrderDetail, createPurchaseOrder, updatePurchaseOrder, submitPurchaseOrder } from '@/api/inventory'
 import type { Sku, Supplier } from '@/api/types'
 
 /**
@@ -250,36 +250,37 @@ onMounted(async () => {
   }
 })
 
-/** 读取库存工作台「一键补货」带来的建议（query.replenish），预填明细行 */
-function loadReplenishSuggestion() {
-  const raw = route.query.replenish
-  if (typeof raw !== 'string' || !raw) return
-  try {
-    const items = JSON.parse(raw) as Array<{
-      sku_id: number
-      sku_code: string
-      spec_name: string
-      product_name: string
-      current_stock: number
-      safety_stock: number
-      suggest_quantity: number
-    }>
-    if (!Array.isArray(items) || items.length === 0) return
-    form.value.items = items.map((item) => ({
-      sku_id: item.sku_id,
-      quantity: Math.max(1, item.suggest_quantity || 1),
-      purchase_price: 0,
-      from_replenish: {
-        product_name: item.product_name,
-        spec_name: item.spec_name,
-        sku_code: item.sku_code,
-        current_stock: item.current_stock,
-        safety_stock: item.safety_stock,
-      },
-    }))
-    message.info(`已带入 ${items.length} 条补货建议，请确认采购价后提交`)
-  } catch {
-    // 建议数据解析失败时按空表单处理
+/** 读取库存工作台「一键补货」带来的 sku_ids（query.replenish=1&sku_ids=1,2,3），回查补货建议预填明细行 */
+async function loadReplenishSuggestion() {
+  if (typeof route.query.replenish !== 'string' || !route.query.replenish) return
+  const raw = route.query.sku_ids
+  let skuIds: number[] | undefined
+  if (typeof raw === 'string' && raw) {
+    skuIds = raw
+      .split(',')
+      .map((v) => Number(v))
+      .filter((v) => Number.isInteger(v) && v > 0)
+    if (skuIds.length === 0) return
   }
+  const res = await generatePurchaseOrder(skuIds ? { sku_ids: skuIds } : undefined)
+  if (res.data.code !== 0) return
+  const items = res.data.data
+  if (!Array.isArray(items) || items.length === 0) {
+    message.warning('没有可补货的低库存项')
+    return
+  }
+  form.value.items = items.map((item) => ({
+    sku_id: item.sku_id,
+    quantity: Math.max(1, item.suggest_quantity || 1),
+    purchase_price: 0,
+    from_replenish: {
+      product_name: item.product_name,
+      spec_name: item.spec_name,
+      sku_code: item.sku_code,
+      current_stock: item.current_stock,
+      safety_stock: item.safety_stock,
+    },
+  }))
+  message.info(`已带入 ${items.length} 条补货建议，请确认采购价后提交`)
 }
 </script>

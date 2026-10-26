@@ -115,11 +115,13 @@ export function deleteSupplier(id: number) {
 
 /**
  * 获取补货建议（低库存 SKU + 建议采购量）
+ * @param params.sku_ids 仅生成指定 SKU 的建议（库存工作台勾选补货）；缺省时生成全部低库存建议
  */
-export function generatePurchaseOrder() {
+export function generatePurchaseOrder(params?: { sku_ids?: number[] }) {
   return request<ApiResult<PurchaseOrderItem[]>>({
     url: '/api/v1/admin/inventory/purchase-order',
     method: 'POST',
+    data: params,
   })
 }
 

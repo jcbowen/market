@@ -839,7 +839,7 @@ func (s *server) GetStockWarnings(ctx stdctx.Context, req *product.GetStockWarni
 
 // GeneratePurchaseOrder 生成补货建议单
 func (s *server) GeneratePurchaseOrder(ctx stdctx.Context, req *product.GeneratePurchaseOrderReq) (*product.GeneratePurchaseOrderResp, error) {
-	items, err := s.stockService.GeneratePurchaseOrder(ctx, req.CommunityId)
+	items, err := s.stockService.GeneratePurchaseOrder(ctx, req.CommunityId, req.SkuIds)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}

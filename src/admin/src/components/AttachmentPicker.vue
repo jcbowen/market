@@ -121,7 +121,8 @@ import { formatDateTime as formatTimeText } from '@/utils/datetime'
  * 分页浏览当前登录管理员上传的图片附件（每页 12 条，响应式 3/4/6 列），
  * 支持关键字（文件名/路径）与上传时间范围筛选、弹窗内直接上传（local/oss 自动分流），
  * 上传成功后新图立即显示在列表中（按上传时间倒序）
- * 选择交互：单图模式点击卡片即回传并关闭；多图模式点选/取消（跨页保留），底部确认批量回传
+ * 选择交互：单图模式点击卡片即回传并关闭（弹窗内上传成功同样直接回填新图并关闭）；
+ * 多图模式点选/取消（跨页保留），底部确认批量回传
  */
 
 const props = withDefaults(
@@ -305,9 +306,17 @@ async function handleUpload(options: UploadCustomRequestOptions) {
 
   uploadingCount.value += 1
   try {
-    await uploadImageFile(file)
+    // 上传响应即完整访问 URL，直接用于回填/选中，
+    // 不依赖列表接口的 URL 拼装结果（附件访问域名未配置时列表会降级为站内路径）
+    const url = await uploadImageFile(file)
     options.onFinish()
     message.success('图片上传成功')
+    if (!props.multiple) {
+      emit('select', url)
+      emit('update:show', false)
+    } else {
+      multiSelected.value = new Set([...multiSelected.value, url])
+    }
     reload()
   } catch (err) {
     // 业务错误提示已由 axios 拦截器统一弹出，这里只标记失败状态

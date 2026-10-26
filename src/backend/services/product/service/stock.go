@@ -950,20 +950,34 @@ func (s *StockService) getProductNames(ctx context.Context, productIDs []int64) 
 // 参数：
 //   - ctx: 上下文
 //   - communityID: 社区 ID，<=0 时查询全部
+//   - skuIDs: 指定仅生成这些 SKU 的建议（工作台勾选补货）；为空时生成全部低库存建议
 //
 // 返回值：
 //   - []*product.PurchaseOrderItem: 补货建议列表
 //   - error: 错误信息
-func (s *StockService) GeneratePurchaseOrder(ctx context.Context, communityID int64) ([]*product.PurchaseOrderItem, error) {
+func (s *StockService) GeneratePurchaseOrder(ctx context.Context, communityID int64, skuIDs []int64) ([]*product.PurchaseOrderItem, error) {
 	warnings, err := s.GetStockWarnings(ctx, communityID)
 	if err != nil {
 		return nil, err
+	}
+	var selected map[int64]struct{}
+	if len(skuIDs) > 0 {
+		selected = make(map[int64]struct{}, len(skuIDs))
+		for _, id := range skuIDs {
+			selected[id] = struct{}{}
+		}
 	}
 	items := make([]*product.PurchaseOrderItem, 0, len(warnings))
 	for _, w := range warnings {
 		// 跳过临期预警，仅处理低库存
 		if w.WarningType != 1 {
 			continue
+		}
+		// 指定了 SKU 集合时仅保留命中的项（不在集合内的低库存项跳过）
+		if selected != nil {
+			if _, ok := selected[w.SkuId]; !ok {
+				continue
+			}
 		}
 		suggest := w.SafetyStock*2 - w.Stock
 		if suggest < 1 {

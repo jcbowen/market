@@ -663,6 +663,8 @@ message PurchaseOrderItem {
 
 message GeneratePurchaseOrderReq {
   int64 community_id = 1;
+  // 指定仅生成这些 SKU 的补货建议（库存工作台勾选补货）；为空时生成全部低库存建议
+  repeated int64 sku_ids = 2;
 }
 
 message GeneratePurchaseOrderResp {

@@ -207,8 +207,12 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await updateSiteSetting({ ...form })
+    const res = await updateSiteSetting({ ...form })
     message.success('站点设置已保存，立即生效')
+    // 附件访问域名此前未配置时已自动沿用本次保存的部署域名，提示用户去附件配置页确认
+    if (res.data?.data?.attachment_domain_synced) {
+      message.info('附件「自定义访问域名」此前未配置，已自动沿用本次保存的部署域名，可到附件配置页调整', { duration: 6000 })
+    }
     await load()
   } catch {
     // 错误提示由请求拦截器统一弹出

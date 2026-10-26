@@ -18,8 +18,9 @@ import (
  *   - configCacheFresh 有效期内命中缓存、过期后失效（列表逐行取 URL 不再每行查库的前提）
  *   - ToMediaURL local 模式拼 <访问域名>/uploads/<相对路径>
  *   - ToMediaURL oss 模式优先自定义 CDN 域名，缺省回落 bucket.endpoint 域名
- *   - ToMediaURL 对空值、存量完整 URL 原样返回；local 未配置访问域名时原样返回
- *   - ToMediaURLs 整批共用一次配置读取
+ *   - ToMediaURL 对空值、存量完整 URL、/ 开头站内绝对路径原样返回
+ *   - local 未配置访问域名/配置缺失时兜底拼 /uploads/<相对路径>，不原样返回裸相对路径
+ *   - ToMediaURLs 整批共用一次配置读取，降级时逐项兜底
  *
  * 用例会预置一份未过期的进程内缓存，因此不会触达 s.db（保持 nil 即证明走的是缓存）。
  */
@@ -103,10 +104,42 @@ func TestAttachmentToMediaURL(t *testing.T) {
 		}
 	})
 
-	t.Run("local未配置访问域名原样返回", func(t *testing.T) {
+	t.Run("local未配置访问域名兜底站内绝对路径", func(t *testing.T) {
 		svc := newCachedAttachmentService(&model.AttachmentConfig{StorageType: "local"})
-		if got := svc.ToMediaURL(ctx, "images/a.jpg"); got != "images/a.jpg" {
-			t.Errorf("缺访问域名时应原样返回: %q", got)
+		if got := svc.ToMediaURL(ctx, "images/a.jpg"); got != "/uploads/images/a.jpg" {
+			t.Errorf("缺访问域名时应兜底 /uploads/ 前缀: %q", got)
+		}
+		if got := svc.ToMediaURL(ctx, "uploads/images/a.jpg"); got != "/uploads/images/a.jpg" {
+			t.Errorf("uploads/ 目录前缀应归一为 /uploads/: %q", got)
+		}
+		// 存量完整 URL 与站内绝对路径（含 seed 素材）原样返回，不重复加前缀
+		if got := svc.ToMediaURL(ctx, "https://other.example.com/x.jpg"); got != "https://other.example.com/x.jpg" {
+			t.Errorf("存量完整 URL 应原样返回: %q", got)
+		}
+		if got := svc.ToMediaURL(ctx, "/uploads/seed/products/a.png"); got != "/uploads/seed/products/a.png" {
+			t.Errorf("/ 开头站内绝对路径应原样返回: %q", got)
+		}
+	})
+
+	t.Run("降级纯函数口径", func(t *testing.T) {
+		// fallbackMediaURL 为纯函数，配置缺失/无法连库等任何走不到转换器的场景共用此口径
+		if got := fallbackMediaURL("images/a.jpg"); got != "/uploads/images/a.jpg" {
+			t.Errorf("相对路径应补 /uploads/ 前缀: %q", got)
+		}
+		if got := fallbackMediaURL("uploads/images/a.jpg"); got != "/uploads/images/a.jpg" {
+			t.Errorf("uploads/ 目录前缀应归一为 /uploads/: %q", got)
+		}
+		if got := fallbackMediaURL("https://other.example.com/x.jpg"); got != "https://other.example.com/x.jpg" {
+			t.Errorf("完整 URL 应原样返回: %q", got)
+		}
+		if got := fallbackMediaURL("//cdn.example.com/x.jpg"); got != "//cdn.example.com/x.jpg" {
+			t.Errorf("协议相对 URL 应原样返回: %q", got)
+		}
+		if got := fallbackMediaURL("/uploads/seed/products/a.png"); got != "/uploads/seed/products/a.png" {
+			t.Errorf("/ 开头站内绝对路径应原样返回: %q", got)
+		}
+		if got := fallbackMediaURL(""); got != "" {
+			t.Errorf("空值应返回空串: %q", got)
 		}
 	})
 
@@ -161,5 +194,15 @@ func TestAttachmentToMediaURLs(t *testing.T) {
 
 	if out := svc.ToMediaURLs(ctx, nil); out != nil {
 		t.Errorf("空列表应原样返回: %v", out)
+	}
+
+	// 降级批量：逐项走 fallbackMediaURL，完整 URL 与站内绝对路径原样保留
+	fallbackSvc := newCachedAttachmentService(&model.AttachmentConfig{StorageType: "local"})
+	fb := fallbackSvc.ToMediaURLs(ctx, []string{"images/a.jpg", "", "https://other.example.com/b.jpg", "/uploads/seed/c.png"})
+	wantFB := []string{"/uploads/images/a.jpg", "", "https://other.example.com/b.jpg", "/uploads/seed/c.png"}
+	for i := range wantFB {
+		if fb[i] != wantFB[i] {
+			t.Errorf("批量降级第 %d 项不符: got %q want %q", i, fb[i], wantFB[i])
+		}
 	}
 }

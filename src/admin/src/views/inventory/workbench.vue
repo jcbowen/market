@@ -20,13 +20,21 @@
       <!-- 库存预警 -->
       <n-tab-pane name="warnings" tab="库存预警">
         <n-space style="margin-bottom: 12px" vertical>
-          <n-text depth="3">低库存与临期批次预警；点击「一键补货」可按建议量生成采购单。</n-text>
+          <n-text depth="3">
+            低库存与临期批次预警；可勾选部分低库存项后「一键补货」，未勾选则按全部低库存项生成（临期项不参与补货）。
+          </n-text>
           <n-space>
             <n-button type="primary" :loading="replenishing" @click="replenish">一键补货（生成采购单）</n-button>
             <n-button @click="loadWarnings">刷新</n-button>
           </n-space>
         </n-space>
-        <n-data-table :columns="warningColumns" :data="warningList" :loading="warningLoading" />
+        <n-data-table
+          :columns="warningColumns"
+          :data="warningList"
+          :loading="warningLoading"
+          :row-key="(row: Warning) => row.sku_id"
+          v-model:checked-row-keys="checkedWarningKeys"
+        />
       </n-tab-pane>
 
       <!-- 库存流水 -->
@@ -70,7 +78,7 @@ defineOptions({ name: 'StockWorkbench' })
 import { h, ref } from 'vue'
 import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NTag } from 'naive-ui'
+import { NButton, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import {
   getInventoryLogList,
@@ -88,6 +96,7 @@ import { formatDateTime } from '@/utils/datetime'
  */
 const router = useRouter()
 const route = useRoute()
+const message = useMessage()
 const activeTab = ref('stock')
 
 // ---------- 库存列表 ----------
@@ -151,8 +160,11 @@ type Warning = {
 const warningList = ref<Warning[]>([])
 const warningLoading = ref(false)
 const replenishing = ref(false)
+// 勾选的预警 SKU（row-key=sku_id）；空 = 不勾选，按全部低库存项生成
+const checkedWarningKeys = ref<Array<string | number>>([])
 
 const warningColumns: DataTableColumns<Warning> = [
+  { type: 'selection' },
   { title: 'SKU 编码', key: 'sku_code', width: 150 },
   { title: '商品', key: 'product_name', ellipsis: { tooltip: true } },
   { title: '规格', key: 'spec_name', width: 130, ellipsis: { tooltip: true } },
@@ -182,13 +194,27 @@ async function loadWarnings() {
   }
 }
 
-/** 一键补货：拉取补货建议，直接带入新建采购单页预填明细 */
+/** 一键补货：勾选时仅按选中项生成建议，否则全量；带入新建采购单页预填明细 */
 async function replenish() {
+  // 勾选项中仅低库存（warning_type=1）参与补货，临期项由促销/清仓流程处理
+  const selectedLowStock = checkedWarningKeys.value
+    .map((key) => warningList.value.find((w) => w.sku_id === key))
+    .filter((w): w is Warning => !!w && w.warning_type === 1)
+    .map((w) => w.sku_id)
+  if (checkedWarningKeys.value.length > 0 && selectedLowStock.length === 0) {
+    message.warning('勾选项均为临期预警，不参与补货；请勾选低库存项')
+    return
+  }
+  const skuIds = selectedLowStock.length > 0 ? selectedLowStock : undefined
+
   replenishing.value = true
   try {
-    const res = await generatePurchaseOrder()
+    const res = await generatePurchaseOrder(skuIds ? { sku_ids: skuIds } : undefined)
     if (res.data.code === 0) {
-      router.push({ path: '/stock/purchase/create', query: { replenish: JSON.stringify(res.data.data) } })
+      router.push({
+        path: '/stock/purchase/create',
+        query: { replenish: '1', ...(skuIds ? { sku_ids: skuIds.join(',') } : {}) },
+      })
     }
   } finally {
     replenishing.value = false

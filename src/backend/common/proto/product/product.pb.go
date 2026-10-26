@@ -4314,8 +4314,10 @@ func (x *PurchaseOrderItem) GetSuggestQuantity() int32 {
 }
 
 type GeneratePurchaseOrderReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CommunityId   int64                  `protobuf:"varint,1,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	CommunityId int64                  `protobuf:"varint,1,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	// 指定仅生成这些 SKU 的补货建议（库存工作台勾选补货）；为空时生成全部低库存建议
+	SkuIds        []int64 `protobuf:"varint,2,rep,packed,name=sku_ids,json=skuIds,proto3" json:"sku_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4355,6 +4357,13 @@ func (x *GeneratePurchaseOrderReq) GetCommunityId() int64 {
 		return x.CommunityId
 	}
 	return 0
+}
+
+func (x *GeneratePurchaseOrderReq) GetSkuIds() []int64 {
+	if x != nil {
+		return x.SkuIds
+	}
+	return nil
 }
 
 type GeneratePurchaseOrderResp struct {
@@ -14161,9 +14170,10 @@ const file_product_product_proto_rawDesc = "" +
 	"\fproduct_name\x18\x04 \x01(\tR\vproductName\x12#\n" +
 	"\rcurrent_stock\x18\x05 \x01(\x05R\fcurrentStock\x12!\n" +
 	"\fsafety_stock\x18\x06 \x01(\x05R\vsafetyStock\x12)\n" +
-	"\x10suggest_quantity\x18\a \x01(\x05R\x0fsuggestQuantity\"=\n" +
+	"\x10suggest_quantity\x18\a \x01(\x05R\x0fsuggestQuantity\"V\n" +
 	"\x18GeneratePurchaseOrderReq\x12!\n" +
-	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\"M\n" +
+	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x17\n" +
+	"\asku_ids\x18\x02 \x03(\x03R\x06skuIds\"M\n" +
 	"\x19GeneratePurchaseOrderResp\x120\n" +
 	"\x05items\x18\x01 \x03(\v2\x1a.product.PurchaseOrderItemR\x05items\"g\n" +
 	"\x17DeductFlashSaleStockReq\x12\x19\n" +

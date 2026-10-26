@@ -1001,6 +1001,7 @@ func ensureTrailingSlash(domain string) string {
 // 数据库仅存附件相对路径（remote_path 形态，如 images/2026/10/11/xxx.jpg，不含 uploads 目录前缀）：
 // 入库前经 ToSourcePath 剥离域名，出库前经 ToMediaURL 拼接完整访问地址。
 // local 模式拼接为 <visit_domain>/uploads/<path>（与 gateway /uploads 静态路由一致），
+// 未配置 visit_domain 时兜底为站内绝对路径 /uploads/<path>，
 // oss 模式拼接为 <自定义 CDN 域名或 bucket 域名>/<path>
 
 // attachmentConverter 按附件配置构造 jcbaseGo 附件转换器
@@ -1031,7 +1032,8 @@ func attachmentConverter(cfg *model.AttachmentConfig) *attachment.Attachment {
 }
 
 // mediaConverter 取当前可用的图片 URL 转换器
-// 配置缺失，或 local 模式未填访问域名（拼不出可用地址）时返回 nil，调用方原样返回源值
+// 配置缺失，或 local 模式未填访问域名时返回 nil，调用方按 fallbackMediaURL 以
+// /uploads/<path> 站内绝对路径兜底
 //
 // 参数:
 //   - ctx: 上下文
@@ -1047,8 +1049,10 @@ func (s *AttachmentService) mediaConverter(ctx context.Context) *attachment.Atta
 }
 
 // ToMediaURL 将入库相对路径补全为完整访问 URL
-// 空值与 http(s) 开头的存量完整 URL 原样返回；
-// local 模式未配置访问域名时拼不出可用地址，同样原样返回（需先在后台附件配置中填写）
+// 拼装优先级（三层递进，均无需迁移存量记录）：
+//  1. 配置了访问域名（local 的 visit_domain / OSS 的自定义或 bucket 域名）→ 拼 <域名>/uploads/<path> 或 <域名>/<path>
+//  2. local 未配置访问域名或配置缺失 → 拼站内绝对路径 /uploads/<path>（网关静态路由兜底，浏览器不随页面路径解析）
+//  3. 空值与 http(s) 完整 URL、/ 开头的站内绝对路径（含 /uploads/seed 演示素材）原样返回
 //
 // 参数:
 //   - ctx: 上下文
@@ -1062,9 +1066,31 @@ func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
 	}
 	conv := s.mediaConverter(ctx)
 	if conv == nil {
-		return src
+		return fallbackMediaURL(src)
 	}
 	return conv.ToMedia(src)
+}
+
+// fallbackMediaURL 附件访问域名不可用时的兜底拼装
+// 返回站内绝对路径 /uploads/<path>：网关 /uploads 静态路由承接，且不随浏览器当前页面
+// 路径解析（SPA 子路径如 /b/ 下不会错拼成 /b/images/...）
+//
+// 参数:
+//   - src: 相对路径或存量完整 URL
+//
+// 返回值:
+//   - string: 站内绝对路径；已是完整 URL 或 / 开头路径时原样返回
+func fallbackMediaURL(src string) string {
+	if src == "" {
+		return ""
+	}
+	// 完整 URL 与站内绝对路径（含 /uploads/seed/** 演示素材）原样返回
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") ||
+		strings.HasPrefix(src, "//") || strings.HasPrefix(src, "/") {
+		return src
+	}
+	// uploads/ 目录前缀形态归一为 /uploads/，其余相对路径补 /uploads/ 前缀
+	return "/uploads/" + strings.TrimPrefix(src, "uploads/")
 }
 
 // ToMediaURLs ToMediaURL 的批量版本
@@ -1083,8 +1109,12 @@ func (s *AttachmentService) ToMediaURLs(ctx context.Context, list []string) []st
 	conv := s.mediaConverter(ctx)
 	out := make([]string, 0, len(list))
 	for _, src := range list {
-		if src == "" || conv == nil {
+		if src == "" {
 			out = append(out, src)
+			continue
+		}
+		if conv == nil {
+			out = append(out, fallbackMediaURL(src))
 			continue
 		}
 		out = append(out, conv.ToMedia(src))

@@ -3742,9 +3742,18 @@ func (h *AdminHandler) CreateStockCheck(c *gin.Context) {
 // GeneratePurchaseOrder 生成补货建议单
 // 参数：
 //   - c: gin 上下文
+//
+// 请求体（可选）：{"sku_ids":[1,2]} 仅生成指定 SKU 的建议；空体/缺省时生成全部低库存建议
 func (h *AdminHandler) GeneratePurchaseOrder(c *gin.Context) {
+	var reqBody struct {
+		SkuIDs []int64 `json:"sku_ids"`
+	}
+	// 请求体可缺省（旧调用无 body），解析失败按全量处理
+	_ = c.ShouldBindJSON(&reqBody)
+
 	resp, err := h.productClient.GeneratePurchaseOrder(c.Request.Context(), &product.GeneratePurchaseOrderReq{
 		CommunityId: h.getAdminCommunityID(c),
+		SkuIds:      reqBody.SkuIDs,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

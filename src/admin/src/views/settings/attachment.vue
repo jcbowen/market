@@ -13,11 +13,11 @@
         </n-form-item>
 
         <n-form-item label="自定义访问域名">
-          <n-input v-model:value="form.visit_domain" placeholder="必填，如 http://localhost:18080/ 或 https://cdn.example.com/，用于拼接图片完整访问地址" />
+          <n-input v-model:value="form.visit_domain" placeholder="选填，如 https://market.example.com，用于拼接图片完整访问地址" />
         </n-form-item>
 
         <n-alert v-if="form.storage_type === 'local'" type="info" class="tip">
-          本地模式文件保存在服务部署目录的 attachment/ 下，通过 /uploads/ 路径对外访问；商品、Banner 等图片地址在返回给页面时按上方「自定义访问域名」拼接为完整 URL（数据库仅存相对路径）。切换为 OSS 后，新上传的图片将直传 OSS；历史本地图片的访问地址会随存储模式变化，请先通过下方「本地附件迁移」将历史文件同步到 OSS，再切换存储模式，避免图片无法访问。
+          本地模式文件保存在服务部署目录的 attachment/ 下，通过 /uploads/ 路径对外访问；商品、Banner 等图片地址在返回给页面时按上方「自定义访问域名」拼接为完整 URL（数据库仅存相对路径）。访问域名未配置时：保存站点设置会自动沿用其部署域名（此后以本页配置为准，站点域名修改不再联动）；仍为空时图片按 /uploads/ 站内路径访问。切换为 OSS 后，新上传的图片将直传 OSS；历史本地图片的访问地址会随存储模式变化，请先通过下方「本地附件迁移」将历史文件同步到 OSS，再切换存储模式，避免图片无法访问。
         </n-alert>
 
         <template v-if="form.storage_type === 'oss'">

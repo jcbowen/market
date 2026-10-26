@@ -413,7 +413,7 @@ export function getSiteSetting() {
  * @returns 保存结果与新版本号
  */
 export function updateSiteSetting(data: Pick<SiteSetting, 'base_url' | 'site_name' | 'logo_url' | 'favicon_url' | 'footer_html' | 'seo_description' | 'seo_keywords'>) {
-  return request<ApiResult<{ success: boolean; version: number }>>({
+  return request<ApiResult<{ success: boolean; version: number; attachment_domain_synced?: boolean }>>({
     url: '/api/v1/admin/settings/site',
     method: 'PUT',
     data,
