@@ -1,11 +1,12 @@
-# Gitea 环境自检（临时文件，迁移完成后删除）
-# 目的：在改正式流水线之前，一次性验证 5 个 Gitea 侧未知项：
+# Gitea 环境自检 v2（临时文件，迁移完成后删除）
+# v1 教训：单 job 内任一环节失败会掩盖后续检查，故拆成互不阻塞的 job；
+# services 与 artifact 都加了诊断输出，一次跑完即可定案。
+# 目的：验证 5 个 Gitea 侧未知项——
 #   1. job 容器内 docker CLI / buildx 是否可用、能否连上宿主守护进程
-#   2. services 是否可按容器名直连（Gitea 与 GitHub 最大的行为差异）
-#   3. arm64 QEMU 模拟是否可用（多架构镜像构建的前置条件）
-#   4. actions/checkout + upload/download-artifact 是否可解析并工作
-#   5. GITHUB_TOKEN 是否具备 contents:write（Release 发布的前置条件）
-# 触发：推送本文件，或在 Gitea 页面手动运行
+#   2. arm64 QEMU 模拟是否可用（多架构镜像构建前置）
+#   3. services 能否按容器名直连（MySQL 首次初始化较慢，等待放宽到 5 分钟）
+#   4. artifact action 哪个大版本可用（v3 / v4 / v7 逐个探测）
+#   5. GITHUB_TOKEN 是否具备 contents:write（Release 发布前置）
 name: Gitea 环境自检
 
 on:
@@ -19,19 +20,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 不依赖 checkout：即使 action 解析失败，也能先拿到环境信息
-  env:
-    name: 工具链 / 服务 / docker
+  # 无 services、无 checkout：单点验证容器与宿主 docker 的连通性
+  tools:
+    name: 工具链 / docker / arm64
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7-alpine
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: ci-mysql
-          MYSQL_DATABASE: market
-          TZ: Asia/Shanghai
     steps:
       - name: 运行上下文
         env:
@@ -60,7 +52,7 @@ jobs:
             echo "MISS buildx"
           fi
 
-      - name: docker 守护进程连通（验证 container.options 挂载生效）
+      - name: docker 守护进程连通
         run: |
           if docker info >/dev/null 2>&1; then
             echo "OK   docker daemon 可达"
@@ -70,26 +62,22 @@ jobs:
             exit 1
           fi
 
-      - name: services 连通（容器名即主机名）
+      # 关键：job 容器由 runner 派生，与 Gitea 不在同一网络，
+      # artifact 上传与 action 下载都依赖这条链路，必须先确认可达
+      - name: Gitea 从 job 容器可达
         run: |
-          wait_port() {
-            local host=$1 port=$2
-            for _ in $(seq 1 30); do
-              if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${host}/${port}" 2>/dev/null; then
-                echo "OK   ${host}:${port} 可达"
-                return 0
-              fi
-              sleep 2
-            done
-            echo "FAIL ${host}:${port} 不可达"
-            return 1
-          }
-          rc=0
-          wait_port redis 6379 || rc=1
-          wait_port mysql 3306 || rc=1
-          exit $rc
+          URL="${GITHUB_SERVER_URL%/}/api/healthz"
+          echo "探测 ${URL}"
+          CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "$URL") || CODE="000"
+          echo "HTTP ${CODE}"
+          if [[ "$CODE" == "200" ]]; then
+            echo "OK   job 容器可访问 Gitea"
+          else
+            echo "FAIL job 容器无法访问 Gitea：artifact 上传与 action 拉取都会失败"
+            exit 1
+          fi
 
-      - name: arm64 模拟（多架构镜像构建前置）
+      - name: arm64 模拟
         run: |
           docker run --privileged --rm tonistiigi/binfmt --install arm64
           # 用 arm64 的 busybox 实跑一条命令，确认 binfmt 真生效而不只是注册成功
@@ -101,52 +89,108 @@ jobs:
           docker buildx inspect --bootstrap
           docker buildx rm smoketest
 
-  actions:
-    name: action 解析 + artifact 上传
+  services:
+    name: services 连通
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-mysql
+          MYSQL_DATABASE: market
+          TZ: Asia/Shanghai
+    steps:
+      - name: 等待端口（上限 5 分钟，MySQL 8.0 首次初始化在慢盘上可能超 2 分钟）
+        id: wait
+        run: |
+          wait_port() {
+            local host=$1 port=$2 label=$3
+            for i in $(seq 1 60); do
+              if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${host}/${port}" 2>/dev/null; then
+                echo "OK   ${label} ${host}:${port} 可达（第 ${i} 次探测）"
+                return 0
+              fi
+              sleep 3
+            done
+            echo "FAIL ${label} ${host}:${port} 5 分钟内不可达"
+            return 1
+          }
+          rc=0
+          wait_port redis 6379 redis || rc=1
+          wait_port mysql 3306 mysql || rc=1
+          echo "wait_rc=${rc}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 诊断（等待失败时输出容器状态与日志）
+        if: steps.wait.outputs.wait_rc != '0'
+        run: |
+          echo "=== 全部容器 ==="
+          docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' || true
+          echo "=== docker 镜像 ==="
+          docker images --format 'table {{.Repository}}:{{.Tag}}\t{{.Size}}' | head -20 || true
+          for id in $(docker ps -aq --filter ancestor=mysql:8.0); do
+            echo "=== mysql 容器 ${id} 日志尾部 ==="
+            docker logs --tail 80 "$id" 2>&1 || true
+          done
+
+      - name: 结论
+        run: |
+          if [ "${{ steps.wait.outputs.wait_rc }}" != "0" ]; then
+            echo "services 不可用，见上方诊断"
+            exit 1
+          fi
+          echo "OK   services 全部可达"
+
+  # artifact 版本探测：act_runner 对 upload-artifact 各版本的兼容性不同，
+  # 用 continue-on-error 逐个试，汇总哪个大版本可用
+  artifact-probe:
+    name: artifact 版本探测
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: 仓库内容
-        run: |
-          git log -1 --oneline
-          ls -1 | head -20
-
-      - name: 生成待上传文件
+      - name: 准备文件
         run: |
           mkdir -p out
           date > out/stamp.txt
-          echo hello > out/hello.txt
           ls -l out
 
-      - uses: actions/upload-artifact@v7
+      - name: 探测 v3
+        id: probe3
+        continue-on-error: true
+        uses: actions/upload-artifact@v3
         with:
-          name: smoke-artifact
+          name: probe-v3
           path: out
 
-  artifact-down:
-    name: artifact 下载校验
-    runs-on: ubuntu-latest
-    needs: [actions]
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/download-artifact@v8
+      - name: 探测 v4
+        id: probe4
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
-          name: smoke-artifact
-          path: in
+          name: probe-v4
+          path: out
 
-      - name: 校验往返
+      - name: 探测 v7
+        id: probe7
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-v7
+          path: out
+
+      - name: 汇总
         run: |
-          ls -l in
-          test -f in/hello.txt
-          grep -q hello in/hello.txt
-          echo "OK   artifact 跨 job 往返成功"
+          echo "upload-artifact v3 结果：${{ steps.probe3.outcome }}"
+          echo "upload-artifact v4 结果：${{ steps.probe4.outcome }}"
+          echo "upload-artifact v7 结果：${{ steps.probe7.outcome }}"
 
   release:
     name: Release 权限（自建自删）
     runs-on: ubuntu-latest
-    needs: [actions]
+    needs: [tools]
     permissions:
       contents: write
     steps:
@@ -168,7 +212,6 @@ jobs:
           fi
           echo "OK   Release 创建成功 id=${ID} tag=${TAG}"
 
-          # 先删 Release 再删 tag，失败不阻断（留痕在日志里，人工清理即可）
           CODE=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
             "${API}/${REPO}/releases/${ID}" -H "$AUTH") || CODE="000"
           echo "删除 Release：HTTP ${CODE}"
