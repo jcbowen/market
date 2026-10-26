@@ -9,6 +9,7 @@
 //   - Loader：attachment_config 单行的进程内缓存读取（默认 60s TTL，失败降级旧缓存）
 //   - Converter：按配置构造的 jcbaseGo 转换器薄封装
 //   - RelPath / FallbackURL / SourcePath：纯函数形态的归一化与兜底，无 DB 依赖
+//     （SourcePath 委托 jcbaseGo attachment.ToSource，剥离口径以上游实现为准）
 //
 // 完整地址的前提是 local 模式 visit_domain 恒有值：gateway 在站点设置保存时与运行期
 // 惰性补写（站点域名 > 当前访问域名，单向只补空）；仅在该补写尚未完成的短暂窗口内，
@@ -19,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -49,18 +49,18 @@ type Config struct {
 	OssEndpoint          string
 }
 
-// LocalDirName 取规范化的本地存储目录名（空值回默认）
+// LocalDirName 取规范化的本地存储目录名（剥离首尾斜杠后为空回默认）
 //
 // 参数:
-//   - dir: 配置的目录名（可为空串）
+//   - dir: 配置的目录名（可为空串或纯斜杠）
 //
 // 返回值:
-//   - string: 目录名（不含首尾斜杠，形如 uploads）
+//   - string: 目录名（不含首尾斜杠且恒非空，形如 uploads）
 func LocalDirName(dir string) string {
-	if dir == "" {
-		return DefaultLocalDir
+	if trimmed := strings.Trim(dir, "/"); trimmed != "" {
+		return trimmed
 	}
-	return strings.Trim(dir, "/")
+	return DefaultLocalDir
 }
 
 // DirOf 取配置的规范化本地目录名（cfg 为 nil 回默认 uploads）
@@ -202,6 +202,37 @@ type Converter struct {
 	conv *attachment.Attachment
 }
 
+// buildAttachment 按配置构造 jcbaseGo 附件转换器底层结构（出库拼接与入库归一共用同一份映射）
+// cfg 为 nil 时按默认本地存储（StorageType 空回 local、目录回 uploads、无域名）构造，
+// 保证 ToSource 等纯剥离口径始终可用
+//
+// 参数:
+//   - cfg: 附件配置（可为 nil）
+//
+// 返回值:
+//   - *attachment.Attachment: jcbaseGo 附件组件实例（恒非 nil）
+func buildAttachment(cfg *Config) *attachment.Attachment {
+	base := &jcbaseGo.AttachmentStruct{
+		// LocalDir 设计对齐 jcbaseGo：物理落盘目录名与 URL 路径段共用同一字段
+		LocalDir: DefaultLocalDir,
+	}
+	if cfg != nil {
+		base.StorageType = cfg.StorageType
+		base.LocalDir = LocalDirName(cfg.LocalDir)
+		switch cfg.StorageType {
+		case "oss":
+			domain := cfg.OssCustomVisitDomain
+			if domain == "" {
+				domain = fmt.Sprintf("https://%s.%s/", cfg.OssBucketName, cfg.OssEndpoint)
+			}
+			base.VisitDomain = ensureTrailingSlash(domain)
+		default:
+			base.LocalVisitDomain = ensureTrailingSlash(cfg.VisitDomain)
+		}
+	}
+	return &attachment.Attachment{BaseConfig: base}
+}
+
 // NewConverter 按配置构造转换器
 // 配置为 nil，或 local 模式未配访问域名（gateway 补写尚未完成的异常窗口）时返回 nil，
 // 调用方按 FallbackURL 兜底
@@ -215,25 +246,10 @@ func NewConverter(cfg *Config) *Converter {
 	if cfg == nil {
 		return nil
 	}
-	base := &jcbaseGo.AttachmentStruct{
-		StorageType: cfg.StorageType,
-		// LocalDir 设计对齐 jcbaseGo：物理落盘目录名与 URL 路径段共用同一字段
-		LocalDir:         LocalDirName(cfg.LocalDir),
-		LocalVisitDomain: ensureTrailingSlash(cfg.VisitDomain),
+	if cfg.StorageType != "oss" && cfg.VisitDomain == "" {
+		return nil
 	}
-	switch cfg.StorageType {
-	case "oss":
-		domain := cfg.OssCustomVisitDomain
-		if domain == "" {
-			domain = fmt.Sprintf("https://%s.%s/", cfg.OssBucketName, cfg.OssEndpoint)
-		}
-		base.VisitDomain = ensureTrailingSlash(domain)
-	default:
-		if cfg.VisitDomain == "" {
-			return nil
-		}
-	}
-	return &Converter{conv: &attachment.Attachment{BaseConfig: base}}
+	return &Converter{conv: buildAttachment(cfg)}
 }
 
 // ToMedia 将入库相对路径拼接为完整访问 URL
@@ -302,57 +318,21 @@ func (l *Loader) SourcePath(ctx context.Context, src string) string {
 	return SourcePath(l.Get(ctx), src)
 }
 
-// SourcePath 纯函数版入库归一化（配置由调用方提供，可离线测试）
-// 剥离前缀候选：配置的 local_dir 目录名 + 默认 uploads（兼容 local_dir 变更前的旧前缀）
+// SourcePath 将附件地址归一化为入库相对路径（remote_path 形态，不含 uploads 前缀）
+// 实现委托 jcbaseGo attachment.ToSource（上游口径，见其 README）：
+//   - 命中本地/远程附件域名：优先从类型目录（images/ 等）截取，本地域名下未命中类型目录时剥离 LocalDir 前缀
+//   - 未命中域名的 http(s) URL：local 存储模式按 /<local_dir>/ 路径前缀剥离（覆盖历史按任意请求域名拼出的存量 URL）；
+//     其余视为外链原样返回（含查询参数不破坏）
+//   - 纯路径形态（/uploads/... 或 uploads/...）：local 模式剥离 LocalDir 前缀，其余仅去掉开头的 /
 //
 // 参数:
-//   - cfg: 附件配置（可为 nil，此时仅剥离本站路径，OSS 候选域名不可用）
+//   - cfg: 附件配置（可为 nil，按默认本地存储、目录 uploads 归一）
 //   - src: 完整 URL、站内路径或已是相对路径
 //
 // 返回值:
 //   - string: 入库相对路径或原样外链 URL
 func SourcePath(cfg *Config, src string) string {
-	if src == "" {
-		return ""
-	}
-	dirs := dirCandidates(DirOf(cfg))
-	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		// 本站附件：path 以 /<目录>/ 开头直接提取相对路径（query/锚点丢弃），与域名无关，
-		// 任何历史按请求域名拼出的存量 URL 都能归一；候选含默认 uploads，兼容 local_dir 变更后的旧前缀
-		if u, err := url.Parse(src); err == nil {
-			for _, d := range dirs {
-				if rel, ok := strings.CutPrefix(u.Path, "/"+d+"/"); ok {
-					return rel
-				}
-			}
-		}
-		// OSS/CDN：域名命中附件配置候选时剥离为对象 Key，未命中的外链原样保存
-		conv := NewConverter(cfg)
-		if conv != nil {
-			base := conv.conv.BaseConfig
-			for _, domain := range []string{base.VisitDomain, base.LocalVisitDomain} {
-				if domain == "" || domain == "/" || !strings.HasPrefix(src, domain) {
-					continue
-				}
-				rest := strings.TrimPrefix(strings.TrimPrefix(src, domain), "/")
-				for _, d := range dirs {
-					if rel, ok := strings.CutPrefix(rest, d+"/"); ok {
-						return rel
-					}
-				}
-				return rest
-			}
-		}
-		return src
-	}
-	// 纯路径形态：剥离开头的 / 与目录前缀（配置目录与默认 uploads 均可）
-	trimmed := strings.Trim(src, "/")
-	for _, d := range dirs {
-		if rest, ok := strings.CutPrefix(trimmed, d+"/"); ok {
-			return rest
-		}
-	}
-	return src
+	return buildAttachment(cfg).ToSource(src)
 }
 
 // RelPath 将任意形态的附件地址归一化为拼接前置形态（默认目录 uploads）

@@ -658,6 +658,10 @@ func resolveAttachmentLocalDir(pc product.ProductServiceClient) string {
 	return attachmenturl.LocalDirName(resp.LocalDir)
 }
 
+// exportPrivateDir 附件目录下的导出私有子目录名（与 order 服务 exportRootDir 的 exports 段一致）：
+// 静态路由对其整体 404，导出文件仅经鉴权下载接口下发
+const exportPrivateDir = "exports"
+
 // registerUploads 注册 /<local_dir> 静态路由，按前缀把演示种子素材与运行期上传附件分流
 // 参数：
 //   - r: gin 引擎
@@ -669,6 +673,8 @@ func resolveAttachmentLocalDir(pc product.ProductServiceClient) string {
 //   - 种子素材目录不存在时（裁剪过的发布包）仅 /<local_dir>/seed/** 返回 404，上传附件不受影响
 //   - 两个根目录各自交给 http.FileServer 处理：路径由标准库 Clean 并拒绝含 .. 的请求，
 //     请求方无法借 URL 逃出根目录
+//   - /<local_dir>/exports/** 固定 404：导出文件与附件共享服务目录但含用户数据属私有文件，
+//     下载只走订单服务的鉴权流式接口
 //   - local_dir 变更需重启 gateway 生效（路由在启动时注册）
 //
 // 使用示例：
@@ -679,8 +685,14 @@ func registerUploads(r *gin.Engine, seedRoot, attachmentRoot, localDir string) {
 	attachmentFS := http.StripPrefix(prefix, http.FileServer(http.Dir(attachmentRoot)))
 	serve := func(c *gin.Context) {
 		// gin 的 *filepath 带前导斜杠，形如 /seed/products/latiao.png
-		if strings.HasPrefix(c.Param("filepath"), "/seed/") {
+		fp := c.Param("filepath")
+		if strings.HasPrefix(fp, "/seed/") {
 			seedFS.ServeHTTP(c.Writer, c.Request)
+			return
+		}
+		// 导出私有段整体 404（含 ../ 归一后指向 exports 的穿越形态）
+		if strings.HasPrefix(fp, "/"+exportPrivateDir+"/") || strings.HasPrefix(filepath.Clean(fp), "/"+exportPrivateDir+"/") {
+			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
 		attachmentFS.ServeHTTP(c.Writer, c.Request)

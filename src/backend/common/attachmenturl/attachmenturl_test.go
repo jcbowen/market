@@ -16,8 +16,9 @@ import (
  *   - FallbackURL：相对路径兜底 /uploads/ 前缀，外链原样
  *   - NewConverter + ToMedia：local 拼域名+uploads 前缀；oss 优先自定义域名回落 bucket 域名；
  *     配置缺失/local 未配域名返回 nil（补写未完成窗口由调用方走 FallbackURL）
- *   - SourcePath：任意本站域名 /uploads/ URL 剥离（与域名无关）；OSS 候选域名剥离；外链原样
- *   - RestoreURL 出库还原口径需 DB（Loader），不在此覆盖，由接入方 e2e 验证
+ *   - SourcePath（委托 jcbaseGo ToSource）：任意本站域名 /uploads/ URL 剥离（与域名无关）；
+ *     OSS 候选域名剥离；外链原样（含查询参数）
+ *   - RestoreURL 出库还原口径：用注入缓存的 Loader 离线覆盖，不触库
  */
 
 func TestRelPath(t *testing.T) {
@@ -174,7 +175,9 @@ func TestSourcePath(t *testing.T) {
 		{"OSS未命中候选域名原样", cdnCfg, "https://other-bucket.oss-cn-beijing.aliyuncs.com/images/a.jpg", "https://other-bucket.oss-cn-beijing.aliyuncs.com/images/a.jpg"},
 		{"自定义目录前缀剥离", mediaCfg, "/media/images/a.jpg", "images/a.jpg"},
 		{"自定义目录URL剥离", mediaCfg, "https://m.example.com/media/images/a.jpg", "images/a.jpg"},
-		{"自定义目录下旧uploads前缀仍剥离", mediaCfg, "/uploads/images/a.jpg", "images/a.jpg"},
+		{"自定义目录非命中域名URL按目录剥离", mediaCfg, "http://localhost:18080/media/images/a.jpg", "images/a.jpg"},
+		// 委托 jcbaseGo ToSource 后不再兼容 local_dir 变更前的旧默认前缀存量（环境重装，存量不处理）
+		{"自定义目录下旧uploads前缀不再剥离", mediaCfg, "/uploads/images/a.jpg", "uploads/images/a.jpg"},
 	}
 	for _, c := range cases {
 		if got := SourcePath(c.cfg, c.in); got != c.want {
@@ -206,14 +209,11 @@ func TestRestoreURLSemantics(t *testing.T) {
 		}
 	}
 
-	// 自定义 local_dir：URL 路径段跟随配置目录，旧默认前缀存量仍归一
+	// 自定义 local_dir：URL 路径段跟随配置目录
 	lm := &Loader{ttl: DefaultCacheTTL}
 	lm.cached = &Config{StorageType: "local", LocalDir: "media", VisitDomain: "https://new.example.com"}
 	lm.cachedAt = time.Now()
 	if got := lm.RestoreURL(context.Background(), "images/a.jpg"); got != "https://new.example.com/media/images/a.jpg" {
 		t.Errorf("自定义目录拼装不符: %q", got)
-	}
-	if got := lm.RestoreURL(context.Background(), "https://old.example.com/uploads/images/a.jpg"); got != "https://new.example.com/media/images/a.jpg" {
-		t.Errorf("旧默认前缀应按新目录重拼: %q", got)
 	}
 }

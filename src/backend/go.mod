@@ -15,7 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jcbowen/alipay-sdk-go-all v0.0.7
-	github.com/jcbowen/jcbaseGo v0.17.3
+	github.com/jcbowen/jcbaseGo v0.17.4
 	github.com/jcbowen/wego v0.2.0
 	github.com/oschwald/geoip2-golang/v2 v2.5.0
 	golang.org/x/crypto v0.58.0

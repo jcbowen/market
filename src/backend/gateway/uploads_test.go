@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,7 @@ import (
  * 覆盖：
  *   - /uploads/seed/** 取自镜像内置素材目录，/uploads/** 取自运行期附件目录
  *   - 两个根目录互不串用（种子目录取不到附件，反之亦然）
+ *   - exports 私有段直链与穿越形态均 404（导出仅走鉴权下载接口）
  *   - 含 .. 的请求被拒绝，无法逃出所属根目录
  *   - 素材缺失时返回 404 而非 500
  */
@@ -58,6 +60,13 @@ func newUploadsTestRouter(t *testing.T) (*gin.Engine, string, string) {
 	}
 	if err := os.WriteFile(filepath.Join(attachmentRoot, "images", "20260101", "01", "order.jpg"), []byte("jpg-upload"), 0o644); err != nil {
 		t.Fatalf("写入附件失败: %v", err)
+	}
+	// 导出私有文件：<bin>/uploads/exports/task.csv（静态路由必须整体 404）
+	if err := os.MkdirAll(filepath.Join(attachmentRoot, exportPrivateDir), 0o755); err != nil {
+		t.Fatalf("创建导出目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(attachmentRoot, exportPrivateDir, "task.csv"), []byte("export-must-not-leak"), 0o644); err != nil {
+		t.Fatalf("写入导出夹具失败: %v", err)
 	}
 	// 两个根目录之外的敏感文件：目录穿越用例不得读到
 	if err := os.WriteFile(filepath.Join(base, "secret.txt"), []byte("must-not-leak"), 0o644); err != nil {
@@ -115,6 +124,31 @@ func TestRegisterUploadsServesBothRoots(t *testing.T) {
 	// 种子前缀不去附件目录找：/uploads/seed/secret.txt 必须 404，而不是命中 attachment/secret.txt
 	if code, _ := doGet(r, "/uploads/seed/secret.txt"); code != http.StatusNotFound {
 		t.Fatalf("种子路径不应回落到附件目录，期望 404，实际 %d", code)
+	}
+}
+
+// TestRegisterUploadsBlocksExports 验证附件目录下的 exports 私有段在静态路由整体 404
+// 导出文件（含用户数据）只能经订单服务的鉴权下载接口获取，直链与穿越形态都不放行
+// 参数：
+//   - t: 测试上下文
+//
+// 异常：断言失败即 t.Fatalf
+func TestRegisterUploadsBlocksExports(t *testing.T) {
+	r, _, _ := newUploadsTestRouter(t)
+
+	for _, p := range []string{
+		"/uploads/exports/task.csv",
+		"/uploads/exports/",
+		"/uploads/images/../exports/task.csv",
+		"/uploads/./exports/task.csv",
+	} {
+		code, body := doGet(r, p)
+		if code != http.StatusNotFound {
+			t.Fatalf("%s: 导出段期望 404，实际 %d（body=%q）", p, code, body)
+		}
+		if strings.Contains(body, "export-must-not-leak") {
+			t.Fatalf("%s: 导出文件内容泄露", p)
+		}
 	}
 }
 

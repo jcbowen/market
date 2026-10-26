@@ -811,8 +811,9 @@ func attachmentRootDir(cfg *model.AttachmentConfig) (string, error) {
 		return "", fmt.Errorf("定位可执行文件失败: %w", err)
 	}
 	dir := attachmenturl.DefaultLocalDir
-	if cfg != nil && cfg.LocalDir != "" {
-		dir = strings.Trim(cfg.LocalDir, "/")
+	if cfg != nil {
+		// 归一逻辑统一走 LocalDirName（含首尾斜杠剥离与 "/" 等纯斜杠值回默认）
+		dir = attachmenturl.LocalDirName(cfg.LocalDir)
 	}
 	return filepath.Join(filepath.Dir(exe), dir), nil
 }
