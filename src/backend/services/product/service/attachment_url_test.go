@@ -18,8 +18,9 @@ import (
  *   - configCacheFresh 有效期内命中缓存、过期后失效（列表逐行取 URL 不再每行查库的前提）
  *   - ToMediaURL local 模式拼 <访问域名>/uploads/<相对路径>
  *   - ToMediaURL oss 模式优先自定义 CDN 域名，缺省回落 bucket.endpoint 域名
- *   - ToMediaURL 对空值、存量完整 URL、/ 开头站内绝对路径原样返回
+ *   - ToMediaURL 对空值、存量完整 URL、/ 开头站内绝对路径原样返回（优先于转换器，防 /uploads/ 二次拼接）
  *   - local 未配置访问域名/配置缺失时兜底拼 /uploads/<相对路径>，不原样返回裸相对路径
+ *   - 存量 uploads/ 目录前缀形态统一归一：配置域名时单次拼接、兜底时归一为 /uploads/
  *   - ToMediaURLs 整批共用一次配置读取，降级时逐项兜底
  *
  * 用例会预置一份未过期的进程内缓存，因此不会触达 s.db（保持 nil 即证明走的是缓存）。
@@ -95,6 +96,14 @@ func TestAttachmentToMediaURL(t *testing.T) {
 		})
 		if got := svc.ToMediaURL(ctx, "images/2026-10-11/a.jpg"); got != "https://m.example.com/uploads/images/2026-10-11/a.jpg" {
 			t.Errorf("local 拼接不符: %q", got)
+		}
+		// 存量 uploads/ 目录前缀归一为相对路径后再拼接，避免双 uploads/ 前缀（线上 /uploads/uploads/ 事故口径）
+		if got := svc.ToMediaURL(ctx, "uploads/images/a.jpg"); got != "https://m.example.com/uploads/images/a.jpg" {
+			t.Errorf("uploads/ 目录前缀应归一后单次拼接: %q", got)
+		}
+		// / 开头站内绝对路径（含 /uploads/seed 演示素材）原样返回，转换器不得二次拼接
+		if got := svc.ToMediaURL(ctx, "/uploads/seed/products/pickle.png"); got != "/uploads/seed/products/pickle.png" {
+			t.Errorf("/ 开头站内绝对路径应原样返回: %q", got)
 		}
 		if got := svc.ToMediaURL(ctx, ""); got != "" {
 			t.Errorf("空路径应返回空串: %q", got)

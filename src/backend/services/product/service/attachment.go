@@ -1050,9 +1050,10 @@ func (s *AttachmentService) mediaConverter(ctx context.Context) *attachment.Atta
 
 // ToMediaURL 将入库相对路径补全为完整访问 URL
 // 拼装优先级（三层递进，均无需迁移存量记录）：
-//  1. 配置了访问域名（local 的 visit_domain / OSS 的自定义或 bucket 域名）→ 拼 <域名>/uploads/<path> 或 <域名>/<path>
-//  2. local 未配置访问域名或配置缺失 → 拼站内绝对路径 /uploads/<path>（网关静态路由兜底，浏览器不随页面路径解析）
-//  3. 空值与 http(s) 完整 URL、/ 开头的站内绝对路径（含 /uploads/seed 演示素材）原样返回
+//  1. 空值与 http(s)/协议相对完整 URL、/ 开头的站内绝对路径（含 /uploads/seed 演示素材）原样返回，
+//     避免被转换器二次拼接出 /uploads/uploads/ 双前缀（ToMedia 会剥 / 后重补 uploads/ 目录）
+//  2. 配置了访问域名（local 的 visit_domain / OSS 的自定义或 bucket 域名）→ 拼 <域名>/uploads/<path> 或 <域名>/<path>
+//  3. local 未配置访问域名或配置缺失 → 拼站内绝对路径 /uploads/<path>（网关静态路由兜底，浏览器不随页面路径解析）
 //
 // 参数:
 //   - ctx: 上下文
@@ -1061,14 +1062,29 @@ func (s *AttachmentService) mediaConverter(ctx context.Context) *attachment.Atta
 // 返回值:
 //   - string: 完整访问 URL
 func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
-	if src == "" {
-		return ""
+	if src == "" || isAbsoluteMediaRef(src) {
+		return src
 	}
+	// 存量 uploads/ 目录前缀形态归一为相对路径（转换器/兜底统一补 /uploads/ 前缀）
+	src = strings.TrimPrefix(src, "uploads/")
 	conv := s.mediaConverter(ctx)
 	if conv == nil {
-		return fallbackMediaURL(src)
+		return "/uploads/" + src
 	}
 	return conv.ToMedia(src)
+}
+
+// isAbsoluteMediaRef 判断是否为无需拼装的绝对引用形态
+// 完整 URL（http/https/协议相对）与 / 开头的站内绝对路径（含 /uploads/seed/** 演示素材）原样可用
+//
+// 参数:
+//   - src: 附件地址
+//
+// 返回值:
+//   - bool: 绝对引用返回 true
+func isAbsoluteMediaRef(src string) bool {
+	return strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") ||
+		strings.HasPrefix(src, "//") || strings.HasPrefix(src, "/")
 }
 
 // fallbackMediaURL 附件访问域名不可用时的兜底拼装
@@ -1081,12 +1097,7 @@ func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
 // 返回值:
 //   - string: 站内绝对路径；已是完整 URL 或 / 开头路径时原样返回
 func fallbackMediaURL(src string) string {
-	if src == "" {
-		return ""
-	}
-	// 完整 URL 与站内绝对路径（含 /uploads/seed/** 演示素材）原样返回
-	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") ||
-		strings.HasPrefix(src, "//") || strings.HasPrefix(src, "/") {
+	if src == "" || isAbsoluteMediaRef(src) {
 		return src
 	}
 	// uploads/ 目录前缀形态归一为 /uploads/，其余相对路径补 /uploads/ 前缀
