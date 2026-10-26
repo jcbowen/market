@@ -155,6 +155,9 @@
         </scroll-view>
       </view>
     </u-popup>
+
+    <!-- 社区推荐确认弹窗（启动自动选社区时展示） -->
+    <community-recommend-dialog />
   </view>
 </template>
 
@@ -170,6 +173,7 @@ import { getFrequentProducts, type FrequentProduct } from '@/api/order'
 import { formatPrice } from '@/utils/format'
 import { goHome, goOrderConfirm, goLogin, goProductDetail } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
+import CommunityRecommendDialog from '@/components/community-recommend-dialog.vue'
 import type { CartItem, Community, Product, Sku } from '@/api/types'
 
 const userStore = useUserStore()

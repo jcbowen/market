@@ -211,6 +211,9 @@
       :initial-quantity="cartSwitchItem?.quantity || 0"
       @confirm="onCartSkuConfirm"
     />
+
+    <!-- 社区推荐确认弹窗（启动自动选社区时展示） -->
+    <community-recommend-dialog />
   </view>
 </template>
 
@@ -227,6 +230,7 @@ import { formatPrice } from '@/utils/format'
 import { goOrderConfirm, goLogin, goCommunitySelect, goPage } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
 import SiteFooter from '@/components/SiteFooter.vue'
+import CommunityRecommendDialog from '@/components/community-recommend-dialog.vue'
 import {
   addLocalCartItem,
   updateLocalCartItem,

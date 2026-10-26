@@ -99,6 +99,9 @@
     </view>
 
     <SiteFooter />
+
+    <!-- 社区推荐确认弹窗（启动自动选社区时展示） -->
+    <community-recommend-dialog />
   </view>
 </template>
 
@@ -124,6 +127,7 @@ import {
 } from '@/utils/navigate'
 import type { Product } from '@/api/types'
 import SiteFooter from '@/components/SiteFooter.vue'
+import CommunityRecommendDialog from '@/components/community-recommend-dialog.vue'
 
 const userStore = useUserStore()
 
