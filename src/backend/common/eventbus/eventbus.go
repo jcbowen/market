@@ -111,3 +111,38 @@ func ParseOrderRefundEvent(payload []byte) *OrderRefundEvent {
 	}
 	return &evt
 }
+
+// 管理员权限变更事件频道：user 服务发布（角色增删改 / 任职调整 / 账号停启用），
+// gateway 订阅后经 WebSocket 提醒在线管理员刷新本地权限快照（菜单/路由守卫）。
+// 后端鉴权本就实时，此事件只消除前端观感滞后，属尽力而为的补充通知
+const ChannelAdminPermissionChanged = "market:admin:permission_changed"
+
+// 管理员权限变更事件类型标识（WebSocket 消息体的 type 字段）
+const MsgTypeAdminPermissionChanged = "admin.permission_changed"
+
+// AdminPermissionChangedEvent 管理员权限变更事件载荷
+// 定向规则（gateway 侧）：AdminIDs 非空时按管理员定向推送（跨社区连接均可达）；
+// 否则按 CommunityIDs 逐社区广播（如社区权限上限调整影响该社区全部在线管理员）
+type AdminPermissionChangedEvent struct {
+	// AdminIDs 直接受影响的管理员 ID 列表（任职调整、账号停启用），非空时优先按此定向
+	AdminIDs []int64 `json:"admin_ids,omitempty"`
+	// CommunityIDs 受影响的社区 ID 列表（角色增删改、社区权限上限调整）
+	CommunityIDs []int64 `json:"community_ids,omitempty"`
+	// Reason 变更原因（供日志定位，不下发前端展示）
+	Reason string `json:"reason,omitempty"`
+}
+
+// ParseAdminPermissionChangedEvent 反序列化管理员权限变更事件
+//
+// 参数：
+//   - payload: Redis Pub/Sub 消息体（JSON 字节）
+//
+// 返回值：
+//   - *AdminPermissionChangedEvent: 事件载荷，payload 非法 JSON 时返回 nil
+func ParseAdminPermissionChangedEvent(payload []byte) *AdminPermissionChangedEvent {
+	var evt AdminPermissionChangedEvent
+	if err := json.Unmarshal(payload, &evt); err != nil {
+		return nil
+	}
+	return &evt
+}

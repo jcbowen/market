@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
@@ -21,6 +22,23 @@ import (
 type AdminService struct {
 	db          *mysql.Instance
 	roleService *RoleService
+	// redisClient 可选：任职/状态变更经 Redis 发布权限变更事件（WS 提醒在线管理员刷新快照），
+	// 未注入时静默跳过；WithRedis 会同步传导给内部 roleService
+	redisClient *redis.Client
+}
+
+// WithRedis 注入 Redis 客户端（权限变更事件发布用，链式返回）
+// 同步传导给内部 roleService，保证角色与任职两条链路共用一个发布通道
+//
+// 参数：
+//   - client: go-redis 客户端
+//
+// 返回：
+//   - *AdminService: 服务自身
+func (s *AdminService) WithRedis(client *redis.Client) *AdminService {
+	s.redisClient = client
+	s.roleService.WithRedis(client)
+	return s
 }
 
 // NewAdminService 创建管理员业务服务
@@ -279,6 +297,8 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 			Update("status", req.Status).Error; err != nil {
 			return nil, err
 		}
+		// 停用/启用即时影响该账号全部社区的有效权限，定向提醒其在线会话刷新快照
+		s.roleService.publishPermissionChangedTo(ctx, []int64{req.Id}, nil, "账号状态变更")
 		return s.getAdminByID(ctx, req.Id)
 	}
 
@@ -313,6 +333,11 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 	})
 	if err != nil {
 		return nil, err
+	}
+	// 任职全量覆盖可能同时替换掉原社区管理员（内置角色单任职语义），
+	// 受影响面不限于本账号，按社区广播提醒在线管理员刷新快照
+	if req.CommunityId > 0 && req.RoleIds != nil {
+		s.roleService.publishPermissionChanged(ctx, req.CommunityId, "调整员工任职")
 	}
 	return s.getAdminByID(ctx, req.Id)
 }
@@ -389,6 +414,8 @@ func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID in
 	if res.RowsAffected == 0 {
 		return bizerr.New(codes.FailedPrecondition, "该员工在此社区无任职")
 	}
+	// 移除任职即时收窄该账号在相关社区的有效权限，定向提醒其在线会话刷新快照
+	s.roleService.publishPermissionChangedTo(ctx, []int64{id}, nil, "移除员工任职")
 	return nil
 }
 

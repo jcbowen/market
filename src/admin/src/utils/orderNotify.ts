@@ -4,17 +4,22 @@ import { useAuthStore } from '@/stores/auth'
  * 新订单 WebSocket 语音通知管理器
  *
  * 职责：
- * - 登录就绪且具备 order:view 权限、已选定社区时，与 gateway 建立 WS 长连接
+ * - 登录就绪且已选定社区时，与 gateway 建立 WS 长连接（不设权限门槛：
+ *   权限被收窄的管理员恰恰需要收到权限变更提醒以刷新本地快照）
  * - 断线自动重连（指数退避 2s 起步，封顶 60s；收到服务端 hello 后复位），
  *   重连前先探测续期 access cookie（30s 节流），避免过期后裸重连持续失败
  * - 收到 order.paid 事件：播放提示音（WebAudio 合成，无需音频文件）+ 语音播报（Web Speech）
  * - 收到 order.refund 事件：按动作区分"退款申请/订单退款"话术播报
+ * - 收到 admin.permission_changed 事件：防抖合并后拉取 /admin/info 刷新权限快照
+ *   （菜单与路由守卫基于 store computed，刷新即生效）；页面切回前台时限流兜底刷新一次，
+ *   覆盖 WS 丢消息场景
  * - 浏览器自动播放限制：首次用户交互时解锁 AudioContext 与语音合成
  *
  * 服务端消息协议（docs/需求文档/06-接口设计）：
  * - {type:'hello'} 连接建立欢迎
  * - {type:'order.paid', data:{order_no,community_id,pay_amount,delivery_type,source,status,pay_time}}
  * - {type:'order.refund', data:{order_no,community_id,refund_no,amount,delivery_type,source,action,operator_type,reason,event_time}}
+ * - {type:'admin.permission_changed', data:{admin_ids?,community_ids?,reason?}}
  * 未知 type 静默忽略（前后端独立演进的前向兼容）
  */
 
@@ -298,9 +303,52 @@ function onMessage(event: MessageEvent) {
         notifyOrderRefund(msg.data)
       }
       break
+    case 'admin.permission_changed':
+      // 权限变更：防抖合并（社区权限上限等批量调整会连发多条）后刷新快照
+      schedulePermissionRefresh()
+      break
     default:
       break
   }
+}
+
+/** 权限快照刷新防抖等待（毫秒）：合并窗口内多条事件只拉取一次 */
+const PERMISSION_REFRESH_DEBOUNCE = 1500
+/** 权限快照刷新定时器句柄 */
+let permissionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * 防抖调度权限快照刷新：拉取 /admin/info 按当前社区语境实时重算，
+ * 菜单与路由守卫基于 store computed，刷新即生效，无需 reload
+ */
+function schedulePermissionRefresh() {
+  if (permissionRefreshTimer) return
+  permissionRefreshTimer = setTimeout(() => {
+    permissionRefreshTimer = null
+    const auth = useAuthStore()
+    if (!auth.isAuthenticated) return
+    void auth.fetchAdminInfo().catch(() => {})
+  }, PERMISSION_REFRESH_DEBOUNCE)
+}
+
+/** 页面切回前台时的权限兜底刷新最小间隔（毫秒），覆盖 WS 丢消息场景 */
+const VISIBILITY_REFRESH_INTERVAL = 10000
+/** 上次切回前台刷新时间戳 */
+let lastVisibilityRefreshAt = 0
+
+// 页面从后台切回前台时限流兜底刷新一次权限快照：
+// WS 通知是尽力而为（Redis 断连/发送缓冲满会丢消息且不补偿），
+// 空闲后台页恰好是纯 WS 流量，兜底刷新保证滞后最终收敛
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return
+    const auth = useAuthStore()
+    if (!auth.isAuthenticated) return
+    const now = Date.now()
+    if (now - lastVisibilityRefreshAt < VISIBILITY_REFRESH_INTERVAL) return
+    lastVisibilityRefreshAt = now
+    void auth.fetchAdminInfo().catch(() => {})
+  })
 }
 
 /**
@@ -334,7 +382,7 @@ async function probeTokenRefresh(): Promise<boolean> {
 
 /**
  * 建立新订单通知 WS 连接（幂等）
- * 未登录 / 未选定社区 / 无 order:view 权限时直接跳过；
+ * 未登录 / 未选定社区时直接跳过（不设权限门槛，登录即可接入）；
  * 已有存活的连接时不再重复创建
  */
 export function connectOrderNotify() {
@@ -342,7 +390,7 @@ export function connectOrderNotify() {
     return
   }
   const auth = useAuthStore()
-  if (!auth.isAuthenticated || auth.currentCommunityId <= 0 || !auth.hasPermission('order:view')) {
+  if (!auth.isAuthenticated || auth.currentCommunityId <= 0) {
     return
   }
   intentionallyClosed = false

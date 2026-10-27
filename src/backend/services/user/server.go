@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"slices"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -31,16 +32,17 @@ type server struct {
 // newServer 创建用户服务 gRPC 实现
 // 参数：
 //   - db: MySQL 实例
+//   - rds: Redis 客户端（权限变更事件发布用，可为 nil）
 //
 // 返回：
 //   - *server: gRPC 服务实现
-func newServer(db *mysql.Instance) *server {
+func newServer(db *mysql.Instance, rds *redis.Client) *server {
 	return &server{
 		userService:      service.NewUserService(db),
 		addressService:   service.NewAddressService(db),
 		communityService: service.NewCommunityService(db),
-		adminService:     service.NewAdminService(db),
-		roleService:      service.NewRoleService(db),
+		adminService:     service.NewAdminService(db).WithRedis(rds),
+		roleService:      service.NewRoleService(db).WithRedis(rds),
 		regionService:    service.NewRegionService(db),
 		channelService:   service.NewChannelService(db),
 		siteService:      service.NewSiteService(db),

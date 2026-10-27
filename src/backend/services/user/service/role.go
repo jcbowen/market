@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -38,6 +41,58 @@ var DefaultCommunityAdminPermissions = []string{
 // RoleService 角色业务服务
 type RoleService struct {
 	db *mysql.Instance
+	// redisClient 可选：权限变更经 Redis 发布到事件总线（WS 提醒在线管理员刷新权限快照），
+	// 未注入时静默跳过（后端鉴权实时，事件仅消除前端观感滞后）
+	redisClient *redis.Client
+}
+
+// WithRedis 注入 Redis 客户端（权限变更事件发布用，链式返回）
+//
+// 参数：
+//   - client: go-redis 客户端
+//
+// 返回：
+//   - *RoleService: 服务自身
+func (s *RoleService) WithRedis(client *redis.Client) *RoleService {
+	s.redisClient = client
+	return s
+}
+
+// publishPermissionChanged 权限变更事件发布（尽力而为）
+// 角色增删改会即时改变该社区管理员的有效权限（含社区权限上限调整，
+// 社区权限页保存即走 UpdateRole），事件提醒 gateway 把在线管理员的
+// 前端权限快照刷新；任何失败仅记日志，不影响角色主流程；
+// Redis 客户端未注入时静默跳过
+//
+// 参数：
+//   - ctx: 上下文（主流程事务已提交后调用，勿传入事务句柄）
+//   - communityID: 角色归属社区 ID（>0 按社区广播；全局角色传 0 时广播全部社区）
+//   - reason: 变更原因（日志用）
+func (s *RoleService) publishPermissionChanged(ctx context.Context, communityID int64, reason string) {
+	s.publishPermissionChangedTo(ctx, nil, []int64{communityID}, reason)
+}
+
+// publishPermissionChangedTo 权限变更事件发布（定向版，见 publishPermissionChanged）
+// AdminIDs 非空时按管理员定向（跨社区连接均可达），否则按 CommunityIDs 逐社区广播
+func (s *RoleService) publishPermissionChangedTo(ctx context.Context, adminIDs []int64, communityIDs []int64, reason string) {
+	if s.redisClient == nil {
+		return
+	}
+	if len(adminIDs) == 0 && len(communityIDs) == 0 {
+		return
+	}
+	payload, err := json.Marshal(eventbus.AdminPermissionChangedEvent{
+		AdminIDs:     adminIDs,
+		CommunityIDs: communityIDs,
+		Reason:       reason,
+	})
+	if err != nil {
+		log.Printf("[user] 权限变更事件序列化失败: reason=%s err=%v", reason, err)
+		return
+	}
+	if err := s.redisClient.Publish(ctx, eventbus.ChannelAdminPermissionChanged, payload).Err(); err != nil {
+		log.Printf("[user] 权限变更事件发布失败: reason=%s err=%v", reason, err)
+	}
 }
 
 // NewRoleService 创建角色业务服务
@@ -228,6 +283,7 @@ func (s *RoleService) CreateRole(ctx context.Context, req *user.CreateRoleReq) (
 	if err := s.db.GetDb().WithContext(ctx).Create(r).Error; err != nil {
 		return nil, fmt.Errorf("角色编码在当前范围内已存在")
 	}
+	s.publishPermissionChanged(ctx, r.CommunityID, "创建角色")
 	return r, nil
 }
 
@@ -267,6 +323,7 @@ func (s *RoleService) UpdateRole(ctx context.Context, req *user.UpdateRoleReq) (
 	if err := s.db.GetDb().WithContext(ctx).Save(r).Error; err != nil {
 		return nil, err
 	}
+	s.publishPermissionChanged(ctx, r.CommunityID, "更新角色")
 	return r, nil
 }
 
@@ -302,7 +359,11 @@ func (s *RoleService) DeleteRole(ctx context.Context, id, communityId int64) err
 		return fmt.Errorf("该角色仍有员工任职，请先在员工管理中调整")
 	}
 
-	return s.db.GetDb().WithContext(ctx).Delete(&model.Role{}, id).Error
+	if err := s.db.GetDb().WithContext(ctx).Delete(&model.Role{}, id).Error; err != nil {
+		return err
+	}
+	s.publishPermissionChanged(ctx, r.CommunityID, "删除角色")
+	return nil
 }
 
 // GetBuiltinCommunityAdminRole 只读查询指定社区的内置社区管理员角色（不存在返回 nil，不自动创建）

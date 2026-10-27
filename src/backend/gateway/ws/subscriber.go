@@ -61,14 +61,15 @@ func RunOrderEventSubscriber(ctx context.Context, cfg *config.Config, hub *Hub) 
 // 返回值：
 //   - error: 订阅或消费过程中的错误（ctx 取消时返回 nil）
 func subscribeOnce(ctx context.Context, rds *goredis.Client, hub *Hub) error {
-	sub := rds.Subscribe(ctx, eventbus.ChannelOrderPaid, eventbus.ChannelOrderRefund)
+	sub := rds.Subscribe(ctx, eventbus.ChannelOrderPaid, eventbus.ChannelOrderRefund, eventbus.ChannelAdminPermissionChanged)
 	defer func() { _ = sub.Close() }()
 
 	// 确认订阅建立后再进入消费循环，避免「以为在收、实际订阅未就绪」的静默丢失
 	if _, err := sub.Receive(ctx); err != nil {
 		return err
 	}
-	log.Printf("[ws] 已订阅订单事件频道: %s, %s", eventbus.ChannelOrderPaid, eventbus.ChannelOrderRefund)
+	log.Printf("[ws] 已订阅事件频道: %s, %s, %s",
+		eventbus.ChannelOrderPaid, eventbus.ChannelOrderRefund, eventbus.ChannelAdminPermissionChanged)
 
 	ch := sub.Channel()
 	for {
@@ -110,6 +111,25 @@ func dispatchEvent(hub *Hub, channel string, payload []byte) {
 		}
 		hub.BroadcastToCommunity(evt.CommunityID, &Message{
 			Type: eventbus.MsgTypeOrderRefund,
+			Data: evt,
+		})
+	case eventbus.ChannelAdminPermissionChanged:
+		evt := eventbus.ParseAdminPermissionChangedEvent(payload)
+		if evt == nil {
+			log.Printf("[ws] 权限变更事件解析失败，已忽略: %s", string(payload))
+			return
+		}
+		// 定向规则：AdminIDs 非空按管理员定向（跨社区连接均可达），
+		// 否则按社区广播（社区权限上限调整影响该社区全部在线管理员）
+		if len(evt.AdminIDs) > 0 {
+			hub.BroadcastToAdmins(evt.AdminIDs, &Message{
+				Type: eventbus.MsgTypeAdminPermissionChanged,
+				Data: evt,
+			})
+			return
+		}
+		hub.BroadcastToCommunities(evt.CommunityIDs, &Message{
+			Type: eventbus.MsgTypeAdminPermissionChanged,
 			Data: evt,
 		})
 	default:

@@ -188,7 +188,17 @@ func (h *Hub) Count() int {
 //   - communityID: 目标社区 ID（<=0 表示未声明社区，不推送）
 //   - msg: 待下发消息
 func (h *Hub) BroadcastToCommunity(communityID int64, msg *Message) {
-	if communityID <= 0 {
+	h.BroadcastToCommunities([]int64{communityID}, msg)
+}
+
+// BroadcastToCommunities 向多个社区的在线连接推送消息（去重由 map 语义天然保证）
+// 社区权限变更等场景一条事件影响多个社区，避免逐社区重复序列化
+//
+// 参数：
+//   - communityIDs: 目标社区 ID 列表（<=0 的项跳过；空列表不推送）
+//   - msg: 待下发消息
+func (h *Hub) BroadcastToCommunities(communityIDs []int64, msg *Message) {
+	if len(communityIDs) == 0 {
 		return
 	}
 	payload, err := json.Marshal(msg)
@@ -196,10 +206,19 @@ func (h *Hub) BroadcastToCommunity(communityID int64, msg *Message) {
 		log.Printf("[ws] 消息序列化失败 type=%s err=%v", msg.Type, err)
 		return
 	}
+	target := make(map[int64]struct{}, len(communityIDs))
+	for _, id := range communityIDs {
+		if id > 0 {
+			target[id] = struct{}{}
+		}
+	}
+	if len(target) == 0 {
+		return
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.clients {
-		if c.communityID != communityID {
+		if _, ok := target[c.communityID]; !ok {
 			continue
 		}
 		select {
@@ -211,8 +230,49 @@ func (h *Hub) BroadcastToCommunity(communityID int64, msg *Message) {
 	}
 }
 
+// BroadcastToAdmins 向指定管理员的全部在线连接定向推送（跨社区连接均可达）
+// 账号停启用、移除任职等单点变更用：受影响的是该管理员本人，
+// 不必惊动其所在社区的其他在线管理员
+//
+// 参数：
+//   - adminIDs: 目标管理员 ID 列表（空列表不推送）
+//   - msg: 待下发消息
+func (h *Hub) BroadcastToAdmins(adminIDs []int64, msg *Message) {
+	if len(adminIDs) == 0 {
+		return
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[ws] 消息序列化失败 type=%s err=%v", msg.Type, err)
+		return
+	}
+	target := make(map[int64]struct{}, len(adminIDs))
+	for _, id := range adminIDs {
+		if id > 0 {
+			target[id] = struct{}{}
+		}
+	}
+	if len(target) == 0 {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		if _, ok := target[c.adminID]; !ok {
+			continue
+		}
+		select {
+		case c.send <- payload:
+		default:
+			log.Printf("[ws] 连接发送缓冲已满，丢弃消息 admin=%s(%d)", c.username, c.adminID)
+		}
+	}
+}
+
 // Attach 将已升级的连接挂入集线器：登记后先下发 hello，再启动读写循环
-// 调用前置条件：路由链已完成 admin JWT 鉴权、社区访问校验与 order:view 权限校验，
+// 调用前置条件：路由链已完成 admin JWT 鉴权与社区访问校验
+// （WS 通道承载订单通知与权限变更提醒两类事件，仅需登录即可接入，
+// 无权限门槛——权限被收窄的管理员恰恰需要收到权限变更提醒）
 // UserContext 已注入 gin 上下文
 //
 // 参数：

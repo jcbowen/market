@@ -26,6 +26,8 @@
             <n-space align="center">
               <span style="font-weight: 600">权限点</span>
               <n-button size="tiny" @click="selectOperationDefault">勾选运营默认集</n-button>
+              <n-button size="tiny" @click="clearAllPermissions">清空全部</n-button>
+              <n-text depth="3" style="font-size: 12px">保存时至少保留 1 个权限点（防社区管理员无法登录）</n-text>
             </n-space>
             <n-alert v-if="affectedRoles.length > 0" type="warning" :show-icon="false">
               收紧后以下私有角色将被上限截断（运行时按上限取交集）：
@@ -199,6 +201,13 @@ function toggleGroup(group: { options: { value: string }[] }) {
   } else {
     form.value.permissions = [...new Set([...form.value.permissions, ...values])]
   }
+}
+
+/**
+ * 清空全部已勾选权限点（全局重置入口；保存时后端拒绝空集合，至少需保留 1 项）
+ */
+function clearAllPermissions() {
+  form.value.permissions = []
 }
 
 /** 勾选运营默认集：本页可分配权限点全量（系统级权限不在范围内） */

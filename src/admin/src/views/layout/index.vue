@@ -53,6 +53,30 @@
           </n-breadcrumb>
         </div>
         <div class="header-right">
+          <!-- 应用启动器：宫格 popover 直达各应用（与左侧「应用中心」菜单双入口，同一偏好存储） -->
+          <n-popover trigger="click" placement="bottom-end" :width="260">
+            <template #trigger>
+              <n-button text class="apps-trigger" title="应用中心">
+                <n-icon size="20">
+                  <grid-outline />
+                </n-icon>
+              </n-button>
+            </template>
+            <div class="apps-pop">
+              <div class="apps-pop-title">应用中心</div>
+              <div class="apps-pop-grid">
+                <div v-for="app in headerApps" :key="app.key" class="apps-pop-item" @click="openApp(app.path)">
+                  <n-icon size="22">
+                    <component :is="app.icon" />
+                  </n-icon>
+                  <span>{{ app.name }}</span>
+                </div>
+              </div>
+              <n-button text size="tiny" class="apps-pop-more" @click="openApp('/apps')">
+                查看全部应用
+              </n-button>
+            </div>
+          </n-popover>
           <!-- 下载中心：后台异步导出的任务列表入口，有未下载文件时图标带角标 -->
           <download-center />
           <!-- 当前社区：点击进入社区选择页（多社区账号切换入口） -->
@@ -126,6 +150,8 @@ import { useBrandingStore } from '@/stores/branding'
 import DownloadCenter from '@/components/DownloadCenter.vue'
 import { resolveHomePath } from '@/router'
 import { getCommunityList } from '@/api/user'
+import { APP_REGISTRY } from '@/constants/apps'
+import type { AppMeta } from '@/constants/apps'
 
 const router = useRouter()
 const route = useRoute()
@@ -160,6 +186,18 @@ const currentCommunityName = computed(() => {
 function goSelectCommunity() {
   // force=1：已选定社区时守卫默认会弹回首页，主动切换须携带标记放行
   router.push({ path: '/select-community', query: { force: '1' } })
+}
+
+// --- 顶栏应用启动器 ---
+
+/** 按权限过滤后的可展示应用（与左侧菜单 checkPermission 同口径） */
+const headerApps = computed<AppMeta[]>(() =>
+  APP_REGISTRY.filter((app) => !app.permission || checkPermission(app.permission)),
+)
+
+/** 启动器点击进入应用 / 查看全部应用 */
+function openApp(path: string) {
+  router.push(path)
 }
 
 /**
@@ -290,7 +328,8 @@ interface MenuGroupConfig {
   key: string
   icon: unknown
   permission?: string
-  children: MenuItemConfig[]
+  /** 子菜单；缺省表示单项直达（无展开层级，如应用中心） */
+  children?: MenuItemConfig[]
 }
 
 /**
@@ -371,12 +410,11 @@ const menuOptions = computed<MenuOption[]>(() => {
       ],
     },
     {
-      // 应用中心：宫格化应用入口（收银台等独立应用从这里进入，登录即可见）
-      // 纯启动器性质，紧跟营销管理之后
-      label: '应用管理',
+      // 应用中心：宫格化应用入口（收银台等独立应用从这里进入，登录即可见）；
+      // 单项直达宫格页，应用较多时的快捷入口由顶栏应用启动器承担
+      label: '应用中心',
       key: '/apps',
       icon: renderIcon(GridOutline),
-      children: [{ label: '应用中心', key: '/apps' }],
     },
     {
       label: '数据统计',
@@ -401,18 +439,22 @@ const menuOptions = computed<MenuOption[]>(() => {
   return groups
     .filter((group) => !group.permission || checkPermission(group.permission))
     .map((group) => {
-      const children = group.children.filter(
+      const children = (group.children ?? []).filter(
         (child) =>
           (!child.permission || checkPermission(child.permission)) &&
           (!child.superOnly || authStore.isSuperAdmin),
       )
-      if (children.length === 0) return null
-      return {
+      // 有子项配置但过滤后为空 → 整组隐藏；无子项配置的单项直接渲染为一级菜单
+      if (group.children && children.length === 0) return null
+      const option: MenuOption = {
         label: group.label,
         key: group.key,
         icon: renderIcon(group.icon),
-        children: children.map((child) => ({ label: child.label, key: child.key })),
       }
+      if (children.length > 0) {
+        option.children = children.map((child) => ({ label: child.label, key: child.key }))
+      }
+      return option
     })
     .filter(Boolean) as MenuOption[]
 })
@@ -460,7 +502,7 @@ const systemMenuOptions = computed<MenuOption[]>(() => {
   return [
     ...(groups
       .map((group) => {
-        const children = group.children.filter(
+        const children = (group.children ?? []).filter(
           (child) =>
             (!child.permission || checkPermission(child.permission)) &&
             (!child.superOnly || authStore.isSuperAdmin),
@@ -715,6 +757,41 @@ function onUserAction(key: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 顶栏应用启动器（宫格 popover） */
+.apps-trigger {
+  padding: 0 4px;
+}
+.apps-pop-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+.apps-pop-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.apps-pop-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #333;
+  transition: background-color 0.2s;
+}
+.apps-pop-item:hover {
+  background-color: #f3f3f5;
+  color: #18a058;
+}
+.apps-pop-more {
+  margin-top: 8px;
+  width: 100%;
+  text-align: center;
 }
 .tabs-bar {
   height: 40px;

@@ -337,14 +337,14 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		// 登出仅需清除 httpOnly refresh cookie，无需登录态（access 已过期也要能登出）
 		admin.POST("/auth/logout", adminAuthLimiter, adminHandler.AdminLogout)
 
-		// 后台 WS（新订单语音通知）：浏览器 WebSocket 握手无法自定义请求头，
+		// 后台 WS（订单语音通知 + 权限变更提醒）：浏览器 WebSocket 握手无法自定义请求头，
 		// token（httpOnly cookie 优先、查询参数兜底）与社区声明经 WSAuthMiddleware
-		// 映射进标准请求头，社区校验与权限校验复用既有链（order:view 才能接收支付成功事件推送）。
+		// 映射进标准请求头，社区校验复用既有链。仅需登录即可接入，不设权限门槛：
+		// 权限被收窄的管理员恰恰需要收到权限变更提醒以刷新本地快照。
 		// 不挂在 authAdmin 组内：该组的 AuthMiddleware 只认请求头，会先于参数映射拒绝握手
 		admin.GET("/ws",
 			gwMiddleware.WSAuthMiddleware(jwtManager),
 			gwMiddleware.RequireCommunityAccess(),
-			gwMiddleware.RequirePermission("order:view"),
 			handler.NewWSHandler(hub).Handle)
 
 		authAdmin := admin.Group("")

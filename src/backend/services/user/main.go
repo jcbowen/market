@@ -59,10 +59,11 @@ func main() {
 	if err := service.NewChannelService(db).EnsureDefaultClientChannels(); err != nil {
 		log.Printf("客户端渠道种子初始化失败（不阻塞启动）: %v", err)
 	}
-	_ = bootstrap.InitRedis(cfg)
+	// Redis：权限变更事件发布用（WS 提醒在线管理员刷新权限快照），失败不阻塞启动
+	rds := bootstrap.InitRedis(cfg)
 
 	srv := grpc.NewServer()
-	user.RegisterUserServiceServer(srv, newServer(db))
+	user.RegisterUserServiceServer(srv, newServer(db, rds.GetClient()))
 	bootstrap.RegisterHealth(srv)
 
 	if err := bootstrap.RunGRPCServer(srv, cfg.UserService.GrpcPort); err != nil {
