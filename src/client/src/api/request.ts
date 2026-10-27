@@ -94,27 +94,41 @@ function getRefreshToken(): string {
 }
 
 /**
+ * 401 登出回调（由 stores/user 模块注册）
+ * 请求层不反向依赖 store 模块：request → stores/user → api/auth → request 存在循环依赖，
+ * 且 store 同时被页面静态引用，动态 import 会触发 Rollup MIXED_IMPORTS 警告，
+ * 故改为注册制：stores/user 加载时注入登出实现，请求层只留兜底
+ */
+let unauthorizedHandler: (() => void) | null = null
+
+/**
+ * 注册 401 登出回调（stores/user 模块加载时调用一次）
+ * @param handler 登出实现（清 Pinia 状态 + 清缓存 + H5 通知后端清 cookie）
+ */
+export function registerUnauthorizedHandler(handler: () => void): void {
+  unauthorizedHandler = handler
+}
+
+/**
  * 处理未登录：清空登录态（含 Pinia）并重置到登录页
  * 用于静默续期不可用（无 refresh_token / refresh_token 已失效）时的兜底
  *
  * 关键点：
  * - 必须清 Pinia：仅 removeStorageSync 不会重置 store 里的 token ref，
  *   isLogin 仍为 true → 页面守卫继续放行发请求 → 401 洪泛。
- *   复用 userStore.logout() 一次性清状态 + 清缓存 + （H5）通知后端清 cookie。
- * - 动态 import：request → stores/user → api/auth → request 存在循环依赖，运行时再取。
+ *   登出实现由 stores/user 模块注册（见 registerUnauthorizedHandler）。
+ * - 未注册时（理论不可达：stores/user 被 App.vue 静态引用，必先于任何请求加载）
+ *   兜底清本地令牌，至少保证下次冷启动不再带旧 token。
  * - reLaunch 而非 navigateTo：小程序页面栈满 10 层时 navigateTo 静默失败，
  *   会导致 token 已清却停在原页、反复跳登录全部失败。
  */
 function handleUnauthorized(): void {
-  import('@/stores/user')
-    .then(({ useUserStore }) => {
-      useUserStore().logout()
-    })
-    .catch(() => {
-      // store 取不到时兜底清本地令牌，至少保证下次冷启动不再带旧 token
-      uni.removeStorageSync(TOKEN_KEY)
-      uni.removeStorageSync(REFRESH_TOKEN_KEY)
-    })
+  if (unauthorizedHandler) {
+    unauthorizedHandler()
+  } else {
+    uni.removeStorageSync(TOKEN_KEY)
+    uni.removeStorageSync(REFRESH_TOKEN_KEY)
+  }
   // 避免登录页重复跳转
   const pages = getCurrentPages()
   const current = pages[pages.length - 1]

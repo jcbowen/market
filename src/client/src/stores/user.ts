@@ -7,6 +7,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getUserInfo, updateCommunity, getCommunityById } from '@/api/user'
 import { logout as logoutApi } from '@/api/auth'
+import { registerUnauthorizedHandler } from '@/api/request'
 import { isH5 } from '@/utils/platform'
 import type { UserInfo, Community, Address } from '@/api/types'
 
@@ -208,3 +209,9 @@ export const useUserStore = defineStore('user', () => {
     switchCommunity,
   }
 })
+
+// 向请求层注册 401 登出实现（见 api/request.ts registerUnauthorizedHandler）：
+// 请求层不反向依赖本模块，避免 request → stores/user → api/auth → request 循环依赖。
+// 本模块被 App.vue 静态引用，注册必先于任何业务请求发生；
+// 回调在事件触发时才调用 useUserStore()，Pinia 实例彼时必然已就绪
+registerUnauthorizedHandler(() => useUserStore().logout())
