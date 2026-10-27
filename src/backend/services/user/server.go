@@ -253,6 +253,10 @@ func (s *server) ListCommunities(ctx stdctx.Context, req *user.ListCommunitiesRe
 	if pageSize < 1 {
 		pageSize = 10
 	}
+	// 与服务层 ListCommunities 同口径封顶，保证回显的 page_size 与实际返回一致
+	if pageSize > 200 {
+		pageSize = 200
+	}
 	list, total, err := s.communityService.ListCommunities(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)

@@ -92,7 +92,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'RegionList' })
-import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, h } from 'vue'
 import { NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getAllRegionsFresh, clearAllRegionsCache, createRegionUpdateTask, getRegionUpdateTask, applyRegionUpdateTask } from '@/api/region'
@@ -450,5 +450,15 @@ function applyTask() {
 }
 
 onMounted(loadData)
+
+// keep-alive 缓存下切标签只 deactivate 不 unmount，仅 onUnmounted 停不住轮询；
+// 补 onDeactivated 停机 + onActivated 在任务仍非终态（status<4）时恢复，
+// 否则离开本页后 setInterval 每 2s 持续打请求（官方源场景自述较慢，泄漏可达数分钟）
 onUnmounted(stopPolling)
+onDeactivated(stopPolling)
+onActivated(() => {
+  if (task.value && task.value.status < 4) {
+    pollTask()
+  }
+})
 </script>

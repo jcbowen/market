@@ -206,6 +206,11 @@ func deductSkuLocked(tx *gorm.DB, sku *model.Sku, quantity int32, orderID int64,
 //	    SkuId: 1, Quantity: 2, OrderId: 100,
 //	})
 func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStockReq) (bool, int32, error) {
+	// 与批量入口 normalizeStockItems 同口径：负数会绕过 `sku.Stock < quantity` 判定，
+	// 反向加库存并污染 stock_records 流水，必须在入口拒绝
+	if req.Quantity <= 0 {
+		return false, 0, invalidArg("扣减数量必须大于 0")
+	}
 	var success bool
 	var remain int32
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {

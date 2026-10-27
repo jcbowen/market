@@ -94,19 +94,34 @@ function getRefreshToken(): string {
 }
 
 /**
- * 处理未登录：清空本地令牌并跳转登录页
+ * 处理未登录：清空登录态（含 Pinia）并重置到登录页
  * 用于静默续期不可用（无 refresh_token / refresh_token 已失效）时的兜底
+ *
+ * 关键点：
+ * - 必须清 Pinia：仅 removeStorageSync 不会重置 store 里的 token ref，
+ *   isLogin 仍为 true → 页面守卫继续放行发请求 → 401 洪泛。
+ *   复用 userStore.logout() 一次性清状态 + 清缓存 + （H5）通知后端清 cookie。
+ * - 动态 import：request → stores/user → api/auth → request 存在循环依赖，运行时再取。
+ * - reLaunch 而非 navigateTo：小程序页面栈满 10 层时 navigateTo 静默失败，
+ *   会导致 token 已清却停在原页、反复跳登录全部失败。
  */
 function handleUnauthorized(): void {
-  uni.removeStorageSync(TOKEN_KEY)
-  uni.removeStorageSync(REFRESH_TOKEN_KEY)
+  import('@/stores/user')
+    .then(({ useUserStore }) => {
+      useUserStore().logout()
+    })
+    .catch(() => {
+      // store 取不到时兜底清本地令牌，至少保证下次冷启动不再带旧 token
+      uni.removeStorageSync(TOKEN_KEY)
+      uni.removeStorageSync(REFRESH_TOKEN_KEY)
+    })
   // 避免登录页重复跳转
   const pages = getCurrentPages()
   const current = pages[pages.length - 1]
   if (current && current.route?.includes('pages/login/login')) {
     return
   }
-  uni.navigateTo({ url: '/pages/login/login' })
+  uni.reLaunch({ url: '/pages/login/login' })
 }
 
 /**
@@ -280,8 +295,9 @@ function requestOnce<T = unknown>(
   // #endif
 
   return new Promise((resolve, reject) => {
-    // uni.promisify.adaptor 下类型推断可能落到 Promise 分支，运行时回调形式返回 RequestTask
-    const task = uni.request({
+    // 超时交由 uni.request 的 timeout 处理：不再额外挂 setTimeout 兜底，
+    // 避免每个请求遗留一个 REQUEST_TIMEOUT+2s、成功/失败都不清的定时器闭包
+    uni.request({
       url: fullUrl,
       method,
       data: requestData,
@@ -315,16 +331,7 @@ function requestOnce<T = unknown>(
         }
         // #endif
       },
-    }) as unknown as { abort?: () => void }
-
-    // 超时兜底
-    setTimeout(() => {
-      try {
-        task.abort && task.abort()
-      } catch {
-        // ignore
-      }
-    }, REQUEST_TIMEOUT + 2000)
+    })
   })
 }
 

@@ -68,7 +68,12 @@ async function initCommunity() {
       }
       const fallback = await autoPickCommunity()
       if (fallback) {
-        await userStore.switchCommunity(fallback.community)
+        try {
+          await userStore.switchCommunity(fallback.community)
+        } catch {
+          // 服务端同步失败不阻断启动：本地至少切到可用社区，避免停在无社区态
+          userStore.setCommunity(fallback.community)
+        }
         notifyRecommend(fallback)
       }
       return
@@ -78,7 +83,12 @@ async function initCommunity() {
     if (!restored) {
       const fallback = await autoPickCommunity()
       if (fallback) {
-        await userStore.switchCommunity(fallback.community)
+        try {
+          await userStore.switchCommunity(fallback.community)
+        } catch {
+          // 服务端同步失败不阻断启动：本地至少切到可用社区，避免停在无社区态
+          userStore.setCommunity(fallback.community)
+        }
         notifyRecommend(fallback)
       }
       return
@@ -112,7 +122,12 @@ async function ensureCommunityOpen(userStore: ReturnType<typeof useUserStore>) {
 
   const next = await autoPickCommunity()
   if (next && next.community.id !== current.id) {
-    await userStore.switchCommunity(next.community)
+    try {
+      await userStore.switchCommunity(next.community)
+    } catch {
+      // 服务端同步失败不阻断：本地切到可用社区并照常告知，避免停在停业社区
+      userStore.setCommunity(next.community)
+    }
     notifyRecommend(next, '社区已停业，已为您切换')
   } else {
     uni.showToast({

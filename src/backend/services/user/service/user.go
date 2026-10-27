@@ -356,6 +356,10 @@ func (s *UserService) ListUsers(ctx context.Context, communityID int64, keyword 
 	if pageSize < 1 {
 		pageSize = 10
 	}
+	// 服务层兜底上限：HTTP 网关已按 maxPageSize 收敛，但 gRPC 可被内部或直连调用传入超大值
+	if pageSize > 200 {
+		pageSize = 200
+	}
 
 	var list []*model.User
 	offset := (page - 1) * pageSize

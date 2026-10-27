@@ -120,6 +120,8 @@ async function fetchPayUrlAndGo() {
     }
     payUrl.value = res.data?.alipay_pay_url || ''
     if (!payUrl.value) {
+      // 复位 loading：否则错误文案被 v-if="loading" 挡住，UI 永久停在"正在跳转"
+      loading.value = false
       errorMsg.value = '支付链接获取失败，请返回重新发起支付'
       return
     }

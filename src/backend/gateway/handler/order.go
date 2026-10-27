@@ -292,6 +292,8 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	}
 
 	// 并行获取订单商品明细（消除 N+1 串行 RPC，延迟从 N×RTT 降为 ~1×RTT）
+	// gin.Context 非并发安全：在循环外取一次派生 ctx 供所有 goroutine 只读使用
+	detailCtx := c.Request.Context()
 	type orderDetail struct {
 		items   []gin.H
 		payType int32
@@ -303,10 +305,12 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		go func(idx int64, orderID int64) {
 			defer wg.Done()
 			var d orderDetail
-			if detail, err := h.orderClient.GetOrder(c.Request.Context(), &order.GetOrderReq{
+			if detail, err := h.orderClient.GetOrder(detailCtx, &order.GetOrderReq{
 				Id:     orderID,
 				UserId: uc.UserID,
-			}); err == nil && detail != nil {
+			}); err != nil {
+				log.Printf("并行拉取订单明细失败（order=%d）: %v", orderID, err)
+			} else if detail != nil {
 				for _, item := range detail.Items {
 					d.items = append(d.items, gin.H{
 						"id":            item.Id,
@@ -321,7 +325,7 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 					})
 				}
 			}
-			d.payType = h.orderPayType(c, orderID)
+			d.payType = h.orderPayType(detailCtx, orderID)
 			details[idx] = d
 		}(int64(i), o.Id)
 	}
@@ -557,7 +561,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"delivery_time":   o.DeliveryTime,
 		"cancel_reason":   o.CancelReason,
 		"cancel_time":     o.CancelTime,
-		"pay_type":        h.orderPayType(c, o.Id),
+		"pay_type":        h.orderPayType(c.Request.Context(), o.Id),
 		"pay_type_text":   h.orderPayTypeText(c, o.Id),
 		// 订单来源（1=C端用户 2=收银台代客）：门店单在 C 端展示但只读（隐藏操作按钮）
 		"source":     o.Source,
@@ -606,14 +610,18 @@ func orderExpireAt(status int32, createdAt string, orderTimeoutSec int) string {
 // orderPayType 查询订单支付类型数值
 // 未支付或查询不到支付记录时返回 0
 // 参数：
-//   - c: gin 上下文
+//   - ctx: 上下文（可在并行拉取场景复用派生 ctx，不依赖 gin.Context）
 //   - orderID: 订单 ID
 //
 // 返回值：
 //   - int32: 支付类型（1微信 2支付宝 3货到付款 4现金；0=未支付/未知）
-func (h *OrderHandler) orderPayType(c *gin.Context, orderID int64) int32 {
-	resp, err := h.paymentClient.GetPayment(c.Request.Context(), &payment.GetPaymentReq{OrderId: orderID})
-	if err != nil || resp == nil {
+func (h *OrderHandler) orderPayType(ctx context.Context, orderID int64) int32 {
+	resp, err := h.paymentClient.GetPayment(ctx, &payment.GetPaymentReq{OrderId: orderID})
+	if err != nil {
+		log.Printf("查询订单支付方式失败（order=%d）: %v", orderID, err)
+		return 0
+	}
+	if resp == nil {
 		return 0
 	}
 	return resp.PayType

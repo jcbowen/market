@@ -98,7 +98,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
+import { onLoad, onShow, onHide, onUnload } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { getOrders, confirmReceive, deleteOrder } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
@@ -134,6 +134,14 @@ const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 const nowTick = ref(Date.now())
 let tickTimer: ReturnType<typeof setInterval> | null = null
 
+/** 停止每分钟倒计时刷新（onHide/onUnload 共用，避免遗留 setInterval） */
+function clearTickTimer() {
+  if (tickTimer) {
+    clearInterval(tickTimer)
+    tickTimer = null
+  }
+}
+
 onLoad((query) => {
   const status = Number(query?.status) || 0
   const index = tabs.value.findIndex((tab) => tab.value === status)
@@ -155,10 +163,12 @@ onShow(() => {
 })
 
 onHide(() => {
-  if (tickTimer) {
-    clearInterval(tickTimer)
-    tickTimer = null
-  }
+  clearTickTimer()
+})
+
+// redirectTo / navigateBack 等离开页面只触发 onUnload 不触发 onHide，需同样清理定时器
+onUnload(() => {
+  clearTickTimer()
 })
 
 /**

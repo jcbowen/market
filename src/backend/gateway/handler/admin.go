@@ -1433,8 +1433,13 @@ func (h *AdminHandler) validatePermissionsSubset(c *gin.Context, communityID int
 		AdminId:     uc.UserID,
 		CommunityId: communityID,
 	})
-	if err != nil || ctxInfo == nil {
-		return err
+	// fail-closed：上下文缺失或查询失败时一律拒绝，不得静默放行任意权限点
+	// （ctxInfo==nil 且 err==nil 的边界若直接 return err 会返回 nil，等价于校验通过）
+	if err != nil {
+		return fmt.Errorf("获取权限上下文失败: %w", err)
+	}
+	if ctxInfo == nil {
+		return fmt.Errorf("权限上下文不可用")
 	}
 	for _, p := range ctxInfo.Permissions {
 		if p == "*" {
@@ -2249,10 +2254,14 @@ func (h *AdminHandler) AssignDelivery(c *gin.Context) {
 		return
 	}
 
-	// 指派时查会员昵称做姓名快照（列表/详情回显免再查）
+	// 指派时查会员昵称做姓名快照（列表/详情回显免再查）；
+	// 带社区语境校验归属，防止跨社区枚举会员 ID 换昵称，并满足"履约人员须为本社区"语义
 	var deliveryUserName string
 	if req.DeliveryUserID > 0 {
-		u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: req.DeliveryUserID})
+		u, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{
+			Id:          req.DeliveryUserID,
+			CommunityId: communityID,
+		})
 		if err != nil {
 			response.GRPCError(c, err)
 			return

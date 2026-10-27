@@ -128,6 +128,10 @@ func (s *RegionService) ListRegions(ctx context.Context, req *user.ListRegionsRe
 	if pageSize < 1 {
 		pageSize = 20
 	}
+	// 服务层兜底上限：HTTP 网关已按 maxPageSize 收敛，但 gRPC 可被内部或直连调用传入超大值
+	if pageSize > 200 {
+		pageSize = 200
+	}
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Region{})
 	if kw := strings.TrimSpace(req.Keyword); kw != "" {
