@@ -66,24 +66,30 @@ func (s *RoleService) WithRedis(client *redis.Client) *RoleService {
 //
 // 参数：
 //   - ctx: 上下文（主流程事务已提交后调用，勿传入事务句柄）
-//   - communityID: 角色归属社区 ID（>0 按社区广播；全局角色传 0 时广播全部社区）
+//   - communityID: 角色归属社区 ID（>0 按社区广播；<=0 为遗留的全局角色，
+//     影响全部社区，改发 Global 事件——按 [0] 广播会被网关的 ID 过滤丢弃）
 //   - reason: 变更原因（日志用）
 func (s *RoleService) publishPermissionChanged(ctx context.Context, communityID int64, reason string) {
-	s.publishPermissionChangedTo(ctx, nil, []int64{communityID}, reason)
+	if communityID <= 0 {
+		s.publishPermissionChangedTo(ctx, nil, nil, true, reason)
+		return
+	}
+	s.publishPermissionChangedTo(ctx, nil, []int64{communityID}, false, reason)
 }
 
 // publishPermissionChangedTo 权限变更事件发布（定向版，见 publishPermissionChanged）
-// AdminIDs 非空时按管理员定向（跨社区连接均可达），否则按 CommunityIDs 逐社区广播
-func (s *RoleService) publishPermissionChangedTo(ctx context.Context, adminIDs []int64, communityIDs []int64, reason string) {
+// 三条通道自上而下：global 全员 → adminIDs 定向 → communityIDs 逐社区广播
+func (s *RoleService) publishPermissionChangedTo(ctx context.Context, adminIDs []int64, communityIDs []int64, global bool, reason string) {
 	if s.redisClient == nil {
 		return
 	}
-	if len(adminIDs) == 0 && len(communityIDs) == 0 {
+	if !global && len(adminIDs) == 0 && len(communityIDs) == 0 {
 		return
 	}
 	payload, err := json.Marshal(eventbus.AdminPermissionChangedEvent{
 		AdminIDs:     adminIDs,
 		CommunityIDs: communityIDs,
+		Global:       global,
 		Reason:       reason,
 	})
 	if err != nil {

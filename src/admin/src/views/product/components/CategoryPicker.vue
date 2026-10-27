@@ -47,7 +47,7 @@
 <script setup lang="ts">
 // 组件名与 keep-alive 无关（弹窗组件不被路由缓存），按语义命名便于调试
 defineOptions({ name: 'CategoryPicker' })
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { NInput, NModal, NButton, NIcon, NSpin, NEmpty, NDivider, createDiscreteApi } from 'naive-ui'
 import { ChevronDownOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import { getCategoryList, createCategory } from '@/api/product'
@@ -91,24 +91,36 @@ const creating = ref(false)
 /** 弹窗可选分类（仅启用项；禁用分类仍需到分类管理页操作） */
 const selectableList = computed(() => list.value.filter((c) => c.status === 1))
 
+/** 展平分类树（后端 /admin/categories 返回树，子级在 children 上）：
+ *  回显匹配要能命中任意层级，否则挂在子分类上的商品匹配不到名称 */
+function flattenCategories(nodes: Category[]): Category[] {
+  return nodes.flatMap((node) => [node, ...flattenCategories(node.children ?? [])])
+}
+
 /**
  * 已选分类名称（触发框回显）
  * 三级兜底：列表匹配 → 外部传入的 category_name → 裸 ID 提示，避免编辑态显示空占位
+ * 一律用 `||` 而非 `??`：fallbackName 缺省为空串（不是 nullish），
+ * 用 `??` 会把空串当成有效值返回，导致后两级兜底全部失效
  */
 const selectedName = computed(() => {
   if (props.modelValue == null) return ''
   return (
-    list.value.find((c) => c.id === props.modelValue)?.name ??
-    props.fallbackName ??
+    flattenCategories(list.value).find((c) => c.id === props.modelValue)?.name ||
+    props.fallbackName ||
     `分类 #${props.modelValue}`
   )
 })
 
-// 编辑态回填 modelValue 后列表尚未就绪会导致回显为空（点开弹窗才纠正），
-// 挂载即静默预取一次，保证触发框直接显示分类名
-onMounted(() => {
-  if (props.modelValue != null) void loadList(true)
-})
+// 编辑态分类是详情加载完成后才回填的，此时本组件早已挂载完（onMounted 预取从不触发），
+// 故改由 modelValue 驱动：一旦有值且列表未就绪即静默预取，保证触发框直接显示分类名
+watch(
+  () => props.modelValue,
+  (id) => {
+    if (id != null && list.value.length === 0) void loadList(true)
+  },
+  { immediate: true },
+)
 
 /**
  * 打开弹窗并加载启用分类

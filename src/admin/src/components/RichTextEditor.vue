@@ -177,4 +177,12 @@ onBeforeUnmount(() => {
 .rich-editor :deep(.rich-editor__img-btn:hover) {
   color: #06c;
 }
+
+/* 编辑态图片钳制到编辑区宽度：Quill 的 image 格式只保留 alt/height/width，
+   入库时服务端注入的 max-width 内联样式在回灌编辑时会被丢弃，超宽原图会撑破编辑框；
+   落库内容不受影响（消毒器每次入库都重新注入同一套样式），此处仅补编辑态观感 */
+.rich-editor :deep(.ql-snow .ql-editor img) {
+  max-width: 100%;
+  height: auto;
+}
 </style>

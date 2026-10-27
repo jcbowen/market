@@ -98,6 +98,8 @@ function soldPercent(item: FlashSale): number {
  * @param item 秒杀活动
  */
 function onBuy(item: FlashSale) {
+  // 与「立即抢购」按钮同一守卫：卡片图片也可点击，非进行中（未开始/已结束）不得跳详情
+  if (item.status !== 1) return
   goProductDetail(item.product_id)
 }
 </script>

@@ -17,16 +17,18 @@ import { useAuthStore } from '@/stores/auth'
 import { connectOrderNotify, disconnectOrderNotify } from '@/utils/orderNotify'
 
 /**
- * 新订单语音通知连接管理
- * 登录就绪、已选定社区且具备 order:view 权限时建立后台 WS 连接；
- * 登出、权限丧失或社区切换（推送范围随握手声明变化，须重连刷新）时断开
+ * 后台 WebSocket 长连接管理（订单语音通知 + 权限变更提醒）
+ * 登录就绪且已选定社区即建立连接，**不设权限码门槛**：权限被收窄的管理员恰恰需要
+ * 收到权限变更提醒以刷新本地快照，加门槛会让提醒对它自己失效（服务端网关会按握手
+ * 时刻的权限快照过滤数据类事件，订单内容不会因为放宽建连条件而多发给无权限连接）；
+ * 登出或未选定社区时断开（社区切换由 currentCommunityId 变化触发断开重连）
  */
 const authStore = useAuthStore()
 const { isReady, currentCommunityId } = storeToRefs(authStore)
 watch(
   [isReady, currentCommunityId],
   ([ready, communityId]) => {
-    if (ready && communityId > 0 && authStore.hasPermission('order:view')) {
+    if (ready && communityId > 0) {
       connectOrderNotify()
     } else {
       disconnectOrderNotify()

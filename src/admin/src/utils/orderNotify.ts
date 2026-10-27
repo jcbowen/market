@@ -13,6 +13,8 @@ import { useAuthStore } from '@/stores/auth'
  * - 收到 admin.permission_changed 事件：防抖合并后拉取 /admin/info 刷新权限快照
  *   （菜单与路由守卫基于 store computed，刷新即生效）；页面切回前台时限流兜底刷新一次，
  *   覆盖 WS 丢消息场景
+ * - 服务端在送达该事件后会断开本连接（其握手时刻的权限快照已作废），onclose 的自动重连
+ *   即可按最新上下文重新握手，无需在此额外处理
  * - 浏览器自动播放限制：首次用户交互时解锁 AudioContext 与语音合成
  *
  * 服务端消息协议（docs/需求文档/06-接口设计）：
@@ -320,9 +322,11 @@ let permissionRefreshTimer: ReturnType<typeof setTimeout> | null = null
 /**
  * 防抖调度权限快照刷新：拉取 /admin/info 按当前社区语境实时重算，
  * 菜单与路由守卫基于 store computed，刷新即生效，无需 reload
+ * 真防抖（每次事件都重置窗口）：批量调整会连发多条事件，若只认首个定时器，
+ * 窗口内的后续事件会被吞掉且不再触发，恰好在「连续改多个角色」时漏刷
  */
 function schedulePermissionRefresh() {
-  if (permissionRefreshTimer) return
+  if (permissionRefreshTimer) clearTimeout(permissionRefreshTimer)
   permissionRefreshTimer = setTimeout(() => {
     permissionRefreshTimer = null
     const auth = useAuthStore()

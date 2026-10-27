@@ -64,8 +64,10 @@ export function phoneLogin(phone: string) {
 /**
  * 登出：请后端清除 refresh_token 的 httpOnly cookie
  * JS 删不掉 httpOnly cookie，只能由后端下发过期值；仅 H5 需要
+ * bypassRefresh：调用时本地令牌往往已过期，若走静默续期链，这个 401 会再次触发
+ * 登出收口（handleUnauthorized → logout → 再发本接口），形成请求放大
  * @returns 后端响应
  */
 export function logout() {
-  return post('/auth/logout', {}, refreshCookieHeader())
+  return post('/auth/logout', {}, refreshCookieHeader(), { bypassRefresh: true, silent: true })
 }

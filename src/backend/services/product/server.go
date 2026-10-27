@@ -250,7 +250,15 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 		imageURLs = append(imageURLs, img.URL)
 	}
 
-	info := service.ToProductInfo(p, "", imageURLs)
+	// 详情出口单独解析分类名（列表出口由 BuildCategoryNames 批量取）：
+	// 商品编辑页的分类选择器回显依赖它，缺失会导致编辑态分类框显示空占位
+	categoryNames, err := s.productService.BuildCategoryNames(ctx, []*model.Product{p})
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	info := service.ToProductInfo(p, categoryNames[p.CategoryID], imageURLs)
+	// 富文本正文只在详情出口回填（ToProductInfo 刻意不带，见其注释）
+	info.Content = p.Content
 	// 出库统一拼接完整访问 URL（库存相对路径）
 	info.CoverImage = s.attachmentService.ToMediaURL(ctx, p.CoverImage)
 	info.Images = s.attachmentService.ToMediaURLs(ctx, imageURLs)

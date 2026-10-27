@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import Cookies from 'js-cookie'
 import { login as loginApi, getAdminInfo, logout as logoutApi, refreshToken as refreshTokenApi } from '@/api/auth'
+import { registerUnauthorizedHandler } from '@/api/request'
 import { useTabsStore } from '@/stores/tabs'
 import type { AdminInfo, LoginParams } from '@/api/types'
 
@@ -261,3 +262,8 @@ export const useAuthStore = defineStore('auth', () => {
     switchCommunity,
   }
 })
+
+// 向请求层注册 401 会话收口（见 api/request 的 registerUnauthorizedHandler）：
+// 请求层不反向依赖本模块，避免 request → stores/auth → api/auth → request 循环依赖。
+// 回调内才取 store 实例，届时 Pinia 必然已初始化
+registerUnauthorizedHandler(() => useAuthStore().logout())

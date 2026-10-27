@@ -374,6 +374,7 @@ func (s *PaymentService) GetPaymentStatusByNo(ctx context.Context, paymentNo str
 //   - error: 参数为空返回 InvalidArgument；查询失败返回 Internal
 //
 // 使用示例：
+//
 //	orderNos, err := svc.FindOrdersByPayNo(ctx, "PAY202601010001")
 func (s *PaymentService) FindOrdersByPayNo(ctx context.Context, payNo string) ([]string, error) {
 	payNo = strings.TrimSpace(payNo)

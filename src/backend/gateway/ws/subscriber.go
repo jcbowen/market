@@ -119,19 +119,27 @@ func dispatchEvent(hub *Hub, channel string, payload []byte) {
 			log.Printf("[ws] 权限变更事件解析失败，已忽略: %s", string(payload))
 			return
 		}
-		// 定向规则：AdminIDs 非空按管理员定向（跨社区连接均可达），
-		// 否则按社区广播（社区权限上限调整影响该社区全部在线管理员）
-		if len(evt.AdminIDs) > 0 {
-			hub.BroadcastToAdmins(evt.AdminIDs, &Message{
-				Type: eventbus.MsgTypeAdminPermissionChanged,
-				Data: evt,
-			})
-			return
+		notify := &Message{Type: eventbus.MsgTypeAdminPermissionChanged, Data: evt}
+		// 定向规则见 eventbus.AdminPermissionChangedEvent 注释：全局 → 全员；
+		// 否则按管理员定向；再否则按社区广播
+		// 提醒送达后一律断开受影响连接：连接里的权限快照是握手时定格的，
+		// 不重连就仍按旧权限收数据类事件，而客户端 onclose 会自动重连并刷新快照
+		switch {
+		case evt.Global:
+			hub.BroadcastAll(notify)
+			log.Printf("[ws] 全局权限变更 reason=%q 已断开全部连接 %d 条", evt.Reason, hub.KickAll())
+		case len(evt.AdminIDs) > 0:
+			hub.BroadcastToAdmins(evt.AdminIDs, notify)
+			log.Printf("[ws] 权限变更定向踢线 reason=%q 目标管理员=%v 断开连接=%d",
+				evt.Reason, evt.AdminIDs, hub.KickAdmins(evt.AdminIDs))
+		default:
+			hub.BroadcastToCommunities(evt.CommunityIDs, notify)
+			// 社区语境下的连接一律重连刷新：网关侧快照只含角色权限并集，
+			// 社区权限上限变化不改并集，但保持「变更后即重连取最新上下文」的单一口径
+			// 比按 adminID 逐个定向更完整（社区内管理员集合在服务端不可枚举）
+			log.Printf("[ws] 权限变更社区广播 reason=%q 目标社区=%v 断开连接=%d",
+				evt.Reason, evt.CommunityIDs, hub.KickCommunities(evt.CommunityIDs))
 		}
-		hub.BroadcastToCommunities(evt.CommunityIDs, &Message{
-			Type: eventbus.MsgTypeAdminPermissionChanged,
-			Data: evt,
-		})
 	default:
 		log.Printf("[ws] 未知的订单事件频道，已忽略: %s", channel)
 	}

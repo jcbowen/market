@@ -298,7 +298,7 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 			return nil, err
 		}
 		// 停用/启用即时影响该账号全部社区的有效权限，定向提醒其在线会话刷新快照
-		s.roleService.publishPermissionChangedTo(ctx, []int64{req.Id}, nil, "账号状态变更")
+		s.roleService.publishPermissionChangedTo(ctx, []int64{req.Id}, nil, false, "账号状态变更")
 		return s.getAdminByID(ctx, req.Id)
 	}
 
@@ -415,7 +415,7 @@ func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID in
 		return bizerr.New(codes.FailedPrecondition, "该员工在此社区无任职")
 	}
 	// 移除任职即时收窄该账号在相关社区的有效权限，定向提醒其在线会话刷新快照
-	s.roleService.publishPermissionChangedTo(ctx, []int64{id}, nil, "移除员工任职")
+	s.roleService.publishPermissionChangedTo(ctx, []int64{id}, nil, false, "移除员工任职")
 	return nil
 }
 

@@ -88,7 +88,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockPurchase' })
-import { h, ref, onMounted, onActivated } from 'vue'
+import { h, ref, onActivated } from 'vue'
 import { formatAmount } from '@/utils/format'
 import { useRouter, useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
@@ -394,18 +394,17 @@ function onTabChange(value: string) {
   if (value === 'suppliers') loadSuppliers()
 }
 
-// 补货建议带入：从库存工作台「一键补货」跳转过来时，预置供应商筛选并刷新
-// 入库单「关联采购单」跳转：经 route.query.keyword 预填单号搜索
-onMounted(() => {
-  // 外部入口（如入库单跳转按采购单号预筛）带 keyword 时仅在挂载时预填，
-  // 数据加载统一交给 onActivated（keep-alive 下挂载即触发一次激活），避免重复请求
+// 外部入口（入库单/入库列表「关联采购单」跳转带 keyword、工作台一键补货带供应商筛选）
+// 在 keep-alive 缓存下再次进入不触发 onMounted，重读 query 必须放在 onActivated，
+// 否则跳转命中缓存会沿用上一次筛选（与 order/list.vue、order/refunds.vue 同口径）
+// 数据加载同样按页签分支：停在供应商页签时不该只拉采购单
+onActivated(() => {
   const q = route.query.keyword
   if (typeof q === 'string' && q) orderKeyword.value = q
-})
-
-// keep-alive 缓存下从内页（新建/详情/编辑）返回时 onMounted 不会触发，
-// onActivated 重新拉取，保证采购单新增/操作后列表展示最新数据
-onActivated(() => {
+  if (activeTab.value === 'suppliers') {
+    loadSuppliers()
+    return
+  }
   loadOrders()
 })
 </script>

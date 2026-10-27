@@ -32,7 +32,7 @@ type ExportTask struct {
 	AdminID   int64  `gorm:"column:admin_id;type:bigint;not null;default:0;index;comment:创建人管理员 ID" json:"admin_id"`
 	AdminName string `gorm:"column:admin_name;type:varchar(50);comment:创建人姓名快照" json:"admin_name"`
 	// CommunityID 创建人社区（0=超管跨社区）；普通管理员列表按本列隔离，与订单列表口径一致
-	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;default:0;index;comment:创建人社区 ID 0=超管" json:"community_id"`
+	CommunityID   int64 `gorm:"column:community_id;type:bigint;not null;default:0;index;comment:创建人社区 ID 0=超管" json:"community_id"`
 	DownloadCount int32 `gorm:"column:download_count;type:int;not null;default:0;comment:累计下载次数" json:"download_count"`
 	// Downloaders 下载留痕 JSON 数组 [{admin_id,admin_name,at}]；完整名单仅超管可见
 	Downloaders string `gorm:"column:downloaders;type:text;comment:下载留痕 JSON" json:"downloaders"`

@@ -69,13 +69,45 @@ export interface BizError extends Error {
 }
 
 /**
+ * 会话收口回调（由 stores/auth 在模块加载时注册）
+ * 拦截器不直接 import store：auth store 依赖 api 层，反向引用会构成循环依赖，
+ * 故此处只持有回调，清态动作归 store 自己（见 registerUnauthorizedHandler）
+ */
+let unauthorizedHandler: (() => void) | null = null
+
+/**
+ * 注册 401 会话收口回调
+ * @param handler 收口实现（清 cookie + 重置 Pinia 认证态）
+ */
+export function registerUnauthorizedHandler(handler: () => void): void {
+  unauthorizedHandler = handler
+}
+
+/**
+ * 收口是否已执行：登录页跳转只改 hash（同一文档不重载），
+ * 一屏多个请求并发 401 时会重复进入本函数，故只收口一次
+ */
+let sessionClosed = false
+
+/**
  * 清除登录凭证并跳转登录页
  * 与 HTTP 401 分支保持同一处理：静默跳转，不弹错误提示。
  * 携带 redirect 回跳原页面（收银台 /pos* 回 /pos/login，其余回 /login），
  * 否则收银员会话过期会被带回主登录页且丢上下文
+ *
+ * 关键点：必须同时重置 Pinia 认证态。只删 cookie 的话 accessToken ref 仍持旧值，
+ * 路由守卫据此判定「已认证」，把 /login 又弹回兜底首页，用户卡在过期会话里
  */
 function redirectToLogin() {
-  Cookies.remove('access_token')
+  if (sessionClosed) return
+  sessionClosed = true
+  if (unauthorizedHandler) {
+    unauthorizedHandler()
+  } else {
+    // 兜底（理论不可达：auth store 被 App.vue 静态引用，注册必先于任何请求）：
+    // path 必须与写入时一致（见 stores/auth 的 Cookies.set），否则删不掉
+    Cookies.remove('access_token', { path: '/' })
+  }
   const current = window.location.hash.replace(/^#/, '')
   const isPos = current.startsWith('/pos')
   const loginPath = isPos ? '/pos/login' : '/login'

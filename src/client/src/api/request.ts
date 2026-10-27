@@ -48,6 +48,12 @@ interface RequestOptions {
   hideLoading?: boolean
   /** 静默模式：业务失败时不弹全局 toast（轮询等自动重试场景由调用方自行提示） */
   silent?: boolean
+  /**
+   * 跳过静默续期：401 直接把 UnauthorizedError 抛给调用方，不触发刷新与登出收口。
+   * 用于「登录态已确定失效时仍要发」的请求（如登出通知后端清 cookie）——
+   * 这类请求若走续期链，会在 401 后再次触发 handleUnauthorized，形成登出套登出的请求放大
+   */
+  bypassRefresh?: boolean
 }
 
 /**
@@ -121,8 +127,17 @@ export function registerUnauthorizedHandler(handler: () => void): void {
  *   兜底清本地令牌，至少保证下次冷启动不再带旧 token。
  * - reLaunch 而非 navigateTo：小程序页面栈满 10 层时 navigateTo 静默失败，
  *   会导致 token 已清却停在原页、反复跳登录全部失败。
+ * - 并发去重：一屏多个请求同时 401 时只收口一次。reLaunch 是异步生效的，
+ *   期间 getCurrentPages 仍是旧路由，靠「已在登录页」判断拦不住紧随的并发调用
  */
+const UNAUTHORIZED_DEDUCE_WINDOW = 2000
+let lastUnauthorizedAt = 0
+
 function handleUnauthorized(): void {
+  const now = Date.now()
+  if (now - lastUnauthorizedAt < UNAUTHORIZED_DEDUCE_WINDOW) return
+  lastUnauthorizedAt = now
+
   if (unauthorizedHandler) {
     unauthorizedHandler()
   } else {
@@ -367,6 +382,9 @@ export async function request<T = unknown>(
     return await requestOnce<T>(options)
   } catch (err) {
     if (!(err instanceof UnauthorizedError)) throw err
+    // 显式声明跳过续期的请求（登出通知等）：401 原样上抛，由调用方自行忽略，
+    // 不再走 silentRefresh → handleUnauthorized 链路
+    if (options.bypassRefresh) throw err
     const ok = await silentRefresh()
     if (!ok) throw new Error('登录已过期')
     // requestOnce 每次调用重新读取本地 token，重放自然携带新令牌
@@ -395,13 +413,15 @@ export function get<T = unknown>(
  * @param url 接口地址
  * @param data 请求体
  * @param header 自定义请求头
+ * @param extra 额外选项（silent 静默失败、bypassRefresh 跳过静默续期）
  */
 export function post<T = unknown>(
   url: string,
   data?: Record<string, unknown>,
   header?: Record<string, string>,
+  extra?: Pick<RequestOptions, 'silent' | 'bypassRefresh'>,
 ): Promise<ApiResponse<T>> {
-  return request<T>({ url, method: 'POST', data, header })
+  return request<T>({ url, method: 'POST', data, header, ...extra })
 }
 
 /**

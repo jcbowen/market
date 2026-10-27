@@ -214,6 +214,28 @@ func resolveAdminContext(c *gin.Context) *user.AdminContextInfo {
 	return info
 }
 
+// AdminContextFrom 取当前请求在指定社区语境下的实时权限上下文（请求内记忆化）
+// 供路由链之外需要同一份口径的入口使用（如 WebSocket 握手取权限快照）：
+// 握手链上 RequireCommunityAccess 已解析过一次，此处命中 gin 上下文缓存，不产生额外 RPC
+// 解析失败返回 nil（user 服务不可用时调用方按最小权限处理，与 RequirePermission 的 fail-closed 同口径）
+//
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - *user.AdminContextInfo: 实时上下文；无管理员语境或解析失败时为 nil
+//
+// 使用示例：
+//
+//	info := gwMiddleware.AdminContextFrom(c)
+//	perms := ws.NewClientPermissions(info.GetIsSuper(), info.GetPermissions())
+func AdminContextFrom(c *gin.Context) *user.AdminContextInfo {
+	if c == nil {
+		return nil
+	}
+	return resolveAdminContext(c)
+}
+
 // contains 判断字符串切片是否包含指定元素
 // 参数：
 //   - list: 字符串切片

@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
+	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 	"github.com/jcbowen/market/src/backend/gateway/ws"
 )
 
@@ -31,7 +32,9 @@ func NewWSHandler(hub *ws.Hub) *WSHandler {
 }
 
 // Handle 升级 WebSocket 连接并挂入集线器
-// 路由链已保证：admin JWT 鉴权（WSAuthMiddleware）→ 社区访问校验 → order:view 权限校验。
+// 路由链已保证：admin JWT 鉴权（WSAuthMiddleware）→ 社区访问校验（实时口径，
+// 解除任职/停用后旧令牌也连不上已收回的社区）；握手不设权限码门槛，
+// 但会把该社区语境下的权限快照记入连接，供推送时刻过滤数据类事件。
 // 握手声明的当前社区（X-Community-Id / 查询参数映射）决定后续事件推送范围，
 // 前端切换社区须断开重连以刷新过滤维度
 //
@@ -52,13 +55,17 @@ func (h *WSHandler) Handle(c *gin.Context) {
 	if id, err := strconv.ParseInt(c.GetHeader("X-Community-Id"), 10, 64); err == nil && id > 0 {
 		communityID = id
 	}
+	// 权限快照取自 RequireCommunityAccess 已解析并记忆化的实时上下文（无额外 RPC）；
+	// 解析不到时按无权限建连（仍可收权限变更提醒，但收不到订单事件），fail-closed
+	ctxInfo := gwMiddleware.AdminContextFrom(c)
+	perms := ws.NewClientPermissions(ctxInfo.GetIsSuper(), ctxInfo.GetPermissions())
 
 	conn, err := ws.Upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("[ws] 连接升级失败 admin=%s(%d): %v", c.GetString("admin_username"), uc.UserID, err)
 		return
 	}
-	client := ws.NewClient(h.hub, conn, communityID, uc.UserID, c.GetString("admin_username"))
+	client := ws.NewClient(h.hub, conn, communityID, uc.UserID, c.GetString("admin_username"), perms)
 	h.hub.Attach(client)
 	log.Printf("[ws] 管理员接入 admin=%s(%d) community=%d 在线数=%d",
 		c.GetString("admin_username"), uc.UserID, communityID, h.hub.Count())

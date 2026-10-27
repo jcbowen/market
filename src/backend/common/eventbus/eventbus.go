@@ -121,13 +121,17 @@ const ChannelAdminPermissionChanged = "market:admin:permission_changed"
 const MsgTypeAdminPermissionChanged = "admin.permission_changed"
 
 // AdminPermissionChangedEvent 管理员权限变更事件载荷
-// 定向规则（gateway 侧）：AdminIDs 非空时按管理员定向推送（跨社区连接均可达）；
-// 否则按 CommunityIDs 逐社区广播（如社区权限上限调整影响该社区全部在线管理员）
+// 定向规则（gateway 侧，自上而下短路）：
+//  1. Global 为真 → 全体在线管理员（全局角色改动，影响所有社区所有管理员）
+//  2. AdminIDs 非空 → 按管理员定向推送（跨社区连接均可达）
+//  3. 否则按 CommunityIDs 逐社区广播（如社区权限上限调整影响该社区全部在线管理员）
 type AdminPermissionChangedEvent struct {
 	// AdminIDs 直接受影响的管理员 ID 列表（任职调整、账号停启用），非空时优先按此定向
 	AdminIDs []int64 `json:"admin_ids,omitempty"`
 	// CommunityIDs 受影响的社区 ID 列表（角色增删改、社区权限上限调整）
 	CommunityIDs []int64 `json:"community_ids,omitempty"`
+	// Global 受影响范围是否为全部社区（全局角色增删改；此时 CommunityIDs 为空）
+	Global bool `json:"global,omitempty"`
 	// Reason 变更原因（供日志定位，不下发前端展示）
 	Reason string `json:"reason,omitempty"`
 }

@@ -8,15 +8,15 @@ import (
 // 对应商品主表，包含基础信息、多规格标识、销售状态等
 type Product struct {
 	base.MysqlBaseModel
-	ID               int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	CommunityID      int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
-	CategoryID       int64   `gorm:"column:category_id;type:bigint;not null;index;comment:分类 ID" json:"category_id"`
-	Name             string  `gorm:"column:name;type:varchar(100);not null;comment:商品名称" json:"name"`
-	Description      string  `gorm:"column:description;type:text;comment:商品描述" json:"description"`
+	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
+	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
+	CategoryID  int64  `gorm:"column:category_id;type:bigint;not null;index;comment:分类 ID" json:"category_id"`
+	Name        string `gorm:"column:name;type:varchar(100);not null;comment:商品名称" json:"name"`
+	Description string `gorm:"column:description;type:text;comment:商品描述" json:"description"`
 	// Content 商品富文本详情：服务端按白名单消毒后的 HTML（C 端 rich-text 渲染），
 	// 允许 p/img/ul/ol 等展示型标签；mediumtext 容纳图文混排
-	Content    string  `gorm:"column:content;type:mediumtext;comment:商品富文本详情（消毒后 HTML）" json:"content"`
-	CoverImage string  `gorm:"column:cover_image;type:varchar(255);comment:封面图 URL" json:"cover_image"`
+	Content          string  `gorm:"column:content;type:mediumtext;comment:商品富文本详情（消毒后 HTML）" json:"content"`
+	CoverImage       string  `gorm:"column:cover_image;type:varchar(255);comment:封面图 URL" json:"cover_image"`
 	Images           string  `gorm:"column:images;type:json;comment:商品图片 JSON 数组" json:"images"`
 	Unit             string  `gorm:"column:unit;type:varchar(20);comment:单位（件/斤/瓶/箱）" json:"unit"`
 	IsMultiSpec      bool    `gorm:"column:is_multi_spec;type:tinyint(1);default:0;comment:是否多规格，默认0" json:"is_multi_spec"`

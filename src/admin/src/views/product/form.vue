@@ -285,6 +285,9 @@ const tabsStore = useTabsStore()
 
 const isEdit = ref(false)
 const saving = ref(false)
+/** 编辑态详情加载失败标记：商品保存是全量覆盖（正文/规格/图片都按提交值写库），
+ *  详情没加载成功就提交等于用空值覆盖既有数据，必须拦住 */
+const detailFailed = ref(false)
 
 const form = reactive({
   name: '',
@@ -436,8 +439,12 @@ async function loadDetail(): Promise<void> {
   if (!id) return
   isEdit.value = true
 
-  const res = await getProductDetail(id)
-  if (res.data.code !== 0 || !res.data.data) return
+  const res = await getProductDetail(id).catch(() => null)
+  if (!res || res.data.code !== 0 || !res.data.data) {
+    detailFailed.value = true
+    message.error('商品详情加载失败，请刷新重试后再编辑（详情缺失时保存会以空值覆盖原有富文本与规格）')
+    return
+  }
 
   const detail = res.data.data
   const p = detail.product
@@ -740,6 +747,10 @@ function previewSkuImage(row: SkuRow): void {
  * 提交保存
  */
 async function submit(): Promise<void> {
+  if (detailFailed.value) {
+    message.error('商品详情未加载成功，禁止保存（保存为全量覆盖，会以空值清掉原有富文本与规格）')
+    return
+  }
   const payload = buildPayload()
   if (!payload) return
 

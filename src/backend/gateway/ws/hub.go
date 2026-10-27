@@ -1,6 +1,7 @@
 // Package ws 管理后台 WebSocket 推送
 // hub 维护在线管理员连接（按社区分组），Redis 订阅器接收 order 服务的支付成功事件，
-// 过滤社区后逐连接推送。握手鉴权复用 gateway 既有 admin JWT + 权限链（见 middleware.WSAuthMiddleware）
+// 过滤社区与连接权限快照后逐连接推送。握手鉴权复用 gateway 既有 admin JWT + 社区校验链
+// （见 middleware.WSAuthMiddleware / RequireCommunityAccess），权限只用于过滤推送内容
 package ws
 
 import (
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/jcbowen/market/src/backend/common/eventbus"
 )
 
 // WebSocket 连接参数
@@ -37,6 +40,17 @@ const (
 	// MsgTypePing 服务端应用层心跳（HTTP 轮询兼容用；WS 通道以协议层 ping 为准）
 	MsgTypePing = "ping"
 )
+
+// PermOrderView 订单数据类事件所需权限点（与 middleware 权限目录同一字符串，
+// 刻意不 import middleware：ws 包被 middleware 侧链路引用，反向依赖会成环）
+const PermOrderView = "order:view"
+
+// msgRequiredPerm 消息类型 → 推送所需权限点（未登记即视为不设门槛）
+// 新增数据类事件必须在此登记，否则等于向无权限连接下发业务数据
+var msgRequiredPerm = map[string]string{
+	eventbus.MsgTypeOrderPaid:   PermOrderView,
+	eventbus.MsgTypeOrderRefund: PermOrderView,
+}
 
 // Message 服务端下发的统一消息结构
 type Message struct {
@@ -114,6 +128,42 @@ func hostName(host string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
 }
 
+// ClientPermissions 握手时刻解析出的权限快照（由 RequireCommunityAccess 记忆化的
+// 实时上下文转换而来，同一请求内不产生额外 RPC）
+// 只读语义：登记后仅在推送判定时读取，变更权限的出路是踢线重连而非就地改快照
+type ClientPermissions struct {
+	// all 超管或含 "*" 通配，可收全部数据类事件
+	all bool
+	// codes 权限点集合（all 为 false 时生效）
+	codes map[string]struct{}
+}
+
+// NewClientPermissions 由权限点列表构造快照
+//
+// 参数：
+//   - isSuper: 账号是否超管（账号级属性，与社区语境无关）
+//   - codes: 任职角色权限并集（可含 "*"）
+//
+// 返回值：
+//   - *ClientPermissions: 快照实例，codes 为 nil 时返回空集合（不含任何数据类事件权限）
+//
+// 使用示例：
+//
+//	perms := ws.NewClientPermissions(info.IsSuper, info.Permissions)
+func NewClientPermissions(isSuper bool, codes []string) *ClientPermissions {
+	set := make(map[string]struct{}, len(codes))
+	for _, c := range codes {
+		set[c] = struct{}{}
+	}
+	return &ClientPermissions{all: isSuper || hasPermCode(set, "*"), codes: set}
+}
+
+// hasPermCode 判定权限集合是否含指定码
+func hasPermCode(set map[string]struct{}, code string) bool {
+	_, ok := set[code]
+	return ok
+}
+
 // Client 单个在线管理员的 WebSocket 连接
 type Client struct {
 	hub *Hub
@@ -127,6 +177,8 @@ type Client struct {
 	adminID int64
 	// username 管理员账号（日志定位用）
 	username string
+	// perms 握手时的权限快照，决定该连接可接收哪些数据类事件（可为 nil，按无权限处理）
+	perms *ClientPermissions
 }
 
 // Hub 在线连接集合与广播
@@ -201,33 +253,14 @@ func (h *Hub) BroadcastToCommunities(communityIDs []int64, msg *Message) {
 	if len(communityIDs) == 0 {
 		return
 	}
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		log.Printf("[ws] 消息序列化失败 type=%s err=%v", msg.Type, err)
-		return
-	}
-	target := make(map[int64]struct{}, len(communityIDs))
-	for _, id := range communityIDs {
-		if id > 0 {
-			target[id] = struct{}{}
-		}
-	}
+	target := positiveIDSet(communityIDs)
 	if len(target) == 0 {
 		return
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for c := range h.clients {
-		if _, ok := target[c.communityID]; !ok {
-			continue
-		}
-		select {
-		case c.send <- payload:
-		default:
-			log.Printf("[ws] 连接发送缓冲已满，丢弃消息 admin=%s(%d) community=%d",
-				c.username, c.adminID, c.communityID)
-		}
-	}
+	h.forEachMatch(func(c *Client) bool {
+		_, ok := target[c.communityID]
+		return ok
+	}, msg)
 }
 
 // BroadcastToAdmins 向指定管理员的全部在线连接定向推送（跨社区连接均可达）
@@ -241,39 +274,164 @@ func (h *Hub) BroadcastToAdmins(adminIDs []int64, msg *Message) {
 	if len(adminIDs) == 0 {
 		return
 	}
+	target := positiveIDSet(adminIDs)
+	if len(target) == 0 {
+		return
+	}
+	h.forEachMatch(func(c *Client) bool {
+		_, ok := target[c.adminID]
+		return ok
+	}, msg)
+}
+
+// BroadcastAll 向全部在线连接推送（全局角色等影响所有管理员的变更提醒用）
+// 仅限无业务数据的提醒类消息：数据类事件的可达范围由 msgRequiredPerm 判定，
+// 未登记权限要求的事件在此都会下发，新增事件是否属数据类必须先确认
+//
+// 参数：
+//   - msg: 待下发消息
+func (h *Hub) BroadcastAll(msg *Message) {
+	h.forEachMatch(func(*Client) bool { return true }, msg)
+}
+
+// forEachMatch 在读锁内逐条下发给匹配的在线连接
+// 必须持锁发送：Unregister 需要写锁且会 close(c.send)，锁内发送可保证迭代期间不会有连接被注销，
+// 否则快照与发送之间恰好发生注销即触发「send on closed channel」panic；
+// 发送走非阻塞 select（缓冲满即丢弃），慢连接不会让读锁长期占用
+//
+// 参数：
+//   - match: 连接匹配判定
+//   - msg: 待下发消息
+func (h *Hub) forEachMatch(match func(*Client) bool, msg *Message) {
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("[ws] 消息序列化失败 type=%s err=%v", msg.Type, err)
 		return
 	}
-	target := make(map[int64]struct{}, len(adminIDs))
-	for _, id := range adminIDs {
-		if id > 0 {
-			target[id] = struct{}{}
-		}
-	}
-	if len(target) == 0 {
-		return
-	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.clients {
-		if _, ok := target[c.adminID]; !ok {
+		if !match(c) || !c.canRecv(msg.Type) {
 			continue
 		}
 		select {
 		case c.send <- payload:
 		default:
-			log.Printf("[ws] 连接发送缓冲已满，丢弃消息 admin=%s(%d)", c.username, c.adminID)
+			log.Printf("[ws] 连接发送缓冲已满，丢弃消息 admin=%s(%d) community=%d",
+				c.username, c.adminID, c.communityID)
 		}
 	}
 }
 
+// canRecv 判定该连接能否接收指定类型的消息
+// 未登记权限要求的类型（hello / 权限变更提醒）恒可接收——握手的存在本身就是要送达这类提醒；
+// 数据类类型要求对应权限点，快照缺失（perms 为 nil）按无权限处理
+func (c *Client) canRecv(msgType string) bool {
+	need, gated := msgRequiredPerm[msgType]
+	if !gated {
+		return true
+	}
+	if c.perms == nil {
+		return false
+	}
+	return c.perms.all || hasPermCode(c.perms.codes, need)
+}
+
+// KickAdmins 断开指定管理员的全部在线连接（权限快照作废的收口）
+// 权限变更事件送达后调用：连接里的权限快照是握手时定格的，不重连就永远按旧权限收推送；
+// 客户端 onclose 会自动重连，重连时按实时上下文重新取快照，无需前端配合
+// 被移除任职的管理员重连时会因社区校验失败而拒握手，自然收敛到不再推送
+//
+// 参数：
+//   - adminIDs: 目标管理员 ID 列表（<=0 的项忽略）
+//
+// 返回值：
+//   - int: 实际断开的连接数（用于日志）
+func (h *Hub) KickAdmins(adminIDs []int64) int {
+	if len(adminIDs) == 0 {
+		return 0
+	}
+	target := positiveIDSet(adminIDs)
+	return h.kick(func(c *Client) bool {
+		_, ok := target[c.adminID]
+		return ok
+	})
+}
+
+// KickCommunities 断开声明了指定社区的在线连接（社区权限上限调整等按社区生效的变更）
+// 该场景受影响的是社区内全部管理员而非某几个人，逐个 adminID 定向既不完整也难维护
+//
+// 参数：
+//   - communityIDs: 目标社区 ID 列表（<=0 的项忽略）
+//
+// 返回值：
+//   - int: 实际断开的连接数
+func (h *Hub) KickCommunities(communityIDs []int64) int {
+	if len(communityIDs) == 0 {
+		return 0
+	}
+	target := positiveIDSet(communityIDs)
+	return h.kick(func(c *Client) bool {
+		_, ok := target[c.communityID]
+		return ok
+	})
+}
+
+// KickAll 断开全部在线连接（全局角色变更等影响所有管理员的场景）
+// 不做退避控制：全局角色改动是低频运维动作，浏览器重连自身带 2s 起步的连接建立过程，
+// 不会形成请求风暴
+//
+// 返回值：
+//   - int: 实际断开的连接数
+func (h *Hub) KickAll() int {
+	return h.kick(func(*Client) bool { return true })
+}
+
+// kick 按判定断开匹配连接：先在 RLock 内取快照，释放锁后逐个 Unregister
+// （Unregister 需要写锁，锁内调用会重入死锁）
+//
+// 参数：
+//   - match: 连接匹配判定
+//
+// 返回值：
+//   - int: 实际断开的连接数
+func (h *Hub) kick(match func(*Client) bool) int {
+	h.mu.RLock()
+	targets := make([]*Client, 0, 8)
+	for c := range h.clients {
+		if match(c) {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range targets {
+		h.Unregister(c)
+	}
+	return len(targets)
+}
+
+// positiveIDSet 过滤出 >0 的 ID 集合（0 是「全局」占位，不作为社区/管理员 ID 匹配）
+//
+// 参数：
+//   - ids: 原始 ID 列表
+//
+// 返回值：
+//   - map[int64]struct{}: 去重后的有效 ID 集合
+func positiveIDSet(ids []int64) map[int64]struct{} {
+	set := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			set[id] = struct{}{}
+		}
+	}
+	return set
+}
+
 // Attach 将已升级的连接挂入集线器：登记后先下发 hello，再启动读写循环
-// 调用前置条件：路由链已完成 admin JWT 鉴权与社区访问校验
-// （WS 通道承载订单通知与权限变更提醒两类事件，仅需登录即可接入，
-// 无权限门槛——权限被收窄的管理员恰恰需要收到权限变更提醒）
-// UserContext 已注入 gin 上下文
+// 调用前置条件：路由链已完成 admin JWT 鉴权与社区访问校验，并已把握手时刻的权限快照
+// 写入 Client.perms（见 handler.WSHandler.Handle）
+// 通道承载订单通知与权限变更提醒两类事件，握手不设权限门槛——权限被收窄的管理员
+// 恰恰需要收到权限变更提醒；数据类事件的可达范围由快照在推送时刻判定
 //
 // 参数：
 //   - c: 客户端连接
@@ -295,6 +453,7 @@ func (h *Hub) Attach(c *Client) {
 //   - communityID: 当前社区 ID
 //   - adminID: 管理员 ID
 //   - username: 管理员账号
+//   - perms: 握手时刻的权限快照（决定可接收的数据类事件；nil 按无权限处理）
 //
 // 返回值：
 //   - *Client: 客户端实例
@@ -302,9 +461,9 @@ func (h *Hub) Attach(c *Client) {
 // 使用示例：
 //
 //	conn, err := upgrader.Upgrade(w, r, nil)
-//	client := ws.NewClient(hub, conn, communityID, adminID, username)
-//	hub.ServeHTTP(client)
-func NewClient(hub *Hub, conn *websocket.Conn, communityID, adminID int64, username string) *Client {
+//	client := ws.NewClient(hub, conn, communityID, adminID, username, perms)
+//	hub.Attach(client)
+func NewClient(hub *Hub, conn *websocket.Conn, communityID, adminID int64, username string, perms *ClientPermissions) *Client {
 	return &Client{
 		hub:         hub,
 		conn:        conn,
@@ -312,6 +471,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, communityID, adminID int64, usern
 		communityID: communityID,
 		adminID:     adminID,
 		username:    username,
+		perms:       perms,
 	}
 }
 

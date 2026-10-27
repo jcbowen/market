@@ -78,8 +78,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockWorkbench' })
-import { h, ref } from 'vue'
-import { onMounted } from 'vue'
+import { h, ref, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -407,7 +406,9 @@ function goPurchase() {
 loadStocks()
 
 // 支持 ?tab=warnings/records/batches 深链（如仪表盘库存预警入口）：定位页签并触发懒加载
-onMounted(() => {
+// keep-alive 缓存下再次进入时 onMounted 不触发，重读 query 必须放在 onActivated，
+// 否则跳转命中缓存会让页签停留在上一次位置（与 order/list.vue、order/refunds.vue 同口径）
+onActivated(() => {
   const tab = route.query.tab
   if (typeof tab === 'string' && ['warnings', 'records', 'batches'].includes(tab)) {
     activeTab.value = tab

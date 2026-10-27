@@ -104,6 +104,8 @@ export interface Category {
   status: number
   /** 分类图标（URL，可空） */
   icon?: string
+  /** 子分类（/admin/categories 返回的是树，子级挂在此字段；仅一级时为空） */
+  children?: Category[]
 }
 
 /**

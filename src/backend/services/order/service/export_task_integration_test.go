@@ -324,8 +324,8 @@ func TestExportTaskVisibility(t *testing.T) {
 	// 文件实体不存在，可见性校验通过后应报「文件不存在」而非「无权」
 	seedDone := func(adminID int64, name string, community int64) int64 {
 		row := &model.ExportTask{
-			TaskNo:      fmt.Sprintf("EXPORTTASK-vis-%d-%d", adminID, time.Now().UnixNano()),
-			ExportType:  model.ExportTypeOrders, Status: model.ExportTaskStatusDone,
+			TaskNo:     fmt.Sprintf("EXPORTTASK-vis-%d-%d", adminID, time.Now().UnixNano()),
+			ExportType: model.ExportTypeOrders, Status: model.ExportTaskStatusDone,
 			FileName: fmt.Sprintf("orders-%d.csv", adminID), AdminID: adminID, AdminName: name,
 			CommunityID: community, FilePath: fmt.Sprintf("orders-%d.csv", adminID),
 		}
@@ -403,8 +403,8 @@ func TestExportTaskVisibility(t *testing.T) {
 
 	t.Run("非完成态与不存在任务不可下载", func(t *testing.T) {
 		pending := &model.ExportTask{
-			TaskNo:      fmt.Sprintf("EXPORTTASK-pending-%d", time.Now().UnixNano()),
-			ExportType:  model.ExportTypeOrders, Status: model.ExportTaskStatusPending,
+			TaskNo:     fmt.Sprintf("EXPORTTASK-pending-%d", time.Now().UnixNano()),
+			ExportType: model.ExportTypeOrders, Status: model.ExportTaskStatusPending,
 			AdminID: adminA, CommunityID: 1,
 		}
 		if err := db.GetDb().Create(pending).Error; err != nil {

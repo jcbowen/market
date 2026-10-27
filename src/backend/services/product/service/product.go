@@ -60,7 +60,8 @@ func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProd
 		pageSize = 200
 	}
 
-	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{})
+	// 列表口径不取富文本正文（大字段，仅商品详情需要）：避免整页正文进内存
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{}).Omit("content")
 	switch req.StatusFilter {
 	case 1: // 出售中：上架且有库存
 		db = db.Where("status = 1 AND stock > 0")
@@ -951,6 +952,9 @@ func WarnIfDBClockZoneMismatch(db *gorm.DB) error {
 
 // ToProductInfo 将商品模型转换为 proto 商品信息
 // 价格/库存取自商品表汇总字段（由规格保存流程回写维护）
+// 不含 Content（富文本正文）：正文只该出现在商品详情，列表/搜索/条码/批量取数
+// 一律不带——单条正文可达数 MB（清洗时每张图还会追加内联样式），随列表下发会
+// 成倍放大 gRPC 报文并撞爆 10MB 上限；需要正文的出口（GetProduct）显式回填
 //
 // 参数：
 //   - p: 商品模型
@@ -990,6 +994,5 @@ func ToProductInfo(p *model.Product, categoryName string, images []string) *prod
 		VirtualSales:  p.VirtualSales,
 		OnSaleAt:      onSaleAt,
 		CategoryName:  categoryName,
-		Content:       p.Content,
 	}
 }
