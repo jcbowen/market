@@ -414,5 +414,165 @@
     "shape": "eggcarton",
     "color": "#D97706",
     "note": ""
+  },
+  {
+    "file": "dawn-milk.png",
+    "label": "高钙纯牛奶",
+    "brand": "晨曦牧场",
+    "shape": "carton",
+    "color": "#2563EB",
+    "note": ""
+  },
+  {
+    "file": "lozhi-yogurt.png",
+    "label": "低温酸奶",
+    "brand": "酪物志",
+    "shape": "bottle",
+    "color": "#DB2777",
+    "note": ""
+  },
+  {
+    "file": "crispy-chips.png",
+    "label": "原切薯片",
+    "brand": "咔吱趣",
+    "shape": "bag",
+    "color": "#D97706",
+    "note": ""
+  },
+  {
+    "file": "cocoa-cookie.png",
+    "label": "夹心曲奇",
+    "brand": "可可岛",
+    "shape": "pack",
+    "color": "#7C2D12",
+    "note": ""
+  },
+  {
+    "file": "spring-water.png",
+    "label": "天然泉水",
+    "brand": "山涧泉",
+    "shape": "bottle",
+    "color": "#0891B2",
+    "note": ""
+  },
+  {
+    "file": "lime-soda.png",
+    "label": "青柠汽水",
+    "brand": "汽泡星球",
+    "shape": "bottle",
+    "color": "#65A30D",
+    "note": ""
+  },
+  {
+    "file": "red-beef-noodle.png",
+    "label": "红汤牛肉面",
+    "brand": "味霸",
+    "shape": "cup",
+    "color": "#991B1B",
+    "note": ""
+  },
+  {
+    "file": "suifeng-rice.png",
+    "label": "长粒香大米",
+    "brand": "穗丰",
+    "shape": "ricebag",
+    "color": "#A16207",
+    "note": ""
+  },
+  {
+    "file": "cotton-tissue.png",
+    "label": "加厚抽纸",
+    "brand": "棉柔派",
+    "shape": "tissue",
+    "color": "#0D9488",
+    "note": ""
+  },
+  {
+    "file": "koba.png",
+    "label": "香辣锅巴",
+    "brand": "脆波波",
+    "shape": "bag",
+    "color": "#B91C1C",
+    "note": ""
+  },
+  {
+    "file": "mango-dried.png",
+    "label": "芒果干",
+    "brand": "果真有料",
+    "shape": "pouch",
+    "color": "#F59E0B",
+    "note": ""
+  },
+  {
+    "file": "jasmine-tea.png",
+    "label": "茉莉绿茶",
+    "brand": "云雾岭",
+    "shape": "bottle",
+    "color": "#16A34A",
+    "note": ""
+  },
+  {
+    "file": "orange-juice.png",
+    "label": "鲜榨橙汁",
+    "brand": "橙意满满",
+    "shape": "bottle",
+    "color": "#F97316",
+    "note": ""
+  },
+  {
+    "file": "luosifen.png",
+    "label": "螺蛳粉",
+    "brand": "碗约",
+    "shape": "pack",
+    "color": "#A16207",
+    "note": ""
+  },
+  {
+    "file": "selfheat-hotpot.png",
+    "label": "自热小火锅",
+    "brand": "热乎",
+    "shape": "box",
+    "color": "#B91C1C",
+    "note": ""
+  },
+  {
+    "file": "peanut-oil.png",
+    "label": "压榨花生油",
+    "brand": "金穗坊",
+    "shape": "jug",
+    "color": "#CA8A04",
+    "note": ""
+  },
+  {
+    "file": "peanut-oil-alt.png",
+    "label": "压榨花生油",
+    "brand": "金穗坊",
+    "shape": "jug",
+    "color": "#CA8A04",
+    "note": "alt"
+  },
+  {
+    "file": "douban-jiang.png",
+    "label": "黄豆豆瓣酱",
+    "brand": "酱芯",
+    "shape": "jar",
+    "color": "#7F1D1D",
+    "note": ""
+  },
+  {
+    "file": "shampoo.png",
+    "label": "氨基酸洗发水",
+    "brand": "沐野",
+    "shape": "bottle",
+    "color": "#0F766E",
+    "note": ""
+  },
+  {
+    "file": "hand-soap.png",
+    "label": "除菌洗手液",
+    "brand": "洁屿",
+    "shape": "bottle",
+    "color": "#2563EB",
+    "note": ""
   }
 ]

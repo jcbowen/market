@@ -10,7 +10,8 @@ import { newAdminContext, adminLogin, newAuthedRequest, assertOk, type ApiRespon
  *   - 预检：结构化条目 + 动作合法性；数据集口径为全部商品（2026-10-27 起两社区商品名
  *     全部唯一，预检应包含社区 1 + 社区 2 的全部分类/商品条目）
  *   - 指定导入会员：未指定会员时 user_assets 段全部 depend_missing（禁止导入）；
- *     指定演示用户（13800138000，开发库已初始化且已持有种子券/购物车）后全部 skip
+ *     指定演示用户（13800138000，开发库已初始化）后会员缺失判定消除，
+ *     其余动作（create/skip）取决于当前操作社区状态，不在此强断
  * 数据口径：演示种子来源为 product 服务内嵌 full-demo.json（tools/gen-data-package.mjs 生成，
  * 经 market-admin init 导入）；用例不写库，仅读列表与预检
  */
@@ -128,7 +129,7 @@ test.describe('数据导入', () => {
         },
       });
       expect(resp.status()).toBe(200);
-      const payload = (await resp.json()) as ApiResponse<{ items?: { action: string; section_key: string; detail: string }[] }>;
+      const payload = (await resp.json()) as ApiResponse<{ items?: { action: string; section_key: string; detail: string; name: string }[] }>;
       assertOk(payload, '数据导入预检');
       const userItems = (payload.data?.items ?? []).filter((it) => it.section_key === 'user_assets');
       expect(userItems.length, '用户侧条目应存在').toBeGreaterThan(0);

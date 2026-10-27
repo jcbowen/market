@@ -54,6 +54,9 @@ func (s *catalogSection) Preview(ctx context.Context, pkg *SeedPackage, req *Pre
 	skuByKey := seedSkuByKey(pkg)
 	scope := communityScopeKey(pkg, "")
 
+	// planned 同包内本轮已判定「将创建」的分类名：全包数据集含两社区同名分类
+	// （如 cat-1/cat-11 均为「休闲零食」），第二个应与 Import 的回写口径一致判 skip
+	planned := make(map[string]bool, len(pkg.Categories))
 	for i := range pkg.Categories {
 		cat := &pkg.Categories[i]
 		if !isSelected(req, cat.Key) || !seedInCommunityScope(cat.CommunityKey, scope) {
@@ -63,6 +66,11 @@ func (s *catalogSection) Preview(ctx context.Context, pkg *SeedPackage, req *Pre
 			appendPreviewItem(items, s.Key(), cat.Key, cat.Name, "skip", "同名分类已存在，商品将导入到既有分类", true)
 			continue
 		}
+		if planned[cat.Name] {
+			appendPreviewItem(items, s.Key(), cat.Key, cat.Name, "skip", "同名分类本次导入已创建，商品将导入到该分类", true)
+			continue
+		}
+		planned[cat.Name] = true
 		appendPreviewItem(items, s.Key(), cat.Key, cat.Name, "create", "将新建分类", true)
 	}
 
@@ -71,12 +79,16 @@ func (s *catalogSection) Preview(ctx context.Context, pkg *SeedPackage, req *Pre
 		if !isSelected(req, p.Key) || !seedInCommunityScope(p.CommunityKey, scope) {
 			continue
 		}
-		// 依赖校验：分类既不在目标社区、其分类条目也不在勾选中 → 标注依赖缺失
-		if _, ok := catIDByName[p.CategoryKey]; !ok {
-			if cat := seedCategoryByKey(pkg, p.CategoryKey); cat != nil && !isSelected(req, cat.Key) {
-				appendPreviewItem(items, s.Key(), p.Key, p.Name, "depend_missing", "依赖分类「"+cat.Name+"」未勾选，请一并勾选或先在分类管理中创建", false)
-				continue
-			}
+		// 依赖校验：分类按名称判定（含本包本轮将创建的同名分类），
+		// 库里没有且其分类条目也未勾选 → 依赖缺失
+		depCat := seedCategoryByKey(pkg, p.CategoryKey)
+		depName := ""
+		if depCat != nil {
+			depName = depCat.Name
+		}
+		if _, ok := catIDByName[depName]; !ok && !planned[depName] && depCat != nil && !isSelected(req, depCat.Key) {
+			appendPreviewItem(items, s.Key(), p.Key, p.Name, "depend_missing", "依赖分类「"+depCat.Name+"」未勾选，请一并勾选或先在分类管理中创建", false)
+			continue
 		}
 		if clashCode := s.findBarcodeClash(p, skuByKey, barcodes); clashCode != "" {
 			appendPreviewItem(items, s.Key(), p.Key, p.Name, "skip", "同条码 SKU 已存在（"+clashCode+"）", true)
@@ -134,6 +146,9 @@ func (s *catalogSection) importCategories(ctx context.Context, pkg *SeedPackage,
 			appendImportResult(items, s.Key(), cat.Key, cat.Name, "failed", "创建分类失败："+err.Error())
 			continue
 		}
+		// 回写名称映射：全包数据集含两社区同名分类（cat-1/cat-11 等），
+		// 不回写会让同一次导入里的第二个同名分类再建一条，产生重复分类
+		catIDByName[cat.Name] = row.ID
 		req.Refs.Set(cat.Key, row.ID)
 		appendImportResult(items, s.Key(), cat.Key, cat.Name, "created", "分类已创建")
 		created++
