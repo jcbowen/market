@@ -119,6 +119,8 @@ export interface Product {
   category_id: number
   category_name: string
   description: string
+  /** 商品富文本详情（服务端消毒后 HTML；rich-text 渲染，空时回退 description 纯文本） */
+  content: string
   skus: Sku[]
   /** 规格树（多规格时非空） */
   specs: Spec[]

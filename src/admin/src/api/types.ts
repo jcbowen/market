@@ -124,6 +124,8 @@ export interface Product {
   images?: string[]
   unit?: string
   description?: string
+  /** 商品富文本详情（消毒后 HTML） */
+  content?: string
   is_multi_spec?: boolean
   min_buy?: number
   sort?: number
@@ -226,6 +228,8 @@ export interface ProductSavePayload {
   name: string
   category_id: number
   description: string
+  /** 商品富文本详情（服务端白名单消毒后入库） */
+  content: string
   cover_image: string
   images: string[]
   unit: string

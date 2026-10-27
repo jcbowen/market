@@ -268,6 +268,8 @@ message CreateProductReq {
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
   // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时商品保存为下架+预约，到点由调度器自动上架
   string on_sale_at = 16;
+  // 商品富文本详情（服务端白名单消毒后的 HTML，C 端 rich-text 渲染）
+  string content = 17;
 }
 
 message UpdateProductReq {
@@ -291,6 +293,8 @@ message UpdateProductReq {
   // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时置为下架+预约；
   // 显式传空串表示取消定时（配合 status 决定立即上架或保持下架）
   string on_sale_at = 17;
+  // 商品富文本详情（服务端白名单消毒后的 HTML；admin 全量提交，直接覆盖）
+  string content = 18;
 }
 
 message DeleteProductReq {
@@ -361,6 +365,7 @@ message ProductInfo {
   bool show_sales = 20;       // C端是否显示销量
   int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
   string on_sale_at = 22;     // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
+  string content = 23;        // 商品富文本详情（服务端已消毒的 HTML，C 端 rich-text 渲染）
 }
 
 message ProductDetail {

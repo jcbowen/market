@@ -827,7 +827,9 @@ type CreateProductReq struct {
 	ShowSales    bool                   `protobuf:"varint,14,opt,name=show_sales,json=showSales,proto3" json:"show_sales,omitempty"`          // C端是否显示销量
 	VirtualSales int32                  `protobuf:"varint,15,opt,name=virtual_sales,json=virtualSales,proto3" json:"virtual_sales,omitempty"` // 虚拟销量（展示口径=真实销量+虚拟销量）
 	// 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时商品保存为下架+预约，到点由调度器自动上架
-	OnSaleAt      string `protobuf:"bytes,16,opt,name=on_sale_at,json=onSaleAt,proto3" json:"on_sale_at,omitempty"`
+	OnSaleAt string `protobuf:"bytes,16,opt,name=on_sale_at,json=onSaleAt,proto3" json:"on_sale_at,omitempty"`
+	// 商品富文本详情（服务端白名单消毒后的 HTML，C 端 rich-text 渲染）
+	Content       string `protobuf:"bytes,17,opt,name=content,proto3" json:"content,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -967,6 +969,13 @@ func (x *CreateProductReq) GetOnSaleAt() string {
 	return ""
 }
 
+func (x *CreateProductReq) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
 type UpdateProductReq struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Id           int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -988,7 +997,9 @@ type UpdateProductReq struct {
 	CommunityId int64 `protobuf:"varint,16,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	// 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时置为下架+预约；
 	// 显式传空串表示取消定时（配合 status 决定立即上架或保持下架）
-	OnSaleAt      string `protobuf:"bytes,17,opt,name=on_sale_at,json=onSaleAt,proto3" json:"on_sale_at,omitempty"`
+	OnSaleAt string `protobuf:"bytes,17,opt,name=on_sale_at,json=onSaleAt,proto3" json:"on_sale_at,omitempty"`
+	// 商品富文本详情（服务端白名单消毒后的 HTML；admin 全量提交，直接覆盖）
+	Content       string `protobuf:"bytes,18,opt,name=content,proto3" json:"content,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1138,6 +1149,13 @@ func (x *UpdateProductReq) GetCommunityId() int64 {
 func (x *UpdateProductReq) GetOnSaleAt() string {
 	if x != nil {
 		return x.OnSaleAt
+	}
+	return ""
+}
+
+func (x *UpdateProductReq) GetContent() string {
+	if x != nil {
+		return x.Content
 	}
 	return ""
 }
@@ -1542,6 +1560,7 @@ type ProductInfo struct {
 	ShowSales     bool                   `protobuf:"varint,20,opt,name=show_sales,json=showSales,proto3" json:"show_sales,omitempty"`              // C端是否显示销量
 	VirtualSales  int32                  `protobuf:"varint,21,opt,name=virtual_sales,json=virtualSales,proto3" json:"virtual_sales,omitempty"`     // 虚拟销量（展示口径=真实销量+虚拟销量）
 	OnSaleAt      string                 `protobuf:"bytes,22,opt,name=on_sale_at,json=onSaleAt,proto3" json:"on_sale_at,omitempty"`                // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
+	Content       string                 `protobuf:"bytes,23,opt,name=content,proto3" json:"content,omitempty"`                                    // 商品富文本详情（服务端已消毒的 HTML，C 端 rich-text 渲染）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1726,6 +1745,13 @@ func (x *ProductInfo) GetVirtualSales() int32 {
 func (x *ProductInfo) GetOnSaleAt() string {
 	if x != nil {
 		return x.OnSaleAt
+	}
+	return ""
+}
+
+func (x *ProductInfo) GetContent() string {
+	if x != nil {
+		return x.Content
 	}
 	return ""
 }
@@ -13868,7 +13894,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\akeyword\x18\x02 \x01(\tR\akeyword\x122\n" +
 	"\n" +
 	"pagination\x18\x03 \x01(\v2\x12.common.PaginationR\n" +
-	"pagination\"\xec\x03\n" +
+	"pagination\"\x86\x04\n" +
 	"\x10CreateProductReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x1f\n" +
 	"\vcategory_id\x18\x02 \x01(\x03R\n" +
@@ -13888,8 +13914,9 @@ const file_product_product_proto_rawDesc = "" +
 	"show_sales\x18\x0e \x01(\bR\tshowSales\x12#\n" +
 	"\rvirtual_sales\x18\x0f \x01(\x05R\fvirtualSales\x12\x1c\n" +
 	"\n" +
-	"on_sale_at\x18\x10 \x01(\tR\bonSaleAtJ\x04\b\n" +
-	"\x10\v\"\x8e\x04\n" +
+	"on_sale_at\x18\x10 \x01(\tR\bonSaleAt\x12\x18\n" +
+	"\acontent\x18\x11 \x01(\tR\acontentJ\x04\b\n" +
+	"\x10\v\"\xa8\x04\n" +
 	"\x10UpdateProductReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\vcategory_id\x18\x02 \x01(\x03R\n" +
@@ -13912,7 +13939,8 @@ const file_product_product_proto_rawDesc = "" +
 	"\rvirtual_sales\x18\x0f \x01(\x05R\fvirtualSales\x12!\n" +
 	"\fcommunity_id\x18\x10 \x01(\x03R\vcommunityId\x12\x1c\n" +
 	"\n" +
-	"on_sale_at\x18\x11 \x01(\tR\bonSaleAt\"E\n" +
+	"on_sale_at\x18\x11 \x01(\tR\bonSaleAt\x12\x18\n" +
+	"\acontent\x18\x12 \x01(\tR\acontent\"E\n" +
 	"\x10DeleteProductReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"c\n" +
@@ -13938,7 +13966,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\x14UpdateProductNameReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
-	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\"\x82\x05\n" +
+	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\"\x9c\x05\n" +
 	"\vProductInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12\x1f\n" +
@@ -13967,7 +13995,8 @@ const file_product_product_proto_rawDesc = "" +
 	"show_sales\x18\x14 \x01(\bR\tshowSales\x12#\n" +
 	"\rvirtual_sales\x18\x15 \x01(\x05R\fvirtualSales\x12\x1c\n" +
 	"\n" +
-	"on_sale_at\x18\x16 \x01(\tR\bonSaleAt\"\x8e\x01\n" +
+	"on_sale_at\x18\x16 \x01(\tR\bonSaleAt\x12\x18\n" +
+	"\acontent\x18\x17 \x01(\tR\acontent\"\x8e\x01\n" +
 	"\rProductDetail\x12.\n" +
 	"\aproduct\x18\x01 \x01(\v2\x14.product.ProductInfoR\aproduct\x12$\n" +
 	"\x04skus\x18\x02 \x03(\v2\x10.product.SkuInfoR\x04skus\x12'\n" +

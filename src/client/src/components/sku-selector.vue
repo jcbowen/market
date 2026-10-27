@@ -141,6 +141,7 @@ const emptyProduct: Product = {
   category_id: 0,
   category_name: '',
   description: '',
+  content: '',
   skus: [],
   specs: [],
   sales: 0,

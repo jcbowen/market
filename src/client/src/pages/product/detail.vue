@@ -30,10 +30,11 @@
       <u-icon name="arrow-right" size="14" color="#999999" />
     </view>
 
-    <!-- 商品详情 -->
+    <!-- 商品详情：富文本优先（图文混排），无富文本回退纯文本描述 -->
     <view class="desc-card">
       <text class="desc-title">商品详情</text>
-      <text class="desc-content">{{ product.description || '暂无详情' }}</text>
+      <rich-text v-if="product.content" class="desc-rich" :nodes="product.content" />
+      <text v-else class="desc-content">{{ product.description || '暂无详情' }}</text>
     </view>
 
     <!-- 底部操作栏 -->
@@ -116,6 +117,7 @@ const product = ref<Product>({
   category_id: 0,
   category_name: '',
   description: '',
+  content: '',
   skus: [],
   specs: [],
   sales: 0,
@@ -461,6 +463,16 @@ function onBuy() {
   font-size: 28rpx;
   color: #666666;
   line-height: 1.6;
+}
+
+/* 富文本详情：rich-text 子节点由服务端注入 max-width 内联样式，容器侧仅兜底换行 */
+.desc-rich {
+  display: block;
+  width: 100%;
+  font-size: 28rpx;
+  color: #666666;
+  line-height: 1.6;
+  word-break: break-all;
 }
 
 .footer-bar {

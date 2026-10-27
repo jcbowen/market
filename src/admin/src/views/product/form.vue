@@ -17,6 +17,9 @@
       <n-form-item label="商品相册">
         <ImageListInput v-model:list="form.images" hint="建议 1:1 方图（如 800×800），与 C 端展示口径一致" />
       </n-form-item>
+      <n-form-item label="图文详情">
+        <RichTextEditor v-model:value="form.content" enable-image />
+      </n-form-item>
       <n-form-item label="是否多规格">
         <n-switch v-model:value="form.is_multi_spec" />
       </n-form-item>
@@ -234,6 +237,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import ImageListInput from '@/components/ImageListInput.vue'
+import RichTextEditor from '@/components/RichTextEditor.vue'
 import AttachmentPicker from '@/components/AttachmentPicker.vue'
 import CategoryPicker from './components/CategoryPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
@@ -288,6 +292,8 @@ const form = reactive({
   unit: '',
   cover_image: '',
   images: [] as string[],
+  // 图文详情：富文本 HTML，保存时服务端白名单消毒
+  content: '',
   is_multi_spec: false,
   min_buy: 1,
   sort: 0,
@@ -443,6 +449,7 @@ async function loadDetail(): Promise<void> {
     unit: p.unit ?? '',
     cover_image: p.cover_image ?? '',
     images: [...(p.images ?? [])],
+    content: p.content ?? '',
     is_multi_spec: !!p.is_multi_spec,
     min_buy: p.min_buy ?? 1,
     sort: p.sort ?? 0,
@@ -572,6 +579,7 @@ function buildPayload(): ProductSavePayload | null {
     name: form.name.trim(),
     category_id: form.category_id,
     description: '',
+    content: form.content,
     cover_image: form.cover_image,
     images: form.images,
     unit: form.unit,

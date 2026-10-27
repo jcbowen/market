@@ -1811,6 +1811,7 @@ type CreateProductReq struct {
 	CategoryID   int64             `json:"category_id" binding:"required"`
 	Name         string            `json:"name" binding:"required"`
 	Description  string            `json:"description"`
+	Content      string            `json:"content"` // 商品富文本详情（服务端白名单消毒后入库）
 	CoverImage   string            `json:"cover_image"`
 	Images       []string          `json:"images"`
 	Unit         string            `json:"unit"`
@@ -1899,6 +1900,7 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 		CategoryId:   req.CategoryID,
 		Name:         req.Name,
 		Description:  req.Description,
+		Content:      req.Content,
 		CoverImage:   req.CoverImage,
 		Images:       req.Images,
 		Unit:         req.Unit,
@@ -1923,6 +1925,7 @@ type UpdateProductReq struct {
 	CategoryID   int64             `json:"category_id"`
 	Name         string            `json:"name"`
 	Description  string            `json:"description"`
+	Content      string            `json:"content"` // 商品富文本详情（全量提交，允许清空）
 	CoverImage   string            `json:"cover_image"`
 	Images       []string          `json:"images"`
 	Unit         string            `json:"unit"`
@@ -1959,6 +1962,7 @@ func (h *AdminHandler) UpdateProduct(c *gin.Context) {
 		CommunityId:  h.scopeCommunityID(c),
 		Name:         req.Name,
 		Description:  req.Description,
+		Content:      req.Content,
 		CoverImage:   req.CoverImage,
 		Images:       req.Images,
 		Unit:         req.Unit,

@@ -495,6 +495,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 		CategoryID:   req.CategoryId,
 		Name:         req.Name,
 		Description:  req.Description,
+		Content:      SanitizeProductContentHTML(req.Content),
 		CoverImage:   req.CoverImage,
 		Images:       string(imagesJSON),
 		Unit:         req.Unit,
@@ -596,6 +597,8 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	// 销量展示配置：admin 保存时全量提交，直接赋值
 	p.ShowSales = req.ShowSales
 	p.VirtualSales = req.VirtualSales
+	// 富文本详情：admin 全量提交，消毒后直接覆盖（允许清空）
+	p.Content = SanitizeProductContentHTML(req.Content)
 
 	// 定时上架（编辑页「上架设置」全量提交）：
 	// 非空且为未来时间 → 下架+预约（支持设置/改期）；显式传空串 → 仅清除预约，
@@ -987,5 +990,6 @@ func ToProductInfo(p *model.Product, categoryName string, images []string) *prod
 		VirtualSales:  p.VirtualSales,
 		OnSaleAt:      onSaleAt,
 		CategoryName:  categoryName,
+		Content:       p.Content,
 	}
 }

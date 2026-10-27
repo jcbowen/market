@@ -47,6 +47,8 @@ interface RawProduct {
   category_id?: number
   category_name?: string
   description?: string
+  /** 商品富文本详情（服务端消毒后 HTML） */
+  content?: string
   /** 后端返回的是 sales_count（累计真实销量） */
   sales_count?: number
   sales?: number
@@ -115,6 +117,7 @@ function normalizeProduct(p: RawProduct): Product {
     category_id: p.category_id || 0,
     category_name: p.category_name || '',
     description: p.description || '',
+    content: p.content || '',
     // 展示口径：真实销量（sales_count）+ 虚拟销量；后端历史字段名为 sales，做兼容
     sales: (p.sales_count ?? p.sales ?? 0) + (p.virtual_sales ?? 0),
     show_sales: p.show_sales !== false,
