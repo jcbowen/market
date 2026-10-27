@@ -102,7 +102,11 @@ func autoMigrate(db *mysql.Instance) error {
 	// 存量数据对齐须在建索引之前：历史「商品软删但 SKU 仍启用」的行会占住条码，
 	// 让新口径索引因 1062 建不起来
 	disableSkusOfDeletedProducts(db)
-	return ensureSkuBarcodeUniqueIndex(db)
+	if err := ensureSkuBarcodeUniqueIndex(db); err != nil {
+		return err
+	}
+	// AutoMigrate 只建不删，改名后的旧规格社区索引须在此清理
+	return dropLegacySpecCommunityIndex(db)
 }
 
 // disableSkusOfDeletedProducts 一次性对齐存量数据：把已软删商品（products.status=2）下
@@ -163,7 +167,7 @@ const (
 // 返回值：
 //   - error: DDL 执行错误
 func ensureSkuBarcodeUniqueIndex(db *mysql.Instance) error {
-	exists, err := skuIndexExists(db, skuBarcodeIndexName)
+	exists, err := tableIndexExists(db, "product_skus", skuBarcodeIndexName)
 	if err != nil {
 		return err
 	}
@@ -192,21 +196,22 @@ func ensureSkuBarcodeUniqueIndex(db *mysql.Instance) error {
 	return dropLegacySkuBarcodeIndex(db)
 }
 
-// skuIndexExists 判断 product_skus 表上是否已存在指定名字的索引
+// tableIndexExists 判断指定表的某个索引是否已存在
 // MySQL 8.0 不支持 CREATE/DROP INDEX IF NOT EXISTS，DDL 前一律先查 information_schema
 //
 // 参数：
 //   - db: MySQL 实例
+//   - tableName: 表名（本包内部的固定字面量，非外部输入）
 //   - indexName: 索引名
 //
 // 返回值：
 //   - bool: 索引是否存在
 //   - error: 查询错误
-func skuIndexExists(db *mysql.Instance, indexName string) (bool, error) {
+func tableIndexExists(db *mysql.Instance, tableName, indexName string) (bool, error) {
 	var count int64
 	err := db.GetDb().Raw(
-		"SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'product_skus' AND index_name = ?",
-		indexName).Scan(&count).Error
+		"SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+		tableName, indexName).Scan(&count).Error
 	if err != nil {
 		return false, err
 	}
@@ -222,7 +227,7 @@ func skuIndexExists(db *mysql.Instance, indexName string) (bool, error) {
 // 返回值：
 //   - error: DDL 执行错误
 func dropLegacySkuBarcodeIndex(db *mysql.Instance) error {
-	exists, err := skuIndexExists(db, skuBarcodeIndexLegacy)
+	exists, err := tableIndexExists(db, "product_skus", skuBarcodeIndexLegacy)
 	if err != nil {
 		return err
 	}
@@ -236,6 +241,47 @@ func dropLegacySkuBarcodeIndex(db *mysql.Instance) error {
 	}
 	log.Printf("已删除旧 SKU 条码唯一索引 %s（口径改为仅启用行参与，由 %s 接管）",
 		skuBarcodeIndexLegacy, skuBarcodeIndexName)
+	return nil
+}
+
+// product_specs 社区索引名：
+//   - specCommunityIndexName 现口径，单列索引，命名与兄弟索引 idx_product_specs_product_id 对齐；
+//   - specCommunityIndexLegacy 旧名，模型 tag 只写了 priority:1（从未有第二列），
+//     实际一直是单列索引却顶着复合索引的名字。
+//
+// 复合口径本就不必存在：product_specs 的读路径只有 product_id 过滤，无 community_id+product_id 联合查询，
+// 而 InnoDB 二级索引叶子自带主键，(community_id, product_id) 相对 (community_id) 无增量收益；
+// 保留单列索引是为社区维度兜底查询与数据隔离规范（见 05-数据库设计/01-设计规范）。
+// AutoMigrate 不删除已不再声明的索引，故改名后须在此显式清理旧名。
+const (
+	specCommunityIndexName   = "idx_product_specs_community_id"
+	specCommunityIndexLegacy = "idx_community_product"
+)
+
+// dropLegacySpecCommunityIndex 删除 product_specs 上顶着复合名、实为单列的旧索引
+// AutoMigrate 已按新 tag 建好 specCommunityIndexName，本函数只负责清理孤儿索引；
+// 不存在时直接返回，重复启动幂等
+//
+// 参数：
+//   - db: MySQL 实例
+//
+// 返回值：
+//   - error: 查询 information_schema 的错误（DDL 失败只告警，不阻塞启动）
+func dropLegacySpecCommunityIndex(db *mysql.Instance) error {
+	exists, err := tableIndexExists(db, "product_specs", specCommunityIndexLegacy)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	if err := db.GetDb().Exec("DROP INDEX " + specCommunityIndexLegacy + " ON product_specs").Error; err != nil {
+		log.Printf("警告: 旧规格社区索引 %s 删除失败（新索引 %s 已生效，可手工清理）: %v",
+			specCommunityIndexLegacy, specCommunityIndexName, err)
+		return nil
+	}
+	log.Printf("已删除旧规格社区索引 %s（名为复合实为单列，由 %s 接管）",
+		specCommunityIndexLegacy, specCommunityIndexName)
 	return nil
 }
 

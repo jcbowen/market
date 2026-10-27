@@ -50,6 +50,16 @@ service PaymentService {
   // MarkPaymentPaid 人工把指定待支付单标记为已支付（渠道查询失效但钱确实到账时的最后出路）
   // 必填渠道交易号与实际收款金额，仅对待支付订单开放，与「同步支付状态」形成分工：后者问渠道，前者凭人工核实
   rpc MarkPaymentPaid(MarkPaymentPaidReq) returns (common.CommonResponse);
+  // GetPaymentStatus 按支付单号查询支付状态（C 端支付宝回跳结果页免登录轮询用）
+  // 只回状态级最小字段集：payment_no 本身是不可枚举的能力凭据（ZF+UUID），
+  // 不携带用户/商品/地址等隐私信息，网关注册在公开路由组
+  rpc GetPaymentStatus(GetPaymentStatusReq) returns (GetPaymentStatusResp);
+  // GetAlipayPayUrl 凭支付单号重新生成支付宝手机网站支付收银台链接（H5 支付引导页免登录换取用）
+  // 引导页 URL 只携带不可枚举的支付单号，在系统浏览器打开后凭单号实时换取新签名的收银台链接，
+  // 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题
+  // （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
+  // 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
+  rpc GetAlipayPayUrl(GetAlipayPayUrlReq) returns (GetAlipayPayUrlResp);
   // FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（2026-10-24 新增，后台订单搜索）
   // 单框双号，字段渠道无关：payment_no 即渠道账单「商家订单号」（out_trade_no），
   // transaction_id 即渠道交易号（支付宝 trade_no / 微信 transaction_id）。
@@ -65,6 +75,35 @@ message FindOrdersByPayNoReq {
 // FindOrdersByPayNoResp 反查结果：关联订单号去重列表
 message FindOrdersByPayNoResp {
   repeated string order_nos = 1;
+}
+
+message GetPaymentStatusReq {
+  string payment_no = 1;
+}
+
+// GetPaymentStatusResp 支付状态查询结果（最小字段集）
+message GetPaymentStatusResp {
+  string payment_no = 1;
+  // 支付单状态：1 待支付 2 已支付 4 已退款 5 已关闭
+  int32 status = 2;
+  double amount = 3;
+  int64 order_id = 4;
+  string order_no = 5;
+}
+
+// GetAlipayPayUrlReq 凭支付单号换取支付宝收银台链接
+message GetAlipayPayUrlReq {
+  string payment_no = 1;
+}
+
+// GetAlipayPayUrlResp 支付宝收银台链接换取结果
+// 仅待支付（status=1）且 pay_type=2 时 alipay_pay_url 有值；其它状态只回 status 供引导页分流
+message GetAlipayPayUrlResp {
+  string payment_no = 1;
+  // 支付单状态：1 待支付 2 已支付 3 支付失败 4 已退款 5 已关闭
+  int32 status = 2;
+  int64 order_id = 3;
+  string alipay_pay_url = 4;
 }
 
 message CreatePaymentReq {
@@ -367,6 +406,10 @@ message MarkPaymentPaidReq {
   string transaction_id = 2;
   double amount = 3;
   string remark = 4;
+  // 路径中的订单 ID（网关已过社区隔离）：服务层据此校验支付单归属，
+  // 防止在 A 订单页面提交 B 订单的支付单号，跨订单确认资金状态
+  int64 order_id = 5;
+
 }
 ```
 
@@ -413,3 +456,9 @@ message MarkPaymentPaidReq {
 - `CreatePaymentReq` 新增 `app_id`（field 6）：微信下单使用的 AppID，由网关按客户端渠道解析后传入（小程序=渠道管理的 mp AppID；H5=mp AppID 或默认）；为空回落 pay_config 默认 AppID。wego `JSAPIPay/H5Pay` 支持请求级 AppID 覆盖，无需多客户端实例。
 - `CreatePaymentReq` 新增 `community_id`（field 7）与 `order_no`（field 8，2026-10-21）：payment 服务不查 orders 表，社区隔离与异常流水展示所依赖的订单事实只能在创建支付单时随订单一起带入并落库（`payments.community_id`/`order_no`，流水继承该快照）。
 - 付款码支付（2026-10-22）：`CreatePaymentReq.pay_type` 放行 5/6（只建待支付单不扣款、拒收 0 元、渠道就绪校验为微信/支付宝任一开启）；新增 `auth_code`（field 9）与 `PayByAuthCode` RPC——渠道按付款码前缀识别（微信 10-15→5，支付宝 25-30→6，占位单原地纠正），结果归一化 PAID/PAYING/FAILED，失败重试复用同一支付单（out_trade_no 不变），云闪付（62 开头）明确拒绝；退款/查单/关单/对账调度器/SyncPaymentFromChannel 全链路按 5→微信、6→支付宝映射（微信付款码关单走撤销 reverse）。
+
+### 支付状态查询与收银台链接换取（2026-10-23 新增，免登录公开口径）
+
+- `GetPaymentStatus`：C 端支付宝**回跳结果页**按支付单号轮询支付结果（网关公开路由 `GET /api/v1/payments/status/:payment_no`，无需登录）。免登录的安全依据是 `payment_no` 本身不可枚举（`ZF` + UUID），且响应只回状态级最小字段集（`payment_no/status/amount/order_id/order_no`），不含用户、商品、地址等隐私字段。**新增字段前须先确认不引入隐私信息**，否则该接口必须改为登录态。
+- `GetAlipayPayUrl`：H5 支付引导页在系统浏览器打开后，凭 URL 上的支付单号实时换取**新签名**的支付宝手机网站支付链接（网关公开路由 `GET /api/v1/payments/alipay/url`）。存在的理由是 uni-app H5 路由 query 会破坏支付链接（实测 `?` 被改写为 `=`，编码也不生效），因此不在前端传递完整链接，只传不可枚举的支付单号。
+- 两接口都只回「状态」而非「资金结论」：入账、对账、翻牌仍以带权限的订单/支付查询为权威。

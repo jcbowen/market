@@ -186,6 +186,9 @@ message CategorySortItem {
 
 message GetCategoryReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验分类归属，防止跨社区读取（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 message CreateCategoryReq {
@@ -202,10 +205,16 @@ message UpdateCategoryReq {
   string icon = 3;
   int32 sort = 4;
   int32 status = 5;
+  // 操作者社区语境：>0 时服务端强校验分类归属，防止跨社区修改（超管传 0 放行）
+  int64 community_id = 6;
+
 }
 
 message DeleteCategoryReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验分类归属，防止跨社区删除（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 message CategoryInfo {
@@ -231,11 +240,19 @@ message ListProductsReq {
   string sort = 4;
   common.Pagination pagination = 5;
   int32 status = 6; // 商品状态过滤：0 不过滤（默认排除已删除），大于 0 时精确匹配（1 上架）
+  // 展示状态过滤（管理端 Tab）：0 不过滤，1=出售中(status=1且stock>0)，2=已售罄(status=1且stock<=0)，
+  // 3=仓库中(status=0，含定时上架中)，4=库存紧张(status=1 且 0<stock<=SKU安全库存合计 且 合计>0)
+  int32 status_filter = 7;
+
 }
 
 message GetProductReq {
   int64 id = 1;
   int64 community_id = 2;
+  // 可售校验（P1-4）：true 时商品非上架态（status≠1，下架/仓库中/定时上架中）直接报错，
+  // 供加购等交易入口收口「可售」判定；公开详情与管理端详情不传，保持原行为
+  bool require_sellable = 3;
+
 }
 
 message SearchProductsReq {
@@ -262,6 +279,9 @@ message CreateProductReq {
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
   // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时商品保存为下架+预约，到点由调度器自动上架
   string on_sale_at = 16;
+  // 商品富文本详情（服务端白名单消毒后的 HTML，C 端 rich-text 渲染）
+  string content = 17;
+
 }
 
 message UpdateProductReq {
@@ -285,15 +305,24 @@ message UpdateProductReq {
   // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时置为下架+预约；
   // 显式传空串表示取消定时（配合 status 决定立即上架或保持下架）
   string on_sale_at = 17;
+  // 商品富文本详情（服务端白名单消毒后的 HTML；admin 全量提交，直接覆盖）
+  string content = 18;
+
 }
 
 message DeleteProductReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区删除（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 message UpdateProductStatusReq {
   int64 id = 1;
   int32 status = 2;
+  // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区上下架（超管传 0 放行）
+  int64 community_id = 3;
+
 }
 
 // 商品名称更新（后台列表页行内改名轻量接口，仅改 name 不影响规格/SKU）
@@ -327,6 +356,8 @@ message ProductInfo {
   bool show_sales = 20;       // C端是否显示销量
   int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
   string on_sale_at = 22;     // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
+  string content = 23;        // 商品富文本详情（服务端已消毒的 HTML，C 端 rich-text 渲染）
+
 }
 
 message ProductDetail {
@@ -338,6 +369,31 @@ message ProductDetail {
 message ListProductsResp {
   repeated ProductInfo list = 1;
   common.PaginationResponse pagination = 2;
+}
+
+
+// BatchUpdateProductStatusReq 批量上下架请求（管理端列表多选操作）
+message BatchUpdateProductStatusReq {
+  repeated int64 ids = 1; // 商品 ID 列表
+  int32 status = 2;       // 目标状态：1 上架，0 下架
+  int64 community_id = 3; // 操作者社区语境（>0 时仅更新归属该社区的商品）
+}
+
+// GetProductStatusStatsReq 商品状态统计请求（筛选口径与列表查询一致）
+message GetProductStatusStatsReq {
+  int64 community_id = 1;
+  string keyword = 2;
+  int64 category_id = 3;
+}
+
+// GetProductStatusStatsResp 商品状态统计响应
+// total/on_sale/sold_out/warehouse 互斥合计=total；low_stock 为出售中的子集维度，不参与互斥合计
+message GetProductStatusStatsResp {
+  int64 total = 1;     // 全部（排除已删除）
+  int64 on_sale = 2;   // 出售中：status=1 且 stock>0
+  int64 sold_out = 3;  // 已售罄：status=1 且 stock<=0
+  int64 warehouse = 4; // 仓库中：status=0（含定时上架中）
+  int64 low_stock = 5; // 库存紧张：出售中且 0<stock<=SKU安全库存合计（SUM>0）
 }
 
 // --- 规格 ---
@@ -407,6 +463,9 @@ message ListSkusReq {
 
 message GetSkuByIdReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区读取（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 message CreateSkuReq {
@@ -456,10 +515,56 @@ message SkuInfo {
   string spec_value_ids = 13; // 逗号分隔的规格值 ID（多规格组合键，单规格为空）
   double original_price = 14; // 划线价（原价，0 表示不展示）
   string barcode = 15;       // 商品条形码（纯数字 6-20 位，社区内在售 SKU 间唯一，空表示未设置）
+  string product_name = 16;  // 冗余商品名（仅 SearchSkus 填充，其余 RPC 为空）
+
 }
 
 message ListSkusResp {
   repeated SkuInfo list = 1;
+}
+
+
+// SearchSkusReq SKU 级搜索请求（keyword 为空 = 全量分页，即库存列表）
+message SearchSkusReq {
+  int64 community_id = 1;
+  string keyword = 2; // 匹配商品名 / SKU 编码 / 条形码
+  common.Pagination pagination = 3;
+}
+
+message SearchSkusResp {
+  repeated SkuInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// BatchGetSkusReq SKU 批量查询（下单/收银等按明细取价取库存，替代逐行 GetSkuById 的 N 次往返）
+// community_id 为操作者社区语境：>0 时逐个校验 SKU 归属，任一越权即整体拒绝
+message BatchGetSkusReq {
+  repeated int64 ids = 1;
+  int64 community_id = 2;
+  // 容忍缺失：true 时任一 ID 不存在（含被删除）或归属越权只从结果中剔除，不再整体报错，
+  // 供「逐项判定、部分可用」的调用方使用（如 C 端再来一单：一个失效规格不应阻断整单复购）。
+  // 启用/停售状态与库存原样返回，可售判定交由调用方；默认 false 保持交易入口的整体拒绝口径
+  bool tolerate_missing = 3;
+}
+
+message BatchGetSkusResp {
+  repeated SkuInfo list = 1;
+}
+
+// BatchGetProductsReq 商品批量查询（下单按明细取商品名/封面/分类，替代逐行 GetProduct）
+message BatchGetProductsReq {
+  repeated int64 ids = 1;
+  int64 community_id = 2;
+  // 可售校验（P1-4）：true 时任一商品非上架态（status≠1）即整体报错，
+  // 供下单入口收口「可售」判定，与 GetByBarcode 的 status=1 口径一致
+  bool require_sellable = 3;
+  // 容忍缺失：语义同 BatchGetSkusReq.tolerate_missing——缺失/越权项只剔除不整体报错，
+  // 上架状态原样返回交由调用方判定；与 require_sellable 互斥，同时为 true 时本字段优先
+  bool tolerate_missing = 4;
+}
+
+message BatchGetProductsResp {
+  repeated ProductInfo list = 1;
 }
 
 // --- 库存 ---
@@ -481,6 +586,58 @@ message ReleaseStockReq {
   // 幂等业务号：同一 biz_no 的重复释放只生效一次；不同业务（多笔部分退款/取消/超时关单）
   // 各自携带不同 biz_no，避免同一订单同一 SKU 的多次部分释放被幂等约束吞掉
   string biz_no = 4;
+}
+
+
+// StockItemQty 库存操作明细项
+message StockItemQty {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+}
+
+// BatchDeductStockReq 批量扣减库存：整单明细在同一事务内按 SKU 主键升序加锁扣减，
+// 幂等键仍为 order_id + sku_id + op_type（+ biz_no），整单要么全扣要么全不扣
+message BatchDeductStockReq {
+  int64 order_id = 1;
+  repeated StockItemQty items = 2;
+}
+
+message BatchDeductStockResp {
+  bool success = 1;
+}
+
+// BatchReleaseStockReq 批量释放库存（取消/退款/超时关单整单回补）
+message BatchReleaseStockReq {
+  int64 order_id = 1;
+  string biz_no = 2;
+  repeated StockItemQty items = 3;
+}
+
+// BatchDeductFlashSaleStockReq 批量扣减秒杀独立库存：无生效秒杀的 SKU 自动 no-op
+message BatchDeductFlashSaleStockReq {
+  int64 order_id = 1;
+  repeated StockItemQty items = 2;
+}
+
+// BatchReleaseFlashSaleStockReq 批量回补秒杀独立库存（biz_no 为空时由服务端按 cancel:{order_id} 生成）
+message BatchReleaseFlashSaleStockReq {
+  int64 order_id = 1;
+  repeated StockItemQty items = 2;
+  string biz_no = 3;
+}
+
+// --- 秒杀库存 ---
+message DeductFlashSaleStockReq {
+  int64 order_id = 1;
+  int64 sku_id = 2;
+  int32 quantity = 3;
+}
+
+message ReleaseFlashSaleStockReq {
+  int64 order_id = 1;
+  int64 sku_id = 2;
+  int32 quantity = 3;
+  string biz_no = 4; // 幂等业务号（退款单号/cancel:{orderID} 等，与主库存释放同口径）
 }
 
 // --- 销量（净成交口径：支付成功累加，取消/退款回退） ---
@@ -520,6 +677,9 @@ message StockRecordInfo {
   int64 operator_id = 11;
   string remark = 12;
   string created_at = 13;
+  int64 batch_id = 14; // 批次 ID（0=无批次语境）
+  string ref_no = 15;  // 来源单据号（入库单号/出库单号等）
+
 }
 
 message ListStockRecordsResp {
@@ -565,6 +725,350 @@ message GeneratePurchaseOrderResp {
   repeated PurchaseOrderItem items = 1;
 }
 
+// --- 供应商 ---
+message SupplierInfo {
+  int64 id = 1;
+  int64 community_id = 2;
+  string name = 3;
+  string contact_name = 4;
+  string phone = 5;
+  string address = 6;
+  string remark = 7;
+  int32 status = 8;
+  string created_at = 9;
+}
+
+message ListSuppliersReq {
+  int64 community_id = 1;
+  string keyword = 2;
+  int32 status = 3; // 0=全部
+  common.Pagination pagination = 4;
+}
+
+message ListSuppliersResp {
+  repeated SupplierInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message CreateSupplierReq {
+  int64 community_id = 1;
+  string name = 2;
+  string contact_name = 3;
+  string phone = 4;
+  string address = 5;
+  string remark = 6;
+}
+
+message UpdateSupplierReq {
+  int64 id = 1;
+  int64 community_id = 2; // 归属校验语境
+  string name = 3;
+  string contact_name = 4;
+  string phone = 5;
+  string address = 6;
+  string remark = 7;
+  int32 status = 8;
+}
+
+message DeleteSupplierReq {
+  int64 id = 1;
+  int64 community_id = 2;
+}
+
+// --- 采购单 ---
+message PurchaseOrderItemReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  double purchase_price = 3;
+}
+
+message CreatePurchaseOrderReq {
+  int64 community_id = 1;
+  int64 supplier_id = 2;
+  int64 operator_id = 3;
+  string remark = 4;
+  bool submit_now = 5; // true=创建后直接下单（跳过草稿态）
+  repeated PurchaseOrderItemReq items = 6;
+}
+
+message UpdatePurchaseOrderReq {
+  int64 id = 1;
+  int64 community_id = 2;
+  int64 supplier_id = 3;
+  string remark = 4;
+  repeated PurchaseOrderItemReq items = 5; // 全量替换，仅草稿态可改
+}
+
+message SubmitPurchaseOrderReq {
+  int64 id = 1;
+  int64 community_id = 2;
+}
+
+message CancelPurchaseOrderReq {
+  int64 id = 1;
+  int64 community_id = 2;
+}
+
+message PurchaseOrderItemInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string spec_name = 4;
+  string product_name = 5;
+  int32 quantity = 6;
+  int32 received_quantity = 7;
+  double purchase_price = 8;
+}
+
+message PurchaseOrderInfo {
+  int64 id = 1;
+  string purchase_no = 2;
+  int64 community_id = 3;
+  int64 supplier_id = 4;
+  string supplier_name = 5;
+  int32 status = 6;
+  double total_amount = 7;
+  string remark = 8;
+  int64 operator_id = 9;
+  string created_at = 10;
+  string updated_at = 11;
+}
+
+message PurchaseOrderDetail {
+  PurchaseOrderInfo info = 1;
+  repeated PurchaseOrderItemInfo items = 2;
+}
+
+message ListPurchaseOrdersReq {
+  int64 community_id = 1;
+  int32 status = 2; // 0=全部
+  int64 supplier_id = 3;
+  string keyword = 4; // 按采购单号模糊
+  common.Pagination pagination = 5;
+}
+
+message ListPurchaseOrdersResp {
+  repeated PurchaseOrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetPurchaseOrderReq {
+  int64 id = 1;
+}
+
+// --- 入库单 ---
+message StockInOrderItemReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+  double unit_cost = 3; // 入库单价（成本），0 时回落 SKU 当前成本价
+  string batch_no = 4;
+  string production_date = 5;
+  string expire_date = 6;
+}
+
+message CreateStockInOrderReq {
+  int64 community_id = 1;
+  int64 supplier_id = 2;
+  int64 purchase_order_id = 3; // 0=直接入库
+  int64 operator_id = 4;
+  string remark = 5;
+  repeated StockInOrderItemReq items = 6;
+}
+
+message StockInOrderInfo {
+  int64 id = 1;
+  string in_no = 2;
+  int64 community_id = 3;
+  int64 supplier_id = 4;
+  string supplier_name = 5;
+  int64 purchase_order_id = 6;
+  string purchase_no = 7;
+  int32 type = 8;
+  double total_amount = 9;
+  int64 operator_id = 10;
+  string remark = 11;
+  string created_at = 12;
+}
+
+message StockInOrderItemInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  int32 quantity = 6;
+  double unit_cost = 7;
+  string batch_no = 8;
+  string production_date = 9;
+  string expire_date = 10;
+  int64 batch_id = 11;
+}
+
+message StockInOrderDetail {
+  StockInOrderInfo info = 1;
+  repeated StockInOrderItemInfo items = 2;
+}
+
+message ListStockInOrdersReq {
+  int64 community_id = 1;
+  int64 purchase_order_id = 2;
+  string start_date = 3;
+  string end_date = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListStockInOrdersResp {
+  repeated StockInOrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetStockInOrderReq {
+  int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验入库单归属（超管传 0 放行）
+  int64 community_id = 2;
+}
+
+// --- 出库单 ---
+message StockOutOrderItemReq {
+  int64 sku_id = 1;
+  int32 quantity = 2;
+}
+
+message CreateStockOutOrderReq {
+  int64 community_id = 1;
+  int32 type = 2; // 1报损 2领用 3调整出库
+  int64 operator_id = 3;
+  string remark = 4;
+  repeated StockOutOrderItemReq items = 5;
+}
+
+message StockOutOrderInfo {
+  int64 id = 1;
+  string out_no = 2;
+  int64 community_id = 3;
+  int32 type = 4;
+  int64 operator_id = 5;
+  string remark = 6;
+  string created_at = 7;
+}
+
+message StockOutOrderItemInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  int32 quantity = 6;
+}
+
+message StockOutOrderDetail {
+  StockOutOrderInfo info = 1;
+  repeated StockOutOrderItemInfo items = 2;
+}
+
+message ListStockOutOrdersReq {
+  int64 community_id = 1;
+  int32 type = 2; // 0=全部
+  string start_date = 3;
+  string end_date = 4;
+  common.Pagination pagination = 5;
+}
+
+message ListStockOutOrdersResp {
+  repeated StockOutOrderInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+message GetStockOutOrderReq {
+  int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验出库单归属（超管传 0 放行）
+  int64 community_id = 2;
+}
+
+// --- 批次库存 ---
+message StockBatchInfo {
+  int64 id = 1;
+  int64 sku_id = 2;
+  string sku_code = 3;
+  string product_name = 4;
+  string spec_name = 5;
+  string batch_no = 6;
+  string production_date = 7;
+  string expire_date = 8;
+  int32 quantity = 9;
+  double unit_cost = 10;
+  int32 status = 11;
+  int32 source_type = 12;
+  string ref_no = 13;
+  string created_at = 14;
+}
+
+message ListStockBatchesReq {
+  int64 community_id = 1;
+  int64 sku_id = 2;
+  string keyword = 3; // 商品名/SKU 编码/批次号模糊
+  bool in_stock_only = 4; // 仅在库（quantity>0）
+  common.Pagination pagination = 5;
+}
+
+message ListStockBatchesResp {
+  repeated StockBatchInfo list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// --- 进销存报表 ---
+// InventorySummaryItem 进销存汇总行：期初 + 入 - 出 = 期末（口径取自 stock_records）
+message InventorySummaryItem {
+  int64 sku_id = 1;
+  string sku_code = 2;
+  string spec_name = 3;
+  string product_name = 4;
+  int32 opening_stock = 5;
+  int32 in_quantity = 6;  // 期间入库合计（type=1）
+  int32 out_quantity = 7; // 期间出库合计（type=2 绝对值）
+  int32 closing_stock = 8;
+  double cost_price = 9;  // 当前移动加权成本
+  double price = 10;      // 当前售价
+}
+
+message GetInventorySummaryReportReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+  string keyword = 4;
+  common.Pagination pagination = 5;
+}
+
+message GetInventorySummaryReportResp {
+  repeated InventorySummaryItem list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
+// ProfitReportItem 毛利分析行（近似口径：期间销售出库数量 × 当前售价/当前成本）
+message ProfitReportItem {
+  int64 sku_id = 1;
+  string sku_code = 2;
+  string spec_name = 3;
+  string product_name = 4;
+  int32 quantity = 5;       // 期间销售数量（type=2 且无出库单号的记录）
+  double sales_amount = 6;  // 销售额（当前售价估算）
+  double cost_amount = 7;   // 销售成本（当前成本估算）
+  double profit = 8;
+}
+
+message GetProfitReportReq {
+  int64 community_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+  string keyword = 4;
+  common.Pagination pagination = 5;
+}
+
+message GetProfitReportResp {
+  repeated ProfitReportItem list = 1;
+  common.PaginationResponse pagination = 2;
+}
+
 // --- 盘点 ---
 message CreateStockCheckReq {
   int64 community_id = 1;
@@ -580,6 +1084,9 @@ message StockCheckItem {
 message SubmitStockCheckReq {
   int64 id = 1;
   repeated StockCheckItem items = 2; // 空明细拒绝
+  // 操作者所属社区：>0 时服务端强校验盘点单归属，防止跨社区提交（与订单/退款族同口径）
+  int64 community_id = 3;
+
 }
 
 message StockCheckInfo {
@@ -590,6 +1097,8 @@ message StockCheckInfo {
   int32 diff_items = 5;
   string remark = 6;
   string created_at = 7;
+  int64 community_id = 8;
+
 }
 
 message ListStockChecksReq {
@@ -604,6 +1113,9 @@ message ListStockChecksResp {
 
 message GetStockCheckReq {
   int64 id = 1;
+  // 操作者所属社区：>0 时服务端强校验盘点单归属
+  int64 community_id = 2;
+
 }
 
 message StockCheckDetailItem {
@@ -662,6 +1174,9 @@ message ListCouponsReq {
 
 message GetCouponReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验券归属社区（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 // 优惠券商品范围项
@@ -713,6 +1228,9 @@ message UpdateCouponReq {
   string use_end_time = 17;
   string rule_text = 18;
   repeated CouponScopeReq scopes = 19; // 全量替换；nil=不修改
+  // 操作者社区语境：>0 时服务端强校验券归属社区，防止跨社区改券（超管传 0 放行）
+  int64 community_id = 20;
+
 }
 
 message DeleteCouponReq {
@@ -865,6 +1383,9 @@ message ListFlashSalesReq {
 
 message GetFlashSaleReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验活动归属社区（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 message CreateFlashSaleReq {
@@ -881,6 +1402,9 @@ message UpdateFlashSaleReq {
   string start_time = 3;
   string end_time = 4;
   int32 status = 5;
+  // 操作者社区语境：>0 时服务端强校验活动归属社区，防止跨社区改秒杀（超管传 0 放行）
+  int64 community_id = 6;
+
 }
 
 message FlashSaleItemReq {
@@ -914,6 +1438,9 @@ message FlashSaleItemInfo {
   double original_price = 7;
   int32 stock = 8;
   int32 limit_per_user = 9;
+  // 商品 ID：由服务端随 SKU 一并回填，避免调用方为拿 product_id 逐行再查一次 SKU
+  int64 product_id = 10;
+
 }
 
 message ListFlashSalesResp {
@@ -1076,10 +1603,17 @@ message UpdateBannerReq {
   string end_time = 9;
   // 适用社区（optional 显式传参才更新；0=全部社区通用）
   optional int64 community_id = 10;
+  // 操作者社区语境：>0 时服务端强校验 banner 归属，社区管理员不得改全局 banner 与其他社区数据
+  // 与上面的 community_id（业务字段"适用社区"）语义不同，故独立命名
+  int64 scope_community_id = 11;
+
 }
 
 message DeleteBannerReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验 banner 归属（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 // --- 附件 ---
@@ -1096,6 +1630,8 @@ message AttachmentConfig {
   string oss_custom_visit_domain = 7;  // OSS 自定义访问域名（CDN），可空
   int64 max_size = 8;                  // 图片大小上限（字节），0 表示使用默认 5MB
   string updated_at = 9;               // 更新时间，兼作版本号
+  string local_dir = 10;               // 本地存储目录名（落盘目录与 URL 路径段共用，空回默认 uploads）；只读字段，保存接口不受理
+
 }
 
 // UploadImageLocalReq 本地模式图片上传请求
@@ -1195,6 +1731,8 @@ message AttachmentMigrateItemInfo {
   string verified_at = 11;     // 验证通过时间
   string local_deleted_at = 12; // 本地文件删除时间
   string created_at = 13;      // 入库时间
+  string url = 14;             // 完整访问 URL（服务端按附件配置拼接，前端不得自行拼装）
+
 }
 
 // AttachmentMigrateOverview 迁移任务概览统计
@@ -1248,6 +1786,16 @@ message AttachmentMigrateDeleteBatchResp {
 - 回补入参校验（2026-10-26）：`releaseSkuLocked` 拒绝 `quantity <= 0`（`stock_op_logs.quantity` 是有符号 int，0/负数不会报错，会静默写进流水并让「释放」变成一次扣减，故在服务层直接拒绝）；`order_id != 0` 时按订单维度校验**累计回补 ≤ 累计扣减**（`assertReleaseWithinDeduct`，统计含本次）——唯一索引只防同一 `biz_no` 重放，跨槽位（取消 + 退款 + 补偿各占独立 `biz_no`）的重复回补必须由这道净上限拦住，否则货到付款单「先部分退款、再整单取消」会把同一 SKU 回补两次。`order_id = 0` 的表单调整类回补不适用该口径。
 - 库存交易与商品汇总列：扣减/回补（单条与批量）、入库、出库、盘点在同一事务内调用 `syncProductAggregates` 回写 `products` 的 `stock/min_price/max_price/min_original_price`，后台商品列表的「已售罄/库存紧张」Tab 直接依赖该列。
 - 免配送费四 RPC（List/Create/Update/GetActive）：活动按社区隔离，门槛与排除范围全量提交；`GetActiveFreeShipping` 供 C 端确认页与 order 服务 `PreviewFreeShipping` 试算共用。
+- `SearchSkus`（SKU 级搜索）：强制社区隔离（`s.community_id`），只返回启用 SKU 与非软删商品；`keyword` 为空返回全量分页，非空匹配商品名 / SKU 编码 / 条形码（`LIKE %kw%`，先 TrimSpace 判空）；分页缺省 1/20、上限 200，排序 `p.id DESC, s.id ASC`，响应携带 `product_name`。供库存工作台与进销存表单的 SKU 选择器复用，替代网关侧 N+1 组合查询。
+- `BatchGetSkus`/`BatchGetProducts`（批量取价取库存）：默认「交易口径」——任一 ID 缺失/越权/SKU 停用即整体拒绝；`tolerate_missing=true` 切「逐项判定口径」（缺失项从结果剔除、状态与库存原样返回），优先于 `require_sellable`。C 端「再来一单」据此逐项跳过失效规格而不阻断整单复购。
+- `BatchDeductStock`/`BatchReleaseStock`（批量库存）：与单条口径一致，差异在事务边界——整单明细并入一个事务，全成或全败（逐行调用是 N 次往返 + N 个独立事务，失败要靠订单侧补偿且会留半态）。幂等日志**先于扣减**插入；整批全部冲突判为重放直接返回成功，**部分冲突按错误处理**（无法判定应扣集合，宁可失败也不静默少扣）。`normalizeStockItems` 必须先把同订单同 SKU 的多行合并数量，否则第二行被唯一键判为重放而静默跳过造成少扣超卖；入口拒绝 `quantity <= 0`（负数会绕过 `stock < quantity` 判定反向加库存）；加锁按主键升序防死锁。
+- 秒杀独立库存（`flash_sale_items.stock`，与主库存完全独立，仅作秒杀限量池）：幂等键用 `op_type=3`（扣减）/ `4`（释放），与主库存 1/2 区分，同一 `order_id + sku_id` 下两套日志并存互不干扰。`DeductFlashSaleStock` 无生效秒杀活动时直接 no-op 且不落幂等日志（订单侧对全部明细统一调用，非秒杀商品不应报错），释放侧据此判断是否需要回补；扣减用 `WHERE id = ? AND stock >= ?` 条件更新防并发超卖，不足返回「秒杀库存不足」由订单侧补偿回滚。`ReleaseFlashSaleStock` 仅当存在 `op_type=3` 日志才回补，**优先按日志记录的活动项 ID 定向回补原活动池**（同 SKU 多活动并发时避免「A 扣 B 补」的池错位，活动结束后退款也能回到原池），日志缺失或活动项被删才回落按 SKU 定位现有活动。批量版逐条口径一致，`biz_no` 为空回落 `cancel:{order_id}`。
+- 供应商（List/Create/Update/Delete）：`keyword` 模糊匹配名称/联系人/电话，分页缺省 1/10、`id desc`；创建时 `status` 强制置 1（启用），无重名校验；更新为按 map 全量覆盖，传空即清空，`community_id` 与记录不一致即拒绝。**删除为物理删除且受引用保护**：`purchase_orders` 或 `stock_in_orders` 任一存在 `supplier_id` 引用即拒绝（被入库单引用同样不能删），提示改为「可停用」。
+- 采购单状态机：1 草稿 / 2 已下单 / 3 部分入库 / 4 已完结 / 5 已取消。`CreatePurchaseOrder` 默认落草稿，`submit_now=true` 直接置 2；校验明细非空、`sku_id > 0`、`quantity > 0`、`purchase_price >= 0`，`total_amount = Σ(数量 × 进价)` 四舍五入到分，头与明细同一事务。`UpdatePurchaseOrder` **仅草稿态可改**（`FOR UPDATE` 锁头，明细全量替换：先删后建）。`SubmitPurchaseOrder` 1 → 2。`CancelPurchaseOrder` 仅 1/2 可取消，3/4/5 返回「采购单已产生入库或已完结，不能取消」。`ListPurchaseOrders` 的 `keyword` **只匹配采购单号**，`GetPurchaseOrder` 回填 SKU 与供应商信息（该接口未做社区归属校验，出库/入库单走 `EnsureScope`）。
+- 入库单（创建即生效，无草稿/审批态）：`purchase_order_id > 0` → `type=1` 采购入库，否则 `type=2` 直接入库；关联采购单时锁单头，要求同社区且状态为 2 或 3，`supplier_id=0` 时回落采购单供应商。事务内逐明细建批次（`source_type=1`、`ref_no` 为入库单号、`unit_cost <= 0` 时取 `sku.cost_price`）→ `product_skus.stock += qty` 且按**移动加权平均**重算 `cost_price` → 落流水 `type=1`（含 `before/after_stock`、`batch_id`）。随后回写采购单：按 SKU 聚合本次入库量，SKU 不在明细或 `received + qty > quantity` 均拒绝，重算状态（全满→4、部分→3、无→2）。`lockSkus` 按 `sku_id` 升序一次性 `IN` 查询加行锁，把 N 次 `FOR UPDATE` 压成 1 次往返并避免并发单据交叉加锁死锁。
+- 出库单（报损/领用/调整）：`type` 后端强校验仅接受 1 报损 / 2 领用 / 3 调整；先 `lockSkus` 升序加锁，`sku.Stock < quantity` 返回「商品 {sku_code} 库存不足（当前 n）」；再按 **FEFO** 从批次扣（`expire_date IS NULL ASC, expire_date ASC, id ASC`，仅取 `quantity > 0` 的批次），每个批次一条流水（`type=2`、`quantity` 取负、`ref_no` 为出库单号），批次扣至 0 时 `status` 置 0。**出库不重算 `cost_price`**（只有入库做移动加权）。
+- 批次库存（`ListStockBatches`）：筛选 `community_id`/`sku_id`/`in_stock_only`（`quantity > 0`），`keyword` 非空才 JOIN 商品与 SKU 匹配商品名/SKU 编码/批次号；排序固定 `id desc`（**非 FEFO**，FEFO 只在出库扣减时由 `deductBatches` 决定）。
+- 报表（2026-10 进销存）：`GetInventorySummaryReport` 期初取期间首条流水的 `before_stock`、期末取末条流水的 `after_stock`，无流水回落当前 `sku.stock`，入库/出库按期间流水 `quantity` 正负聚合，只统计启用 SKU；时间范围为空回退近 30 天（起补 `00:00:00`、止补 `23:59:59`），分页上限 100。`GetProfitReport` 为**近似口径**：销量取期间 `type=2` 且 `ref_no=''`（无出库单号，即销售出库）的 `-quantity` 合计，销售额按当前售价、成本按当前移动加权成本估算，均四舍五入到分，只返回有销量的 SKU。
 
 对应网关路由（admin，需 JWT）：
 
@@ -1257,5 +1805,102 @@ message AttachmentMigrateDeleteBatchResp {
 | GET | /api/v1/admin/attachment/migrate/items | settings:view |
 | POST | /api/v1/admin/attachment/migrate/delete-verified | settings:update |
 | POST | /api/v1/admin/attachment/migrate/:id/migrate | settings:update |
-| POST | /api/v1/admin/attachment/migrate/:id/verify | settings:update |
 | POST | /api/v1/admin/attachment/migrate/:id/delete-local | settings:update |
+
+### 数据导入（应用中心 · 数据包，2026-10-27 新增）
+
+面向空社区/新环境的演示数据一键导入能力。数据包由 `tools/gen-data-package.mjs` 生成后固化提交（`services/product/service/seeddata/full-demo.json`，`go:embed` 编译进二进制），框架层见 `service/dataimport.go`，各段逻辑见 `service/section_*.go`。
+
+```protobuf
+// 数据导入（应用中心 · 数据包；实现见 service/dataimport*.go，初期仅超管）
+rpc ListDataPackages(ListDataPackagesReq) returns (ListDataPackagesResp);
+rpc PreviewDataImport(DataImportPreviewReq) returns (DataImportPreviewResp);
+rpc ImportDataPackage(DataImportReq) returns (DataImportResp);
+```
+
+```protobuf
+// --- 数据导入 ---
+message DataPackageSectionInfo {
+  string key = 1;        // 条目标识：catalog / banners / marketing ...
+  string name = 2;       // 展示名
+  string description = 3;
+  int32 item_count = 4;  // 可导入条目数
+}
+
+message DataPackageInfo {
+  string key = 1;
+  string name = 2;
+  string description = 3;
+  repeated DataPackageSectionInfo sections = 4;
+}
+
+message ListDataPackagesReq {
+  int64 community_id = 1; // 目标社区（当前选中社区）
+}
+
+message ListDataPackagesResp {
+  repeated DataPackageInfo packages = 1;
+}
+
+message DataImportPreviewReq {
+  int64 community_id = 1;
+  string package_key = 2;
+  // 勾选明细（条目 key，如 cat-1 / prod-3 / banner-1）；空 = 全选
+  repeated string selected_keys = 3;
+  // 指定导入会员手机号（应用中心路径：用户券/购物车落到该会员名下；空 = 未指定）
+  string target_user_phone = 4;
+}
+
+// DataImportItem 预检/执行结果条目
+// action: create=将新建 skip=已存在跳过 depend_missing=依赖缺失
+// status: created=已创建 skipped=已跳过 failed=失败
+message DataImportItem {
+  string section_key = 1;
+  string item_key = 2;
+  string name = 3;
+  string action = 4;
+  string detail = 5;
+  bool selected = 6; // 预检默认勾选态（depend_missing 固定 false）
+  string status = 7; // 执行结果：created / skipped / failed（预检时为空）
+  string message = 8; // 补充信息（失败原因等）
+}
+
+message DataImportPreviewResp {
+  repeated DataImportItem items = 1;
+}
+
+message DataImportReq {
+  int64 community_id = 1;
+  string package_key = 2;
+  repeated string selected_keys = 3; // 空 = 全选
+  repeated string excluded_keys = 4; // 预检后手动排除的条目
+  bool on_sale = 5;                  // 导入后商品状态：true=上架（默认）false=下架
+  string target_user_phone = 6;      // 指定导入会员手机号（用户券/购物车落到该会员名下）
+}
+
+message DataImportResp {
+  int32 created = 1;
+  int32 skipped = 2;
+  int32 failed = 3;
+  repeated DataImportItem details = 4;
+}
+```
+
+接口语义说明：
+
+- **段落归属（`PackageSection.Scope`）**：`global`（社区/区划/账号/用户/站点）与 `InitOnly=true`（订单/售后/进销存/采购/收银样本）是**环境初始化种子**，仅随 `market-admin init` 的 `SeedDemoBootstrap` 导入，应用中心一律不展示、不可导；三个 RPC 只处理「社区域且非仅初始化」的段——`catalog` 商品目录、`banners` Banner 轮播、`marketing` 营销活动、`free_shipping` 满免邮活动、`user_assets` 用户券与购物车。
+- `ListDataPackages`：返回可导包及其可见段的展示名与条目数；`community_id` 仅作上下文，不参与过滤。
+- `PreviewDataImport`：逐条目给出动作报告 `create`/`skip`/`depend_missing` 与默认勾选态（`depend_missing` 固定不勾）。依赖判定有兜底 `seedDepSelected`——库内暂无但包内存在同名条目且随本次勾选一起导入时，因段顺序为「目录 → 营销 → 免邮 → 用户资产」，依赖会在同一次执行里先落库，故不判为 `depend_missing`（空社区全选场景靠此避免误报）。
+- `ImportDataPackage`：按条目粒度独立事务，单条失败记录 `message` 后继续，不中断整包；`excluded_keys` 优先于 `selected_keys`。段内跨条目引用（如秒杀引用目录 SKU）经 `SectionRefs`（key → 真实 ID）在同一次执行内传递。
+- **归属口径**：应用中心单社区导入不指定包内社区，2026-10-27 起数据集放宽为 `SectionScopeAll`（包内全部社区域条目参与，两社区商品名已全部唯一，混灌无按名解析歧义）；初始化流程逐社区导入时显式带入 `CommunityKey`，各取自身归属条目。
+- **幂等键**：社区按名称、账号按 username、用户按手机号、SKU 按社区内条码、分类按社区内名称；已存在即 `skip`，可安全重跑。
+- **目标会员**：`target_user_phone` 非空时用户券/购物车落到该会员名下；应用中心路径未指定会员时用户侧数据段（`user_assets`）禁止导入（初始化链路仍按种子条目自带手机号落演示用户）。
+- **相对时间**：包内时间均为相对表达（`offset_minutes` 或 `day_offset + minute_of_day`），导入时换算为绝对时间，避免种子数据随存放时间老化；演示样本的 `created_at/updated_at` 经 `UpdateColumns`（跳过钩子）回填。
+
+对应网关路由（admin，需 JWT + 超管双闸，见 06-接口设计/03 的「数据导入模块」）：
+
+| 方法 | 路径 | 权限 |
+|------|------|------|
+| GET | /api/v1/admin/data-import/packages | `product:create` + 仅超管 |
+| POST | /api/v1/admin/data-import/preview | `product:create` + 仅超管 |
+| POST | /api/v1/admin/data-import/import | `product:create` + 仅超管 |

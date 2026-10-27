@@ -781,7 +781,7 @@ func appendDownloaderRecord(raw string, adminID int64, adminName string) string 
 	return string(b)
 }
 
-// newExportTaskNo 生成任务号（UUID 去连字符，32 位）
+// newExportTaskNo 生成任务号（UUID 标准形式，含连字符 36 字符）
 // 返回值：
 //   - string: 任务号
 func newExportTaskNo() string {

@@ -83,6 +83,18 @@ service OrderService {
   rpc StartDelivery(StartDeliveryReq) returns (common.CommonResponse);
   // 送达完成：status 4 → 5，强制签收照片（决策点②拍照留证）
   rpc CompleteDelivery(CompleteDeliveryReq) returns (common.CommonResponse);
+
+  // --- 后台导出任务（下载中心） ---
+  // 创建导出任务：落库后由 order 服务异步分批生成 CSV，创建接口立即返回
+  rpc CreateExportTask(CreateExportTaskReq) returns (CreateExportTaskResp);
+  // 下载中心任务列表（普通管理员仅见自己创建的，超管见全部；同时返回未下载数供角标）
+  rpc ListExportTasks(ListExportTasksReq) returns (ListExportTasksResp);
+  // 取导出文件：校验可见性后返回文件路径并记录下载人（gateway 凭路径流式下发）
+  rpc GetExportTaskFile(GetExportTaskFileReq) returns (GetExportTaskFileResp);
+  // 删除导出任务：仅超管，记录与文件一并删除
+  rpc DeleteExportTask(DeleteExportTaskReq) returns (common.CommonResponse);
+  // 未下载任务数（右上角下载图标角标）
+  rpc CountUndownloaded(CountUndownloadedReq) returns (CountUndownloadedResp);
 }
 
 message OrderItem {
@@ -115,6 +127,10 @@ message CreateOrderReq {
   double manual_discount = 15;
   // 收银班次 ID（source=2 收银单必填，下单时由网关校验进行中班次后传入；0=非收银单）
   int64 shift_id = 16;
+  // 直接收款金额（收银台「直接收款」无商品单专用，2026-10-25 新增）：
+  // >0 时订单不含商品明细（items 可空），跳过计价/库存扣减/满减/优惠券，金额即成交额；
+  // 仅允许 source=2 + delivery_type=3（到店）的收银台路径
+  double manual_amount = 17;
 }
 
 // --- 免配送费试算 ---
@@ -251,7 +267,7 @@ message GetExportTaskFileReq {
 }
 
 message GetExportTaskFileResp {
-  // 文件绝对路径（服务端 attachment 目录下，gateway 凭此流式读取）
+  // 文件绝对路径（服务端附件目录 `<local_dir>/exports/` 下，默认 uploads；gateway 凭此流式读取）
   string file_path = 1;
   string file_name = 2;
 }
@@ -690,6 +706,7 @@ message GetUserOrderStatusCountsResp {
   int32 pending_receive = 3;
   // 退款/售后（存在待审核售后单 refunds.status=1 的订单数，订单维度去重；
   // 不再按 status=7/8 聚合：8 已退款为终态会永远亮角标，7 中已同意打款在途的不属"待商家处理"）
+  // 口径以本注释为准（2026-10-23 调整）；proto 内该字段的行内注释尚未同步，属已知滞后
   int32 after_sale = 4;
 }
 

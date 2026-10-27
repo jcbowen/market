@@ -10,7 +10,7 @@ type ProductSpec struct {
 	base.MysqlBaseModel
 	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	ProductID   int64  `gorm:"column:product_id;type:bigint;not null;index;comment:商品 ID" json:"product_id"`
-	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;index:idx_community_product,priority:1;comment:社区 ID" json:"community_id"`
+	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;index:idx_product_specs_community_id;comment:社区 ID" json:"community_id"`
 	Name        string `gorm:"column:name;type:varchar(64);not null;comment:规格名（如”颜色”、”尺寸”）" json:"name"`
 	Sort        int32  `gorm:"column:sort;type:int;default:0;comment:排序，默认0" json:"sort"`
 	CreatedAt   string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`

@@ -546,10 +546,16 @@ message UpdateRoleReq {
   string code = 3;
   repeated string permissions = 4;
   string description = 5;
+  // 操作者社区语境：>0 时服务端强校验角色归属社区，防止跨社区改角色权限（超管传 0 放行）
+  int64 community_id = 6;
+
 }
 
 message DeleteRoleReq {
   int64 id = 1;
+  // 操作者社区语境：>0 时服务端强校验角色归属社区（超管传 0 放行）
+  int64 community_id = 2;
+
 }
 
 // --- 行政区划 ---
@@ -668,6 +674,9 @@ message SetUserStatusReq {
   int64 id = 1;
   // 0 拉黑 1 正常
   int32 status = 2;
+  // 操作者社区语境：>0 时校验会员与本社区的任职/绑定关系，防止跨社区拉黑他社区会员（超管传 0 放行）
+  int64 community_id = 3;
+
 }
 
 // CreateMemberReq 注册会员请求
@@ -733,9 +742,81 @@ message CheckFulfillerResp {
 
 ### 客户端渠道管理（2026-10-18 新增 RPC）
 
+```protobuf
+  // 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
+  // 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+  rpc ListClientChannels(ListClientChannelsReq) returns (ListClientChannelsResp);
+  rpc GetClientChannel(GetClientChannelReq) returns (ClientChannelInfo);
+  rpc SaveClientChannel(SaveClientChannelReq) returns (ClientChannelInfo);
+  // 查询用户在指定客户端渠道的微信 openid（渠道身份表优先，mp 渠道回落 users.openid 存量口径）
+  rpc GetUserChannelOpenid(GetUserChannelOpenidReq) returns (GetUserChannelOpenidResp);
+  // 登录后写入/更新用户在指定渠道的微信身份（幂等 upsert）
+  rpc UpsertUserChannelIdentity(UpsertUserChannelIdentityReq) returns (common.CommonResponse);
+```
+
 - `ListClientChannels(only_enabled)` / `GetClientChannel(code)` / `SaveClientChannel`：客户端渠道主数据（client_channels 表：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5）的查询与维护；`SaveClientChannel` 的 AppSecret 留空保留原值，code 不可变更，返回 `ClientChannelInfo`（含 `configured` 凭证完整性，h5 恒 true）。
 - `GetUserChannelOpenid(user_id, channel_code)`：查询用户在指定渠道的微信 openid/unionid；渠道身份表（user_channel_identities）优先，mp 渠道回落存量 `users.openid`（排除 phone_ 占位），零迁移兼容。
 - `UpsertUserChannelIdentity(user_id, channel_code, openid, unionid)`：登录成功后幂等写入/更新用户渠道身份；内容一致时跳过写入，并发唯一索引冲突视为已存在。
+
+```protobuf
+// ClientChannelInfo 客户端渠道信息
+message ClientChannelInfo {
+  int64 id = 1;
+  // 渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5
+  string code = 2;
+  string name = 3;
+  string app_id = 4;
+  string app_secret = 5;
+  bool enabled = 6;
+  int32 sort = 7;
+  // 凭证是否配置完整（AppID+AppSecret 均非空），C 端渲染与支付就绪判定用
+  bool configured = 8;
+  string updated_at = 9;
+}
+
+message ListClientChannelsReq {
+  // true 仅返回启用渠道；false 返回全部（管理端用）
+  bool only_enabled = 1;
+}
+
+message ListClientChannelsResp {
+  repeated ClientChannelInfo list = 1;
+}
+
+message GetClientChannelReq {
+  string code = 1;
+}
+
+message SaveClientChannelReq {
+  int64 id = 1;
+  // 渠道标识由服务端按内置渠道固定，请求中的 code 仅作校验
+  string code = 2;
+  string name = 3;
+  string app_id = 4;
+  // 为空时保留原值，避免未重新输入时清空已保存的 Secret
+  string app_secret = 5;
+  bool enabled = 6;
+  int32 sort = 7;
+}
+
+message GetUserChannelOpenidReq {
+  int64 user_id = 1;
+  string channel_code = 2;
+}
+
+message GetUserChannelOpenidResp {
+  string openid = 1;
+  string unionid = 2;
+}
+
+message UpsertUserChannelIdentityReq {
+  int64 user_id = 1;
+  string channel_code = 2;
+  string openid = 3;
+  string unionid = 4;
+}
+```
+
 - 服务归属说明：渠道本质是「客户端身份与准入」（登录换 openid、按端授权、未来的渠道访问开关），与 identities 同域闭环在 user 服务；支付仅是消费场景，payment 侧不感知渠道表，按网关传入的 app_id+openid 下单。
 
 ### 站点设置（2026-10-20 新增 RPC）
@@ -747,8 +828,78 @@ message CheckFulfillerResp {
   rpc SaveSiteConfig(SaveSiteConfigReq) returns (SiteConfigInfo);
 ```
 
+```protobuf
+// SiteConfigInfo 站点设置（全平台单行）
+message SiteConfigInfo {
+  int64 id = 1;
+  // 部署域名基址：scheme://host，不含路径与尾斜杠；为空时网关回落按请求现推
+  string base_url = 2;
+  // 平台品牌名，用于后台/H5 标题与侧边栏品牌位
+  string site_name = 3;
+  // 站点 logo（附件外链 URL），为空时前端使用内置默认图
+  string logo_url = 4;
+  // favicon（附件外链 URL），为空时不注入 icon 链接
+  string favicon_url = 5;
+  // 页脚富文本：版权与 ICP 备案号合并编辑，仅含白名单标签的 HTML（服务端消毒后落库）
+  string footer_html = 12;
+  // SEO 描述（H5 <meta name=description> 与 og:description）
+  string seo_description = 8;
+  // SEO 关键词，逗号分隔
+  string seo_keywords = 9;
+  // 配置版本号，每次保存递增；网关内存缓存据此失效
+  int64 version = 10;
+  string updated_at = 11;
+}
+
+message GetSiteConfigReq {
+}
+
+// SaveSiteConfigReq 保存站点设置
+// 覆盖式写入：各字段以请求值为准，传空串即清空该配置
+message SaveSiteConfigReq {
+  string base_url = 1;
+  string site_name = 2;
+  string logo_url = 3;
+  string favicon_url = 4;
+  // 页脚富文本：版权与 ICP 备案号合并编辑，服务端消毒后落库
+  string footer_html = 9;
+  string seo_description = 7;
+  string seo_keywords = 8;
+}
+```
+
 - `GetSiteConfig`：读取 `site_configs` 单行配置（固定主键 id=1），行不存在时惰性创建后返回，调用方恒能拿到非 nil 结果；并发创建靠主键冲突后重读兜底，不会产生多行。
 - `SaveSiteConfig`：覆盖式写入，**传空串即清空该项**（与 `SaveClientChannel` 的「留空保留原值」口径不同，品牌字段需要能主动清空）。服务端校验：`base_url` 归一为 `scheme://host[:port]`（小写协议、去尾斜杠，缺协议/带路径参数/非 http(s) 返回 `InvalidArgument`）、`site_name` ≤32 字、`seo_description`/`seo_keywords` ≤200 字、`footer_html` 白名单消毒后 ≤2000 字符（仅放行 a/b/strong/i/em/u/p/br/span 与合规 href，脚本/事件属性/危险协议一律剥除）、`logo_url`/`favicon_url` 须为站内绝对路径或 http(s) 外链。
 - `SiteConfigInfo`：七个配置项（含 `footer_html`，原 `copyright_text`/`icp_number` 两字段已合并，proto 字段号不复用）+ `version`（每次保存 +1）+ `updated_at`。`version` 是网关内存快照与 favicon 长缓存的失效依据，故必须每次保存递增，不随内容是否变化而定。
 - 服务归属说明：与 `client_channels` 同理——表放在 user 服务（平台级单行配置、与社区无隔离关系），消费方几乎全在网关（品牌快照、回调地址派生、附件外链基址、HTML 注入），payment 侧只被动接收派生结果，不新增 payment 侧配置入口。
+
+### 会员批量查询与管理员实时校验（2026-10-27 补录）
+
+```protobuf
+  // BatchGetUsers 会员批量查询（后台订单列表按行取会员名，替代逐行 GetUserById 的 N 次往返）
+  rpc BatchGetUsers(BatchGetUsersReq) returns (BatchGetUsersResp);
+  // GetAdminById 按 ID 查管理员（refresh 时实时校验账号状态：停用/删除即令牌失效）
+  rpc GetAdminById(GetAdminByIdReq) returns (AdminInfo);
+```
+
+```protobuf
+// BatchGetUsersReq 会员批量查询（后台订单列表按行取会员名，替代逐行 GetUserById 的 N 次往返）
+// community_id 为操作者社区语境：>0 时逐个校验会员与该社区的关联关系，任一越权即整体拒绝；
+// 0 表示超管跨社区或服务间内部调用
+message BatchGetUsersReq {
+  repeated int64 ids = 1;
+  int64 community_id = 2;
+}
+
+message BatchGetUsersResp {
+  repeated UserInfo list = 1;
+}
+
+message GetAdminByIdReq {
+  int64 id = 1;
+}
+```
+
+- `BatchGetUsers`：一次取回多会员信息，后台订单/售后列表按行展示会员名与手机号的性能前提（原来每行一次 `GetUserById`）。**社区隔离在批量接口上不是可选项**：`community_id > 0` 时逐个校验 `user_communities` 关联，任一会员不属于该社区即整体拒绝（不静默剔除——剔除会让调用方误以为会员不存在，掩盖越权）；`0` 只用于超管跨社区与服务间内部调用。
+- `GetAdminById`：按 ID 取管理员信息，当前唯一消费方是刷新令牌链路——refresh 时实时读取账号状态，停用/删除的账号即使持有有效 refresh token 也立即失效（不依赖 access token 的过期窗口）。
 
