@@ -79,13 +79,12 @@ func TestPermissionCatalogCoversUsage(t *testing.T) {
 	catalog := catalogSet()
 
 	var missing []string
-	for c := range used {
+	for _, c := range sortedKeys(used) {
 		if _, ok := catalog[c]; !ok {
 			missing = append(missing, c)
 		}
 	}
 	if len(missing) > 0 {
-		sort.Strings(missing)
 		t.Fatalf("路由/handler 使用了目录外权限码，请在 KnownPermissionCodes 与 "+
 			"src/admin/src/constants/permissions.ts 同步登记: %s", strings.Join(missing, ", "))
 	}
@@ -97,13 +96,12 @@ func TestPermissionCatalogHasNoStaleEntry(t *testing.T) {
 	catalog := catalogSet()
 
 	var stale []string
-	for c := range catalog {
+	for _, c := range sortedKeys(catalog) {
 		if _, ok := used[c]; !ok {
 			stale = append(stale, c)
 		}
 	}
 	if len(stale) > 0 {
-		sort.Strings(stale)
 		t.Fatalf("目录内权限码无实际使用（残留死权限点），请从 KnownPermissionCodes 与 "+
 			"src/admin/src/constants/permissions.ts 一并移除: %s", strings.Join(stale, ", "))
 	}

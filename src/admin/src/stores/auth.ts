@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import Cookies from 'js-cookie'
 import { login as loginApi, getAdminInfo, logout as logoutApi, refreshToken as refreshTokenApi } from '@/api/auth'
-import { registerUnauthorizedHandler } from '@/api/request'
+import { registerUnauthorizedHandler, resetSessionGuard } from '@/api/request'
 import { useTabsStore } from '@/stores/tabs'
 import type { AdminInfo, LoginParams } from '@/api/types'
 
@@ -136,6 +136,9 @@ export const useAuthStore = defineStore('auth', () => {
     // 不能依赖浏览器默认行为
     Cookies.set('access_token', token, { expires: expiresDay, path: '/', sameSite: 'lax' })
     accessToken.value = token
+    // 新令牌写入即视为新会话开始，重开 401 收口（见 api/request 的 sessionClosed：
+    // 收口后跳登录只改 hash 不重载文档，不在登录成功处复位则下次过期不再收口）
+    resetSessionGuard()
   }
 
   /**

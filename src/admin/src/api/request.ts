@@ -90,6 +90,16 @@ export function registerUnauthorizedHandler(handler: () => void): void {
 let sessionClosed = false
 
 /**
+ * 重置会话收口标记（新会话建立时调用）
+ * 收口后的登录页跳转只改 hash 不重载文档，sessionClosed 会跨越整个文档生命周期；
+ * 不复位的话，重新登录后的下一次会话过期将不再清凭证、不再跳登录，
+ * 用户静默卡死在坏会话里。在写入新 token（登录/静默续期成功）处调用
+ */
+export function resetSessionGuard(): void {
+  sessionClosed = false
+}
+
+/**
  * 清除登录凭证并跳转登录页
  * 与 HTTP 401 分支保持同一处理：静默跳转，不弹错误提示。
  * 携带 redirect 回跳原页面（收银台 /pos* 回 /pos/login，其余回 /login），

@@ -17,7 +17,8 @@ const CookieAdminAccessToken = "market_admin_access"
 // 浏览器 WebSocket 握手无法自定义请求头（带不了 Authorization / X-Community-Id），
 // 取 token 与社区声明映射到标准请求头后，复用既有 AuthMiddleware 全套校验
 // （JWT 解析、TokenUse 强校验、admin 类型限定、UserContext 注入），
-// 后续可继续挂 RequireCommunityAccess / RequirePermission，与普通 admin 接口同一套权限口径
+// 后续可继续挂 RequireCommunityAccess（权限码门槛刻意不挂，见下方「注」），
+// 社区校验与普通 admin 接口同一套口径
 //
 // token 来源：httpOnly cookie（新版前端，不落 URL 与日志）优先，
 // 查询参数兜底（旧前端缓存、POS 等未携带 cookie 声明的客户端）
@@ -31,7 +32,11 @@ const CookieAdminAccessToken = "market_admin_access"
 // 使用示例：
 //
 //	admin.GET("/ws", gwMiddleware.WSAuthMiddleware(jwtManager),
-//	    gwMiddleware.RequireCommunityAccess(), gwMiddleware.RequirePermission("order:view"), h.Handle)
+//	    gwMiddleware.RequireCommunityAccess(), h.Handle)
+//
+// 注：WS 路由链不挂 RequirePermission（2026-10-27 定案）——握手不设权限码门槛，
+// 数据类事件在推送时刻按握手权限快照过滤（见 ws/hub.go 的 msgRequiredPerm），
+// 保证权限被收窄的管理员仍能收到权限变更提醒
 func WSAuthMiddleware(manager *jwt.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.GetHeader("Authorization") == "" {
