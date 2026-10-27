@@ -79,7 +79,7 @@
             class="product-card"
             @click="onProductClick(item)"
           >
-            <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" />
+            <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" @click.stop="onImageClick(item)" />
             <view class="product-info">
               <text class="product-name">{{ item.name }}</text>
               <text v-if="item.show_sales" class="product-sales">已售 {{ item.sales || 0 }}</text>
@@ -115,7 +115,7 @@
           class="product-card"
           @click="onProductClick(item)"
         >
-          <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" />
+          <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" @click.stop="onImageClick(item)" />
           <view class="product-info">
             <text class="product-name">{{ item.name }}</text>
             <text v-if="item.show_sales" class="product-sales">已售 {{ item.sales || 0 }}</text>
@@ -227,7 +227,7 @@ import { getBanners, getCategories, getProducts, getProductByBarcode, getProduct
 import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart'
 import { getCommunityList } from '@/api/user'
 import { formatPrice } from '@/utils/format'
-import { goOrderConfirm, goLogin, goCommunitySelect, goPage } from '@/utils/navigate'
+import { goOrderConfirm, goLogin, goCommunitySelect, goPage, goProductDetail } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
 import SiteFooter from '@/components/SiteFooter.vue'
 import CommunityRecommendDialog from '@/components/community-recommend-dialog.vue'
@@ -726,6 +726,14 @@ function onProductClick(product: Product) {
   } else {
     addSingleSpecToCart(product)
   }
+}
+
+/**
+ * 点击商品图片：跳转商品详情页（卡片其余区域维持加购语义）
+ * @param product 商品对象
+ */
+function onImageClick(product: Product) {
+  goProductDetail(product.id)
 }
 
 /**

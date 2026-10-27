@@ -8,43 +8,31 @@
 
         <n-form label-placement="left" label-width="110" :disabled="!isSuperAdmin">
           <n-divider title-placement="left">部署域名</n-divider>
-          <n-form-item label="域名基址">
-            <n-input
-              v-model:value="form.base_url"
-              placeholder="留空则按访问请求自动推导，如 https://shop.example.com"
-              clearable
-            />
-          </n-form-item>
-          <n-form-item label="当前生效">
+          <n-form-item label="站点域名">
             <n-space vertical size="small" style="width: 100%">
-              <n-text strong>{{ setting.effective_base_url || '未配置' }}</n-text>
-              <n-text depth="3" style="font-size: 12px">
-                来源：{{ sourceLabel }}{{ sourceHint }}
-              </n-text>
+              <n-input
+                v-model:value="form.base_url"
+                placeholder="留空则按访问请求自动推导，如 https://shop.example.com"
+                clearable
+              />
+              <n-space align="center" justify="space-between" :wrap="false" style="width: 100%">
+                <n-text depth="3" style="font-size: 12px; word-break: break-all">
+                  当前生效：{{ setting.effective_base_url || '未配置' }}（来源：{{ sourceLabel }}{{ sourceHint }}）
+                </n-text>
+                <n-button
+                  size="tiny"
+                  type="primary"
+                  text
+                  :disabled="!isSuperAdmin || !setting.effective_base_url"
+                  @click="fillEffective"
+                >
+                  一键填入
+                </n-button>
+              </n-space>
             </n-space>
           </n-form-item>
           <n-alert v-if="isPrivateHost" type="warning" :show-icon="true" class="mb-16">
             当前生效地址指向本机或内网，支付宝与微信无法回调，正式环境请改为公网域名。
-          </n-alert>
-
-          <n-divider title-placement="left">派生地址</n-divider>
-          <n-form-item label="微信通知">
-            <n-text depth="3" style="font-size: 12px; word-break: break-all">
-              {{ setting.wechat_notify_url }}
-            </n-text>
-          </n-form-item>
-          <n-form-item label="支付宝通知">
-            <n-text depth="3" style="font-size: 12px; word-break: break-all">
-              {{ setting.alipay_notify_url }}
-            </n-text>
-          </n-form-item>
-          <n-form-item label="支付宝回跳">
-            <n-text depth="3" style="font-size: 12px; word-break: break-all">
-              {{ setting.alipay_return_url }}
-            </n-text>
-          </n-form-item>
-          <n-alert type="info" :show-icon="true" class="mb-16">
-            回调地址由部署域名自动派生，无需在支付配置中填写；把上述地址配置到支付平台后台即可。
           </n-alert>
 
           <n-divider title-placement="left">品牌信息</n-divider>
@@ -161,6 +149,16 @@ const sourceHint = computed(() =>
       ? '；建议填写正式域名，避免访问端口变化导致回调地址漂移'
       : '',
 )
+
+/**
+ * 一键把「当前生效」地址填入输入框
+ * 新站点此处常为空且按请求推导，手动复制麻烦；支付回调地址等派生值随保存自动刷新
+ */
+function fillEffective() {
+  if (!setting.value.effective_base_url) return
+  form.base_url = setting.value.effective_base_url
+  message.success('已填入当前生效地址，保存后生效')
+}
 
 // 本机与内网地址无法被支付平台回调，需给出醒目提示
 const isPrivateHost = computed(() => {

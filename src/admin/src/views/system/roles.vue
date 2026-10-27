@@ -3,7 +3,8 @@
     <n-space vertical>
       <n-alert v-if="isOverviewPage" type="info" :show-icon="false">
         跨社区角色总览（只读）：查看各社区有哪些角色、角色权限与当前任职人数。
-        需要调整权限时点「到该社区管理」，切到该社区语境后在「角色管理」中维护
+        普通角色点「到该社区管理」，切到该社区语境后在「角色管理」中维护；
+        内置「社区管理员」角色点「去社区权限设置」，其权限由该页统一控制
       </n-alert>
       <n-alert v-else type="info" :show-icon="false">
         以下为当前社区的私有角色；可分配的权限点不超出你自身的权限范围（并受社区权限上限约束）。
@@ -173,6 +174,15 @@ const columns = computed<DataTableColumns<Role>>(() => {
           if (isLegacyRole(row)) {
             return h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' })
           }
+          if (isBuiltinRole(row)) {
+            // 内置社区管理员角色的权限由「社区权限」页控制而非角色编辑，
+            // 跳角色管理只会看到禁用的编辑按钮（死胡同），直接引导去正确页面
+            return h(
+              NButton,
+              { size: 'small', type: 'primary', secondary: true, onClick: () => goCommunityPermissions(row) },
+              { default: () => '去社区权限设置' },
+            )
+          }
           return h(NButton, { size: 'small', onClick: () => manageInCommunity(row) }, { default: () => '到该社区管理' })
         },
       },
@@ -225,6 +235,15 @@ function manageInCommunity(row: Role) {
     return
   }
   router.push({ name: 'RoleList' })
+}
+
+/**
+ * 从总览页跳转到指定社区的权限分配页（内置社区管理员角色的正确控制入口）
+ * 社区语境无需切换：权限页自带社区选择器，经 query 带入目标社区
+ * @param row 内置角色行
+ */
+function goCommunityPermissions(row: Role) {
+  router.push({ name: 'CommunityPermission', query: { community_id: String(row.community_id ?? '') } })
 }
 
 function openCreate() {

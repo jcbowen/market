@@ -6,7 +6,7 @@
         :key="item.id"
         class="flash-card"
       >
-        <image class="flash-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" />
+        <image class="flash-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" @click="onBuy(item)" />
         <view class="flash-info">
           <text class="flash-name">{{ item.product_name }}</text>
           <view class="flash-price">
@@ -94,7 +94,7 @@ function soldPercent(item: FlashSale): number {
 }
 
 /**
- * 跳转商品详情
+ * 跳转商品详情（图片与「立即抢购」按钮同行为）
  * @param item 秒杀活动
  */
 function onBuy(item: FlashSale) {

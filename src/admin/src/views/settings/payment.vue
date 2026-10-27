@@ -234,13 +234,8 @@
               </n-text>
             </n-grid-item>
             <n-grid-item :span="2">
-              <n-form-item label="支付完成回跳 URL">
-                <n-text code>{{ paymentForm.alipay.return_url || '未派生' }}</n-text>
-              </n-form-item>
-            </n-grid-item>
-            <n-grid-item :span="2">
               <n-text depth="3" class="form-hint">
-                通知与回跳地址一律由「站点设置」的部署域名派生，保存站点设置时自动写入本系统配置，
+                通知与回跳地址一律由「站点设置」的部署域名派生，并随下单请求逐笔带给支付宝，无需在任何平台手工配置，故不再展示；
                 改域名请到站点设置页。回跳仅作体验用途，支付结果一律以异步通知与订单状态为准。
               </n-text>
             </n-grid-item>

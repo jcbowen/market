@@ -5,17 +5,17 @@
         <n-input v-model:value="form.name" placeholder="请输入商品名称" />
       </n-form-item>
       <n-form-item label="商品分类" required>
-        <CategoryPicker v-model="form.category_id" style="width: 100%" />
+        <CategoryPicker v-model="form.category_id" :fallback-name="categoryNameFallback" style="width: 100%" />
         <span class="field-hint">点击选择分类，可在弹窗中直接新建</span>
       </n-form-item>
       <n-form-item label="商品单位">
         <n-input v-model:value="form.unit" placeholder="如：件 / 斤 / 箱" />
       </n-form-item>
       <n-form-item label="封面图">
-        <ImageUploadInput v-model:value="form.cover_image" placeholder="图片 URL 或点击上传" hint="建议尺寸 750×600（5:4）" />
+        <ImageUploadInput v-model:value="form.cover_image" placeholder="图片 URL 或点击上传" hint="建议 1:1 方图（如 800×800），与 C 端展示口径一致" />
       </n-form-item>
       <n-form-item label="商品相册">
-        <ImageListInput v-model:list="form.images" hint="建议尺寸 750×600（5:4）" />
+        <ImageListInput v-model:list="form.images" hint="建议 1:1 方图（如 800×800），与 C 端展示口径一致" />
       </n-form-item>
       <n-form-item label="是否多规格">
         <n-switch v-model:value="form.is_multi_spec" />
@@ -300,6 +300,8 @@ const form = reactive({
 
 /** 编辑态加载到的原始上下架状态（status / on_sale_at），用于保存时推断是否需要显式上架 */
 const originSale = ref<{ status: number; onSaleAt: string }>({ status: 1, onSaleAt: '' })
+/** 编辑态分类名兜底：分类列表未就绪或分类已删除时，CategoryPicker 用它回显 */
+const categoryNameFallback = ref('')
 
 /** 单规格默认 SKU（编辑时回填 id 以更新而非新建） */
 const singleSku = reactive({
@@ -434,6 +436,7 @@ async function loadDetail(): Promise<void> {
   const detail = res.data.data
   const p = detail.product
   originSale.value = { status: p.status, onSaleAt: p.on_sale_at ?? '' }
+  categoryNameFallback.value = p.category_name ?? ''
   Object.assign(form, {
     name: p.name,
     category_id: p.category_id,

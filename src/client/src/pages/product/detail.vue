@@ -3,7 +3,7 @@
     <!-- 轮播图 -->
     <swiper class="banner" indicator-dots autoplay circular>
       <swiper-item v-for="(img, idx) in product.images" :key="idx">
-        <image class="banner-image" :src="img" mode="aspectFill" />
+        <image class="banner-image" :src="img" mode="aspectFill" @click="previewGallery(idx)" />
       </swiper-item>
       <swiper-item v-if="!product.images.length">
         <image class="banner-image" src="/static/logo.png" mode="aspectFill" />
@@ -147,6 +147,16 @@ onLoad((query) => {
     loadFreeShippingBadge()
   }
 })
+
+/**
+ * 相册大图预览：从点击的图片进入，左右滑动浏览全部相册
+ * @param idx 点击的轮播图下标
+ */
+function previewGallery(idx: number) {
+  const urls = product.value.images
+  if (!urls.length) return
+  uni.previewImage({ urls, current: idx })
+}
 
 // --- 满额免配送费角标 ---
 const fsActivity = ref<FreeShippingActivity | null>(null)
@@ -338,8 +348,11 @@ function onBuy() {
   background-color: #f5f5f5;
 }
 
+/* 全站商品图统一 1:1 方形口径（首页/购物车/订单等均方容器），
+   swiper 宽度默认 100% = 750rpx，高度同步为 750rpx，
+   方图不再被 aspectFill 裁切（旧 600rpx 高的 5:4 容器会纵向裁掉 25%） */
 .banner {
-  height: 600rpx;
+  height: 750rpx;
 }
 
 .banner-image {
