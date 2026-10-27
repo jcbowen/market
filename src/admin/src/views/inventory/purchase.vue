@@ -88,7 +88,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockPurchase' })
-import { h, ref, onMounted } from 'vue'
+import { h, ref, onMounted, onActivated } from 'vue'
 import { formatAmount } from '@/utils/format'
 import { useRouter, useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
@@ -397,8 +397,15 @@ function onTabChange(value: string) {
 // 补货建议带入：从库存工作台「一键补货」跳转过来时，预置供应商筛选并刷新
 // 入库单「关联采购单」跳转：经 route.query.keyword 预填单号搜索
 onMounted(() => {
+  // 外部入口（如入库单跳转按采购单号预筛）带 keyword 时仅在挂载时预填，
+  // 数据加载统一交给 onActivated（keep-alive 下挂载即触发一次激活），避免重复请求
   const q = route.query.keyword
   if (typeof q === 'string' && q) orderKeyword.value = q
+})
+
+// keep-alive 缓存下从内页（新建/详情/编辑）返回时 onMounted 不会触发，
+// onActivated 重新拉取，保证采购单新增/操作后列表展示最新数据
+onActivated(() => {
   loadOrders()
 })
 </script>

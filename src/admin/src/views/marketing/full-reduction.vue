@@ -12,7 +12,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'FullReductionList' })
-import { ref, onMounted, h } from 'vue'
+import { ref, onActivated, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NSpace, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -74,5 +74,7 @@ async function remove(row: FullReduction) {
   if (res.data.code === 0) loadData()
 }
 
-onMounted(loadData)
+// keep-alive 缓存下从内页（新建）返回时 onMounted 不会触发，
+// onActivated 重新拉取，保证满减活动新增后列表展示最新数据
+onActivated(loadData)
 </script>

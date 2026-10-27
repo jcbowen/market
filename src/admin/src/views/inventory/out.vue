@@ -13,7 +13,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockOut' })
-import { h, ref } from 'vue'
+import { h, ref, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -100,5 +100,7 @@ function onPageChange(page: number) {
   loadData()
 }
 
-loadData()
+// keep-alive 缓存下从内页（新建/详情）返回时 onMounted 不会触发，
+// onActivated 重新拉取，保证出库单新增/操作后列表展示最新数据
+onActivated(loadData)
 </script>
