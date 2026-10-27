@@ -32,8 +32,24 @@
       </template>
       <n-alert type="info" :show-icon="false" class="mb-16">
         已按当前社区状态完成预检：默认勾选全部可导入项，<b>取消勾选即排除该项</b>；
-        「依赖缺失」项不可导入，需先导入其依赖（分类 / 商品目录）。
+        「依赖缺失」项不可导入，需先导入其依赖（分类 / 商品目录）；
+        「用户券与购物车」需先在下方选择导入会员。
       </n-alert>
+
+      <!-- 用户券/购物车必须指定导入会员（未选择时该组禁止导入） -->
+      <div v-if="hasUserAssets" class="user-target-bar">
+        <span class="bar-label">「用户券与购物车」导入到会员：</span>
+        <n-tag v-if="targetUser" closable type="primary" @close="clearTargetUser">
+          {{ targetUser.nickname || '未设置昵称' }}（{{ maskPhone(targetUser.phone) }}）
+        </n-tag>
+        <n-button size="small" type="primary" @click="showUserPicker = true">
+          {{ targetUser ? '更换会员' : '选择会员' }}
+        </n-button>
+        <n-text v-if="needUserTarget" type="warning" style="font-size: 12px">
+          未选择会员时该组数据禁止导入
+        </n-text>
+      </div>
+      <UserPicker v-model:show="showUserPicker" title="选择导入会员" @select="onPickTargetUser" />
 
       <div v-for="group in previewGroups" :key="group.key" class="preview-group">
         <div class="group-title">
@@ -104,6 +120,8 @@ import {
 import { listDataPackages, previewDataImport, importDataPackage } from '@/api/dataImport'
 import type { DataImportItem, DataPackage } from '@/api/dataImport'
 import { getCommunityList } from '@/api/user'
+import type { User } from '@/api/types'
+import UserPicker from '@/components/UserPicker.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const message = useMessage()
@@ -121,6 +139,46 @@ const onSale = ref(true)
 const result = ref<{ created: number; skipped: number; failed: number; details: DataImportItem[] } | null>(null)
 
 const communityName = ref('')
+
+// --- 指定导入会员（用户券/购物车落到该会员名下） ---
+const showUserPicker = ref(false)
+const targetUser = ref<User | null>(null)
+
+/** 预检结果是否包含用户侧数据段（需指定导入会员） */
+const hasUserAssets = computed(() => previewItems.value.some((it) => it.section_key === 'user_assets'))
+/** 未选择导入会员：用户侧数据组禁止导入 */
+const needUserTarget = computed(() => hasUserAssets.value && !targetUser.value)
+
+/**
+ * 手机号脱敏展示：138****1234
+ */
+function maskPhone(phone: string): string {
+  if (!phone || phone.length < 7) return phone
+  return `${phone.slice(0, 3)}****${phone.slice(-4)}`
+}
+
+/**
+ * 选中导入会员后重新预检（用户侧条目按新会员重算依赖与幂等判定）
+ */
+function onPickTargetUser(u: User) {
+  targetUser.value = u
+  void rerunPreview()
+}
+
+/**
+ * 清除已选导入会员并重新预检
+ */
+function clearTargetUser() {
+  targetUser.value = null
+  void rerunPreview()
+}
+
+/**
+ * 预检步骤内重跑预检（会员变更时调用）
+ */
+async function rerunPreview() {
+  if (currentPkg.value && step.value === 'preview') await startPreview(currentPkg.value)
+}
 
 /**
  * 预检结果按条目分组（组名取条目所在 section 的展示名，回退到 section key）
@@ -234,7 +292,7 @@ async function startPreview(pkg: DataPackage) {
   currentPkg.value = pkg
   previewing.value = true
   try {
-    const res = await previewDataImport(pkg.key, [])
+    const res = await previewDataImport(pkg.key, [], targetUser.value?.phone ?? '')
     previewItems.value = res.data.data?.items ?? []
     uncheckedKeys.value = new Set()
     step.value = 'preview'
@@ -267,11 +325,17 @@ async function execute() {
   if (!currentPkg.value) return
   importing.value = true
   try {
+    // 依赖缺失项（含未指定会员的用户侧条目）一并排除，避免必然失败的请求
+    const excluded = new Set(uncheckedKeys.value)
+    previewItems.value.forEach((it) => {
+      if (it.action === 'depend_missing') excluded.add(it.item_key)
+    })
     const res = await importDataPackage(
       currentPkg.value.key,
       [],
-      [...uncheckedKeys.value],
+      [...excluded],
       onSale.value,
+      targetUser.value?.phone ?? '',
     )
     result.value = res.data.data ?? null
     step.value = 'result'
@@ -351,6 +415,21 @@ onMounted(async () => {
 }
 .preview-group {
   margin-bottom: 18px;
+}
+.user-target-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px dashed #e0e0e6;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+
+  .bar-label {
+    font-size: 13px;
+    color: #666;
+  }
 }
 .group-title {
   font-size: 14px;

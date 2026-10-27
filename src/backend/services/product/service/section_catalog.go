@@ -15,8 +15,8 @@ import (
 // catalogSection 商品目录条目：分类 → 商品 → SKU → 初始批次
 // 复用 ProductService.CreateProduct 完整链路（规格树/SKU/初始批次/汇总列），保证与手工建品同口径；
 // 种子批次（FEFO 演示拆批与效期）在创建后同事务替换自动生成的 INIT 批次，数量之和恒等于 SKU 库存。
-// 分类与商品按 community_key 归属演示社区（社区1 9类46品、社区2 6类10品），
-// 逐社区导入时只落各自条目，避免两个社区同名不同价的商品混进同一社区
+// 分类与商品按 community_key 归属演示社区（社区1 9类46品、社区2 6类20品），
+// 初始化逐社区导入时只落各自条目；应用中心数据集为全部条目（两社区商品名已全部唯一）
 type catalogSection struct {
 	svc *DataImportService
 }
@@ -29,7 +29,7 @@ func (s *catalogSection) Description() string {
 	return "分类、商品、SKU 与初始库存批次（含 FEFO 演示批次）"
 }
 
-// ItemCount 应用中心展示用条目数：按主演示社区口径（页面导入的目标数据集）
+// ItemCount 应用中心展示用条目数：数据集为包内全部社区域条目（SectionScopeAll）
 func (s *catalogSection) ItemCount(pkg *SeedPackage) int32 {
 	scope := communityScopeKey(pkg, "")
 	var n int32

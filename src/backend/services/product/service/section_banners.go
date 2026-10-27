@@ -28,7 +28,7 @@ func (s *bannersSection) inScope(b *SeedBanner, scopeKey string) bool {
 	return b.Platform || seedInCommunityScope(b.CommunityKey, scopeKey)
 }
 
-// ItemCount 平台级 + 主演示社区归属的条目数（应用中心展示口径）
+// ItemCount 平台级 + 全部社区域归属的条目数（应用中心数据集口径）
 func (s *bannersSection) ItemCount(pkg *SeedPackage) int32 {
 	scope := communityScopeKey(pkg, "")
 	var n int32

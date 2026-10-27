@@ -359,6 +359,9 @@ const products = [
   },
 
   // ===== 社区2：阳光花园 =====
+  // 命名口径（2026-10-27）：社区2 全部商品与社区1 不同名（品牌+品名均独立），
+  // 保证「应用中心数据集=全部商品」时按商品名解析（购物车/满免邮/按名查库）无歧义；
+  // 图片也不再 reuse 社区1 素材，全部独立绘制。
   {
     id: 4, cid: 2, cat: 3, name: '农欢 散养鲜鸡蛋', short: '散养鲜鸡蛋', brand: '农欢',
     desc: '社区农户散养，30 枚防震蛋托装', unit: '箱', multi: false, shape: 'eggcarton',
@@ -366,58 +369,124 @@ const products = [
     skus: [[5, 'EGG-30P', '30枚/箱', 12.90, 15.90, 9.50, 100, 20, 15, 24, true]],
   },
   {
-    id: 48, cid: 2, cat: 3, name: '怡香源 纯牛奶', short: '纯牛奶', brand: '怡香源',
-    desc: '3.2g 优质乳蛋白，250ml×12 整箱装', unit: '箱', multi: false, shape: 'carton',
-    color: '#4F46E5', vSales: 60, sort: 90, status: 1, reuse: 'milk-carton.png',
+    id: 48, cid: 2, cat: 3, name: '晨曦牧场 高钙纯牛奶', short: '高钙纯牛奶', brand: '晨曦牧场',
+    desc: '3.4g 优质乳蛋白强化钙配方，250ml×12 整箱装', unit: '箱', multi: false, shape: 'carton',
+    color: '#2563EB', vSales: 60, sort: 90, status: 1,
     skus: [[53, 'MILK-PURE-C2-12', '250ml×12盒', 45.90, 52.90, 35.80, 24, 6, 180, 22]],
   },
   {
-    id: 49, cid: 2, cat: 3, name: '慕希 原味浓稠酸奶', short: '浓稠酸奶', brand: '慕希',
-    desc: '浓稠口感原味发酵乳，205g×12 瓶装', unit: '箱', multi: false, shape: 'bottle',
-    color: '#F472B6', vSales: 48, sort: 80, status: 1, reuse: 'yogurt-bottle.png',
+    id: 49, cid: 2, cat: 3, name: '酪物志 低温原味酸奶', short: '低温酸奶', brand: '酪物志',
+    desc: '低温慢发酵浓稠酸奶，205g×12 瓶装', unit: '箱', multi: false, shape: 'bottle',
+    color: '#DB2777', vSales: 48, sort: 80, status: 1,
     skus: [[54, 'MILK-YOGURT-C2-12', '205g×12', 52.90, 59.90, 39.80, 18, 5, 90, 15]],
   },
   {
-    id: 50, cid: 2, cat: 11, name: '乐游 原味薯片', short: '原味薯片', brand: '乐游',
-    desc: '厚切马铃薯片，咸香酥脆，70g 便携装', unit: '袋', multi: false, shape: 'bag',
-    color: '#F59E0B', vSales: 88, sort: 100, status: 1, reuse: 'chips.png',
+    id: 50, cid: 2, cat: 11, name: '咔吱趣 原切马铃薯片', short: '原切薯片', brand: '咔吱趣',
+    desc: '整颗马铃薯原切厚切，咸香酥脆，70g 便携装', unit: '袋', multi: false, shape: 'bag',
+    color: '#D97706', vSales: 88, sort: 100, status: 1,
     skus: [[55, 'SNACK-CHIPS-C2-70', '70g', 5.90, 6.90, 3.20, 60, 15, 240, 18]],
   },
   {
-    id: 51, cid: 2, cat: 11, name: '麦香源 巧克力夹心饼干', short: '夹心饼干', brand: '麦香源',
-    desc: '酥脆饼干夹可可奶油心，116g 小袋装', unit: '袋', multi: false, shape: 'pack',
-    color: '#8B5CF6', vSales: 42, sort: 90, status: 1, reuse: 'cookie.png',
+    id: 51, cid: 2, cat: 11, name: '可可岛 夹心曲奇', short: '夹心曲奇', brand: '可可岛',
+    desc: '曲奇饼干夹比利时可可心，116g 小袋装', unit: '袋', multi: false, shape: 'pack',
+    color: '#7C2D12', vSales: 42, sort: 90, status: 1,
     skus: [[56, 'SNACK-COOKIE-C2-116', '116g', 7.20, 8.50, 4.40, 40, 10, 210, 16]],
   },
   {
-    id: 52, cid: 2, cat: 12, name: '碧源 饮用天然水', short: '饮用天然水', brand: '碧源',
-    desc: '弱碱性天然水，550ml 随身装', unit: '瓶', multi: false, shape: 'bottle',
-    color: '#0EA5E9', vSales: 150, sort: 100, status: 1, reuse: 'water.png',
+    id: 52, cid: 2, cat: 12, name: '山涧泉 饮用天然泉水', short: '天然泉水', brand: '山涧泉',
+    desc: '山涧岩泉水源，清冽微甘，550ml 随身装', unit: '瓶', multi: false, shape: 'bottle',
+    color: '#0891B2', vSales: 150, sort: 100, status: 1,
     skus: [[57, 'DRINK-WATER-C2-550', '550ml', 2.00, 2.50, 1.25, 96, 24, 720, 30]],
   },
   {
-    id: 53, cid: 2, cat: 12, name: '气泡山 柠檬味汽水', short: '柠檬汽水', brand: '气泡山',
-    desc: '清爽柠檬口味汽水，500ml 大瓶装', unit: '瓶', multi: false, shape: 'bottle',
-    color: '#22C55E', vSales: 66, sort: 90, status: 1, reuse: 'sprite.png',
+    id: 53, cid: 2, cat: 12, name: '汽泡星球 青柠苏打汽水', short: '青柠汽水', brand: '汽泡星球',
+    desc: '青柠风味无糖苏打汽水，500ml 大瓶装', unit: '瓶', multi: false, shape: 'bottle',
+    color: '#65A30D', vSales: 66, sort: 90, status: 1,
     skus: [[58, 'DRINK-SPRITE-C2-500', '500ml', 3.80, 4.00, 2.20, 48, 12, 300, 22]],
   },
   {
-    id: 54, cid: 2, cat: 13, name: '面匠 红烧牛肉面', short: '红烧牛肉面', brand: '面匠',
-    desc: '经典红烧汤底，桶装免洗碗', unit: '桶', multi: false, shape: 'cup',
-    color: '#DC2626', vSales: 110, sort: 100, status: 1, reuse: 'noodle-cup.png',
+    id: 54, cid: 2, cat: 13, name: '味霸 红汤牛肉面', short: '红汤牛肉面', brand: '味霸',
+    desc: '红汤浓醇牛肉风味，桶装免洗碗', unit: '桶', multi: false, shape: 'cup',
+    color: '#991B1B', vSales: 110, sort: 100, status: 1,
     skus: [[59, 'FAST-NOODLE-C2-BEEF', '桶装105g', 5.80, 6.50, 3.50, 45, 12, 180, 20]],
   },
   {
-    id: 55, cid: 2, cat: 14, name: '金稻 东北长粒香米', short: '长粒香米', brand: '金稻',
-    desc: '当季新米，颗粒饱满，5kg 家庭装', unit: '袋', multi: false, shape: 'ricebag',
-    color: '#CA8A04', vSales: 36, sort: 100, status: 1, reuse: 'rice-bag.png',
+    id: 55, cid: 2, cat: 14, name: '穗丰 长粒香大米', short: '长粒香大米', brand: '穗丰',
+    desc: '当季新米颗粒饱满，5kg 家庭装', unit: '袋', multi: false, shape: 'ricebag',
+    color: '#A16207', vSales: 36, sort: 100, status: 1,
     skus: [[60, 'GRAIN-RICE-C2-5KG', '5kg', 42.90, 46.90, 33.80, 18, 5, null, 18]],
   },
   {
-    id: 56, cid: 2, cat: 15, name: '维纯 抽取式面巾纸', short: '抽取面巾纸', brand: '维纯',
-    desc: '3 层 100 抽原生木浆，6 包装', unit: '提', multi: false, shape: 'tissue',
-    color: '#14B8A6', vSales: 54, sort: 100, status: 1, reuse: 'tissue-pack.png',
+    id: 56, cid: 2, cat: 15, name: '棉柔派 加厚抽取面巾纸', short: '加厚抽纸', brand: '棉柔派',
+    desc: '4 层加厚原生木浆柔肤亲肤，6 包装', unit: '提', multi: false, shape: 'tissue',
+    color: '#0D9488', vSales: 54, sort: 100, status: 1,
     skus: [[61, 'DAILY-TISSUE-C2-6', '3层×6包', 13.50, 15.90, 9.20, 30, 8, null, 20]],
+  },
+
+  // ===== 社区2：专属补充批次（id 57~66 续排，与社区1 全部不同名） =====
+  {
+    id: 57, cid: 2, cat: 11, name: '脆波波 香辣锅巴', short: '香辣锅巴', brand: '脆波波',
+    desc: '糯米锅巴又脆又香，麻辣入味，80g 袋装', unit: '袋', multi: false, shape: 'bag',
+    color: '#B91C1C', vSales: 95, sort: 80, status: 1,
+    skus: [[62, 'SNACK-C2-KOBA-80', '80g', 6.50, 7.90, 3.60, 70, 15, 240, 18, true]],
+  },
+  {
+    id: 58, cid: 2, cat: 11, name: '果真有料 芒果干', short: '芒果干', brand: '果真有料',
+    desc: '大块果肉厚切晾晒，酸甜软糯，100g 袋装', unit: '袋', multi: false, shape: 'pouch',
+    color: '#F59E0B', vSales: 72, sort: 70, status: 1,
+    skus: [[63, 'SNACK-C2-MANGO-100', '100g', 9.90, 12.90, 6.80, 45, 10, 300, 25]],
+  },
+  {
+    id: 59, cid: 2, cat: 12, name: '云雾岭 茉莉绿茶', short: '茉莉绿茶', brand: '云雾岭',
+    desc: '高山绿茶窨制茉莉花香，500ml 瓶装', unit: '瓶', multi: false, shape: 'bottle',
+    color: '#16A34A', vSales: 130, sort: 80, status: 1,
+    skus: [[64, 'DRINK-C2-GREEN-TEA-500', '500ml', 3.50, 4.00, 2.10, 90, 20, 300, 22]],
+  },
+  {
+    id: 60, cid: 2, cat: 12, name: '橙意满满 鲜榨橙汁', short: '鲜榨橙汁', brand: '橙意满满',
+    desc: ' NFC 鲜榨橙汁不加糖，300ml 短保鲜瓶装', unit: '瓶', multi: false, shape: 'bottle',
+    color: '#F97316', vSales: 58, sort: 70, status: 1,
+    skus: [[65, 'DRINK-C2-ORANGE-300', '300ml', 6.90, 8.50, 4.50, 36, 8, 90, 10]],
+  },
+  {
+    id: 61, cid: 2, cat: 13, name: '碗约 柳州螺蛳粉', short: '螺蛳粉', brand: '碗约',
+    desc: '酸辣鲜爽烫地道柳州风味，335g 水煮型袋装', unit: '袋', multi: false, shape: 'pack',
+    color: '#A16207', vSales: 140, sort: 90, status: 1,
+    skus: [[66, 'FAST-C2-LUOSI-335', '335g', 12.90, 15.90, 8.40, 50, 12, 240, 16]],
+  },
+  {
+    id: 62, cid: 2, cat: 13, name: '热乎 自热小火锅', short: '自热小火锅', brand: '热乎',
+    desc: '荤素搭配自热锅，15 分钟开吃，380g 盒装', unit: '盒', multi: false, shape: 'box',
+    color: '#B91C1C', vSales: 66, sort: 80, status: 1,
+    skus: [[67, 'FAST-C2-HOTPOT-380', '380g', 26.90, 32.90, 17.80, 26, 6, 270, 14]],
+  },
+  {
+    id: 63, cid: 2, cat: 14, name: '金穗坊 压榨花生油', short: '压榨花生油', brand: '金穗坊',
+    desc: '物理压榨浓香花生油，家用炒菜更香', unit: '桶', multi: true, shape: 'jug',
+    color: '#CA8A04', vSales: 42, sort: 90, status: 1, alt: true,
+    spec: { id: 6, name: '规格', values: [[11, '4L'], [12, '2.5L']] },
+    skus: [
+      [68, 'GRAIN-C2-PEANUT-OIL-4L', '4L', 109.90, 129.00, 86.50, 20, 5, 540, 30, true],
+      [69, 'GRAIN-C2-PEANUT-OIL-2.5L', '2.5L', 69.90, 82.00, 55.20, 14, 4, 540, 30],
+    ],
+  },
+  {
+    id: 64, cid: 2, cat: 14, name: '酱芯 黄豆豆瓣酱', short: '黄豆豆瓣酱', brand: '酱芯',
+    desc: '东北非转基因黄豆酿造，酱香浓郁，500g 瓶装', unit: '瓶', multi: false, shape: 'jar',
+    color: '#7F1D1D', vSales: 48, sort: 80, status: 1,
+    skus: [[70, 'GRAIN-C2-DOUBAN-500', '500g', 8.90, 10.90, 5.60, 40, 10, 540, 35]],
+  },
+  {
+    id: 65, cid: 2, cat: 15, name: '沐野 氨基酸洗发水', short: '氨基酸洗发水', brand: '沐野',
+    desc: '温和氨基酸配方控油蓬松，500ml 瓶装', unit: '瓶', multi: false, shape: 'bottle',
+    color: '#0F766E', vSales: 65, sort: 90, status: 1,
+    skus: [[71, 'DAILY-C2-SHAMPOO-500', '500ml', 32.90, 39.90, 21.50, 22, 6, 1080, 40]],
+  },
+  {
+    id: 66, cid: 2, cat: 15, name: '洁屿 除菌洗手液', short: '除菌洗手液', brand: '洁屿',
+    desc: '植萃除菌温和不干手，450ml 泵瓶装', unit: '瓶', multi: false, shape: 'bottle',
+    color: '#2563EB', vSales: 82, sort: 80, status: 1,
+    skus: [[72, 'DAILY-C2-WASH-450', '450ml', 12.90, 15.90, 8.10, 30, 8, 1080, 28]],
   },
 ];
 
@@ -448,6 +517,12 @@ const FILE_SLUG = {
   42: 'chocolate', 43: 'energy-bar', 44: 'gum-jar',
   45: 'coffee-box', 46: 'milktea-cup', 47: 'oats-jar',
   4: 'egg-carton',
+  // 社区2（2026-10-27 起不再 reuse 社区1 素材，全部独立绘制）
+  48: 'dawn-milk', 49: 'lozhi-yogurt', 50: 'crispy-chips', 51: 'cocoa-cookie',
+  52: 'spring-water', 53: 'lime-soda', 54: 'red-beef-noodle', 55: 'suifeng-rice', 56: 'cotton-tissue',
+  57: 'koba', 58: 'mango-dried', 59: 'jasmine-tea', 60: 'orange-juice',
+  61: 'luosifen', 62: 'selfheat-hotpot', 63: 'peanut-oil', 64: 'douban-jiang',
+  65: 'shampoo', 66: 'hand-soap',
 };
 const IMG_OF = {};
 for (const p of products) {
@@ -493,7 +568,7 @@ L.push('');
 L.push('-- ============ 商品 ============');
 L.push('-- 汇总口径：min_price/max_price = SKU 价格区间；min_original_price = 最低价 SKU 的划线价（0 不展示）；');
 L.push('-- stock = 各启用 SKU 库存之和；展示销量 = sales_count + virtual_sales');
-L.push('-- 商品 1/24/30/35/39 为多规格，其余单规格；29 号为仓库中（status=0）、41 号为售罄（stock=0）、');
+L.push('-- 商品 1/24/30/35/39/63 为多规格，其余单规格；29 号为仓库中（status=0）、41 号为售罄（stock=0）、');
 L.push('-- 27/44 号为库存紧张（stock ≤ 安全库存），用于演示商品列表四个状态页签');
 L.push('INSERT INTO `products` (`id`, `community_id`, `category_id`, `name`, `description`, `cover_image`, `images`, `unit`, `is_multi_spec`, `min_price`, `max_price`, `min_original_price`, `show_sales`, `virtual_sales`, `stock`, `min_buy`, `status`, `sort`, `sales_count`, `created_at`, `updated_at`)');
 L.push('VALUES');
@@ -525,7 +600,7 @@ for (const p of products) {
 L.push(imgRows.join(',\n') + ';');
 L.push('');
 
-L.push('-- ============ 多规格链路（5 个多规格商品） ============');
+L.push('-- ============ 多规格链路（6 个多规格商品） ============');
 L.push('-- sku.spec_value_ids 为规格值 ID 组合键（逗号分隔、升序），spec_json 为展示快照');
 L.push('INSERT INTO `product_specs` (`id`, `product_id`, `community_id`, `name`, `sort`, `created_at`, `updated_at`, `deleted_at`)');
 L.push('VALUES');
@@ -641,7 +716,8 @@ L.push('');
 // ---------- 结构化数据导出（供 gen-data-package.mjs 等消费，无副作用） ----------
 // 批次推导与下方 SQL 生成同源同公式：sku 元组 [id, code, specName, price, original, cost, stock, safety, expireDays, prodAgo, split?]
 // community_key 口径：源数据用 cid（1=盘龙金茂悦 / 2=阳光花园）标注归属，导出为包内社区 key，
-// 供数据包按社区过滤——两个社区的同名商品是各自独立的演示条目，不可灌进同一社区。
+// 供数据包按社区过滤。2026-10-27 起两社区商品名已全部唯一，应用中心数据集放宽为全部商品；
+// 但营销/订单等段仍按 community_key 归属演示社区，初始化逐社区导入口径不变。
 function collectSeedCatalog() {
   const barcodes = {};
   let seq = 0;

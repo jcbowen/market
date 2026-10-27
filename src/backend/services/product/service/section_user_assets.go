@@ -15,6 +15,8 @@ import (
 // userAssetsSection 用户侧演示数据条目：用户持券 + 购物车。
 // 用户按手机号解析（users 全局段唯一键），商品/SKU 按社区内「商品名 + 规格名」解析，
 // 不依赖跨段 key 映射，单独经应用中心导入到已初始化的社区同样可工作；
+// 应用中心路径（RequireTargetUser=true）必须指定导入会员，条目落到该会员名下
+// （覆盖种子条目的演示用户手机号）；初始化链路仍按种子 user_phone 落演示用户；
 // 预检的依赖判定含「同一次勾选导入」兜底（见 seedDepSelected），导入空社区时不误报缺失；
 // 条目按 community_key 归属演示社区（用户券/购物车都挂在具体社区的用户语境下）。
 type userAssetsSection struct {
@@ -45,7 +47,7 @@ func (s *userAssetsSection) ItemCount(pkg *SeedPackage) int32 {
 	return n
 }
 
-// Preview 依赖与幂等判定：用户（全局段）、券（营销段/库内）、商品与 SKU（目录段/库内）；
+// Preview 依赖与幂等判定：目标会员（应用中心必须指定）、券（营销段/库内）、商品与 SKU（目录段/库内）；
 // 已持有该券 / 购物车已含该 SKU 的条目报 skip，与 Import 的实际落库行为同口径
 func (s *userAssetsSection) Preview(ctx context.Context, pkg *SeedPackage, req *PreviewRequest, items *[]*product.DataImportItem) {
 	scope := communityScopeKey(pkg, "")
@@ -54,16 +56,31 @@ func (s *userAssetsSection) Preview(ctx context.Context, pkg *SeedPackage, req *
 	products := seedProductKeys(pkg)
 	willImportCoupon := func(name string) bool { return seedDepSelected(name, coupons, scope, selected) }
 	willImportProduct := func(name string) bool { return seedDepSelected(name, products, scope, selected) }
+	targetUserID, userMissing, userErr := s.resolveTargetUser(ctx, req.TargetUserPhone, req.RequireTargetUser)
 	for i := range pkg.UserCoupons {
 		uc := &pkg.UserCoupons[i]
 		if !isSelected(req, uc.Key) || !seedInCommunityScope(uc.CommunityKey, scope) {
 			continue
 		}
-		userID, err := s.svc.userIDByPhone(ctx, uc.UserPhone)
-		if err != nil {
+		if userMissing {
 			appendPreviewItem(items, s.Key(), uc.Key, uc.CouponName, "depend_missing",
-				"演示用户（"+uc.UserPhone+"）未初始化，用户券随环境初始化导入", false)
+				"未指定导入会员，请先选择会员后重新预检", false)
 			continue
+		}
+		if userErr != nil {
+			appendPreviewItem(items, s.Key(), uc.Key, uc.CouponName, "depend_missing",
+				"指定会员（"+req.TargetUserPhone+"）不存在，请重新选择", false)
+			continue
+		}
+		userID := targetUserID
+		if userID == 0 {
+			var err error
+			userID, err = s.svc.userIDByPhone(ctx, uc.UserPhone)
+			if err != nil {
+				appendPreviewItem(items, s.Key(), uc.Key, uc.CouponName, "depend_missing",
+					"演示用户（"+uc.UserPhone+"）未初始化，用户券随环境初始化导入", false)
+				continue
+			}
 		}
 		couponID, err := s.svc.couponIDByName(ctx, req.CommunityID, uc.CouponName)
 		if err != nil {
@@ -84,11 +101,25 @@ func (s *userAssetsSection) Preview(ctx context.Context, pkg *SeedPackage, req *
 		if !isSelected(req, c.Key) || !seedInCommunityScope(c.CommunityKey, scope) {
 			continue
 		}
-		userID, err := s.svc.userIDByPhone(ctx, c.UserPhone)
-		if err != nil {
+		if userMissing {
 			appendPreviewItem(items, s.Key(), c.Key, c.ProductName, "depend_missing",
-				"演示用户（"+c.UserPhone+"）未初始化，购物车随环境初始化导入", false)
+				"未指定导入会员，请先选择会员后重新预检", false)
 			continue
+		}
+		if userErr != nil {
+			appendPreviewItem(items, s.Key(), c.Key, c.ProductName, "depend_missing",
+				"指定会员（"+req.TargetUserPhone+"）不存在，请重新选择", false)
+			continue
+		}
+		userID := targetUserID
+		if userID == 0 {
+			var err error
+			userID, err = s.svc.userIDByPhone(ctx, c.UserPhone)
+			if err != nil {
+				appendPreviewItem(items, s.Key(), c.Key, c.ProductName, "depend_missing",
+					"演示用户（"+c.UserPhone+"）未初始化，购物车随环境初始化导入", false)
+				continue
+			}
 		}
 		_, sku, err := s.resolveCartItem(ctx, req.CommunityID, c)
 		if err != nil {
@@ -112,17 +143,31 @@ func (s *userAssetsSection) Preview(ctx context.Context, pkg *SeedPackage, req *
 // Import 用户券与购物车逐条独立创建（仅本次归属社区的条目）
 func (s *userAssetsSection) Import(ctx context.Context, pkg *SeedPackage, req *ImportRequest, items *[]*product.DataImportItem) (created int32) {
 	scope := communityScopeKey(pkg, req.CommunityKey)
+	targetUserID, userMissing, userErr := s.resolveTargetUser(ctx, req.TargetUserPhone, req.RequireTargetUser)
 	// 用户券
 	for i := range pkg.UserCoupons {
 		uc := &pkg.UserCoupons[i]
 		if !isImportable(req, uc.Key) || !seedInCommunityScope(uc.CommunityKey, scope) {
 			continue
 		}
-		userID, err := s.svc.userIDByPhone(ctx, uc.UserPhone)
-		if err != nil {
-			appendImportResult(items, s.Key(), uc.Key, uc.CouponName, "failed",
-				"演示用户（"+uc.UserPhone+"）不存在")
+		if userMissing {
+			appendImportResult(items, s.Key(), uc.Key, uc.CouponName, "failed", "未指定导入会员，禁止导入")
 			continue
+		}
+		if userErr != nil {
+			appendImportResult(items, s.Key(), uc.Key, uc.CouponName, "failed",
+				"指定会员（"+req.TargetUserPhone+"）不存在")
+			continue
+		}
+		userID := targetUserID
+		if userID == 0 {
+			var err error
+			userID, err = s.svc.userIDByPhone(ctx, uc.UserPhone)
+			if err != nil {
+				appendImportResult(items, s.Key(), uc.Key, uc.CouponName, "failed",
+					"演示用户（"+uc.UserPhone+"）不存在")
+				continue
+			}
 		}
 		couponID, err := s.svc.couponIDByName(ctx, req.CommunityID, uc.CouponName)
 		if err != nil {
@@ -180,11 +225,24 @@ func (s *userAssetsSection) Import(ctx context.Context, pkg *SeedPackage, req *I
 		if !isImportable(req, c.Key) || !seedInCommunityScope(c.CommunityKey, scope) {
 			continue
 		}
-		userID, err := s.svc.userIDByPhone(ctx, c.UserPhone)
-		if err != nil {
-			appendImportResult(items, s.Key(), c.Key, c.ProductName, "failed",
-				"演示用户（"+c.UserPhone+"）不存在")
+		if userMissing {
+			appendImportResult(items, s.Key(), c.Key, c.ProductName, "failed", "未指定导入会员，禁止导入")
 			continue
+		}
+		if userErr != nil {
+			appendImportResult(items, s.Key(), c.Key, c.ProductName, "failed",
+				"指定会员（"+req.TargetUserPhone+"）不存在")
+			continue
+		}
+		userID := targetUserID
+		if userID == 0 {
+			var err error
+			userID, err = s.svc.userIDByPhone(ctx, c.UserPhone)
+			if err != nil {
+				appendImportResult(items, s.Key(), c.Key, c.ProductName, "failed",
+					"演示用户（"+c.UserPhone+"）不存在")
+				continue
+			}
 		}
 		prod, sku, err := s.resolveCartItem(ctx, req.CommunityID, c)
 		if err != nil {
@@ -229,6 +287,28 @@ func (s *userAssetsSection) Import(ctx context.Context, pkg *SeedPackage, req *I
 		created++
 	}
 	return created
+}
+
+// resolveTargetUser 解析本次导入的目标会员（预检与导入共用同一口径）：
+//   - require=true（应用中心路径）必须显式指定 phone，未指定返回 missing=true，
+//     由调用方按「禁止导入」口径逐条标注；指定时按手机号查库，无法解析返回 err；
+//   - require=false（初始化链路）且未指定时返回 (0, false, nil)，调用方回退
+//     种子条目的 user_phone 落演示用户。
+//
+// 参数：ctx 请求上下文；phone 指定导入会员手机号；require 是否强制指定（应用中心路径）
+// 返回值：userID 已解析的会员 ID（回退场景为 0）；missing 是否未指定会员；err 指定手机号无法解析
+func (s *userAssetsSection) resolveTargetUser(ctx context.Context, phone string, require bool) (int64, bool, error) {
+	if phone == "" {
+		if require {
+			return 0, true, nil
+		}
+		return 0, false, nil
+	}
+	id, err := s.svc.userIDByPhone(ctx, phone)
+	if err != nil {
+		return 0, false, err
+	}
+	return id, false, nil
 }
 
 // resolveCartItem 按社区内「商品名 + SKU 规格名」解析商品与 SKU。

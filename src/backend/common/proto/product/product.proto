@@ -192,6 +192,8 @@ message DataImportPreviewReq {
   string package_key = 2;
   // 勾选明细（条目 key，如 cat-1 / prod-3 / banner-1）；空 = 全选
   repeated string selected_keys = 3;
+  // 指定导入会员手机号（应用中心路径：用户券/购物车落到该会员名下；空 = 未指定）
+  string target_user_phone = 4;
 }
 
 // DataImportItem 预检/执行结果条目
@@ -218,6 +220,7 @@ message DataImportReq {
   repeated string selected_keys = 3; // 空 = 全选
   repeated string excluded_keys = 4; // 预检后手动排除的条目
   bool on_sale = 5;                  // 导入后商品状态：true=上架（默认）false=下架
+  string target_user_phone = 6;      // 指定导入会员手机号（用户券/购物车落到该会员名下）
 }
 
 message DataImportResp {

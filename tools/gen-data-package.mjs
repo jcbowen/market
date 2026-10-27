@@ -6,7 +6,7 @@
 // 引用关系用包内 key（comm-N / cat-N / prod-N / sku-N）或自然键（手机号/商品名）表达。
 // 归属口径：每个社区域条目都带 community_key（Banner 的平台级位用 platform=true），
 // 初始化按社区逐个导入时只落各自归属的条目——社区 1（盘龙金茂悦）为完整演示目录 + 全套营销，
-// 社区 2（阳光花园）只有 6 分类 / 10 商品与专属 Banner；两段同名不同价的商品互不串社区。
+// 社区 2（阳光花园）为 6 分类 / 20 商品与专属 Banner（2026-10-27 起两社区商品名全部唯一）。
 // 原 deploy/init.dev.sql 已由本数据包取代（导入执行链路见 product service 的 dataimport*.go，
 // 初始化入口为 market-admin init → DataImportService.SeedDemoBootstrap）。
 // 使用示例：
@@ -542,7 +542,7 @@ const stock_records = [
 const pkg = {
   key: 'full-demo',
   name: '社区便利店演示包',
-  description: '演示环境整包数据：社区/账号/区划/用户（全局段，仅初始化导入）+ 15 分类 / 56 商品 / 61 SKU（含 FEFO 演示批次，按社区归属：社区1 9类46品、社区2 6类10品）+ Banner + 满减/优惠券/秒杀/满免邮 + 用户券与购物车 + 订单/售后/收银/采购/进销存样本（仅初始化导入）',
+  description: '演示环境整包数据：社区/账号/区划/用户（全局段，仅初始化导入）+ 15 分类 / 66 商品 / 72 SKU（含 FEFO 演示批次；两社区商品名全部唯一，应用中心数据集为全部商品：社区1 9类46品46SKU、社区2 6类20品21SKU，初始化仍按 community_key 归属各自社区）+ Banner + 满减/优惠券/秒杀/满免邮 + 用户券与购物车 + 订单/售后/收银/采购/进销存样本（仅初始化导入）',
   communities,
   regions,
   admins,

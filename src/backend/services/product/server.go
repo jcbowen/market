@@ -1377,27 +1377,31 @@ func (s *server) ListDataPackages(ctx stdctx.Context, req *product.ListDataPacka
 	return s.dataImportService.ListPackages()
 }
 
-// PreviewDataImport 数据导入预检报告
+// PreviewDataImport 数据导入预检报告（应用中心路径：RequireTargetUser 强制指定导入会员）
 func (s *server) PreviewDataImport(ctx stdctx.Context, req *product.DataImportPreviewReq) (*product.DataImportPreviewResp, error) {
 	if req.CommunityId <= 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "缺少目标社区")
 	}
 	return s.dataImportService.Preview(ctx, req.PackageKey, &service.PreviewRequest{
-		CommunityID: req.CommunityId,
-		Selected:    rpcKeySet(req.SelectedKeys),
+		CommunityID:       req.CommunityId,
+		Selected:          rpcKeySet(req.SelectedKeys),
+		TargetUserPhone:   req.TargetUserPhone,
+		RequireTargetUser: true,
 	})
 }
 
-// ImportDataPackage 执行数据导入
+// ImportDataPackage 执行数据导入（应用中心路径：RequireTargetUser 强制指定导入会员）
 func (s *server) ImportDataPackage(ctx stdctx.Context, req *product.DataImportReq) (*product.DataImportResp, error) {
 	if req.CommunityId <= 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "缺少目标社区")
 	}
 	return s.dataImportService.Import(ctx, req.PackageKey, &service.ImportRequest{
-		CommunityID: req.CommunityId,
-		Selected:    rpcKeySet(req.SelectedKeys),
-		Excluded:    rpcKeySet(req.ExcludedKeys),
-		OnSale:      req.OnSale,
+		CommunityID:       req.CommunityId,
+		Selected:          rpcKeySet(req.SelectedKeys),
+		Excluded:          rpcKeySet(req.ExcludedKeys),
+		OnSale:            req.OnSale,
+		TargetUserPhone:   req.TargetUserPhone,
+		RequireTargetUser: true,
 	})
 }
 

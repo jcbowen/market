@@ -59,12 +59,13 @@ export function listDataPackages() {
  * 导入预检
  * @param packageKey 包标识
  * @param selectedKeys 勾选条目 key；空数组 = 全选
+ * @param targetUserPhone 指定导入会员手机号（用户券/购物车落到该会员名下；空 = 未指定）
  */
-export function previewDataImport(packageKey: string, selectedKeys: string[]) {
+export function previewDataImport(packageKey: string, selectedKeys: string[], targetUserPhone = '') {
   return request<ApiResult<DataImportPreview>>({
     url: '/api/v1/admin/data-import/preview',
     method: 'POST',
-    data: { package_key: packageKey, selected_keys: selectedKeys },
+    data: { package_key: packageKey, selected_keys: selectedKeys, target_user_phone: targetUserPhone },
   })
 }
 
@@ -80,6 +81,7 @@ export function importDataPackage(
   selectedKeys: string[],
   excludedKeys: string[],
   onSale: boolean,
+  targetUserPhone = '',
 ) {
   return request<ApiResult<DataImportResult>>({
     url: '/api/v1/admin/data-import/import',
@@ -89,6 +91,7 @@ export function importDataPackage(
       selected_keys: selectedKeys,
       excluded_keys: excludedKeys,
       on_sale: onSale,
+      target_user_phone: targetUserPhone,
     },
   })
 }

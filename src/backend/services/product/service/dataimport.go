@@ -29,8 +29,8 @@ import (
 // community 段按社区导入，其中 InitOnly=true 的段（二期：订单/进销存等演示样本）
 // 也仅随初始化灌入，应用中心同样不展示。
 // 社区域条目逐条带 community_key 标注归属演示社区（见 communityScopeKey/seedInCommunityScope）：
-// 演示包是两个社区的样本合集（社区1 完整目录+全套营销，社区2 精简目录），
-// 初始化逐社区导入时各取自身归属，避免把两个社区同名不同价的商品灌进同一社区。
+// 初始化逐社区导入时各取自身归属；应用中心数据集为全部条目（SectionScopeAll，
+// 两社区商品名已全部唯一，混灌不会产生按名解析歧义）。
 
 //go:embed seeddata/full-demo.json
 var seedPackageFullDemo []byte
@@ -41,6 +41,9 @@ const (
 	SectionScopeGlobal = "global"
 	// SectionScopeCommunity 社区域数据：按社区导入
 	SectionScopeCommunity = "community"
+	// SectionScopeAll 应用中心数据集口径：包内全部社区域条目都参与预检/导入
+	//（两社区商品名已全部唯一，混灌一个社区不会产生按名解析歧义；见 communityScopeKey）
+	SectionScopeAll = "all"
 )
 
 // SeedPackage 数据包定义（条目化注册表）
@@ -417,17 +420,26 @@ type PreviewRequest struct {
 	CommunityID int64
 	// Selected 勾选明细（条目 key → 是否勾选）；nil 表示全选
 	Selected map[string]bool
+	// TargetUserPhone 指定导入会员手机号（用户券/购物车落到该会员名下；空 = 未指定）
+	TargetUserPhone string
+	// RequireTargetUser 应用中心路径置 true：未指定会员时用户侧数据段禁止导入；
+	// 初始化链路保持 false，仍按种子条目的 user_phone 落演示用户
+	RequireTargetUser bool
 }
 
 // ImportRequest 执行导入入参
 type ImportRequest struct {
 	CommunityID int64
 	// CommunityKey 目标社区在包内的 key（初始化流程逐社区导入时显式带入）；
-	// 应用中心路径为空，按主演示社区口径过滤，见 communityScopeKey
+	// 应用中心路径为空，数据集为全部社区域条目（SectionScopeAll），见 communityScopeKey
 	CommunityKey string
 	Selected     map[string]bool // nil = 全选
 	Excluded     map[string]bool // 预检后手动排除的条目
 	OnSale       bool            // 导入后商品状态
+	// TargetUserPhone 指定导入会员手机号（用户券/购物车落到该会员名下；空 = 未指定）
+	TargetUserPhone string
+	// RequireTargetUser 应用中心路径置 true：未指定会员时用户侧数据段禁止导入
+	RequireTargetUser bool
 	// Refs 跨条目 key → 真实 ID 映射：catalog 导入时写入，下游条目（营销/秒杀）读取
 	Refs *SectionRefs
 }
@@ -769,26 +781,28 @@ func datetimeOffsetString(minutes int) string {
 
 // communityScopeKey 本次导入的归属社区 key：
 //   - 初始化流程（SeedDemoBootstrap）逐社区导入，带入 req.CommunityKey；
-//   - 应用中心单社区导入不指定包内社区，取主演示社区（communities 首项）作为数据集口径——
-//     两个演示社区的目录/营销是各自独立且同名不同价的样本，混灌一个社区会互相冲突。
+//   - 应用中心单社区导入不指定包内社区：2026-10-27 起两社区商品名已全部唯一，
+//     数据集口径放宽为 SectionScopeAll（包内全部社区域条目都参与）；
+//     原「主演示社区（communities 首项）」口径废止——同名不同价样本已全部改名消除冲突。
 //
 // 参数：pkg 数据包；reqCommunityKey 请求显式指定的归属（可为空）
-// 返回值：本次生效的归属社区 key
+// 返回值：本次生效的归属社区 key（SectionScopeAll=全部）
 func communityScopeKey(pkg *SeedPackage, reqCommunityKey string) string {
 	if reqCommunityKey != "" {
 		return reqCommunityKey
 	}
-	if len(pkg.Communities) > 0 {
-		return pkg.Communities[0].Key
-	}
-	return ""
+	return SectionScopeAll
 }
 
-// seedInCommunityScope 条目的社区归属判定：空 community_key 视为通用条目（任何社区可导，
-// 如平台级 Banner 与跨社区共用文案）；否则必须落在本次导入的归属社区
+// seedInCommunityScope 条目的社区归属判定：scopeKey=SectionScopeAll 时全部放行
+// （应用中心数据集口径）；否则空 community_key 视为通用条目（任何社区可导，
+// 如平台级 Banner 与跨社区共用文案），其余必须落在本次导入的归属社区
 // 参数：itemCommunityKey 条目标注的归属；scopeKey 本次导入归属（见 communityScopeKey）
 // 返回值：是否应参与本次预检/导入
 func seedInCommunityScope(itemCommunityKey, scopeKey string) bool {
+	if scopeKey == SectionScopeAll {
+		return true
+	}
 	return itemCommunityKey == "" || itemCommunityKey == scopeKey
 }
 

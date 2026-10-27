@@ -1,7 +1,7 @@
 {
  "key": "full-demo",
  "name": "社区便利店演示包",
- "description": "演示环境整包数据：社区/账号/区划/用户（全局段，仅初始化导入）+ 15 分类 / 56 商品 / 61 SKU（含 FEFO 演示批次，按社区归属：社区1 9类46品、社区2 6类10品）+ Banner + 满减/优惠券/秒杀/满免邮 + 用户券与购物车 + 订单/售后/收银/采购/进销存样本（仅初始化导入）",
+ "description": "演示环境整包数据：社区/账号/区划/用户（全局段，仅初始化导入）+ 15 分类 / 66 商品 / 72 SKU（含 FEFO 演示批次；两社区商品名全部唯一，应用中心数据集为全部商品：社区1 9类46品46SKU、社区2 6类20品21SKU，初始化仍按 community_key 归属各自社区）+ Banner + 满减/优惠券/秒杀/满免邮 + 用户券与购物车 + 订单/售后/收银/采购/进销存样本（仅初始化导入）",
  "communities": [
   {
    "key": "comm-1",
@@ -443,35 +443,35 @@
    "community_key": "comm-2",
    "name": "休闲零食",
    "sort": 20,
-   "icon": "/uploads/seed/products/chips.png"
+   "icon": "/uploads/seed/products/crispy-chips.png"
   },
   {
    "key": "cat-12",
    "community_key": "comm-2",
    "name": "酒水饮料",
    "sort": 30,
-   "icon": "/uploads/seed/products/water.png"
+   "icon": "/uploads/seed/products/spring-water.png"
   },
   {
    "key": "cat-13",
    "community_key": "comm-2",
    "name": "方便速食",
    "sort": 40,
-   "icon": "/uploads/seed/products/noodle-cup.png"
+   "icon": "/uploads/seed/products/red-beef-noodle.png"
   },
   {
    "key": "cat-14",
    "community_key": "comm-2",
    "name": "粮油调味",
    "sort": 50,
-   "icon": "/uploads/seed/products/rice-bag.png"
+   "icon": "/uploads/seed/products/suifeng-rice.png"
   },
   {
    "key": "cat-15",
    "community_key": "comm-2",
    "name": "日用百货",
    "sort": 60,
-   "icon": "/uploads/seed/products/tissue-pack.png"
+   "icon": "/uploads/seed/products/cotton-tissue.png"
   }
  ],
  "products": [
@@ -1442,15 +1442,15 @@
    "key": "prod-48",
    "category_key": "cat-3",
    "community_key": "comm-2",
-   "name": "怡香源 纯牛奶",
-   "description": "3.2g 优质乳蛋白，250ml×12 整箱装",
+   "name": "晨曦牧场 高钙纯牛奶",
+   "description": "3.4g 优质乳蛋白强化钙配方，250ml×12 整箱装",
    "unit": "箱",
    "is_multi_spec": false,
    "sort": 90,
    "virtual_sales": 60,
    "status": 1,
    "images": [
-    "/uploads/seed/products/milk-carton.png"
+    "/uploads/seed/products/dawn-milk.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1461,15 +1461,15 @@
    "key": "prod-49",
    "category_key": "cat-3",
    "community_key": "comm-2",
-   "name": "慕希 原味浓稠酸奶",
-   "description": "浓稠口感原味发酵乳，205g×12 瓶装",
+   "name": "酪物志 低温原味酸奶",
+   "description": "低温慢发酵浓稠酸奶，205g×12 瓶装",
    "unit": "箱",
    "is_multi_spec": false,
    "sort": 80,
    "virtual_sales": 48,
    "status": 1,
    "images": [
-    "/uploads/seed/products/yogurt-bottle.png"
+    "/uploads/seed/products/lozhi-yogurt.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1480,15 +1480,15 @@
    "key": "prod-50",
    "category_key": "cat-11",
    "community_key": "comm-2",
-   "name": "乐游 原味薯片",
-   "description": "厚切马铃薯片，咸香酥脆，70g 便携装",
+   "name": "咔吱趣 原切马铃薯片",
+   "description": "整颗马铃薯原切厚切，咸香酥脆，70g 便携装",
    "unit": "袋",
    "is_multi_spec": false,
    "sort": 100,
    "virtual_sales": 88,
    "status": 1,
    "images": [
-    "/uploads/seed/products/chips.png"
+    "/uploads/seed/products/crispy-chips.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1499,15 +1499,15 @@
    "key": "prod-51",
    "category_key": "cat-11",
    "community_key": "comm-2",
-   "name": "麦香源 巧克力夹心饼干",
-   "description": "酥脆饼干夹可可奶油心，116g 小袋装",
+   "name": "可可岛 夹心曲奇",
+   "description": "曲奇饼干夹比利时可可心，116g 小袋装",
    "unit": "袋",
    "is_multi_spec": false,
    "sort": 90,
    "virtual_sales": 42,
    "status": 1,
    "images": [
-    "/uploads/seed/products/cookie.png"
+    "/uploads/seed/products/cocoa-cookie.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1518,15 +1518,15 @@
    "key": "prod-52",
    "category_key": "cat-12",
    "community_key": "comm-2",
-   "name": "碧源 饮用天然水",
-   "description": "弱碱性天然水，550ml 随身装",
+   "name": "山涧泉 饮用天然泉水",
+   "description": "山涧岩泉水源，清冽微甘，550ml 随身装",
    "unit": "瓶",
    "is_multi_spec": false,
    "sort": 100,
    "virtual_sales": 150,
    "status": 1,
    "images": [
-    "/uploads/seed/products/water.png"
+    "/uploads/seed/products/spring-water.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1537,15 +1537,15 @@
    "key": "prod-53",
    "category_key": "cat-12",
    "community_key": "comm-2",
-   "name": "气泡山 柠檬味汽水",
-   "description": "清爽柠檬口味汽水，500ml 大瓶装",
+   "name": "汽泡星球 青柠苏打汽水",
+   "description": "青柠风味无糖苏打汽水，500ml 大瓶装",
    "unit": "瓶",
    "is_multi_spec": false,
    "sort": 90,
    "virtual_sales": 66,
    "status": 1,
    "images": [
-    "/uploads/seed/products/sprite.png"
+    "/uploads/seed/products/lime-soda.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1556,15 +1556,15 @@
    "key": "prod-54",
    "category_key": "cat-13",
    "community_key": "comm-2",
-   "name": "面匠 红烧牛肉面",
-   "description": "经典红烧汤底，桶装免洗碗",
+   "name": "味霸 红汤牛肉面",
+   "description": "红汤浓醇牛肉风味，桶装免洗碗",
    "unit": "桶",
    "is_multi_spec": false,
    "sort": 100,
    "virtual_sales": 110,
    "status": 1,
    "images": [
-    "/uploads/seed/products/noodle-cup.png"
+    "/uploads/seed/products/red-beef-noodle.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1575,15 +1575,15 @@
    "key": "prod-55",
    "category_key": "cat-14",
    "community_key": "comm-2",
-   "name": "金稻 东北长粒香米",
-   "description": "当季新米，颗粒饱满，5kg 家庭装",
+   "name": "穗丰 长粒香大米",
+   "description": "当季新米颗粒饱满，5kg 家庭装",
    "unit": "袋",
    "is_multi_spec": false,
    "sort": 100,
    "virtual_sales": 36,
    "status": 1,
    "images": [
-    "/uploads/seed/products/rice-bag.png"
+    "/uploads/seed/products/suifeng-rice.png"
    ],
    "spec": null,
    "sku_keys": [
@@ -1594,19 +1594,223 @@
    "key": "prod-56",
    "category_key": "cat-15",
    "community_key": "comm-2",
-   "name": "维纯 抽取式面巾纸",
-   "description": "3 层 100 抽原生木浆，6 包装",
+   "name": "棉柔派 加厚抽取面巾纸",
+   "description": "4 层加厚原生木浆柔肤亲肤，6 包装",
    "unit": "提",
    "is_multi_spec": false,
    "sort": 100,
    "virtual_sales": 54,
    "status": 1,
    "images": [
-    "/uploads/seed/products/tissue-pack.png"
+    "/uploads/seed/products/cotton-tissue.png"
    ],
    "spec": null,
    "sku_keys": [
     "sku-61"
+   ]
+  },
+  {
+   "key": "prod-57",
+   "category_key": "cat-11",
+   "community_key": "comm-2",
+   "name": "脆波波 香辣锅巴",
+   "description": "糯米锅巴又脆又香，麻辣入味，80g 袋装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 95,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/koba.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-62"
+   ]
+  },
+  {
+   "key": "prod-58",
+   "category_key": "cat-11",
+   "community_key": "comm-2",
+   "name": "果真有料 芒果干",
+   "description": "大块果肉厚切晾晒，酸甜软糯，100g 袋装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 72,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/mango-dried.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-63"
+   ]
+  },
+  {
+   "key": "prod-59",
+   "category_key": "cat-12",
+   "community_key": "comm-2",
+   "name": "云雾岭 茉莉绿茶",
+   "description": "高山绿茶窨制茉莉花香，500ml 瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 130,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/jasmine-tea.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-64"
+   ]
+  },
+  {
+   "key": "prod-60",
+   "category_key": "cat-12",
+   "community_key": "comm-2",
+   "name": "橙意满满 鲜榨橙汁",
+   "description": " NFC 鲜榨橙汁不加糖，300ml 短保鲜瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 58,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/orange-juice.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-65"
+   ]
+  },
+  {
+   "key": "prod-61",
+   "category_key": "cat-13",
+   "community_key": "comm-2",
+   "name": "碗约 柳州螺蛳粉",
+   "description": "酸辣鲜爽烫地道柳州风味，335g 水煮型袋装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 140,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/luosifen.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-66"
+   ]
+  },
+  {
+   "key": "prod-62",
+   "category_key": "cat-13",
+   "community_key": "comm-2",
+   "name": "热乎 自热小火锅",
+   "description": "荤素搭配自热锅，15 分钟开吃，380g 盒装",
+   "unit": "盒",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 66,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/selfheat-hotpot.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-67"
+   ]
+  },
+  {
+   "key": "prod-63",
+   "category_key": "cat-14",
+   "community_key": "comm-2",
+   "name": "金穗坊 压榨花生油",
+   "description": "物理压榨浓香花生油，家用炒菜更香",
+   "unit": "桶",
+   "is_multi_spec": true,
+   "sort": 90,
+   "virtual_sales": 42,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/peanut-oil.png",
+    "/uploads/seed/products/peanut-oil-alt.png"
+   ],
+   "spec": {
+    "name": "规格",
+    "values": [
+     {
+      "key": "sv-11",
+      "name": "4L"
+     },
+     {
+      "key": "sv-12",
+      "name": "2.5L"
+     }
+    ]
+   },
+   "sku_keys": [
+    "sku-68",
+    "sku-69"
+   ]
+  },
+  {
+   "key": "prod-64",
+   "category_key": "cat-14",
+   "community_key": "comm-2",
+   "name": "酱芯 黄豆豆瓣酱",
+   "description": "东北非转基因黄豆酿造，酱香浓郁，500g 瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 48,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/douban-jiang.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-70"
+   ]
+  },
+  {
+   "key": "prod-65",
+   "category_key": "cat-15",
+   "community_key": "comm-2",
+   "name": "沐野 氨基酸洗发水",
+   "description": "温和氨基酸配方控油蓬松，500ml 瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 65,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/shampoo.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-71"
+   ]
+  },
+  {
+   "key": "prod-66",
+   "category_key": "cat-15",
+   "community_key": "comm-2",
+   "name": "洁屿 除菌洗手液",
+   "description": "植萃除菌温和不干手，450ml 泵瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 82,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/hand-soap.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-72"
    ]
   }
  ],
@@ -2986,7 +3190,7 @@
    "barcode": "6901000000530",
    "stock": 24,
    "safety_stock": 6,
-   "image": "/uploads/seed/products/milk-carton.png",
+   "image": "/uploads/seed/products/dawn-milk.png",
    "status": 1,
    "batches": [
     {
@@ -3011,7 +3215,7 @@
    "barcode": "6901000000547",
    "stock": 18,
    "safety_stock": 5,
-   "image": "/uploads/seed/products/yogurt-bottle.png",
+   "image": "/uploads/seed/products/lozhi-yogurt.png",
    "status": 1,
    "batches": [
     {
@@ -3036,7 +3240,7 @@
    "barcode": "6901000000554",
    "stock": 60,
    "safety_stock": 15,
-   "image": "/uploads/seed/products/chips.png",
+   "image": "/uploads/seed/products/crispy-chips.png",
    "status": 1,
    "batches": [
     {
@@ -3061,7 +3265,7 @@
    "barcode": "6901000000561",
    "stock": 40,
    "safety_stock": 10,
-   "image": "/uploads/seed/products/cookie.png",
+   "image": "/uploads/seed/products/cocoa-cookie.png",
    "status": 1,
    "batches": [
     {
@@ -3086,7 +3290,7 @@
    "barcode": "6901000000578",
    "stock": 96,
    "safety_stock": 24,
-   "image": "/uploads/seed/products/water.png",
+   "image": "/uploads/seed/products/spring-water.png",
    "status": 1,
    "batches": [
     {
@@ -3111,7 +3315,7 @@
    "barcode": "6901000000585",
    "stock": 48,
    "safety_stock": 12,
-   "image": "/uploads/seed/products/sprite.png",
+   "image": "/uploads/seed/products/lime-soda.png",
    "status": 1,
    "batches": [
     {
@@ -3136,7 +3340,7 @@
    "barcode": "6901000000592",
    "stock": 45,
    "safety_stock": 12,
-   "image": "/uploads/seed/products/noodle-cup.png",
+   "image": "/uploads/seed/products/red-beef-noodle.png",
    "status": 1,
    "batches": [
     {
@@ -3161,7 +3365,7 @@
    "barcode": "6901000000608",
    "stock": 18,
    "safety_stock": 5,
-   "image": "/uploads/seed/products/rice-bag.png",
+   "image": "/uploads/seed/products/suifeng-rice.png",
    "status": 1,
    "batches": [
     {
@@ -3186,7 +3390,7 @@
    "barcode": "6901000000615",
    "stock": 30,
    "safety_stock": 8,
-   "image": "/uploads/seed/products/tissue-pack.png",
+   "image": "/uploads/seed/products/cotton-tissue.png",
    "status": 1,
    "batches": [
     {
@@ -3195,6 +3399,297 @@
      "expire_in": null,
      "quantity": 30,
      "unit_cost": 9.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-62",
+   "product_key": "prod-57",
+   "code": "SNACK-C2-KOBA-80",
+   "spec_name": "80g",
+   "spec_value_key": "",
+   "price": 6.5,
+   "original_price": 7.9,
+   "cost_price": 3.6,
+   "barcode": "6901000000622",
+   "stock": 70,
+   "safety_stock": 15,
+   "image": "/uploads/seed/products/koba.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-C2-KOBA-80-A",
+     "production_ago": 30,
+     "expire_in": 234,
+     "quantity": 42,
+     "unit_cost": 3.6,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-SNACK-C2-KOBA-80-B",
+     "production_ago": 18,
+     "expire_in": 240,
+     "quantity": 28,
+     "unit_cost": 3.6,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-63",
+   "product_key": "prod-58",
+   "code": "SNACK-C2-MANGO-100",
+   "spec_name": "100g",
+   "spec_value_key": "",
+   "price": 9.9,
+   "original_price": 12.9,
+   "cost_price": 6.8,
+   "barcode": "6901000000639",
+   "stock": 45,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/mango-dried.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-C2-MANGO-100-A",
+     "production_ago": 25,
+     "expire_in": 300,
+     "quantity": 45,
+     "unit_cost": 6.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-64",
+   "product_key": "prod-59",
+   "code": "DRINK-C2-GREEN-TEA-500",
+   "spec_name": "500ml",
+   "spec_value_key": "",
+   "price": 3.5,
+   "original_price": 4,
+   "cost_price": 2.1,
+   "barcode": "6901000000646",
+   "stock": 90,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/jasmine-tea.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-C2-GREEN-TEA-500-A",
+     "production_ago": 22,
+     "expire_in": 300,
+     "quantity": 90,
+     "unit_cost": 2.1,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-65",
+   "product_key": "prod-60",
+   "code": "DRINK-C2-ORANGE-300",
+   "spec_name": "300ml",
+   "spec_value_key": "",
+   "price": 6.9,
+   "original_price": 8.5,
+   "cost_price": 4.5,
+   "barcode": "6901000000653",
+   "stock": 36,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/orange-juice.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-C2-ORANGE-300-A",
+     "production_ago": 10,
+     "expire_in": 90,
+     "quantity": 36,
+     "unit_cost": 4.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-66",
+   "product_key": "prod-61",
+   "code": "FAST-C2-LUOSI-335",
+   "spec_name": "335g",
+   "spec_value_key": "",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.4,
+   "barcode": "6901000000660",
+   "stock": 50,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/luosifen.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-C2-LUOSI-335-A",
+     "production_ago": 16,
+     "expire_in": 240,
+     "quantity": 50,
+     "unit_cost": 8.4,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-67",
+   "product_key": "prod-62",
+   "code": "FAST-C2-HOTPOT-380",
+   "spec_name": "380g",
+   "spec_value_key": "",
+   "price": 26.9,
+   "original_price": 32.9,
+   "cost_price": 17.8,
+   "barcode": "6901000000677",
+   "stock": 26,
+   "safety_stock": 6,
+   "image": "/uploads/seed/products/selfheat-hotpot.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-C2-HOTPOT-380-A",
+     "production_ago": 14,
+     "expire_in": 270,
+     "quantity": 26,
+     "unit_cost": 17.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-68",
+   "product_key": "prod-63",
+   "code": "GRAIN-C2-PEANUT-OIL-4L",
+   "spec_name": "4L",
+   "spec_value_key": "sv-11",
+   "price": 109.9,
+   "original_price": 129,
+   "cost_price": 86.5,
+   "barcode": "6901000000684",
+   "stock": 20,
+   "safety_stock": 5,
+   "image": "/uploads/seed/products/peanut-oil.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-C2-PEANUT-OIL-4L-A",
+     "production_ago": 42,
+     "expire_in": 534,
+     "quantity": 12,
+     "unit_cost": 86.5,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-GRAIN-C2-PEANUT-OIL-4L-B",
+     "production_ago": 30,
+     "expire_in": 540,
+     "quantity": 8,
+     "unit_cost": 86.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-69",
+   "product_key": "prod-63",
+   "code": "GRAIN-C2-PEANUT-OIL-2.5L",
+   "spec_name": "2.5L",
+   "spec_value_key": "sv-12",
+   "price": 69.9,
+   "original_price": 82,
+   "cost_price": 55.2,
+   "barcode": "6901000000691",
+   "stock": 14,
+   "safety_stock": 4,
+   "image": "/uploads/seed/products/peanut-oil.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-C2-PEANUT-OIL-2.5L-A",
+     "production_ago": 30,
+     "expire_in": 540,
+     "quantity": 14,
+     "unit_cost": 55.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-70",
+   "product_key": "prod-64",
+   "code": "GRAIN-C2-DOUBAN-500",
+   "spec_name": "500g",
+   "spec_value_key": "",
+   "price": 8.9,
+   "original_price": 10.9,
+   "cost_price": 5.6,
+   "barcode": "6901000000707",
+   "stock": 40,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/douban-jiang.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-C2-DOUBAN-500-A",
+     "production_ago": 35,
+     "expire_in": 540,
+     "quantity": 40,
+     "unit_cost": 5.6,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-71",
+   "product_key": "prod-65",
+   "code": "DAILY-C2-SHAMPOO-500",
+   "spec_name": "500ml",
+   "spec_value_key": "",
+   "price": 32.9,
+   "original_price": 39.9,
+   "cost_price": 21.5,
+   "barcode": "6901000000714",
+   "stock": 22,
+   "safety_stock": 6,
+   "image": "/uploads/seed/products/shampoo.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-C2-SHAMPOO-500-A",
+     "production_ago": 40,
+     "expire_in": 1080,
+     "quantity": 22,
+     "unit_cost": 21.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-72",
+   "product_key": "prod-66",
+   "code": "DAILY-C2-WASH-450",
+   "spec_name": "450ml",
+   "spec_value_key": "",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.1,
+   "barcode": "6901000000721",
+   "stock": 30,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/hand-soap.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-C2-WASH-450-A",
+     "production_ago": 28,
+     "expire_in": 1080,
+     "quantity": 30,
+     "unit_cost": 8.1,
      "ref": "INIT-SEED"
     }
    ]
