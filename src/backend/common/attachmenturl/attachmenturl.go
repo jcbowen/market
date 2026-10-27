@@ -95,7 +95,12 @@ func dirCandidates(dir string) []string {
 }
 
 // configRow attachment_config 单行的轻量读取模型（各服务共享同一 market 库）
+// ID 必须显式声明主键：GORM 对无主键模型会把第一个字段推断为主键，
+// First(&row, 1) 会被错误编译成 WHERE storage_type = 1，
+// 而 storage_type 取值恒为 'local'/'oss'，该比较永不相等，
+// 导致所有服务读配置失败、URL 全部降级为站内相对路径（cart 出库相对路径事故根因）
 type configRow struct {
+	ID                   uint   `gorm:"column:id"`
 	StorageType          string `gorm:"column:storage_type"`
 	LocalDir             string `gorm:"column:local_dir"`
 	VisitDomain          string `gorm:"column:visit_domain"`
@@ -108,6 +113,7 @@ type configRow struct {
 func (configRow) TableName() string { return "attachment_config" }
 
 // LoadConfig 直读附件配置（无缓存），读不到/读失败返回错误
+// 显式 WHERE id = 1 而非 First(&row, 1)：不依赖 GORM 主键推断，防止模型字段调整后查询条件漂移
 //
 // 参数:
 //   - ctx: 上下文
@@ -118,7 +124,7 @@ func (configRow) TableName() string { return "attachment_config" }
 //   - error: 查询失败或行不存在时返回错误
 func LoadConfig(ctx context.Context, db *gorm.DB) (*Config, error) {
 	var row configRow
-	if err := db.WithContext(ctx).First(&row, 1).Error; err != nil {
+	if err := db.WithContext(ctx).Where("id = ?", 1).Take(&row).Error; err != nil {
 		return nil, fmt.Errorf("读取附件配置失败: %w", err)
 	}
 	return &Config{

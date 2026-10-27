@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 /**
@@ -215,5 +218,40 @@ func TestRestoreURLSemantics(t *testing.T) {
 	lm.cachedAt = time.Now()
 	if got := lm.RestoreURL(context.Background(), "images/a.jpg"); got != "https://new.example.com/media/images/a.jpg" {
 		t.Errorf("自定义目录拼装不符: %q", got)
+	}
+}
+
+// TestLoadConfigByPrimaryKey 用 sqlite 真库锁定 LoadConfig 按主键 id 查询的行为。
+// 回归背景：configRow 曾缺少 ID 主键字段，GORM 主键推断把首字段 storage_type 当主键，
+// First(&row, 1) 被编译成 WHERE storage_type = 1，
+// 而 storage_type 取值恒为 'local'/'oss'，该比较永不相等，
+// 各服务读配置全部 record not found，出库 URL 降级为站内相对路径（cart 商品图事故根因）
+func TestLoadConfigByPrimaryKey(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("打开 sqlite 失败: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE attachment_config (
+		id INTEGER PRIMARY KEY,
+		storage_type TEXT,
+		local_dir TEXT,
+		visit_domain TEXT,
+		oss_custom_visit_domain TEXT,
+		oss_bucket_name TEXT,
+		oss_endpoint TEXT
+	)`).Error; err != nil {
+		t.Fatalf("建表失败: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO attachment_config (id, storage_type, local_dir, visit_domain)
+		VALUES (1, 'local', 'uploads', 'http://localhost:18080/')`).Error; err != nil {
+		t.Fatalf("插入配置失败: %v", err)
+	}
+
+	cfg, err := LoadConfig(context.Background(), db)
+	if err != nil {
+		t.Fatalf("LoadConfig 应命中 id=1 行: %v", err)
+	}
+	if cfg.StorageType != "local" || cfg.LocalDir != "uploads" || cfg.VisitDomain != "http://localhost:18080/" {
+		t.Errorf("配置读取不符: %+v", cfg)
 	}
 }
