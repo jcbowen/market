@@ -241,6 +241,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/apps/index.vue'),
         meta: { title: '应用管理', group: '应用管理' },
       },
+      // 数据导入（应用中心独立应用页）：初期仅超管
+      {
+        path: 'apps/data-import',
+        name: 'AppDataImport',
+        component: () => import('@/views/apps/data-import.vue'),
+        meta: { title: '数据导入', permission: 'product:create', superOnly: true, group: '应用管理' },
+      },
       // 数据统计
       {
         path: 'statistics',

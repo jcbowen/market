@@ -120,6 +120,9 @@ const (
 	ProductService_VerifyAttachmentItem_FullMethodName          = "/product.ProductService/VerifyAttachmentItem"
 	ProductService_DeleteAttachmentLocal_FullMethodName         = "/product.ProductService/DeleteAttachmentLocal"
 	ProductService_DeleteAttachmentLocalVerified_FullMethodName = "/product.ProductService/DeleteAttachmentLocalVerified"
+	ProductService_ListDataPackages_FullMethodName              = "/product.ProductService/ListDataPackages"
+	ProductService_PreviewDataImport_FullMethodName             = "/product.ProductService/PreviewDataImport"
+	ProductService_ImportDataPackage_FullMethodName             = "/product.ProductService/ImportDataPackage"
 )
 
 // ProductServiceClient is the client API for ProductService service.
@@ -258,6 +261,10 @@ type ProductServiceClient interface {
 	VerifyAttachmentItem(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error)
 	DeleteAttachmentLocal(ctx context.Context, in *AttachmentMigrateItemReq, opts ...grpc.CallOption) (*AttachmentMigrateItemInfo, error)
 	DeleteAttachmentLocalVerified(ctx context.Context, in *common.Empty, opts ...grpc.CallOption) (*AttachmentMigrateDeleteBatchResp, error)
+	// 数据导入（应用中心 · 数据包；实现见 service/dataimport*.go，初期仅超管）
+	ListDataPackages(ctx context.Context, in *ListDataPackagesReq, opts ...grpc.CallOption) (*ListDataPackagesResp, error)
+	PreviewDataImport(ctx context.Context, in *DataImportPreviewReq, opts ...grpc.CallOption) (*DataImportPreviewResp, error)
+	ImportDataPackage(ctx context.Context, in *DataImportReq, opts ...grpc.CallOption) (*DataImportResp, error)
 }
 
 type productServiceClient struct {
@@ -1268,6 +1275,36 @@ func (c *productServiceClient) DeleteAttachmentLocalVerified(ctx context.Context
 	return out, nil
 }
 
+func (c *productServiceClient) ListDataPackages(ctx context.Context, in *ListDataPackagesReq, opts ...grpc.CallOption) (*ListDataPackagesResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDataPackagesResp)
+	err := c.cc.Invoke(ctx, ProductService_ListDataPackages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) PreviewDataImport(ctx context.Context, in *DataImportPreviewReq, opts ...grpc.CallOption) (*DataImportPreviewResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DataImportPreviewResp)
+	err := c.cc.Invoke(ctx, ProductService_PreviewDataImport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) ImportDataPackage(ctx context.Context, in *DataImportReq, opts ...grpc.CallOption) (*DataImportResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DataImportResp)
+	err := c.cc.Invoke(ctx, ProductService_ImportDataPackage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProductServiceServer is the server API for ProductService service.
 // All implementations must embed UnimplementedProductServiceServer
 // for forward compatibility.
@@ -1404,6 +1441,10 @@ type ProductServiceServer interface {
 	VerifyAttachmentItem(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error)
 	DeleteAttachmentLocal(context.Context, *AttachmentMigrateItemReq) (*AttachmentMigrateItemInfo, error)
 	DeleteAttachmentLocalVerified(context.Context, *common.Empty) (*AttachmentMigrateDeleteBatchResp, error)
+	// 数据导入（应用中心 · 数据包；实现见 service/dataimport*.go，初期仅超管）
+	ListDataPackages(context.Context, *ListDataPackagesReq) (*ListDataPackagesResp, error)
+	PreviewDataImport(context.Context, *DataImportPreviewReq) (*DataImportPreviewResp, error)
+	ImportDataPackage(context.Context, *DataImportReq) (*DataImportResp, error)
 	mustEmbedUnimplementedProductServiceServer()
 }
 
@@ -1713,6 +1754,15 @@ func (UnimplementedProductServiceServer) DeleteAttachmentLocal(context.Context, 
 }
 func (UnimplementedProductServiceServer) DeleteAttachmentLocalVerified(context.Context, *common.Empty) (*AttachmentMigrateDeleteBatchResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteAttachmentLocalVerified not implemented")
+}
+func (UnimplementedProductServiceServer) ListDataPackages(context.Context, *ListDataPackagesReq) (*ListDataPackagesResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListDataPackages not implemented")
+}
+func (UnimplementedProductServiceServer) PreviewDataImport(context.Context, *DataImportPreviewReq) (*DataImportPreviewResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewDataImport not implemented")
+}
+func (UnimplementedProductServiceServer) ImportDataPackage(context.Context, *DataImportReq) (*DataImportResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ImportDataPackage not implemented")
 }
 func (UnimplementedProductServiceServer) mustEmbedUnimplementedProductServiceServer() {}
 func (UnimplementedProductServiceServer) testEmbeddedByValue()                        {}
@@ -3535,6 +3585,60 @@ func _ProductService_DeleteAttachmentLocalVerified_Handler(srv interface{}, ctx 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_ListDataPackages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDataPackagesReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ListDataPackages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ListDataPackages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ListDataPackages(ctx, req.(*ListDataPackagesReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_PreviewDataImport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataImportPreviewReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).PreviewDataImport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_PreviewDataImport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).PreviewDataImport(ctx, req.(*DataImportPreviewReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_ImportDataPackage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataImportReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).ImportDataPackage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_ImportDataPackage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).ImportDataPackage(ctx, req.(*DataImportReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ProductService_ServiceDesc is the grpc.ServiceDesc for ProductService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3941,6 +4045,18 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteAttachmentLocalVerified",
 			Handler:    _ProductService_DeleteAttachmentLocalVerified_Handler,
+		},
+		{
+			MethodName: "ListDataPackages",
+			Handler:    _ProductService_ListDataPackages_Handler,
+		},
+		{
+			MethodName: "PreviewDataImport",
+			Handler:    _ProductService_PreviewDataImport_Handler,
+		},
+		{
+			MethodName: "ImportDataPackage",
+			Handler:    _ProductService_ImportDataPackage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -57,7 +57,7 @@ export interface AdminLoginInfo {
   [k: string]: unknown;
 }
 
-/** 管理端默认账号（init.dev.sql 预置） */
+/** 管理端默认账号（演示种子包预置） */
 export const ADMIN_USERNAME = process.env.TEST_ADMIN_USER ?? 'admin';
 export const ADMIN_PASSWORD = process.env.TEST_ADMIN_PASS ?? 'admin123';
 

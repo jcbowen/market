@@ -1,0 +1,4643 @@
+{
+ "key": "full-demo",
+ "name": "社区便利店演示包",
+ "description": "演示环境整包数据：社区/账号/区划/用户（全局段，仅初始化导入）+ 15 分类 / 56 商品 / 61 SKU（含 FEFO 演示批次，按社区归属：社区1 9类46品、社区2 6类10品）+ Banner + 满减/优惠券/秒杀/满免邮 + 用户券与购物车 + 订单/售后/收银/采购/进销存样本（仅初始化导入）",
+ "communities": [
+  {
+   "key": "comm-1",
+   "name": "盘龙金茂悦",
+   "address": "重庆市九龙坡区彩云大道8号",
+   "longitude": 106.492104,
+   "latitude": 29.506279,
+   "contact_phone": "17898616950",
+   "manager_name": "万先生",
+   "manager_phone": "17898616950",
+   "pickup_address": "金茂悦7栋1楼保安处",
+   "delivery_fee": 3,
+   "min_order_amount": 15,
+   "delivery_range_km": 2,
+   "business_hours": "[{\"start\":\"08:00\",\"end\":\"12:00\"},{\"start\":\"14:00\",\"end\":\"22:00\"}]",
+   "province": "重庆市",
+   "city": "重庆市",
+   "district": "九龙坡区",
+   "province_code": "50",
+   "city_code": "",
+   "district_code": "500107",
+   "allow_outside_delivery": false
+  },
+  {
+   "key": "comm-2",
+   "name": "阳光花园",
+   "address": "重庆市南岸区阳光路 8 号",
+   "longitude": 106.5716,
+   "latitude": 29.5218,
+   "contact_phone": "023-88886666",
+   "manager_name": "李管家",
+   "manager_phone": "13900139002",
+   "pickup_address": "花园南门快递柜旁自提点",
+   "delivery_fee": 2,
+   "min_order_amount": 0,
+   "delivery_range_km": 3,
+   "business_hours": "09:00-21:00",
+   "province": "重庆市",
+   "city": "重庆市",
+   "district": "南岸区",
+   "province_code": "50",
+   "city_code": "",
+   "district_code": "500108",
+   "allow_outside_delivery": true
+  }
+ ],
+ "regions": [
+  {
+   "code": "50",
+   "name": "重庆市",
+   "parent_code": "0",
+   "level": 1
+  },
+  {
+   "code": "500101",
+   "name": "万州区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500102",
+   "name": "涪陵区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500103",
+   "name": "渝中区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500104",
+   "name": "大渡口区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500106",
+   "name": "沙坪坝区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500107",
+   "name": "九龙坡区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500108",
+   "name": "南岸区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500109",
+   "name": "北碚区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500110",
+   "name": "綦江区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500111",
+   "name": "大足区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500113",
+   "name": "巴南区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500114",
+   "name": "黔江区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500115",
+   "name": "长寿区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500116",
+   "name": "江津区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500117",
+   "name": "合川区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500118",
+   "name": "永川区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500119",
+   "name": "南川区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500120",
+   "name": "璧山区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500151",
+   "name": "铜梁区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500152",
+   "name": "潼南区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500153",
+   "name": "荣昌区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500154",
+   "name": "开州区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500155",
+   "name": "梁平区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500156",
+   "name": "武隆区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500157",
+   "name": "两江新区",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500229",
+   "name": "城口县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500230",
+   "name": "丰都县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500231",
+   "name": "垫江县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500233",
+   "name": "忠县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500235",
+   "name": "云阳县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500236",
+   "name": "奉节县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500237",
+   "name": "巫山县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500238",
+   "name": "巫溪县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500240",
+   "name": "石柱土家族自治县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500241",
+   "name": "秀山土家族苗族自治县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500242",
+   "name": "酉阳土家族苗族自治县",
+   "parent_code": "50",
+   "level": 3
+  },
+  {
+   "code": "500243",
+   "name": "彭水苗族土家族自治县",
+   "parent_code": "50",
+   "level": 3
+  }
+ ],
+ "admins": [
+  {
+   "key": "admin-1",
+   "username": "admin",
+   "password": "admin123",
+   "real_name": "系统管理员",
+   "phone": "13800138001",
+   "is_super": true,
+   "assignments": []
+  },
+  {
+   "key": "admin-2",
+   "username": "shequ",
+   "password": "admin123",
+   "real_name": "阳光花园管理员",
+   "phone": "13800138003",
+   "is_super": false,
+   "assignments": [
+    {
+     "community_key": "comm-2",
+     "role_code": "community_admin"
+    }
+   ]
+  }
+ ],
+ "users": [
+  {
+   "key": "user-1",
+   "openid": "test_openid_1",
+   "phone": "13800138000",
+   "nickname": "测试用户",
+   "avatar": "https://placehold.co/100x100/orange/white?text=User",
+   "gender": 0,
+   "community_key": "comm-1",
+   "address": {
+    "contact_name": "张三",
+    "contact_phone": "13800138000",
+    "province": "重庆市",
+    "city": "重庆市",
+    "district": "九龙坡区",
+    "province_code": "50",
+    "city_code": "",
+    "district_code": "500107",
+    "detail": "彩云大道 8 号 2 单元 301",
+    "tag": "家",
+    "is_default": true
+   },
+   "memberships": [
+    {
+     "community_key": "comm-1",
+     "source": "order"
+    }
+   ]
+  },
+  {
+   "key": "user-2",
+   "openid": "test_openid_2",
+   "phone": "13900139000",
+   "nickname": "阳光用户",
+   "avatar": "https://placehold.co/100x100/blue/white?text=User2",
+   "gender": 0,
+   "community_key": "comm-2",
+   "address": {
+    "contact_name": "李四",
+    "contact_phone": "13900139000",
+    "province": "重庆市",
+    "city": "重庆市",
+    "district": "南岸区",
+    "province_code": "50",
+    "city_code": "",
+    "district_code": "500108",
+    "detail": "阳光路 8 号 5 栋 1201",
+    "tag": "家",
+    "is_default": true
+   },
+   "memberships": [
+    {
+     "community_key": "comm-2",
+     "source": "address"
+    }
+   ]
+  }
+ ],
+ "site": {
+  "site_name": "社区集市",
+  "footer_html": "<p>© 2026 社区集市 · 演示环境</p>",
+  "seo_description": "社区便利店，线上下单到店自提",
+  "seo_keywords": "社区团购,便利店,零食饮料,日用百货"
+ },
+ "categories": [
+  {
+   "key": "cat-1",
+   "community_key": "comm-1",
+   "name": "休闲零食",
+   "sort": 10,
+   "icon": "/uploads/seed/products/latiao.png"
+  },
+  {
+   "key": "cat-2",
+   "community_key": "comm-1",
+   "name": "酒水饮料",
+   "sort": 20,
+   "icon": "/uploads/seed/products/water.png"
+  },
+  {
+   "key": "cat-4",
+   "community_key": "comm-1",
+   "name": "方便速食",
+   "sort": 30,
+   "icon": "/uploads/seed/products/noodle-cup.png"
+  },
+  {
+   "key": "cat-5",
+   "community_key": "comm-1",
+   "name": "乳品烘焙",
+   "sort": 40,
+   "icon": "/uploads/seed/products/milk-carton.png"
+  },
+  {
+   "key": "cat-6",
+   "community_key": "comm-1",
+   "name": "粮油调味",
+   "sort": 50,
+   "icon": "/uploads/seed/products/rice-bag.png"
+  },
+  {
+   "key": "cat-7",
+   "community_key": "comm-1",
+   "name": "日用百货",
+   "sort": 60,
+   "icon": "/uploads/seed/products/tissue-pack.png"
+  },
+  {
+   "key": "cat-8",
+   "community_key": "comm-1",
+   "name": "冷冻食品",
+   "sort": 70,
+   "icon": "/uploads/seed/products/dumpling-box.png"
+  },
+  {
+   "key": "cat-9",
+   "community_key": "comm-1",
+   "name": "糖果巧克力",
+   "sort": 80,
+   "icon": "/uploads/seed/products/chocolate.png"
+  },
+  {
+   "key": "cat-10",
+   "community_key": "comm-1",
+   "name": "冲调饮品",
+   "sort": 90,
+   "icon": "/uploads/seed/products/coffee-box.png"
+  },
+  {
+   "key": "cat-3",
+   "community_key": "comm-2",
+   "name": "乳品蛋品",
+   "sort": 10,
+   "icon": "/uploads/seed/products/egg-carton.png"
+  },
+  {
+   "key": "cat-11",
+   "community_key": "comm-2",
+   "name": "休闲零食",
+   "sort": 20,
+   "icon": "/uploads/seed/products/chips.png"
+  },
+  {
+   "key": "cat-12",
+   "community_key": "comm-2",
+   "name": "酒水饮料",
+   "sort": 30,
+   "icon": "/uploads/seed/products/water.png"
+  },
+  {
+   "key": "cat-13",
+   "community_key": "comm-2",
+   "name": "方便速食",
+   "sort": 40,
+   "icon": "/uploads/seed/products/noodle-cup.png"
+  },
+  {
+   "key": "cat-14",
+   "community_key": "comm-2",
+   "name": "粮油调味",
+   "sort": 50,
+   "icon": "/uploads/seed/products/rice-bag.png"
+  },
+  {
+   "key": "cat-15",
+   "community_key": "comm-2",
+   "name": "日用百货",
+   "sort": 60,
+   "icon": "/uploads/seed/products/tissue-pack.png"
+  }
+ ],
+ "products": [
+  {
+   "key": "prod-1",
+   "category_key": "cat-1",
+   "community_key": "comm-1",
+   "name": "魔小鲜 大面筋辣条",
+   "description": "经典川香辣条，独立小包装，追剧解馋开袋即食",
+   "unit": "袋",
+   "is_multi_spec": true,
+   "sort": 100,
+   "virtual_sales": 320,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/latiao.png",
+    "/uploads/seed/products/latiao-alt.png"
+   ],
+   "spec": {
+    "name": "规格",
+    "values": [
+     {
+      "key": "sv-1",
+      "name": "小包106g"
+     },
+     {
+      "key": "sv-2",
+      "name": "大包226g"
+     }
+    ]
+   },
+   "sku_keys": [
+    "sku-1",
+    "sku-2"
+   ]
+  },
+  {
+   "key": "prod-3",
+   "category_key": "cat-1",
+   "community_key": "comm-1",
+   "name": "乐游 原味薯片",
+   "description": "厚切马铃薯片，咸香酥脆，70g 便携装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 260,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/chips.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-4"
+   ]
+  },
+  {
+   "key": "prod-5",
+   "category_key": "cat-1",
+   "community_key": "comm-1",
+   "name": "麦香源 巧克力夹心饼干",
+   "description": "酥脆饼干夹可可奶油心，116g 家庭小袋装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 140,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/cookie.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-6"
+   ]
+  },
+  {
+   "key": "prod-6",
+   "category_key": "cat-1",
+   "community_key": "comm-1",
+   "name": "果仁季 每日坚果",
+   "description": "七种果仁独立小包，25g×7 混合装，办公室常备",
+   "unit": "盒",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 88,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/nuts.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-7"
+   ]
+  },
+  {
+   "key": "prod-7",
+   "category_key": "cat-1",
+   "community_key": "comm-1",
+   "name": "肉匠 蜜汁猪肉脯",
+   "description": "厚切猪肉脯，蜜汁入味，100g 即食装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 60,
+   "virtual_sales": 66,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/jerky.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-8"
+   ]
+  },
+  {
+   "key": "prod-8",
+   "category_key": "cat-1",
+   "community_key": "comm-1",
+   "name": "雪旺 咸味雪饼",
+   "description": "米饼夹心，松脆咸香，84g 经典怀旧味",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 50,
+   "virtual_sales": 120,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/snowcake.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-9"
+   ]
+  },
+  {
+   "key": "prod-9",
+   "category_key": "cat-1",
+   "community_key": "comm-1",
+   "name": "魔小鲜 香辣魔芋爽",
+   "description": "低负担辣味零食，Q 弹爽口，50g 独立装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 40,
+   "virtual_sales": 210,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/konjac.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-10"
+   ]
+  },
+  {
+   "key": "prod-2",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "碧源 饮用天然水",
+   "description": "弱碱性天然水，550ml 随身装，整箱更划算",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 480,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/water.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-3"
+   ]
+  },
+  {
+   "key": "prod-10",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "气泡山 经典可乐",
+   "description": "冰镇更带劲的碳酸饮料，330ml 易拉罐装",
+   "unit": "罐",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 350,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/cola.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-11"
+   ]
+  },
+  {
+   "key": "prod-11",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "气泡山 柠檬味汽水",
+   "description": "清爽柠檬口味汽水，500ml 大瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 220,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/sprite.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-12"
+   ]
+  },
+  {
+   "key": "prod-12",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "茶语时光 冰红茶",
+   "description": "柠檬风味红茶，1L 分享装，夏日解腻",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 300,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/iced-tea.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-13"
+   ]
+  },
+  {
+   "key": "prod-13",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "茶语时光 无糖乌龙茶",
+   "description": "0 糖 0 卡原叶萃取，500ml 无糖茶饮",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 60,
+   "virtual_sales": 160,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/oolong.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-14"
+   ]
+  },
+  {
+   "key": "prod-14",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "倍力特 维生素功能饮料",
+   "description": "补充能量与维生素，250ml 金罐装",
+   "unit": "罐",
+   "is_multi_spec": false,
+   "sort": 50,
+   "virtual_sales": 190,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/energy-drink.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-15"
+   ]
+  },
+  {
+   "key": "prod-15",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "青岛 经典啤酒",
+   "description": "麦香清爽的拉格啤酒，500ml 罐装，冷藏更佳",
+   "unit": "罐",
+   "is_multi_spec": false,
+   "sort": 40,
+   "virtual_sales": 240,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/beer.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-16"
+   ]
+  },
+  {
+   "key": "prod-16",
+   "category_key": "cat-2",
+   "community_key": "comm-1",
+   "name": "优乐乳 乳酸菌饮品",
+   "description": "发酵乳酸菌风味，250ml×6 连包，饭后一瓶",
+   "unit": "提",
+   "is_multi_spec": false,
+   "sort": 30,
+   "virtual_sales": 130,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/lactic-drink.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-17"
+   ]
+  },
+  {
+   "key": "prod-17",
+   "category_key": "cat-4",
+   "community_key": "comm-1",
+   "name": "面匠 红烧牛肉面",
+   "description": "经典红烧汤底，桶装免洗碗，夜宵加班必备",
+   "unit": "桶",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 420,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/noodle-cup.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-18"
+   ]
+  },
+  {
+   "key": "prod-18",
+   "category_key": "cat-4",
+   "community_key": "comm-1",
+   "name": "面匠 老坛酸菜面",
+   "description": "酸爽开胃的老坛酸菜汤底，桶装 120g",
+   "unit": "桶",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 380,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/noodle-pickle-cup.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-19"
+   ]
+  },
+  {
+   "key": "prod-19",
+   "category_key": "cat-4",
+   "community_key": "comm-1",
+   "name": "汤好鲜 骨汤面",
+   "description": "浓骨汤底非油炸面饼，5 连包家庭囤货款",
+   "unit": "包",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 150,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/noodle-5pack.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-20"
+   ]
+  },
+  {
+   "key": "prod-20",
+   "category_key": "cat-4",
+   "community_key": "comm-1",
+   "name": "自热派 麻辣牛肉自热饭",
+   "description": "不插电自加热，15 分钟吃上热饭，麻辣牛肉口味",
+   "unit": "盒",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 90,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/selfheat-rice.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-21"
+   ]
+  },
+  {
+   "key": "prod-21",
+   "category_key": "cat-4",
+   "community_key": "comm-1",
+   "name": "旺肉多 优级火腿肠",
+   "description": "肉含量高的即食火腿肠，60g×10 支装",
+   "unit": "组",
+   "is_multi_spec": false,
+   "sort": 60,
+   "virtual_sales": 200,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/sausage.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-22"
+   ]
+  },
+  {
+   "key": "prod-22",
+   "category_key": "cat-4",
+   "community_key": "comm-1",
+   "name": "脆爽 涪陵榨菜",
+   "description": "佐粥下饭的经典小菜，70g 独立鲜香装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 50,
+   "virtual_sales": 170,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/pickle.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-23"
+   ]
+  },
+  {
+   "key": "prod-23",
+   "category_key": "cat-4",
+   "community_key": "comm-1",
+   "name": "香林 午餐肉罐头",
+   "description": "厚切肉粒午餐肉，340g 铁罐，泡面搭档",
+   "unit": "罐",
+   "is_multi_spec": false,
+   "sort": 40,
+   "virtual_sales": 75,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/luncheon-jar.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-24"
+   ]
+  },
+  {
+   "key": "prod-24",
+   "category_key": "cat-5",
+   "community_key": "comm-1",
+   "name": "怡香源 纯牛奶",
+   "description": "3.2g 优质乳蛋白，250ml 利乐砖整箱装",
+   "unit": "箱",
+   "is_multi_spec": true,
+   "sort": 100,
+   "virtual_sales": 260,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/milk-carton.png",
+    "/uploads/seed/products/milk-carton-alt.png"
+   ],
+   "spec": {
+    "name": "规格",
+    "values": [
+     {
+      "key": "sv-3",
+      "name": "12盒装"
+     },
+     {
+      "key": "sv-4",
+      "name": "24盒装"
+     }
+    ]
+   },
+   "sku_keys": [
+    "sku-25",
+    "sku-26"
+   ]
+  },
+  {
+   "key": "prod-25",
+   "category_key": "cat-5",
+   "community_key": "comm-1",
+   "name": "牧场精选 高钙牛奶",
+   "description": "强化钙配方，250ml×12 礼盒装，早晚一瓶",
+   "unit": "箱",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 110,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/milk-calcium.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-27"
+   ]
+  },
+  {
+   "key": "prod-26",
+   "category_key": "cat-5",
+   "community_key": "comm-1",
+   "name": "慕希 原味浓稠酸奶",
+   "description": "浓稠口感原味发酵乳，205g×12 瓶装",
+   "unit": "箱",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 145,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/yogurt-bottle.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-28"
+   ]
+  },
+  {
+   "key": "prod-27",
+   "category_key": "cat-5",
+   "community_key": "comm-1",
+   "name": "晨鲜 巴氏鲜牛奶",
+   "description": "低温巴氏杀菌，保留鲜奶本味，950ml 大瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 95,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/fresh-milk.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-29"
+   ]
+  },
+  {
+   "key": "prod-28",
+   "category_key": "cat-5",
+   "community_key": "comm-1",
+   "name": "麦香坊 法式软面包",
+   "description": "独立小包软面包，400g 约 8 枚，早餐随手带",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 60,
+   "virtual_sales": 130,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/soft-bread.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-30"
+   ]
+  },
+  {
+   "key": "prod-29",
+   "category_key": "cat-5",
+   "community_key": "comm-1",
+   "name": "醇熟 切片吐司",
+   "description": "松软吐司切片，400g 一袋，做三明治方便",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 50,
+   "virtual_sales": 60,
+   "status": 0,
+   "images": [
+    "/uploads/seed/products/toast.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-31"
+   ]
+  },
+  {
+   "key": "prod-30",
+   "category_key": "cat-6",
+   "community_key": "comm-1",
+   "name": "金稻 东北长粒香米",
+   "description": "当季新米，颗粒饱满，5kg/10kg 家庭装",
+   "unit": "袋",
+   "is_multi_spec": true,
+   "sort": 100,
+   "virtual_sales": 180,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/rice-bag.png",
+    "/uploads/seed/products/rice-bag-alt.png"
+   ],
+   "spec": {
+    "name": "规格",
+    "values": [
+     {
+      "key": "sv-5",
+      "name": "5kg"
+     },
+     {
+      "key": "sv-6",
+      "name": "10kg"
+     }
+    ]
+   },
+   "sku_keys": [
+    "sku-32",
+    "sku-33"
+   ]
+  },
+  {
+   "key": "prod-31",
+   "category_key": "cat-6",
+   "community_key": "comm-1",
+   "name": "油乐 压榨菜籽油",
+   "description": "物理压榨一级菜籽油，5L 桶装家用",
+   "unit": "桶",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 95,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/oil-jug.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-34"
+   ]
+  },
+  {
+   "key": "prod-32",
+   "category_key": "cat-6",
+   "community_key": "comm-1",
+   "name": "海天下 金标生抽",
+   "description": "零添加头道原香酱油，1.9L 大瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 160,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/soy-sauce.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-35"
+   ]
+  },
+  {
+   "key": "prod-33",
+   "category_key": "cat-6",
+   "community_key": "comm-1",
+   "name": "海天下 五年陈醋",
+   "description": "粮食固态发酵陈醋，500ml 瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 85,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/vinegar.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-36"
+   ]
+  },
+  {
+   "key": "prod-34",
+   "category_key": "cat-6",
+   "community_key": "comm-1",
+   "name": "白盐 精制食用盐",
+   "description": "加碘精制盐，400g 袋装，厨房常备",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 60,
+   "virtual_sales": 240,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/salt.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-37"
+   ]
+  },
+  {
+   "key": "prod-35",
+   "category_key": "cat-7",
+   "community_key": "comm-1",
+   "name": "维纯 抽取式面巾纸",
+   "description": "3 层 100 抽加厚原生木浆，6 包/12 包囤货装",
+   "unit": "提",
+   "is_multi_spec": true,
+   "sort": 100,
+   "virtual_sales": 300,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/tissue-pack.png",
+    "/uploads/seed/products/tissue-pack-alt.png"
+   ],
+   "spec": {
+    "name": "规格",
+    "values": [
+     {
+      "key": "sv-7",
+      "name": "6包装"
+     },
+     {
+      "key": "sv-8",
+      "name": "12包装"
+     }
+    ]
+   },
+   "sku_keys": [
+    "sku-38",
+    "sku-39"
+   ]
+  },
+  {
+   "key": "prod-36",
+   "category_key": "cat-7",
+   "community_key": "comm-1",
+   "name": "清月 深层洁净洗衣液",
+   "description": "低泡易漂洗，3kg 大瓶装，清新花香",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 120,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/laundry-jug.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-40"
+   ]
+  },
+  {
+   "key": "prod-37",
+   "category_key": "cat-7",
+   "community_key": "comm-1",
+   "name": "净立 柠檬洗洁精",
+   "description": "强力去油易冲洗，1.5kg 柠檬香型",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 140,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/dish-soap.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-41"
+   ]
+  },
+  {
+   "key": "prod-38",
+   "category_key": "cat-7",
+   "community_key": "comm-1",
+   "name": "草本 薄荷牙膏",
+   "description": "清新薄荷口味，120g 家庭装",
+   "unit": "支",
+   "is_multi_spec": false,
+   "sort": 70,
+   "virtual_sales": 105,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/toothpaste.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-42"
+   ]
+  },
+  {
+   "key": "prod-39",
+   "category_key": "cat-8",
+   "community_key": "comm-1",
+   "name": "三鲜 猪肉白菜水饺",
+   "description": "皮薄馅大的冷冻水饺，500g/1kg 家庭装",
+   "unit": "袋",
+   "is_multi_spec": true,
+   "sort": 100,
+   "virtual_sales": 190,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/dumpling-box.png",
+    "/uploads/seed/products/dumpling-box-alt.png"
+   ],
+   "spec": {
+    "name": "规格",
+    "values": [
+     {
+      "key": "sv-9",
+      "name": "500g"
+     },
+     {
+      "key": "sv-10",
+      "name": "1kg"
+     }
+    ]
+   },
+   "sku_keys": [
+    "sku-43",
+    "sku-44"
+   ]
+  },
+  {
+   "key": "prod-40",
+   "category_key": "cat-8",
+   "community_key": "comm-1",
+   "name": "芝麻心 黑芝麻汤圆",
+   "description": "糯叽叽的黑芝麻流心汤圆，500g 约 32 颗",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 150,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/tangyuan.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-45"
+   ]
+  },
+  {
+   "key": "prod-41",
+   "category_key": "cat-8",
+   "community_key": "comm-1",
+   "name": "雪绒 巧克力脆皮雪糕",
+   "description": "脆皮裹香草冰淇淋，75g 单支装",
+   "unit": "支",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 260,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/icecream.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-46"
+   ]
+  },
+  {
+   "key": "prod-42",
+   "category_key": "cat-9",
+   "community_key": "comm-1",
+   "name": "丝滑 牛奶巧克力",
+   "description": "入口丝滑的牛奶巧克力，43g 排块装",
+   "unit": "块",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 175,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/chocolate.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-47"
+   ]
+  },
+  {
+   "key": "prod-43",
+   "category_key": "cat-9",
+   "community_key": "comm-1",
+   "name": "能量棒 花生夹心巧克力",
+   "description": "花生牛糖夹心，扛饿补给，51g 单支装",
+   "unit": "支",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 210,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/energy-bar.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-48"
+   ]
+  },
+  {
+   "key": "prod-44",
+   "category_key": "cat-9",
+   "community_key": "comm-1",
+   "name": "清息 无糖口香糖",
+   "description": "薄荷味无糖口香糖，64g 瓶装，随时清新",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 90,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/gum-jar.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-49"
+   ]
+  },
+  {
+   "key": "prod-45",
+   "category_key": "cat-10",
+   "community_key": "comm-1",
+   "name": "雀语 特浓速溶咖啡",
+   "description": "三合一特浓配方，15g×30 条独立装",
+   "unit": "盒",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 130,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/coffee-box.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-50"
+   ]
+  },
+  {
+   "key": "prod-46",
+   "category_key": "cat-10",
+   "community_key": "comm-1",
+   "name": "飘飘 芋圆奶茶",
+   "description": "冷热皆宜的杯装奶茶，80g 加料版",
+   "unit": "杯",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 165,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/milktea-cup.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-51"
+   ]
+  },
+  {
+   "key": "prod-47",
+   "category_key": "cat-10",
+   "community_key": "comm-1",
+   "name": "麦谷 即食燕麦片",
+   "description": "澳洲燕麦，热水一冲即食，400g 罐装",
+   "unit": "罐",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 75,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/oats-jar.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-52"
+   ]
+  },
+  {
+   "key": "prod-4",
+   "category_key": "cat-3",
+   "community_key": "comm-2",
+   "name": "农欢 散养鲜鸡蛋",
+   "description": "社区农户散养，30 枚防震蛋托装",
+   "unit": "箱",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 120,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/egg-carton.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-5"
+   ]
+  },
+  {
+   "key": "prod-48",
+   "category_key": "cat-3",
+   "community_key": "comm-2",
+   "name": "怡香源 纯牛奶",
+   "description": "3.2g 优质乳蛋白，250ml×12 整箱装",
+   "unit": "箱",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 60,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/milk-carton.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-53"
+   ]
+  },
+  {
+   "key": "prod-49",
+   "category_key": "cat-3",
+   "community_key": "comm-2",
+   "name": "慕希 原味浓稠酸奶",
+   "description": "浓稠口感原味发酵乳，205g×12 瓶装",
+   "unit": "箱",
+   "is_multi_spec": false,
+   "sort": 80,
+   "virtual_sales": 48,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/yogurt-bottle.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-54"
+   ]
+  },
+  {
+   "key": "prod-50",
+   "category_key": "cat-11",
+   "community_key": "comm-2",
+   "name": "乐游 原味薯片",
+   "description": "厚切马铃薯片，咸香酥脆，70g 便携装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 88,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/chips.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-55"
+   ]
+  },
+  {
+   "key": "prod-51",
+   "category_key": "cat-11",
+   "community_key": "comm-2",
+   "name": "麦香源 巧克力夹心饼干",
+   "description": "酥脆饼干夹可可奶油心，116g 小袋装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 42,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/cookie.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-56"
+   ]
+  },
+  {
+   "key": "prod-52",
+   "category_key": "cat-12",
+   "community_key": "comm-2",
+   "name": "碧源 饮用天然水",
+   "description": "弱碱性天然水，550ml 随身装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 150,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/water.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-57"
+   ]
+  },
+  {
+   "key": "prod-53",
+   "category_key": "cat-12",
+   "community_key": "comm-2",
+   "name": "气泡山 柠檬味汽水",
+   "description": "清爽柠檬口味汽水，500ml 大瓶装",
+   "unit": "瓶",
+   "is_multi_spec": false,
+   "sort": 90,
+   "virtual_sales": 66,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/sprite.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-58"
+   ]
+  },
+  {
+   "key": "prod-54",
+   "category_key": "cat-13",
+   "community_key": "comm-2",
+   "name": "面匠 红烧牛肉面",
+   "description": "经典红烧汤底，桶装免洗碗",
+   "unit": "桶",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 110,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/noodle-cup.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-59"
+   ]
+  },
+  {
+   "key": "prod-55",
+   "category_key": "cat-14",
+   "community_key": "comm-2",
+   "name": "金稻 东北长粒香米",
+   "description": "当季新米，颗粒饱满，5kg 家庭装",
+   "unit": "袋",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 36,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/rice-bag.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-60"
+   ]
+  },
+  {
+   "key": "prod-56",
+   "category_key": "cat-15",
+   "community_key": "comm-2",
+   "name": "维纯 抽取式面巾纸",
+   "description": "3 层 100 抽原生木浆，6 包装",
+   "unit": "提",
+   "is_multi_spec": false,
+   "sort": 100,
+   "virtual_sales": 54,
+   "status": 1,
+   "images": [
+    "/uploads/seed/products/tissue-pack.png"
+   ],
+   "spec": null,
+   "sku_keys": [
+    "sku-61"
+   ]
+  }
+ ],
+ "skus": [
+  {
+   "key": "sku-1",
+   "product_key": "prod-1",
+   "code": "SNACK-LATIAO-S",
+   "spec_name": "小包106g",
+   "spec_value_key": "sv-1",
+   "price": 3.5,
+   "original_price": 4.5,
+   "cost_price": 2,
+   "barcode": "6901000000011",
+   "stock": 80,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/latiao.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-LATIAO-S-A",
+     "production_ago": 47,
+     "expire_in": 144,
+     "quantity": 48,
+     "unit_cost": 2,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-SNACK-LATIAO-S-B",
+     "production_ago": 35,
+     "expire_in": 150,
+     "quantity": 32,
+     "unit_cost": 2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-2",
+   "product_key": "prod-1",
+   "code": "SNACK-LATIAO-L",
+   "spec_name": "大包226g",
+   "spec_value_key": "sv-2",
+   "price": 6.5,
+   "original_price": 8,
+   "cost_price": 3.8,
+   "barcode": "6901000000028",
+   "stock": 40,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/latiao.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-LATIAO-L-A",
+     "production_ago": 24,
+     "expire_in": 150,
+     "quantity": 40,
+     "unit_cost": 3.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-4",
+   "product_key": "prod-3",
+   "code": "SNACK-CHIPS-70",
+   "spec_name": "70g",
+   "spec_value_key": "",
+   "price": 5.5,
+   "original_price": 6.9,
+   "cost_price": 3,
+   "barcode": "6901000000035",
+   "stock": 90,
+   "safety_stock": 30,
+   "image": "/uploads/seed/products/chips.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-CHIPS-70-A",
+     "production_ago": 25,
+     "expire_in": 215,
+     "quantity": 20,
+     "unit_cost": 3,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-SNACK-CHIPS-70-B",
+     "production_ago": 20,
+     "expire_in": 220,
+     "quantity": 20,
+     "unit_cost": 3,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "IN-SEED-0001",
+     "production_ago": 5,
+     "expire_in": 235,
+     "quantity": 50,
+     "unit_cost": 3,
+     "ref": "IN-SEED-0001"
+    }
+   ]
+  },
+  {
+   "key": "sku-6",
+   "product_key": "prod-5",
+   "code": "SNACK-COOKIE-116",
+   "spec_name": "116g",
+   "spec_value_key": "",
+   "price": 6.9,
+   "original_price": 8.5,
+   "cost_price": 4.1,
+   "barcode": "6901000000042",
+   "stock": 96,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/cookie.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-COOKIE-116-A",
+     "production_ago": 18,
+     "expire_in": 210,
+     "quantity": 96,
+     "unit_cost": 4.1,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-7",
+   "product_key": "prod-6",
+   "code": "SNACK-NUTS-7",
+   "spec_name": "25g×7袋",
+   "spec_value_key": "",
+   "price": 29.9,
+   "original_price": 39.9,
+   "cost_price": 19.5,
+   "barcode": "6901000000059",
+   "stock": 42,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/nuts.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-NUTS-7-A",
+     "production_ago": 25,
+     "expire_in": 180,
+     "quantity": 42,
+     "unit_cost": 19.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-8",
+   "product_key": "prod-7",
+   "code": "SNACK-JERKY-100",
+   "spec_name": "100g",
+   "spec_value_key": "",
+   "price": 19.9,
+   "original_price": 25.9,
+   "cost_price": 12.8,
+   "barcode": "6901000000066",
+   "stock": 36,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/jerky.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-JERKY-100-A",
+     "production_ago": 30,
+     "expire_in": 150,
+     "quantity": 36,
+     "unit_cost": 12.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-9",
+   "product_key": "prod-8",
+   "code": "SNACK-SNOWCAKE-84",
+   "spec_name": "84g",
+   "spec_value_key": "",
+   "price": 7.5,
+   "original_price": 9,
+   "cost_price": 4.5,
+   "barcode": "6901000000073",
+   "stock": 68,
+   "safety_stock": 15,
+   "image": "/uploads/seed/products/snowcake.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-SNOWCAKE-84-A",
+     "production_ago": 22,
+     "expire_in": 240,
+     "quantity": 68,
+     "unit_cost": 4.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-10",
+   "product_key": "prod-9",
+   "code": "SNACK-KONJAC-50",
+   "spec_name": "50g",
+   "spec_value_key": "",
+   "price": 3.2,
+   "original_price": 4,
+   "cost_price": 1.7,
+   "barcode": "6901000000080",
+   "stock": 120,
+   "safety_stock": 25,
+   "image": "/uploads/seed/products/konjac.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-KONJAC-50-A",
+     "production_ago": 15,
+     "expire_in": 270,
+     "quantity": 120,
+     "unit_cost": 1.7,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-3",
+   "product_key": "prod-2",
+   "code": "DRINK-WATER-550",
+   "spec_name": "550ml",
+   "spec_value_key": "",
+   "price": 2,
+   "original_price": 2.8,
+   "cost_price": 1.2,
+   "barcode": "6901000000097",
+   "stock": 200,
+   "safety_stock": 40,
+   "image": "/uploads/seed/products/water.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-WATER-550-A",
+     "production_ago": 52,
+     "expire_in": 714,
+     "quantity": 120,
+     "unit_cost": 1.2,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-DRINK-WATER-550-B",
+     "production_ago": 40,
+     "expire_in": 720,
+     "quantity": 80,
+     "unit_cost": 1.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-11",
+   "product_key": "prod-10",
+   "code": "DRINK-COLA-330",
+   "spec_name": "330ml",
+   "spec_value_key": "",
+   "price": 3,
+   "original_price": 3.5,
+   "cost_price": 1.9,
+   "barcode": "6901000000103",
+   "stock": 144,
+   "safety_stock": 30,
+   "image": "/uploads/seed/products/cola.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-COLA-330-A",
+     "production_ago": 30,
+     "expire_in": 365,
+     "quantity": 144,
+     "unit_cost": 1.9,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-12",
+   "product_key": "prod-11",
+   "code": "DRINK-SPRITE-500",
+   "spec_name": "500ml",
+   "spec_value_key": "",
+   "price": 3.5,
+   "original_price": 4,
+   "cost_price": 2.1,
+   "barcode": "6901000000110",
+   "stock": 96,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/sprite.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-SPRITE-500-A",
+     "production_ago": 26,
+     "expire_in": 300,
+     "quantity": 96,
+     "unit_cost": 2.1,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-13",
+   "product_key": "prod-12",
+   "code": "DRINK-ICETEA-1L",
+   "spec_name": "1L",
+   "spec_value_key": "",
+   "price": 4.5,
+   "original_price": 5.5,
+   "cost_price": 2.6,
+   "barcode": "6901000000127",
+   "stock": 84,
+   "safety_stock": 18,
+   "image": "/uploads/seed/products/iced-tea.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-ICETEA-1L-A",
+     "production_ago": 28,
+     "expire_in": 270,
+     "quantity": 84,
+     "unit_cost": 2.6,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-14",
+   "product_key": "prod-13",
+   "code": "DRINK-OOLONG-500",
+   "spec_name": "500ml",
+   "spec_value_key": "",
+   "price": 5,
+   "original_price": 6,
+   "cost_price": 3,
+   "barcode": "6901000000134",
+   "stock": 72,
+   "safety_stock": 15,
+   "image": "/uploads/seed/products/oolong.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-OOLONG-500-A",
+     "production_ago": 20,
+     "expire_in": 300,
+     "quantity": 72,
+     "unit_cost": 3,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-15",
+   "product_key": "prod-14",
+   "code": "DRINK-ENERGY-250",
+   "spec_name": "250ml",
+   "spec_value_key": "",
+   "price": 6.5,
+   "original_price": 7.5,
+   "cost_price": 4.2,
+   "barcode": "6901000000141",
+   "stock": 60,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/energy-drink.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-ENERGY-250-A",
+     "production_ago": 32,
+     "expire_in": 365,
+     "quantity": 60,
+     "unit_cost": 4.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-16",
+   "product_key": "prod-15",
+   "code": "DRINK-BEER-500",
+   "spec_name": "500ml",
+   "spec_value_key": "",
+   "price": 6,
+   "original_price": 7,
+   "cost_price": 3.8,
+   "barcode": "6901000000158",
+   "stock": 90,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/beer.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-BEER-500-A",
+     "production_ago": 24,
+     "expire_in": 180,
+     "quantity": 90,
+     "unit_cost": 3.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-17",
+   "product_key": "prod-16",
+   "code": "DRINK-LACTIC-6",
+   "spec_name": "250ml×6",
+   "spec_value_key": "",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.6,
+   "barcode": "6901000000165",
+   "stock": 48,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/lactic-drink.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-LACTIC-6-A",
+     "production_ago": 16,
+     "expire_in": 180,
+     "quantity": 48,
+     "unit_cost": 8.6,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-18",
+   "product_key": "prod-17",
+   "code": "FAST-NOODLE-BEEF",
+   "spec_name": "桶装105g",
+   "spec_value_key": "",
+   "price": 5.5,
+   "original_price": 6.5,
+   "cost_price": 3.4,
+   "barcode": "6901000000172",
+   "stock": 120,
+   "safety_stock": 25,
+   "image": "/uploads/seed/products/noodle-cup.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-NOODLE-BEEF-A",
+     "production_ago": 30,
+     "expire_in": 180,
+     "quantity": 120,
+     "unit_cost": 3.4,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-19",
+   "product_key": "prod-18",
+   "code": "FAST-NOODLE-PICKLE",
+   "spec_name": "桶装120g",
+   "spec_value_key": "",
+   "price": 5.5,
+   "original_price": 6.5,
+   "cost_price": 3.5,
+   "barcode": "6901000000189",
+   "stock": 108,
+   "safety_stock": 25,
+   "image": "/uploads/seed/products/noodle-pickle-cup.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-NOODLE-PICKLE-A",
+     "production_ago": 28,
+     "expire_in": 180,
+     "quantity": 108,
+     "unit_cost": 3.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-20",
+   "product_key": "prod-19",
+   "code": "FAST-NOODLE-5PK",
+   "spec_name": "5连包",
+   "spec_value_key": "",
+   "price": 13.9,
+   "original_price": 16.9,
+   "cost_price": 9.2,
+   "barcode": "6901000000196",
+   "stock": 54,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/noodle-5pack.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-NOODLE-5PK-A",
+     "production_ago": 20,
+     "expire_in": 210,
+     "quantity": 54,
+     "unit_cost": 9.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-21",
+   "product_key": "prod-20",
+   "code": "FAST-SELFHEAT-RICE",
+   "spec_name": "260g",
+   "spec_value_key": "",
+   "price": 19.9,
+   "original_price": 24.9,
+   "cost_price": 13.2,
+   "barcode": "6901000000202",
+   "stock": 30,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/selfheat-rice.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-SELFHEAT-RICE-A",
+     "production_ago": 18,
+     "expire_in": 270,
+     "quantity": 30,
+     "unit_cost": 13.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-22",
+   "product_key": "prod-21",
+   "code": "FAST-SAUSAGE-10",
+   "spec_name": "60g×10支",
+   "spec_value_key": "",
+   "price": 15.9,
+   "original_price": 18.9,
+   "cost_price": 10.5,
+   "barcode": "6901000000219",
+   "stock": 66,
+   "safety_stock": 15,
+   "image": "/uploads/seed/products/sausage.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-SAUSAGE-10-A",
+     "production_ago": 22,
+     "expire_in": 180,
+     "quantity": 66,
+     "unit_cost": 10.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-23",
+   "product_key": "prod-22",
+   "code": "FAST-PICKLE-70",
+   "spec_name": "70g",
+   "spec_value_key": "",
+   "price": 3.5,
+   "original_price": 4.5,
+   "cost_price": 2,
+   "barcode": "6901000000226",
+   "stock": 110,
+   "safety_stock": 25,
+   "image": "/uploads/seed/products/pickle.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-PICKLE-70-A",
+     "production_ago": 40,
+     "expire_in": 365,
+     "quantity": 110,
+     "unit_cost": 2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-24",
+   "product_key": "prod-23",
+   "code": "FAST-LUNCHEON-340",
+   "spec_name": "340g",
+   "spec_value_key": "",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.4,
+   "barcode": "6901000000233",
+   "stock": 40,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/luncheon-jar.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-LUNCHEON-340-A",
+     "production_ago": 45,
+     "expire_in": 720,
+     "quantity": 40,
+     "unit_cost": 8.4,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-25",
+   "product_key": "prod-24",
+   "code": "MILK-PURE-12",
+   "spec_name": "250ml×12盒",
+   "spec_value_key": "sv-3",
+   "price": 42.9,
+   "original_price": 52.9,
+   "cost_price": 33.5,
+   "barcode": "6901000000240",
+   "stock": 50,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/milk-carton.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-MILK-PURE-12-A",
+     "production_ago": 42,
+     "expire_in": 174,
+     "quantity": 30,
+     "unit_cost": 33.5,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-MILK-PURE-12-B",
+     "production_ago": 30,
+     "expire_in": 180,
+     "quantity": 20,
+     "unit_cost": 33.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-26",
+   "product_key": "prod-24",
+   "code": "MILK-PURE-24",
+   "spec_name": "250ml×24盒",
+   "spec_value_key": "sv-4",
+   "price": 82.9,
+   "original_price": 99.9,
+   "cost_price": 65.8,
+   "barcode": "6901000000257",
+   "stock": 24,
+   "safety_stock": 6,
+   "image": "/uploads/seed/products/milk-carton.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-MILK-PURE-24-A",
+     "production_ago": 30,
+     "expire_in": 180,
+     "quantity": 24,
+     "unit_cost": 65.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-27",
+   "product_key": "prod-25",
+   "code": "MILK-CALCIUM-12",
+   "spec_name": "250ml×12盒",
+   "spec_value_key": "",
+   "price": 59.9,
+   "original_price": 69.9,
+   "cost_price": 46.5,
+   "barcode": "6901000000264",
+   "stock": 28,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/milk-calcium.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-MILK-CALCIUM-12-A",
+     "production_ago": 26,
+     "expire_in": 180,
+     "quantity": 28,
+     "unit_cost": 46.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-28",
+   "product_key": "prod-26",
+   "code": "MILK-YOGURT-12",
+   "spec_name": "205g×12",
+   "spec_value_key": "",
+   "price": 49.9,
+   "original_price": 59.9,
+   "cost_price": 37.2,
+   "barcode": "6901000000271",
+   "stock": 32,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/yogurt-bottle.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-MILK-YOGURT-12-A",
+     "production_ago": 20,
+     "expire_in": 90,
+     "quantity": 32,
+     "unit_cost": 37.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-29",
+   "product_key": "prod-27",
+   "code": "MILK-FRESH-950",
+   "spec_name": "950ml",
+   "spec_value_key": "",
+   "price": 15.9,
+   "original_price": 18.9,
+   "cost_price": 11.2,
+   "barcode": "6901000000288",
+   "stock": 8,
+   "safety_stock": 15,
+   "image": "/uploads/seed/products/fresh-milk.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-MILK-FRESH-950-A",
+     "production_ago": 1,
+     "expire_in": 3,
+     "quantity": 8,
+     "unit_cost": 11.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-30",
+   "product_key": "prod-28",
+   "code": "BAKERY-BUN-400",
+   "spec_name": "400g",
+   "spec_value_key": "",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.2,
+   "barcode": "6901000000295",
+   "stock": 45,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/soft-bread.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-BAKERY-BUN-400-A",
+     "production_ago": 4,
+     "expire_in": 15,
+     "quantity": 45,
+     "unit_cost": 8.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-31",
+   "product_key": "prod-29",
+   "code": "BAKERY-TOAST-400",
+   "spec_name": "400g",
+   "spec_value_key": "",
+   "price": 9.9,
+   "original_price": 12.9,
+   "cost_price": 6.3,
+   "barcode": "6901000000301",
+   "stock": 20,
+   "safety_stock": 5,
+   "image": "/uploads/seed/products/toast.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-BAKERY-TOAST-400-A",
+     "production_ago": 2,
+     "expire_in": 10,
+     "quantity": 20,
+     "unit_cost": 6.3,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-32",
+   "product_key": "prod-30",
+   "code": "GRAIN-RICE-5KG",
+   "spec_name": "5kg",
+   "spec_value_key": "sv-5",
+   "price": 39.9,
+   "original_price": 46.9,
+   "cost_price": 31.5,
+   "barcode": "6901000000318",
+   "stock": 50,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/rice-bag.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-RICE-5KG-A",
+     "production_ago": 32,
+     "expire_in": null,
+     "quantity": 30,
+     "unit_cost": 31.5,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-GRAIN-RICE-5KG-B",
+     "production_ago": 20,
+     "expire_in": null,
+     "quantity": 20,
+     "unit_cost": 31.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-33",
+   "product_key": "prod-30",
+   "code": "GRAIN-RICE-10KG",
+   "spec_name": "10kg",
+   "spec_value_key": "sv-6",
+   "price": 74.9,
+   "original_price": 89.9,
+   "cost_price": 61,
+   "barcode": "6901000000325",
+   "stock": 22,
+   "safety_stock": 5,
+   "image": "/uploads/seed/products/rice-bag.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-RICE-10KG-A",
+     "production_ago": 20,
+     "expire_in": null,
+     "quantity": 22,
+     "unit_cost": 61,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-34",
+   "product_key": "prod-31",
+   "code": "GRAIN-OIL-5L",
+   "spec_name": "5L",
+   "spec_value_key": "",
+   "price": 79.9,
+   "original_price": 92.9,
+   "cost_price": 62.5,
+   "barcode": "6901000000332",
+   "stock": 24,
+   "safety_stock": 6,
+   "image": "/uploads/seed/products/oil-jug.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-OIL-5L-A",
+     "production_ago": 35,
+     "expire_in": 540,
+     "quantity": 24,
+     "unit_cost": 62.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-35",
+   "product_key": "prod-32",
+   "code": "GRAIN-SOYSAUCE",
+   "spec_name": "1.9L",
+   "spec_value_key": "",
+   "price": 16.9,
+   "original_price": 19.9,
+   "cost_price": 11.8,
+   "barcode": "6901000000349",
+   "stock": 38,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/soy-sauce.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-SOYSAUCE-A",
+     "production_ago": 30,
+     "expire_in": 540,
+     "quantity": 38,
+     "unit_cost": 11.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-36",
+   "product_key": "prod-33",
+   "code": "GRAIN-VINEGAR",
+   "spec_name": "500ml",
+   "spec_value_key": "",
+   "price": 6.9,
+   "original_price": 8.9,
+   "cost_price": 4.3,
+   "barcode": "6901000000356",
+   "stock": 46,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/vinegar.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-VINEGAR-A",
+     "production_ago": 28,
+     "expire_in": 720,
+     "quantity": 46,
+     "unit_cost": 4.3,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-37",
+   "product_key": "prod-34",
+   "code": "GRAIN-SALT-400",
+   "spec_name": "400g",
+   "spec_value_key": "",
+   "price": 2.5,
+   "original_price": 3,
+   "cost_price": 1.4,
+   "barcode": "6901000000363",
+   "stock": 90,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/salt.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-SALT-400-A",
+     "production_ago": 40,
+     "expire_in": null,
+     "quantity": 90,
+     "unit_cost": 1.4,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-38",
+   "product_key": "prod-35",
+   "code": "DAILY-TISSUE-6",
+   "spec_name": "3层×6包",
+   "spec_value_key": "sv-7",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.9,
+   "barcode": "6901000000370",
+   "stock": 100,
+   "safety_stock": 25,
+   "image": "/uploads/seed/products/tissue-pack.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-TISSUE-6-A",
+     "production_ago": 37,
+     "expire_in": null,
+     "quantity": 60,
+     "unit_cost": 8.9,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-DAILY-TISSUE-6-B",
+     "production_ago": 25,
+     "expire_in": null,
+     "quantity": 40,
+     "unit_cost": 8.9,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-39",
+   "product_key": "prod-35",
+   "code": "DAILY-TISSUE-12",
+   "spec_name": "3层×12包",
+   "spec_value_key": "sv-8",
+   "price": 23.9,
+   "original_price": 29.9,
+   "cost_price": 17.2,
+   "barcode": "6901000000387",
+   "stock": 40,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/tissue-pack.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-TISSUE-12-A",
+     "production_ago": 25,
+     "expire_in": null,
+     "quantity": 40,
+     "unit_cost": 17.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-40",
+   "product_key": "prod-36",
+   "code": "DAILY-LAUNDRY-3KG",
+   "spec_name": "3kg",
+   "spec_value_key": "",
+   "price": 29.9,
+   "original_price": 36.9,
+   "cost_price": 20.5,
+   "barcode": "6901000000394",
+   "stock": 26,
+   "safety_stock": 6,
+   "image": "/uploads/seed/products/laundry-jug.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-LAUNDRY-3KG-A",
+     "production_ago": 30,
+     "expire_in": 1080,
+     "quantity": 26,
+     "unit_cost": 20.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-41",
+   "product_key": "prod-37",
+   "code": "DAILY-DISHSOAP",
+   "spec_name": "1.5kg",
+   "spec_value_key": "",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.3,
+   "barcode": "6901000000400",
+   "stock": 34,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/dish-soap.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-DISHSOAP-A",
+     "production_ago": 26,
+     "expire_in": 1080,
+     "quantity": 34,
+     "unit_cost": 8.3,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-42",
+   "product_key": "prod-38",
+   "code": "DAILY-PASTE-120",
+   "spec_name": "120g",
+   "spec_value_key": "",
+   "price": 15.9,
+   "original_price": 19.9,
+   "cost_price": 9.8,
+   "barcode": "6901000000417",
+   "stock": 40,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/toothpaste.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-PASTE-120-A",
+     "production_ago": 32,
+     "expire_in": 1080,
+     "quantity": 40,
+     "unit_cost": 9.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-43",
+   "product_key": "prod-39",
+   "code": "FROZEN-DUMPLING-500",
+   "spec_name": "500g",
+   "spec_value_key": "sv-9",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 8.6,
+   "barcode": "6901000000424",
+   "stock": 35,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/dumpling-box.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FROZEN-DUMPLING-500-A",
+     "production_ago": 27,
+     "expire_in": 359,
+     "quantity": 21,
+     "unit_cost": 8.6,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-FROZEN-DUMPLING-500-B",
+     "production_ago": 15,
+     "expire_in": 365,
+     "quantity": 14,
+     "unit_cost": 8.6,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-44",
+   "product_key": "prod-39",
+   "code": "FROZEN-DUMPLING-1KG",
+   "spec_name": "1kg",
+   "spec_value_key": "sv-10",
+   "price": 21.9,
+   "original_price": 26.9,
+   "cost_price": 15.4,
+   "barcode": "6901000000431",
+   "stock": 18,
+   "safety_stock": 5,
+   "image": "/uploads/seed/products/dumpling-box.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FROZEN-DUMPLING-1KG-A",
+     "production_ago": 15,
+     "expire_in": 365,
+     "quantity": 18,
+     "unit_cost": 15.4,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-45",
+   "product_key": "prod-40",
+   "code": "FROZEN-TANGYUAN",
+   "spec_name": "500g",
+   "spec_value_key": "",
+   "price": 9.9,
+   "original_price": 12.9,
+   "cost_price": 6.4,
+   "barcode": "6901000000448",
+   "stock": 40,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/tangyuan.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FROZEN-TANGYUAN-A",
+     "production_ago": 18,
+     "expire_in": 365,
+     "quantity": 40,
+     "unit_cost": 6.4,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-46",
+   "product_key": "prod-41",
+   "code": "FROZEN-ICECREAM",
+   "spec_name": "75g",
+   "spec_value_key": "",
+   "price": 3.5,
+   "original_price": 4.5,
+   "cost_price": 1.9,
+   "barcode": "6901000000455",
+   "stock": 0,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/icecream.png",
+   "status": 1,
+   "batches": []
+  },
+  {
+   "key": "sku-47",
+   "product_key": "prod-42",
+   "code": "CANDY-CHOCO-43",
+   "spec_name": "43g",
+   "spec_value_key": "",
+   "price": 8.5,
+   "original_price": 9.9,
+   "cost_price": 5.3,
+   "barcode": "6901000000462",
+   "stock": 60,
+   "safety_stock": 15,
+   "image": "/uploads/seed/products/chocolate.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-CANDY-CHOCO-43-A",
+     "production_ago": 22,
+     "expire_in": 365,
+     "quantity": 60,
+     "unit_cost": 5.3,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-48",
+   "product_key": "prod-43",
+   "code": "CANDY-BAR-51",
+   "spec_name": "51g",
+   "spec_value_key": "",
+   "price": 6.5,
+   "original_price": 7.5,
+   "cost_price": 3.9,
+   "barcode": "6901000000479",
+   "stock": 72,
+   "safety_stock": 18,
+   "image": "/uploads/seed/products/energy-bar.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-CANDY-BAR-51-A",
+     "production_ago": 20,
+     "expire_in": 300,
+     "quantity": 72,
+     "unit_cost": 3.9,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-49",
+   "product_key": "prod-44",
+   "code": "CANDY-GUM-64",
+   "spec_name": "64g",
+   "spec_value_key": "",
+   "price": 9.9,
+   "original_price": 11.9,
+   "cost_price": 6.1,
+   "barcode": "6901000000486",
+   "stock": 6,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/gum-jar.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-CANDY-GUM-64-A",
+     "production_ago": 25,
+     "expire_in": 540,
+     "quantity": 6,
+     "unit_cost": 6.1,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-50",
+   "product_key": "prod-45",
+   "code": "BREW-COFFEE-30",
+   "spec_name": "15g×30条",
+   "spec_value_key": "",
+   "price": 39.9,
+   "original_price": 46.9,
+   "cost_price": 28.6,
+   "barcode": "6901000000493",
+   "stock": 30,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/coffee-box.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-BREW-COFFEE-30-A",
+     "production_ago": 28,
+     "expire_in": 540,
+     "quantity": 30,
+     "unit_cost": 28.6,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-51",
+   "product_key": "prod-46",
+   "code": "BREW-MILKTEA-80",
+   "spec_name": "80g",
+   "spec_value_key": "",
+   "price": 6.5,
+   "original_price": 7.9,
+   "cost_price": 3.8,
+   "barcode": "6901000000509",
+   "stock": 54,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/milktea-cup.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-BREW-MILKTEA-80-A",
+     "production_ago": 20,
+     "expire_in": 360,
+     "quantity": 54,
+     "unit_cost": 3.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-52",
+   "product_key": "prod-47",
+   "code": "BREW-OATS-400",
+   "spec_name": "400g",
+   "spec_value_key": "",
+   "price": 19.9,
+   "original_price": 24.9,
+   "cost_price": 13.2,
+   "barcode": "6901000000516",
+   "stock": 26,
+   "safety_stock": 6,
+   "image": "/uploads/seed/products/oats-jar.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-BREW-OATS-400-A",
+     "production_ago": 24,
+     "expire_in": 360,
+     "quantity": 26,
+     "unit_cost": 13.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-5",
+   "product_key": "prod-4",
+   "code": "EGG-30P",
+   "spec_name": "30枚/箱",
+   "spec_value_key": "",
+   "price": 12.9,
+   "original_price": 15.9,
+   "cost_price": 9.5,
+   "barcode": "6901000000523",
+   "stock": 100,
+   "safety_stock": 20,
+   "image": "/uploads/seed/products/egg-carton.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-EGG-30P-A",
+     "production_ago": 36,
+     "expire_in": 9,
+     "quantity": 60,
+     "unit_cost": 9.5,
+     "ref": "INIT-SEED"
+    },
+    {
+     "no": "INIT-EGG-30P-B",
+     "production_ago": 24,
+     "expire_in": 15,
+     "quantity": 40,
+     "unit_cost": 9.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-53",
+   "product_key": "prod-48",
+   "code": "MILK-PURE-C2-12",
+   "spec_name": "250ml×12盒",
+   "spec_value_key": "",
+   "price": 45.9,
+   "original_price": 52.9,
+   "cost_price": 35.8,
+   "barcode": "6901000000530",
+   "stock": 24,
+   "safety_stock": 6,
+   "image": "/uploads/seed/products/milk-carton.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-MILK-PURE-C2-12-A",
+     "production_ago": 22,
+     "expire_in": 180,
+     "quantity": 24,
+     "unit_cost": 35.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-54",
+   "product_key": "prod-49",
+   "code": "MILK-YOGURT-C2-12",
+   "spec_name": "205g×12",
+   "spec_value_key": "",
+   "price": 52.9,
+   "original_price": 59.9,
+   "cost_price": 39.8,
+   "barcode": "6901000000547",
+   "stock": 18,
+   "safety_stock": 5,
+   "image": "/uploads/seed/products/yogurt-bottle.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-MILK-YOGURT-C2-12-A",
+     "production_ago": 15,
+     "expire_in": 90,
+     "quantity": 18,
+     "unit_cost": 39.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-55",
+   "product_key": "prod-50",
+   "code": "SNACK-CHIPS-C2-70",
+   "spec_name": "70g",
+   "spec_value_key": "",
+   "price": 5.9,
+   "original_price": 6.9,
+   "cost_price": 3.2,
+   "barcode": "6901000000554",
+   "stock": 60,
+   "safety_stock": 15,
+   "image": "/uploads/seed/products/chips.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-CHIPS-C2-70-A",
+     "production_ago": 18,
+     "expire_in": 240,
+     "quantity": 60,
+     "unit_cost": 3.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-56",
+   "product_key": "prod-51",
+   "code": "SNACK-COOKIE-C2-116",
+   "spec_name": "116g",
+   "spec_value_key": "",
+   "price": 7.2,
+   "original_price": 8.5,
+   "cost_price": 4.4,
+   "barcode": "6901000000561",
+   "stock": 40,
+   "safety_stock": 10,
+   "image": "/uploads/seed/products/cookie.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-SNACK-COOKIE-C2-116-A",
+     "production_ago": 16,
+     "expire_in": 210,
+     "quantity": 40,
+     "unit_cost": 4.4,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-57",
+   "product_key": "prod-52",
+   "code": "DRINK-WATER-C2-550",
+   "spec_name": "550ml",
+   "spec_value_key": "",
+   "price": 2,
+   "original_price": 2.5,
+   "cost_price": 1.25,
+   "barcode": "6901000000578",
+   "stock": 96,
+   "safety_stock": 24,
+   "image": "/uploads/seed/products/water.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-WATER-C2-550-A",
+     "production_ago": 30,
+     "expire_in": 720,
+     "quantity": 96,
+     "unit_cost": 1.25,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-58",
+   "product_key": "prod-53",
+   "code": "DRINK-SPRITE-C2-500",
+   "spec_name": "500ml",
+   "spec_value_key": "",
+   "price": 3.8,
+   "original_price": 4,
+   "cost_price": 2.2,
+   "barcode": "6901000000585",
+   "stock": 48,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/sprite.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DRINK-SPRITE-C2-500-A",
+     "production_ago": 22,
+     "expire_in": 300,
+     "quantity": 48,
+     "unit_cost": 2.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-59",
+   "product_key": "prod-54",
+   "code": "FAST-NOODLE-C2-BEEF",
+   "spec_name": "桶装105g",
+   "spec_value_key": "",
+   "price": 5.8,
+   "original_price": 6.5,
+   "cost_price": 3.5,
+   "barcode": "6901000000592",
+   "stock": 45,
+   "safety_stock": 12,
+   "image": "/uploads/seed/products/noodle-cup.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-FAST-NOODLE-C2-BEEF-A",
+     "production_ago": 20,
+     "expire_in": 180,
+     "quantity": 45,
+     "unit_cost": 3.5,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-60",
+   "product_key": "prod-55",
+   "code": "GRAIN-RICE-C2-5KG",
+   "spec_name": "5kg",
+   "spec_value_key": "",
+   "price": 42.9,
+   "original_price": 46.9,
+   "cost_price": 33.8,
+   "barcode": "6901000000608",
+   "stock": 18,
+   "safety_stock": 5,
+   "image": "/uploads/seed/products/rice-bag.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-GRAIN-RICE-C2-5KG-A",
+     "production_ago": 18,
+     "expire_in": null,
+     "quantity": 18,
+     "unit_cost": 33.8,
+     "ref": "INIT-SEED"
+    }
+   ]
+  },
+  {
+   "key": "sku-61",
+   "product_key": "prod-56",
+   "code": "DAILY-TISSUE-C2-6",
+   "spec_name": "3层×6包",
+   "spec_value_key": "",
+   "price": 13.5,
+   "original_price": 15.9,
+   "cost_price": 9.2,
+   "barcode": "6901000000615",
+   "stock": 30,
+   "safety_stock": 8,
+   "image": "/uploads/seed/products/tissue-pack.png",
+   "status": 1,
+   "batches": [
+    {
+     "no": "INIT-DAILY-TISSUE-C2-6-A",
+     "production_ago": 20,
+     "expire_in": null,
+     "quantity": 30,
+     "unit_cost": 9.2,
+     "ref": "INIT-SEED"
+    }
+   ]
+  }
+ ],
+ "banners": [
+  {
+   "key": "banner-1",
+   "platform": true,
+   "title": "新人专享满减",
+   "image_url": "https://placehold.co/750x300/ff6b35/white?text=Banner1",
+   "link_url": "#",
+   "position": 2,
+   "sort": 1
+  },
+  {
+   "key": "banner-2",
+   "platform": true,
+   "title": "零食饮品周周上新",
+   "image_url": "https://placehold.co/750x300/4caf50/white?text=Banner2",
+   "link_url": "#",
+   "position": 2,
+   "sort": 2
+  },
+  {
+   "key": "banner-3",
+   "community_key": "comm-2",
+   "title": "阳光花园精选",
+   "image_url": "https://placehold.co/750x300/2196f3/white?text=Banner3",
+   "link_url": "#",
+   "position": 2,
+   "sort": 1
+  }
+ ],
+ "full_reductions": [
+  {
+   "key": "fr-1",
+   "community_key": "comm-1",
+   "name": "全场满30减5",
+   "threshold": 30,
+   "reduce_amount": 5
+  }
+ ],
+ "coupons": [
+  {
+   "key": "coupon-1",
+   "community_key": "comm-1",
+   "name": "新人满20减5券",
+   "type": 1,
+   "threshold": 20,
+   "discount_value": 5,
+   "total_count": 100,
+   "per_user_limit": 2,
+   "valid_days": 30,
+   "scopes": [
+    {
+     "scope_type": 2,
+     "category_key": "cat-2"
+    }
+   ]
+  }
+ ],
+ "flash_sales": [
+  {
+   "key": "fs-1",
+   "community_key": "comm-1",
+   "name": "限时秒杀·零食饮品特惠",
+   "start_offset_minutes": -60,
+   "end_offset_minutes": 2880,
+   "items": [
+    {
+     "key": "fsi-1",
+     "sku_key": "sku-1",
+     "flash_price": 2.99,
+     "stock": 50,
+     "sold_count": 3,
+     "limit_per_user": 2
+    },
+    {
+     "key": "fsi-2",
+     "sku_key": "sku-3",
+     "flash_price": 1.69,
+     "stock": 100,
+     "sold_count": 12,
+     "limit_per_user": 5
+    }
+   ]
+  }
+ ],
+ "free_shippings": [
+  {
+   "key": "fship-1",
+   "community_key": "comm-1",
+   "name": "满39元免配送费",
+   "threshold": 39,
+   "scopes": [
+    {
+     "scope_type": 5,
+     "product_name": "乐游 原味薯片"
+    }
+   ]
+  }
+ ],
+ "user_coupons": [
+  {
+   "key": "uc-1",
+   "community_key": "comm-1",
+   "user_phone": "13800138000",
+   "coupon_key": "coupon-1",
+   "coupon_name": "新人满20减5券",
+   "expire_in_days": 30
+  }
+ ],
+ "carts": [
+  {
+   "key": "cart-1",
+   "community_key": "comm-1",
+   "user_phone": "13800138000",
+   "product_name": "魔小鲜 大面筋辣条",
+   "spec_name": "小包106g",
+   "quantity": 2,
+   "selected": true
+  },
+  {
+   "key": "cart-2",
+   "community_key": "comm-1",
+   "user_phone": "13800138000",
+   "product_name": "乐游 原味薯片",
+   "spec_name": "70g",
+   "quantity": 1,
+   "selected": false
+  }
+ ],
+ "suppliers": [
+  {
+   "key": "sup-1",
+   "community_key": "comm-1",
+   "name": "渝百快消品批发商行",
+   "contact_name": "王老板",
+   "phone": "023-68111111",
+   "address": "重庆市九龙坡区西彭镇食品批发城B区3号",
+   "remark": "休闲零食/方便速食/饮料，长期合作账期月结",
+   "status": 1
+  },
+  {
+   "key": "sup-2",
+   "community_key": "comm-1",
+   "name": "洁士日化供应链",
+   "contact_name": "赵姐",
+   "phone": "023-68222222",
+   "address": "重庆市江津区双福商贸城C区12号",
+   "remark": "纸品与洗涤日化",
+   "status": 1
+  }
+ ],
+ "purchase_orders": [
+  {
+   "key": "po-1",
+   "community_key": "comm-1",
+   "purchase_no": "PO20261018001",
+   "supplier_key": "sup-1",
+   "status": 2,
+   "total_amount": 260,
+   "operator_key": "admin-1",
+   "remark": "周末档期例行补货",
+   "items": [
+    {
+     "sku_key": "sku-1",
+     "quantity": 100,
+     "received_quantity": 0,
+     "purchase_price": 2
+    },
+    {
+     "sku_key": "sku-3",
+     "quantity": 50,
+     "received_quantity": 0,
+     "purchase_price": 1.2
+    }
+   ]
+  }
+ ],
+ "pos_shifts": [
+  {
+   "key": "shift-1",
+   "community_key": "comm-1",
+   "operator_key": "admin-1",
+   "operator_name": "系统管理员",
+   "start_time": {
+    "day_offset": -1,
+    "minute_of_day": 540
+   },
+   "end_time": {
+    "day_offset": -1,
+    "minute_of_day": 1260
+   },
+   "status": 2,
+   "note": "种子数据：历史早班",
+   "statistics_json": "{\"income\":[{\"pay_type\":4,\"amount\":6.00,\"order_count\":1}],\"refund\":[],\"total_income\":6.00,\"total_refund\":0,\"cash_total\":6.00,\"order_count\":1}"
+  }
+ ],
+ "pos_held_orders": [
+  {
+   "key": "held-1",
+   "community_key": "comm-1",
+   "operator_key": "admin-1",
+   "operator_name": "系统管理员",
+   "user_key": "user-1",
+   "user_name": "张三",
+   "items": [
+    {
+     "sku_key": "sku-1",
+     "product_name": "魔小鲜 大面筋辣条",
+     "spec_name": "小包106g",
+     "product_image": "/uploads/seed/products/latiao.png",
+     "price": 3.5,
+     "quantity": 1
+    },
+    {
+     "sku_key": "sku-3",
+     "product_name": "碧源 饮用天然水",
+     "spec_name": "550ml",
+     "product_image": "/uploads/seed/products/water.png",
+     "price": 2,
+     "quantity": 2
+    }
+   ],
+   "total_amount": 7.5,
+   "remark": "顾客临时取物，挂单待结",
+   "created_at": {
+    "offset_minutes": -10
+   }
+  }
+ ],
+ "orders": [
+  {
+   "key": "order-1",
+   "community_key": "comm-1",
+   "order_no": "SEED20261018001",
+   "user_key": "user-1",
+   "status": 1,
+   "total_amount": 17,
+   "discount_amount": 0,
+   "delivery_fee": 3,
+   "pay_amount": 20,
+   "delivery_type": 2,
+   "delivery_time": "尽快送达",
+   "address_detail": "彩云大道 8 号 2 单元 301",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "重庆市九龙坡区彩云大道 8 号 2 单元 301",
+   "remark": "辣条挑最新日期的",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -5
+   },
+   "items": [
+    {
+     "sku_key": "sku-1",
+     "product_name": "魔小鲜 大面筋辣条",
+     "spec_name": "小包106g",
+     "product_image": "/uploads/seed/products/latiao.png",
+     "price": 3.5,
+     "quantity": 2,
+     "total_price": 7,
+     "original_price": 3.5,
+     "price_modified": 0
+    },
+    {
+     "sku_key": "sku-3",
+     "product_name": "碧源 饮用天然水",
+     "spec_name": "550ml",
+     "product_image": "/uploads/seed/products/water.png",
+     "price": 2,
+     "quantity": 5,
+     "total_price": 10,
+     "original_price": 2,
+     "price_modified": 0
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -5
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-2",
+   "community_key": "comm-1",
+   "order_no": "SEED20261018002",
+   "user_key": "user-1",
+   "status": 3,
+   "total_amount": 16.5,
+   "discount_amount": 0,
+   "delivery_fee": 0,
+   "pay_amount": 16.5,
+   "delivery_type": 1,
+   "delivery_time": "今天晚饭后自提",
+   "address_detail": "",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "金茂悦7栋1楼保安处",
+   "pickup_code": "10000001",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -120
+   },
+   "pay_time": {
+    "offset_minutes": -110
+   },
+   "items": [
+    {
+     "sku_key": "sku-4",
+     "product_name": "乐游 原味薯片",
+     "spec_name": "70g",
+     "product_image": "/uploads/seed/products/chips.png",
+     "price": 5.5,
+     "quantity": 3,
+     "total_price": 16.5,
+     "original_price": 5.5,
+     "price_modified": 0
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 1,
+     "amount": 16.5,
+     "transaction_id": "SEED-WX-20261018-01",
+     "confirm_source": 1,
+     "confirm_ref": "",
+     "pay_time": {
+      "offset_minutes": -110
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -120
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "微信支付成功",
+     "created_at": {
+      "offset_minutes": -110
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 3,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "支付完成进入备货",
+     "created_at": {
+      "offset_minutes": -105
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-3",
+   "community_key": "comm-1",
+   "order_no": "SEED20261018003",
+   "user_key": "user-1",
+   "status": 5,
+   "total_amount": 20,
+   "discount_amount": 5,
+   "delivery_fee": 0,
+   "pay_amount": 15,
+   "delivery_type": 1,
+   "delivery_time": "周末自提",
+   "address_detail": "",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "金茂悦7栋1楼保安处",
+   "used_coupon": {
+    "coupon_name": "新人满20减5券",
+    "expire_in_days": 30
+   },
+   "pickup_code": "10000002",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -2880
+   },
+   "pay_time": {
+    "offset_minutes": -2870
+   },
+   "complete_time": {
+    "offset_minutes": -1440
+   },
+   "items": [
+    {
+     "sku_key": "sku-3",
+     "product_name": "碧源 饮用天然水",
+     "spec_name": "550ml",
+     "product_image": "/uploads/seed/products/water.png",
+     "price": 2,
+     "quantity": 10,
+     "total_price": 20,
+     "original_price": 2,
+     "price_modified": 0
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 2,
+     "amount": 15,
+     "transaction_id": "SEED-ALI-20261018-01",
+     "confirm_source": 1,
+     "confirm_ref": "",
+     "pay_time": {
+      "offset_minutes": -2870
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -2880
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "支付宝支付成功（抵扣新人券 5.00）",
+     "created_at": {
+      "offset_minutes": -2870
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 3,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "支付完成进入备货",
+     "created_at": {
+      "offset_minutes": -2865
+     }
+    },
+    {
+     "from_status": 3,
+     "to_status": 5,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "取货码核销完成",
+     "created_at": {
+      "offset_minutes": -1440
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-4",
+   "community_key": "comm-1",
+   "order_no": "SEED20261018004",
+   "user_key": "user-1",
+   "status": 6,
+   "total_amount": 16.5,
+   "discount_amount": 0,
+   "delivery_fee": 3,
+   "pay_amount": 19.5,
+   "delivery_type": 2,
+   "delivery_time": "尽快送达",
+   "address_detail": "彩云大道 8 号 2 单元 301",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "重庆市九龙坡区彩云大道 8 号 2 单元 301",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -1440
+   },
+   "cancel_time": {
+    "offset_minutes": -1425
+   },
+   "cancel_reason": "用户误下单，主动取消",
+   "items": [
+    {
+     "sku_key": "sku-4",
+     "product_name": "乐游 原味薯片",
+     "spec_name": "70g",
+     "product_image": "/uploads/seed/products/chips.png",
+     "price": 5.5,
+     "quantity": 3,
+     "total_price": 16.5,
+     "original_price": 5.5,
+     "price_modified": 0
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -1440
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 6,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户取消：误下单",
+     "created_at": {
+      "offset_minutes": -1425
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-5",
+   "community_key": "comm-2",
+   "order_no": "SEED20261018005",
+   "user_key": "user-2",
+   "status": 5,
+   "total_amount": 12.9,
+   "discount_amount": 0,
+   "delivery_fee": 0,
+   "pay_amount": 12.9,
+   "delivery_type": 3,
+   "delivery_time": "到店取货",
+   "address_detail": "",
+   "contact_name": "李四",
+   "contact_phone": "13900139000",
+   "contact_address": "花园南门快递柜旁自提点",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -180
+   },
+   "pay_time": {
+    "offset_minutes": -120
+   },
+   "complete_time": {
+    "offset_minutes": -120
+   },
+   "items": [
+    {
+     "sku_key": "sku-5",
+     "product_name": "农欢 散养鲜鸡蛋",
+     "spec_name": "30枚/箱",
+     "product_image": "/uploads/seed/products/egg-carton.png",
+     "price": 12.9,
+     "quantity": 1,
+     "total_price": 12.9,
+     "original_price": 12.9,
+     "price_modified": 0
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 1,
+     "amount": 12.9,
+     "transaction_id": "SEED-WX-20261019-01",
+     "confirm_source": 1,
+     "confirm_ref": "",
+     "pay_time": {
+      "offset_minutes": -120
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-2",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -180
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "user",
+     "operator_key": "user-2",
+     "remark": "微信支付成功",
+     "created_at": {
+      "offset_minutes": -120
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 5,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "到店订单收款完成，自动完结",
+     "created_at": {
+      "offset_minutes": -120
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-6",
+   "community_key": "comm-2",
+   "order_no": "SEED20261018006",
+   "user_key": "user-2",
+   "status": 1,
+   "total_amount": 25.8,
+   "discount_amount": 0,
+   "delivery_fee": 0,
+   "pay_amount": 25.8,
+   "delivery_type": 1,
+   "delivery_time": "明天上午自提",
+   "address_detail": "",
+   "contact_name": "李四",
+   "contact_phone": "13900139000",
+   "contact_address": "花园南门快递柜旁自提点",
+   "pickup_code": "20000001",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -5
+   },
+   "items": [
+    {
+     "sku_key": "sku-5",
+     "product_name": "农欢 散养鲜鸡蛋",
+     "spec_name": "30枚/箱",
+     "product_image": "/uploads/seed/products/egg-carton.png",
+     "price": 12.9,
+     "quantity": 2,
+     "total_price": 25.8,
+     "original_price": 12.9,
+     "price_modified": 0
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-2",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -5
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-7",
+   "community_key": "comm-2",
+   "order_no": "SEED20261018007",
+   "user_key": "user-2",
+   "status": 4,
+   "total_amount": 25.8,
+   "discount_amount": 0,
+   "delivery_fee": 2,
+   "pay_amount": 27.8,
+   "delivery_type": 2,
+   "delivery_time": "工作日晚间",
+   "address_detail": "阳光路 8 号 5 栋 1201",
+   "contact_name": "李四",
+   "contact_phone": "13900139000",
+   "contact_address": "重庆市南岸区阳光路 8 号 5 栋 1201",
+   "remark": "送货上门",
+   "express_company": "顺丰速运",
+   "express_no": "SF1000000001",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -2880
+   },
+   "pay_time": {
+    "offset_minutes": -2870
+   },
+   "deliver_time": {
+    "offset_minutes": -60
+   },
+   "items": [
+    {
+     "sku_key": "sku-5",
+     "product_name": "农欢 散养鲜鸡蛋",
+     "spec_name": "30枚/箱",
+     "product_image": "/uploads/seed/products/egg-carton.png",
+     "price": 12.9,
+     "quantity": 2,
+     "total_price": 25.8,
+     "original_price": 12.9,
+     "price_modified": 0
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 2,
+     "amount": 27.8,
+     "transaction_id": "SEED-ALI-20261018-02",
+     "confirm_source": 1,
+     "confirm_ref": "",
+     "pay_time": {
+      "offset_minutes": -2870
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-2",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -2880
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "user",
+     "operator_key": "user-2",
+     "remark": "支付宝支付成功",
+     "created_at": {
+      "offset_minutes": -2870
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 4,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "商家发货（顺丰速运 SF1000000001）",
+     "created_at": {
+      "offset_minutes": -60
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-8",
+   "community_key": "comm-1",
+   "order_no": "SEED20261018008",
+   "user_key": "user-1",
+   "status": 5,
+   "total_amount": 6,
+   "discount_amount": 0,
+   "delivery_fee": 0,
+   "pay_amount": 6,
+   "delivery_type": 3,
+   "delivery_time": "到店取货",
+   "address_detail": "",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "金茂悦7栋1楼保安处",
+   "remark": "收银台改价 6.50→6.00",
+   "source": 2,
+   "operator_key": "admin-1",
+   "operator_name": "系统管理员",
+   "shift_key": "shift-1",
+   "created_at": {
+    "day_offset": -1,
+    "minute_of_day": 602
+   },
+   "pay_time": {
+    "day_offset": -1,
+    "minute_of_day": 605
+   },
+   "complete_time": {
+    "day_offset": -1,
+    "minute_of_day": 605
+   },
+   "items": [
+    {
+     "sku_key": "sku-2",
+     "product_name": "魔小鲜 大面筋辣条",
+     "spec_name": "大包226g",
+     "product_image": "/uploads/seed/products/latiao.png",
+     "price": 6,
+     "quantity": 1,
+     "total_price": 6,
+     "original_price": 6.5,
+     "price_modified": 1
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 4,
+     "amount": 6,
+     "transaction_id": "",
+     "confirm_source": 4,
+     "confirm_ref": "pos-cash",
+     "pay_time": {
+      "day_offset": -1,
+      "minute_of_day": 605
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "admin",
+     "operator_key": "admin-1",
+     "remark": "收银台代客下单",
+     "created_at": {
+      "day_offset": -1,
+      "minute_of_day": 602
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "admin",
+     "operator_key": "admin-1",
+     "remark": "收银台现金收款（改价 6.50→6.00）",
+     "created_at": {
+      "day_offset": -1,
+      "minute_of_day": 605
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 5,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "到店订单收款完成，自动完结",
+     "created_at": {
+      "day_offset": -1,
+      "minute_of_day": 605
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-9",
+   "community_key": "comm-1",
+   "order_no": "SEED-TODAY-0009",
+   "user_key": "user-1",
+   "status": 5,
+   "total_amount": 17,
+   "discount_amount": 0,
+   "delivery_fee": 3,
+   "pay_amount": 20,
+   "delivery_type": 2,
+   "delivery_time": "尽快送达",
+   "address_detail": "彩云大道 8 号 2 单元 301",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "重庆市九龙坡区彩云大道 8 号 2 单元 301",
+   "remark": "今日配送单（种子，用于工作台今日经营数据）",
+   "express_company": "顺丰速运",
+   "express_no": "SF1000000009",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -40
+   },
+   "pay_time": {
+    "offset_minutes": -25
+   },
+   "deliver_time": {
+    "offset_minutes": -15
+   },
+   "complete_time": {
+    "offset_minutes": -5
+   },
+   "items": [
+    {
+     "sku_key": "sku-1",
+     "product_name": "魔小鲜 大面筋辣条",
+     "spec_name": "小包106g",
+     "product_image": "/uploads/seed/products/latiao.png",
+     "price": 3.5,
+     "quantity": 2,
+     "total_price": 7,
+     "original_price": 3.5,
+     "price_modified": 0
+    },
+    {
+     "sku_key": "sku-3",
+     "product_name": "碧源 饮用天然水",
+     "spec_name": "550ml",
+     "product_image": "/uploads/seed/products/water.png",
+     "price": 2,
+     "quantity": 5,
+     "total_price": 10,
+     "original_price": 2,
+     "price_modified": 0
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 1,
+     "amount": 20,
+     "transaction_id": "SEED-WX-TODAY-09",
+     "confirm_source": 1,
+     "confirm_ref": "",
+     "pay_time": {
+      "offset_minutes": -25
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -40
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "微信支付成功",
+     "created_at": {
+      "offset_minutes": -25
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 3,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "支付完成进入备货",
+     "created_at": {
+      "offset_minutes": -24
+     }
+    },
+    {
+     "from_status": 3,
+     "to_status": 4,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "商家发货（顺丰速运 SF1000000009）",
+     "created_at": {
+      "offset_minutes": -15
+     }
+    },
+    {
+     "from_status": 4,
+     "to_status": 5,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "确认收货",
+     "created_at": {
+      "offset_minutes": -5
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-10",
+   "community_key": "comm-1",
+   "order_no": "SEED-REFUND-0010",
+   "user_key": "user-1",
+   "status": 8,
+   "total_amount": 17,
+   "discount_amount": 0,
+   "delivery_fee": 3,
+   "pay_amount": 20,
+   "delivery_type": 2,
+   "delivery_time": "尽快送达",
+   "address_detail": "彩云大道 8 号 2 单元 301",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "重庆市九龙坡区彩云大道 8 号 2 单元 301",
+   "remark": "整单退款：商品质量问题",
+   "express_company": "顺丰速运",
+   "express_no": "SF1000000010",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -7200
+   },
+   "pay_time": {
+    "offset_minutes": -7190
+   },
+   "deliver_time": {
+    "offset_minutes": -5760
+   },
+   "complete_time": {
+    "offset_minutes": -5640
+   },
+   "items": [
+    {
+     "sku_key": "sku-1",
+     "product_name": "魔小鲜 大面筋辣条",
+     "spec_name": "小包106g",
+     "product_image": "/uploads/seed/products/latiao.png",
+     "price": 3.5,
+     "quantity": 2,
+     "total_price": 7,
+     "original_price": 3.5,
+     "price_modified": 0
+    },
+    {
+     "sku_key": "sku-3",
+     "product_name": "碧源 饮用天然水",
+     "spec_name": "550ml",
+     "product_image": "/uploads/seed/products/water.png",
+     "price": 2,
+     "quantity": 5,
+     "total_price": 10,
+     "original_price": 2,
+     "price_modified": 0
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 1,
+     "amount": 20,
+     "transaction_id": "SEED-WX-REFUND-10",
+     "confirm_source": 1,
+     "confirm_ref": "",
+     "pay_time": {
+      "offset_minutes": -7190
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -7200
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "微信支付成功",
+     "created_at": {
+      "offset_minutes": -7190
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 3,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "支付完成进入备货",
+     "created_at": {
+      "offset_minutes": -7185
+     }
+    },
+    {
+     "from_status": 3,
+     "to_status": 4,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "商家发货（顺丰速运 SF1000000010）",
+     "created_at": {
+      "offset_minutes": -5760
+     }
+    },
+    {
+     "from_status": 4,
+     "to_status": 5,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "确认收货",
+     "created_at": {
+      "offset_minutes": -5640
+     }
+    },
+    {
+     "from_status": 5,
+     "to_status": 7,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "申请退款: 商品质量问题",
+     "created_at": {
+      "offset_minutes": -4800
+     }
+    },
+    {
+     "from_status": 7,
+     "to_status": 8,
+     "operator_type": "admin",
+     "operator_key": "admin-1",
+     "remark": "退款完成",
+     "created_at": {
+      "offset_minutes": -4260
+     }
+    }
+   ]
+  },
+  {
+   "key": "order-11",
+   "community_key": "comm-1",
+   "order_no": "SEED-REFUND-0011",
+   "user_key": "user-1",
+   "status": 7,
+   "total_amount": 16.5,
+   "discount_amount": 0,
+   "delivery_fee": 0,
+   "pay_amount": 16.5,
+   "delivery_type": 1,
+   "delivery_time": "今天晚饭后自提",
+   "address_detail": "",
+   "contact_name": "张三",
+   "contact_phone": "13800138000",
+   "contact_address": "金茂悦7栋1楼保安处",
+   "remark": "部分商品缺货，申请退款",
+   "pickup_code": "10000011",
+   "source": 1,
+   "created_at": {
+    "offset_minutes": -1440
+   },
+   "pay_time": {
+    "offset_minutes": -1430
+   },
+   "complete_time": {
+    "offset_minutes": -1200
+   },
+   "items": [
+    {
+     "sku_key": "sku-4",
+     "product_name": "乐游 原味薯片",
+     "spec_name": "70g",
+     "product_image": "/uploads/seed/products/chips.png",
+     "price": 5.5,
+     "quantity": 3,
+     "total_price": 16.5,
+     "original_price": 5.5,
+     "price_modified": 0
+    }
+   ],
+   "payments": [
+    {
+     "pay_type": 1,
+     "amount": 16.5,
+     "transaction_id": "SEED-WX-REFUND-11",
+     "confirm_source": 1,
+     "confirm_ref": "",
+     "pay_time": {
+      "offset_minutes": -1430
+     }
+    }
+   ],
+   "status_logs": [
+    {
+     "from_status": 0,
+     "to_status": 1,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户下单",
+     "created_at": {
+      "offset_minutes": -1440
+     }
+    },
+    {
+     "from_status": 1,
+     "to_status": 2,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "微信支付成功",
+     "created_at": {
+      "offset_minutes": -1430
+     }
+    },
+    {
+     "from_status": 2,
+     "to_status": 3,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "支付完成进入备货",
+     "created_at": {
+      "offset_minutes": -1425
+     }
+    },
+    {
+     "from_status": 3,
+     "to_status": 5,
+     "operator_type": "system",
+     "operator_key": "",
+     "remark": "取货码核销完成",
+     "created_at": {
+      "offset_minutes": -1200
+     }
+    },
+    {
+     "from_status": 5,
+     "to_status": 7,
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "申请退款: 部分商品缺货",
+     "created_at": {
+      "offset_minutes": -120
+     }
+    }
+   ]
+  }
+ ],
+ "refunds": [
+  {
+   "key": "refund-1",
+   "community_key": "comm-1",
+   "refund_no": "SEEDREFUND-0010",
+   "order_key": "order-10",
+   "amount": 20,
+   "freight_amount": 3,
+   "type": 1,
+   "reason": "商品质量问题，申请整单退款",
+   "status": 5,
+   "operator_key": "admin-1",
+   "refund_time": {
+    "offset_minutes": -4260
+   },
+   "created_at": {
+    "offset_minutes": -4800
+   },
+   "items": [
+    {
+     "order_key": "order-10",
+     "item_index": 0,
+     "sku_key": "sku-1",
+     "product_name": "魔小鲜 大面筋辣条",
+     "spec_name": "小包106g",
+     "quantity": 2,
+     "refund_amount": 7
+    },
+    {
+     "order_key": "order-10",
+     "item_index": 1,
+     "sku_key": "sku-3",
+     "product_name": "碧源 饮用天然水",
+     "spec_name": "550ml",
+     "quantity": 5,
+     "refund_amount": 10
+    }
+   ],
+   "logs": [
+    {
+     "action": "create",
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户发起退款",
+     "created_at": {
+      "offset_minutes": -4800
+     }
+    },
+    {
+     "action": "approve",
+     "operator_type": "admin",
+     "operator_key": "admin-1",
+     "remark": "同意退款",
+     "created_at": {
+      "offset_minutes": -4270
+     }
+    }
+   ],
+   "channel_payment": {
+    "status": 2,
+    "transaction_id": "SEED-WX-RF-0010",
+    "created_at": {
+     "offset_minutes": -4270
+    },
+    "refund_time": {
+     "offset_minutes": -4260
+    }
+   }
+  },
+  {
+   "key": "refund-2",
+   "community_key": "comm-1",
+   "refund_no": "SEEDREFUND-0011",
+   "order_key": "order-11",
+   "amount": 5.5,
+   "freight_amount": 0,
+   "type": 2,
+   "reason": "部分商品缺货，申请退款",
+   "status": 4,
+   "operator_key": "admin-1",
+   "last_checked_at": {
+    "offset_minutes": -60
+   },
+   "created_at": {
+    "offset_minutes": -120
+   },
+   "items": [
+    {
+     "order_key": "order-11",
+     "item_index": 0,
+     "sku_key": "sku-4",
+     "product_name": "乐游 原味薯片",
+     "spec_name": "70g",
+     "quantity": 1,
+     "refund_amount": 5.5
+    }
+   ],
+   "logs": [
+    {
+     "action": "create",
+     "operator_type": "user",
+     "operator_key": "user-1",
+     "remark": "用户发起退款",
+     "created_at": {
+      "offset_minutes": -120
+     }
+    },
+    {
+     "action": "approve",
+     "operator_type": "admin",
+     "operator_key": "admin-1",
+     "remark": "同意退款",
+     "created_at": {
+      "offset_minutes": -60
+     }
+    }
+   ],
+   "channel_payment": {
+    "status": 1,
+    "transaction_id": "",
+    "created_at": {
+     "offset_minutes": -60
+    },
+    "refund_time": null
+   }
+  }
+ ],
+ "stock_in_orders": [
+  {
+   "key": "in-1",
+   "community_key": "comm-1",
+   "in_no": "IN-SEED-0001",
+   "supplier_name": "渝百快消品批发商行",
+   "type": 2,
+   "total_amount": 150,
+   "operator_key": "admin-1",
+   "remark": "零食档期补货（直接入库，无采购单）",
+   "created_at": {
+    "offset_minutes": -7200
+   },
+   "items": [
+    {
+     "sku_key": "sku-4",
+     "quantity": 50,
+     "unit_cost": 3,
+     "batch_no": "IN-SEED-0001",
+     "production_ago": 5,
+     "expire_in": 235
+    }
+   ]
+  }
+ ],
+ "stock_out_orders": [
+  {
+   "key": "out-1",
+   "community_key": "comm-1",
+   "out_no": "OUT-SEED-0001",
+   "type": 1,
+   "operator_key": "admin-1",
+   "remark": "薯片运输压碎报损",
+   "created_at": {
+    "offset_minutes": -4320
+   },
+   "sku_key": "sku-4",
+   "quantity": 10
+  }
+ ],
+ "stock_checks": [
+  {
+   "key": "check-1",
+   "community_key": "comm-1",
+   "check_no": "CHECK-SEED-0001",
+   "operator_key": "admin-1",
+   "status": 1,
+   "remark": "月度抽盘（草稿，未提交）",
+   "created_at": {
+    "offset_minutes": -2880
+   },
+   "items": [
+    {
+     "sku_key": "sku-1",
+     "system_stock": 80,
+     "actual_stock": 80
+    },
+    {
+     "sku_key": "sku-4",
+     "system_stock": 90,
+     "actual_stock": 88
+    }
+   ]
+  }
+ ],
+ "stock_records": [
+  {
+   "key": "rec-1",
+   "community_key": "comm-1",
+   "sku_key": "sku-4",
+   "type": 1,
+   "quantity": 50,
+   "before_stock": 50,
+   "after_stock": 100,
+   "batch_no": "IN-SEED-0001",
+   "production_ago": 5,
+   "expire_in": 235,
+   "ref_no": "IN-SEED-0001",
+   "operator_key": "admin-1",
+   "remark": "直接入库",
+   "created_at": {
+    "offset_minutes": -7200
+   }
+  },
+  {
+   "key": "rec-2",
+   "community_key": "comm-1",
+   "sku_key": "sku-4",
+   "type": 2,
+   "quantity": -10,
+   "before_stock": 100,
+   "after_stock": 90,
+   "batch_no": "INIT-SNACK-CHIPS-70-A",
+   "production_ago": 25,
+   "expire_in": 215,
+   "ref_no": "OUT-SEED-0001",
+   "operator_key": "admin-1",
+   "remark": "薯片运输压碎报损",
+   "created_at": {
+    "offset_minutes": -4320
+   }
+  }
+ ]
+}

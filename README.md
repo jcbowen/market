@@ -24,7 +24,7 @@ market/
 │   └── internal/         #   服务启动引导
 ├── src/admin/            # 管理端前端（Vue3）
 ├── src/client/           # C 端 uni-app
-├── deploy/               # init.dev.sql（开发测试数据）、nginx/daemon 示例
+├── deploy/               # seed-assets/（演示种子图与清单）、nginx/daemon 示例
 ├── bin/                  # 构建产物与运行时配置（不入 git，模板除外）
 ├── docs/                 # 项目文档（见下）
 └── docker-compose.yml    # 本地/生产编排（口令经根目录 .env 注入）
@@ -115,7 +115,7 @@ done
 
 要点：
 
-- 表结构全部由各服务启动时 **GORM AutoMigrate** 创建，无手写建表 SQL；`deploy/init.dev.sql` 仅含测试数据，**只限开发环境**，在服务启动建表之后导入。
+- 表结构全部由各服务启动时 **GORM AutoMigrate** 创建，无手写建表 SQL；演示数据不再走 SQL 直插，改由 `market-admin init` 导入内嵌数据包（`src/backend/services/product/service/seeddata/full-demo.json`），**仅非 production 环境且空库时执行**；包内含弱口令演示账号，生产环境务必用 `MARKET_ADMIN_PASSWORD` 指定真实口令。
 - MySQL/Redis 口令与 `JWT_SECRET` 经项目根目录 `.env` 注入（`.env` 不入 git）；生产环境检测到默认 JWT 密钥会拒绝启动。
 - 后端依赖 `jcbaseGo`/`wego` 本地 replace（与仓库平级放置）；CI 场景用 `go mod edit -dropreplace` 后走公共 proxy，详见部署文档。
 

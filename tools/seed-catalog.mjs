@@ -1,15 +1,19 @@
-// seed-catalog.mjs —— 生成 dev 种子数据的「商品目录」片段（社区便利店 · 预包装食品）
-// 参数：无；返回值：无（SQL 打到 stdout，图片清单写入 deploy/seed-assets/images.json）
+// seed-catalog.mjs —— 生成 dev 种子数据的「商品目录」源数据（社区便利店 · 预包装食品）
+// 参数：无；返回值：无（直跑输出 SQL 到 stdout 供人工核对，图片清单写入 deploy/seed-assets/images.json）
 // 异常：商品缺少图片 slug（FILE_SLUG）时抛错退出，避免生成引用不存在图片的种子
 // 使用示例：
-//   node tools/seed-catalog.mjs > /tmp/catalog.sql   # 分类/商品/图集/规格/SKU/批次七张表的 INSERT，核对后并入 deploy/init.dev.sql
+//   node tools/seed-catalog.mjs                       # 输出目录 SQL（仅人工核对用，不入库）
 //   node tools/seed-images.mjs                       # 依据 images.json 绘制商品图到 deploy/seed-assets/products/
-// 约束：本文件里的 id 与 init.dev.sql 下游段落（订单、购物车、秒杀、进销存、挂单、优惠券）强耦合，
-//       改 id 或价格必须同步改那些段落；SQL 不入库是避免与 init.dev.sql 形成两份同源数据互相漂移。
+//   import { categories, products, collectSeedCatalog } from './seed-catalog.mjs'  # 数据包生成器（gen-data-package.mjs）复用同一份源数据
+// 约束：本文件是商品目录的唯一数据源，collectSeedCatalog() 供 gen-data-package.mjs
+//       生成 full-demo.json（编译进 product-service，经数据导入/初始化链路落库）。
+//       改 id 或价格后需重新生成 full-demo.json 并提交。
+// 注意：种子批次（MANUAL_BATCHES）演示了与进销存单据咬合的口径（Σ批次=SKU 库存），
+//       订单/进销存样本段按批次号引用这些批次；批次本身随目录段落库。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'); // 脚本在 tools/ 下，仓库根取上一级
 const ASSET_DIR = path.join(ROOT_DIR, 'deploy', 'seed-assets');
@@ -578,7 +582,8 @@ L.push('-- MANUAL_BATCHES 里的 SKU 用手写批次，与下方「进销存」�
 L.push('-- sku 4（乐游 原味薯片）初始 30/20 → 入库 +50（IN-SEED-0001）→ 报损 10（扣 A 批），终态 20/20/50 = 90。');
 L.push('INSERT INTO `stock_batches` (`id`, `community_id`, `sku_id`, `batch_no`, `production_date`, `expire_date`, `quantity`, `unit_cost`, `status`, `source_type`, `ref_no`, `created_at`, `updated_at`)');
 L.push('VALUES');
-// 手写批次：用于和 init.dev.sql「进销存」段落互相咬合的单据演示，数量之和必须等于该 SKU 的 stock。
+// 手写批次：与数据包「进销存样本」段（gen-data-package.mjs 的 stock_in/stock_out/stock_records）
+// 互相咬合，数量之和必须等于该 SKU 的 stock。
 // sku 4（乐游 原味薯片，社区1）：初始两批 30/20 → 5 天前直接入库 +50（IN-SEED-0001）→ 3 天前报损 10（扣 A 批，余 20）
 // 生成后会打印这些批次号拿到的自增 id，供 stock_in_order_items.batch_id / stock_records.batch_id 回填。
 const MANUAL_BATCHES = {
@@ -633,10 +638,83 @@ for (const p of products) {
 L.push(batchRows.join(',\n') + ';');
 L.push('');
 
-// SQL 片段走 stdout（便于重定向核对），统计信息走 stderr，两者互不污染
-process.stdout.write(L.join('\n') + '\n');
-fs.writeFileSync(path.join(ASSET_DIR, 'images.json'), JSON.stringify(images, null, 2) + '\n');
-// 快照仅供人工同步 init.dev.sql 下游段落（订单/购物车/挂单里引用的品名、规格、图片、条码）时查阅
+// ---------- 结构化数据导出（供 gen-data-package.mjs 等消费，无副作用） ----------
+// 批次推导与下方 SQL 生成同源同公式：sku 元组 [id, code, specName, price, original, cost, stock, safety, expireDays, prodAgo, split?]
+// community_key 口径：源数据用 cid（1=盘龙金茂悦 / 2=阳光花园）标注归属，导出为包内社区 key，
+// 供数据包按社区过滤——两个社区的同名商品是各自独立的演示条目，不可灌进同一社区。
+function collectSeedCatalog() {
+  const barcodes = {};
+  let seq = 0;
+  for (const p of products) {
+    for (const s of p.skus) {
+      seq += 1;
+      barcodes[s[0]] = ean13('6901' + String(seq).padStart(8, '0'));
+    }
+  }
+  const imagesOf = {};
+  for (const p of products) {
+    const base = p.reuse ? p.reuse.replace('.png', '') : FILE_SLUG[p.id];
+    if (!base) throw new Error(`商品 ${p.id} 缺少 FILE_SLUG`);
+    const imgs = [`${IMG_DIR}/${base}.png`];
+    if (p.alt) imgs.push(`${IMG_DIR}/${base}-alt.png`);
+    imagesOf[p.id] = imgs;
+  }
+  const catIcon = {};
+  for (const c of categories) {
+    const first = products.filter((p) => p.cat === c.id)[0];
+    catIcon[c.id] = imagesOf[first.id][0];
+  }
+  const skus = [];
+  for (const p of products) {
+    for (const s of p.skus) {
+      const [id, code, specName, price, orig, cost, stock, safety, expire, prodAgo, split] = s;
+      let batches = [];
+      if (stock > 0) {
+        const manual = MANUAL_BATCHES[id];
+        if (manual) {
+          batches = manual.map((m) => ({ no: m.no, production_ago: m.prodAgo, expire_in: m.expireIn, quantity: m.qty, unit_cost: cost, ref: m.ref }));
+        } else if (split) {
+          const a = Math.ceil(stock * 0.6);
+          batches = [
+            { no: `INIT-${code}-A`, production_ago: prodAgo + 12, expire_in: expire === null ? null : expire - 6, quantity: a, unit_cost: cost, ref: 'INIT-SEED' },
+            { no: `INIT-${code}-B`, production_ago: prodAgo, expire_in: expire, quantity: stock - a, unit_cost: cost, ref: 'INIT-SEED' },
+          ];
+        } else {
+          batches = [{ no: `INIT-${code}-A`, production_ago: prodAgo, expire_in: expire, quantity: stock, unit_cost: cost, ref: 'INIT-SEED' }];
+        }
+      }
+      skus.push({
+        key: `sku-${id}`, product_key: `prod-${p.id}`, code, spec_name: specName,
+        spec_value_key: p.spec ? `sv-${p.spec.values[p.skus.indexOf(s)][0]}` : '',
+        price, original_price: orig, cost_price: cost, barcode: barcodes[id],
+        stock, safety_stock: safety, image: imagesOf[p.id][0], status: 1,
+        batches,
+      });
+    }
+  }
+  return {
+    categories: categories.map((c) => ({ key: `cat-${c.id}`, community_key: `comm-${c.cid}`, name: c.name, sort: c.sort, icon: catIcon[c.id] })),
+    products: products.map((p) => ({
+      key: `prod-${p.id}`, category_key: `cat-${p.cat}`, community_key: `comm-${p.cid}`, name: p.name, description: p.desc,
+      unit: p.unit, is_multi_spec: !!p.multi, sort: p.sort, virtual_sales: p.vSales, status: p.status,
+      images: imagesOf[p.id],
+      spec: p.spec
+        ? { name: p.spec.name, values: p.spec.values.map(([vid, vname]) => ({ key: `sv-${vid}`, name: vname })) }
+        : null,
+      sku_keys: p.skus.map((s) => `sku-${s[0]}`),
+    })),
+    skus,
+  };
+}
+
+// SQL 组装保持顶层纯计算（import 复用数据时不执行任何写入/输出）
+const SQL_OUTPUT = L.join('\n');
+
+// ---------- 输出（仅直接运行本脚本时执行，被 import 时不产生副作用） ----------
+function main() {
+  process.stdout.write(SQL_OUTPUT + '\n');
+  fs.writeFileSync(path.join(ASSET_DIR, 'images.json'), JSON.stringify(images, null, 2) + '\n');
+  // 快照仅供人工核对 gen-data-package.mjs 里引用目录的样本段（订单/购物车/挂单中的品名、规格、图片、条码）
 fs.writeFileSync(
   path.join(os.tmpdir(), 'seed-catalog-snapshot.json'),
   JSON.stringify(
@@ -663,3 +741,11 @@ for (const [no, id] of Object.entries(BATCH_ID_OF)) {
   console.error(`下游引用的批次 id：${no} → stock_batches.id=${id}`);
 }
 console.error('快照:', path.join(os.tmpdir(), 'seed-catalog-snapshot.json'));
+}
+
+// 直接运行才生成 SQL 与图片清单；被 import（gen-data-package.mjs）时只取数据不产生副作用
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
+
+export { categories, products, FILE_SLUG, collectSeedCatalog };

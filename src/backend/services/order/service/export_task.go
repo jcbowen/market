@@ -17,6 +17,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -30,6 +31,10 @@ const exportTaskBatchSize = 500
 
 // exportTaskMaxRunning 同管理员同时在途（待处理/生成中）任务数上限，防连点刷任务拖垮服务
 const exportTaskMaxRunning = 2
+
+// exportDirFailureMsg 落盘目录准备失败的对外文案：
+// os.MkdirAll 的错误文本带完整落盘路径，既不发给 WS 订阅端也不发给列表接口
+const exportDirFailureMsg = "创建导出目录失败"
 
 // ExportTaskService 后台导出任务服务（下载中心）
 // 职责：创建异步导出任务、分批生成 CSV、任务列表/下载留痕/删除、过期清理
@@ -168,7 +173,7 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[export-task] 任务 %d 生成 panic 已恢复: %v", task.ID, r)
-			s.failExport(task.ID, "生成过程异常，请重新发起导出")
+			s.failExport(ctx, task.ID, "生成过程异常，请重新发起导出")
 		}
 	}()
 
@@ -182,7 +187,7 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 	var q exportQuery
 	if task.QueryCond != "" {
 		if err := json.Unmarshal([]byte(task.QueryCond), &q); err != nil {
-			s.failExport(task.ID, "查询条件快照解析失败")
+			s.failExport(ctx, task.ID, "查询条件快照解析失败")
 			return
 		}
 	}
@@ -191,13 +196,16 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 	// 打开输出文件（uploads/exports 目录，与 gateway /uploads 静态目录同级但不走公开访问）
 	root, err := exportRootDir()
 	if err != nil {
-		s.failExport(task.ID, err.Error())
+		// 目录准备失败：os.MkdirAll 的错误文本带完整落盘路径，这里只取原因不取路径
+		s.failExport(ctx, task.ID, exportDirFailureMsg)
 		return
 	}
 	fullPath := filepath.Join(root, task.FileName)
 	f, err := os.Create(fullPath)
 	if err != nil {
-		s.failExport(task.ID, "创建导出文件失败")
+		// 与上一处同理：落盘失败只报原因，真实路径留在日志里
+		log.Printf("[export-task] 任务 %d 创建导出文件失败: %v", task.ID, err)
+		s.failExport(ctx, task.ID, "创建导出文件失败")
 		return
 	}
 
@@ -211,27 +219,27 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 
 	// BOM 保证 Excel 正确识别 UTF-8
 	if _, err := f.WriteString("\ufeff"); err != nil {
-		s.failExport(task.ID, "写入导出文件失败")
+		s.failExport(ctx, task.ID, "写入导出文件失败")
 		return
 	}
 	if _, err := f.WriteString(exportCSVHeader); err != nil {
-		s.failExport(task.ID, "写入导出文件失败")
+		s.failExport(ctx, task.ID, "写入导出文件失败")
 		return
 	}
 
 	// 游标分批：按 id asc 逐批写，行数封顶 ExportMaxRows
 	rows, truncated, err := s.writeRows(ctx, &q, f)
 	if err != nil {
-		s.failExport(task.ID, "生成导出数据失败")
+		s.failExport(ctx, task.ID, "生成导出数据失败")
 		return
 	}
 	info, err := f.Stat()
 	if err != nil {
-		s.failExport(task.ID, "读取导出文件失败")
+		s.failExport(ctx, task.ID, "读取导出文件失败")
 		return
 	}
 	if err := f.Close(); err != nil {
-		s.failExport(task.ID, "写入导出文件失败")
+		s.failExport(ctx, task.ID, "写入导出文件失败")
 		return
 	}
 	success = true
@@ -253,9 +261,11 @@ func (s *ExportTaskService) runExport(ctx context.Context, task *model.ExportTas
 		// 达到行数上限截断：错误信息字段复用为提示语（完成态下前端展示为「部分导出」提示）
 		updates["error_msg"] = fmt.Sprintf("已达单次导出上限 %d 行，仅导出前 %d 行，请缩小筛选范围", model.ExportMaxRows, rows)
 	}
-	if err := s.db.GetDb().Model(&model.ExportTask{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.ExportTask{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
 		log.Printf("[export-task] 任务 %d 置完成失败: %v", task.ID, err)
+		return
 	}
+	s.publishExportTaskEvent(ctx, task.ID, eventbus.ExportTaskStateDone)
 }
 
 // writeRows 游标分批查询订单并写 CSV 数据行
@@ -585,17 +595,131 @@ func (s *ExportTaskService) CleanupExpired(ctx context.Context) int {
 }
 
 // failExport 任务置失败态（错误原因落库；半成品文件由调用方 defer 删除）
+// 状态落库成功后发布导出任务事件，让创建人的下载中心立即刷新（不等面板轮询）
 // 参数：
+//   - ctx: 上下文（透传给事件发布）
 //   - id: 任务 ID
 //   - msg: 失败原因
-func (s *ExportTaskService) failExport(id int64, msg string) {
-	err := s.db.GetDb().Model(&model.ExportTask{}).Where("id = ?", id).Updates(map[string]interface{}{
+func (s *ExportTaskService) failExport(ctx context.Context, id int64, msg string) {
+	err := s.db.GetDb().WithContext(ctx).Model(&model.ExportTask{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"status":    model.ExportTaskStatusFailed,
 		"error_msg": msg,
 	}).Error
 	if err != nil {
 		log.Printf("[export-task] 任务 %d 置失败失败: %v", id, err)
+		return
 	}
+	s.publishExportTaskEvent(ctx, id, eventbus.ExportTaskStateFailed)
+}
+
+// publishExportTaskEvent 导出任务进入终态后向事件总线发布状态变更事件（尽力而为）
+// 触发点仅两处：runExport 置完成、failExport 置失败。gateway 订阅后按创建人管理员定向推送，
+// 事件只带 ID 与计数、不带文件路径（下载仍走带归属校验的接口）；
+// error_msg 虽为管理员可读文案，仍需经 sanitizeExportMsg 剥离可能夹带的落盘路径再下发。
+// 任何失败（任务回读、序列化、Redis 不可用）仅记日志，不影响导出主流程；
+// 事件总线未就绪（orderService 未注入或 Redis 客户端为 nil，如单测与精简部署）时静默跳过
+//
+// 参数：
+//   - ctx: 上下文（任务状态已落库后调用，勿传入事务句柄）
+//   - taskID: 任务 ID
+//   - state: 事件状态（eventbus.ExportTaskStateDone / ExportTaskStateFailed）
+//
+// 异常：
+//   - 回读/序列化/Publish 失败仅记 [WARN] 日志，不向上返回错误
+//
+// 使用示例：
+//
+//	s.publishExportTaskEvent(ctx, task.ID, eventbus.ExportTaskStateDone)
+func (s *ExportTaskService) publishExportTaskEvent(ctx context.Context, taskID int64, state string) {
+	if s.orderService == nil {
+		return
+	}
+	rds := s.orderService.redisClient
+	if rds == nil {
+		return
+	}
+	var t model.ExportTask
+	if err := s.db.GetDb().WithContext(ctx).First(&t, taskID).Error; err != nil {
+		log.Printf("[export-task] 导出事件发布失败（任务回读）: task_id=%d err=%v", taskID, err)
+		return
+	}
+	payload, err := json.Marshal(eventbus.ExportTaskEvent{
+		TaskID:      t.ID,
+		AdminID:     t.AdminID,
+		CommunityID: t.CommunityID,
+		ExportType:  t.ExportType,
+		State:       state,
+		FileName:    t.FileName,
+		RowCount:    t.RowCount,
+		ErrorMsg:    sanitizeExportMsg(t.ErrorMsg),
+		EventTime:   time.Now().Format("2006-01-02 15:04:05"),
+	})
+	if err != nil {
+		log.Printf("[export-task] 导出事件序列化失败: task_id=%d err=%v", taskID, err)
+		return
+	}
+	if err := rds.Publish(ctx, eventbus.ChannelExportTask, payload).Err(); err != nil {
+		log.Printf("[export-task] 导出事件发布失败: task_id=%d state=%s err=%v", taskID, state, err)
+	}
+}
+
+// sanitizeExportMsg 剥离任务错误文案中夹带的本地落盘路径（WS 载荷契约红线）
+// error_msg 落库的是管理员可读原因，但历史与外部写入方可能带第三方错误全文
+// （如 os.MkdirAll 的 "创建导出目录失败: mkdir /app/uploads/exports: permission denied"），
+// 这类文本会把容器内绝对路径原样下发给 WS 并渲染到下载中心。
+// 识别方式：文本里出现 POSIX 绝对路径（"/" 后还有 "/"）或带分隔符的 Windows 盘符路径
+// （"C:\..."）即从该 token 起截断，保留它之前的原因描述；常规中文文案不含这类 token，原样返回。
+//
+// 参数：
+//   - msg: 任务行里的错误文案
+//
+// 返回值：
+//   - string: 可安全下发给 WS 的文案（合规文本原样返回）
+//
+// 异常：
+//   - 无错误返回；空串原样返回
+//
+// 使用示例：
+//
+//	ErrorMsg: sanitizeExportMsg(t.ErrorMsg)
+func sanitizeExportMsg(msg string) string {
+	cut := -1
+	for i := 0; i < len(msg); i++ {
+		switch msg[i] {
+		case '/':
+			// POSIX 绝对路径：段首斜杠且后面还有层级
+			if i == 0 || msg[i-1] == ' ' || msg[i-1] == ':' || msg[i-1] == '=' {
+				if strings.Contains(msg[i+1:], "/") {
+					cut = i
+				}
+			}
+		case '\\':
+			// Windows 路径：段首反斜杠，或盘符形式 "X:\"（此时回退到盘符字母一起截）
+			if i == 0 || msg[i-1] == ' ' || msg[i-1] == ':' || msg[i-1] == '=' {
+				cut = i
+				if i >= 2 && msg[i-1] == ':' && isWindowsDriveLetter(msg[i-2]) {
+					cut = i - 2
+				}
+			}
+		}
+		if cut >= 0 {
+			break
+		}
+	}
+	if cut < 0 {
+		return msg
+	}
+	return strings.TrimSpace(msg[:cut])
+}
+
+// isWindowsDriveLetter 判定字节是否为盘符字母（大小写均可）
+// 参数：
+//   - b: 待判定的字节
+//
+// 返回值：
+//   - bool: 是否为 A-Z 或 a-z
+func isWindowsDriveLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // toExportTaskInfo 模型转 proto 视图

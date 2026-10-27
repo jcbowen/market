@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { CashOutline } from '@vicons/ionicons5'
+import { CashOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 
 /**
  * 应用注册表：应用中心宫格展示与入口路由的统一来源
@@ -17,6 +17,8 @@ export interface AppMeta {
   path: string
   /** 所需权限码；缺省表示登录即可 */
   permission?: string
+  /** 仅超级管理员可见 */
+  superOnly?: boolean
 }
 
 /** 全部注册应用（顺序即应用中心默认展示顺序） */
@@ -28,6 +30,15 @@ export const APP_REGISTRY: AppMeta[] = [
     icon: CashOutline,
     path: '/pos/cashier',
     permission: 'order:create',
+  },
+  {
+    key: 'data-import',
+    name: '数据导入',
+    description: '按需导入演示数据包：分类、商品、库存、Banner 与营销活动',
+    icon: CloudDownloadOutline,
+    path: '/apps/data-import',
+    permission: 'product:create',
+    superOnly: true,
   },
 ]
 

@@ -7,7 +7,10 @@
 //     MARKET_ADMIN_PASSWORD（未配置时随机生成）；凭据打印到 stdout（进入
 //     docker logs）并写入凭证文件（随宿主机 runtime 目录持久化）。幂等：
 //     已有超管时跳过，绝不重置既有密码。
-//     随后做初始社区兜底：库中不存在任何社区时创建一个默认社区（名称取
+//     随后导入演示种子（非 production 且 communities 为空时）：数据来自 product
+//     服务内嵌演示数据包（full-demo.json），经 SeedDemoBootstrap 直连库导入，
+//     替代原 deploy/init.dev.sql 的 SQL 导入链路（详见 seed.go）。
+//     再做初始社区兜底：库中不存在任何社区时创建一个默认社区（名称取
 //     MARKET_DEFAULT_COMMUNITY，默认「默认社区」），并初始化内置社区管理员
 //     角色（与后台创建社区同链路），避免全新部署时超管被卡在「社区选择」页
 //     死循环（无社区 → 强制选择页 → 选择页为空且无创建入口）。
@@ -115,6 +118,14 @@ func runInit(timeoutSec int) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+
+	// 演示种子导入（原 init.dev.sql 的替代链路，非 production 且空库时执行）：
+	// 必须先于 ensureSuperAdmin/ensureDefaultCommunity——
+	//   - 演示超管（admin/admin123）优先生效，ensureSuperAdmin 随后跳过；
+	//     已配置 MARKET_ADMIN_PASSWORD 时演示段让位（种子内部判断）；
+	//   - 演示社区先建，ensureDefaultCommunity 检测到社区已存在即不再创建「默认社区」，
+	//     仅补建缺内置角色的社区（覆盖两个演示社区）
+	seedDemoPackage(inst, timeoutSec)
 
 	if err := ensureSuperAdmin(db); err != nil {
 		fmt.Printf("==> [market-admin] 超管初始化失败: %v\n", err)
@@ -239,7 +250,7 @@ func ensureDefaultCommunity(inst *mysql.Instance) {
 }
 
 // backfillCommunityAdminRoles 为缺内置社区管理员角色的社区幂等补建该角色。
-// 该角色是「社区权限上限」的载体：预置数据（init.dev.sql）里已有社区但没有角色时，
+// 该角色是「社区权限上限」的载体：预置数据（演示种子包）里已有社区但没有角色时，
 // 分配社区管理员、按内置角色造员工都会失败，故每次初始化都补齐一次。
 func backfillCommunityAdminRoles(inst *mysql.Instance) {
 	db := inst.GetDb()

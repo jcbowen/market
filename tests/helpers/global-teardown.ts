@@ -8,7 +8,7 @@ import { clearTestUserRegistry, readTestUserRegistry } from './data';
  *
  * 做的事：把本轮 clientLogin 登记的 C 端会员逐个停用（PUT /admin/users/:id/status {status:0}）。
  * 为什么不是删除：会员没有删除接口，后台提供的生命周期只有停用；停用后账号既不能再登录，
- * 也不会再被统计/列表用例命中，脏行留在库里等重建开发库（init.dev.sql）时统一清掉。
+ * 也不会再被统计/列表用例命中，脏行留在库里等重建开发库（演示种子包）时统一清掉。
  *
  * - 函数名: globalTeardown（Playwright 约定导出）
  * - 参数: options — Playwright 传入的是 globalSetup 的返回值（本项目 globalSetup 无返回值，

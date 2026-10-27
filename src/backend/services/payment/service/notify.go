@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
@@ -64,6 +65,109 @@ func (s *PaymentService) recordNotifyLog(ctx context.Context, entry *model.Notif
 	if err := s.db.GetDb().WithContext(ctx).Create(entry).Error; err != nil {
 		log.Printf("[payment-notify] 流水写入失败 kind=%d result=%d payment_no=%s: %v",
 			entry.Kind, entry.Result, entry.PaymentNo, err)
+		return
+	}
+	s.publishPaymentAnomalyEvent(ctx, entry)
+}
+
+// anomalyStuckKinds 挂账检出的同一事实的两个来源（3 系统自动扫出、8 后台人工核实）。
+// 二者按同一告警组去重：管理员点「同步支付状态」核实出的挂账，系统此前往往已自动检出并提醒过，
+// 再响一次只是把同一条待办念两遍
+var anomalyStuckKinds = []int32{model.NotifyKindStuck, model.NotifyKindManualStuckCheck}
+
+// anomalyAlertKinds 值得「叫醒人」的流水类别白名单（WS 语音告警范围）：
+// 3 系统检出挂账、8 后台人工核实挂账、6 回查超限放弃对账。
+// 幂等忽略（NotifyResultIgnored）与验签失败是正常噪音或量大类，推了会淹没告警，不在此列；
+// 金额不符/订单同步失败等其余待办仍进异常队列，只是不主动语音叫醒
+var anomalyAlertKinds = map[int32]struct{}{
+	model.NotifyKindStuck:            {},
+	model.NotifyKindManualStuckCheck: {},
+	model.NotifyKindGiveUp:           {},
+}
+
+// anomalyAlertGroup 告警去重组：3 与 8 是同一事实的不同检出来源（同组），
+// 6 是「放弃对账」的独立升级事实（单独一组）；白名单外的类别返回 0，不参与去重
+//
+// 参数：
+//   - kind: model.NotifyKind*
+//
+// 返回值：
+//   - []int32: 组内互斥的类别集合；非告警类别返回 nil
+//
+// 使用示例：
+//
+//	kinds := anomalyAlertGroup(entry.Kind) // kind=3 → [3 8]
+func anomalyAlertGroup(kind int32) []int32 {
+	switch kind {
+	case model.NotifyKindStuck, model.NotifyKindManualStuckCheck:
+		return anomalyStuckKinds
+	case model.NotifyKindGiveUp:
+		return []int32{model.NotifyKindGiveUp}
+	default:
+		return nil
+	}
+}
+
+// publishPaymentAnomalyEvent 挂账检出/放弃对账流水落库后向事件总线发布告警事件（尽力而为）
+// 发布点唯一：recordNotifyLog 成功落库后（系统检出、人工核实、对账调度器全部经此收口），
+// gateway 订阅后按社区广播给在线管理员。事件只带定位凭据与金额，不带原始报文。
+// 防刷屏：同一支付单、同一告警组（挂账 3/8 视为一组）已有待处理流水时不再重推
+// （重复检出或换了检出来源都只进队列、不重复叫醒；放弃对账 6 是独立事实，单独成组）。
+// 任何失败（去重查询、金额补全、序列化、Redis 不可用）仅记日志，不影响流水落库主流程；
+// Redis 客户端未注入（单测/精简部署）时静默跳过
+//
+// 参数：
+//   - ctx: 上下文（流水已落库后调用，勿传入事务句柄）
+//   - entry: 已落库的流水（Kind 需在 anomalyAlertKinds 白名单内）
+//
+// 异常：
+//   - 查询/序列化/Publish 失败仅记日志，不向上返回错误
+//
+// 使用示例：
+//
+//	s.publishPaymentAnomalyEvent(ctx, entry)
+func (s *PaymentService) publishPaymentAnomalyEvent(ctx context.Context, entry *model.NotifyLog) {
+	if s.redisClient == nil {
+		return
+	}
+	if _, ok := anomalyAlertKinds[entry.Kind]; !ok {
+		return
+	}
+	// 防刷屏：同一支付单、同一告警组已有待处理流水（含历史遗留），说明人还没销账、
+	// 这次检出不是新事实。按 payment_no 索引取组内类别（挂账的 3/8 互斥去重），
+	// 排除本条自身——本条在 recordNotifyLog 里已先行落库且同为待处理态
+	var dup int64
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.NotifyLog{}).
+		Where("payment_no = ? AND kind IN ? AND handled = ? AND id <> ?",
+			entry.PaymentNo, anomalyAlertGroup(entry.Kind), model.NotifyPending, entry.ID).
+		Limit(1).Count(&dup).Error; err != nil {
+		log.Printf("[payment-notify] 异常告警去重查询失败（放行本次推送）: payment_no=%s err=%v", entry.PaymentNo, err)
+	} else if dup > 0 {
+		return
+	}
+	// 金额不在流水上，按支付单号补全（挂账类流水必带支付单号；查不到按 0 下发，不阻断）
+	var amount float64
+	if entry.PaymentNo != "" {
+		var p model.Payment
+		if err := s.db.GetDb().WithContext(ctx).Select("amount").
+			Where("payment_no = ?", entry.PaymentNo).First(&p).Error; err == nil {
+			amount = p.Amount
+		}
+	}
+	payload, err := json.Marshal(eventbus.PaymentAnomalyEvent{
+		Kind:        entry.Kind,
+		OrderNo:     entry.OrderNo,
+		PaymentNo:   entry.PaymentNo,
+		CommunityID: entry.CommunityID,
+		Amount:      amount,
+		EventTime:   entry.CreatedAt,
+	})
+	if err != nil {
+		log.Printf("[payment-notify] 异常告警事件序列化失败: payment_no=%s err=%v", entry.PaymentNo, err)
+		return
+	}
+	if err := s.redisClient.Publish(ctx, eventbus.ChannelPaymentAnomaly, payload).Err(); err != nil {
+		log.Printf("[payment-notify] 异常告警事件发布失败: payment_no=%s kind=%d err=%v", entry.PaymentNo, entry.Kind, err)
 	}
 }
 

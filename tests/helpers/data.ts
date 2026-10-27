@@ -7,14 +7,14 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-/** 常用 C 端测试手机号（init.dev.sql 预置用户） */
+/** 常用 C 端测试手机号（演示种子包预置用户） */
 export const PRESET_PHONE = '13800138000';
 
 /**
  * 本轮创建的 C 端会员登记表（JSONL，一行一条）
  * 会员没有删除接口（后台只有 PUT /admin/users/:id/status），所以回收口径是「登记 + 停用」：
  * 用例经 clientLogin 造出的每个会员都落表，globalTeardown 读取后逐个停用，
- * 让脏数据停在可识别、不可登录的状态；要彻底清行只能重建库（init.dev.sql）。
+ * 让脏数据停在可识别、不可登录的状态；要彻底清行只能重建库（演示种子包）。
  * 预置账号（PRESET_PHONE）与人工使用的固定账号一律不登记，避免把共享数据停用。
  *
  * 路径锚定用 `__dirname`（helpers/ 的上一级即 tests/）：Playwright 把 TS 转成 CommonJS 执行，

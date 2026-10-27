@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/services/order/model"
 )
 
@@ -254,5 +255,82 @@ func TestExportCSVHeader(t *testing.T) {
 	cols := len(strings.Split(strings.TrimSuffix(exportCSVHeader, "\n"), ","))
 	if cols != 11 {
 		t.Fatalf("表头应为 11 列, got %d", cols)
+	}
+}
+
+// TestSanitizeExportMsg 导出错误文案下发前剥离落盘路径（WS 载荷不带文件路径红线）
+func TestSanitizeExportMsg(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"空串原样", "", ""},
+		{"截断提示等常规文案原样", "已达单次导出上限 5000 行，仅导出前 1200 行，请缩小筛选范围",
+			"已达单次导出上限 5000 行，仅导出前 1200 行，请缩小筛选范围"},
+		{"不带路径的失败原因原样", "查询条件快照解析失败", "查询条件快照解析失败"},
+		{"含冒号但无路径的文案原样", "写入导出文件失败: disk quota exceeded", "写入导出文件失败: disk quota exceeded"},
+		{"中文逗号与顿号不应误伤", "订单号、金额，含 / 号的路径不会单独成段", "订单号、金额，含 / 号的路径不会单独成段"},
+		{"Linux 绝对路径从路径段截断", `创建导出目录失败: mkdir /app/uploads/exports: permission denied`, "创建导出目录失败: mkdir"},
+		{"Windows 盘符路径连同盘符截断", `创建导出目录失败: mkdir C:\app\uploads\exports: Access is denied.`, "创建导出目录失败: mkdir"},
+		{"路径在句中时保留前因", "准备落盘目录 /data/uploads/exports 失败", "准备落盘目录"},
+		{"相对路径不改写（不带部署根目录，无泄露面）", "打开文件失败: open exports/2026/a.csv: no such file",
+			"打开文件失败: open exports/2026/a.csv: no such file"},
+	}
+	for _, c := range cases {
+		if got := sanitizeExportMsg(c.in); got != c.want {
+			t.Errorf("%s: got=%q want=%q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestSanitizedMsgPassesEventContract 净化结果必须能通过事件契约的路径红线
+// 把「发布侧脱敏」与「契约校验」串起来，任一侧口径变化都会在这里暴露
+//
+// 参数：
+//   - t: 测试句柄
+func TestSanitizedMsgPassesEventContract(t *testing.T) {
+	raw, err := json.Marshal(eventbus.ExportTaskEvent{
+		TaskID:   11,
+		State:    eventbus.ExportTaskStateFailed,
+		ErrorMsg: sanitizeExportMsg(`创建导出目录失败: mkdir /app/uploads/exports: permission denied`),
+	})
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("反解为 map 失败: %v", err)
+	}
+	for _, v := range pathBearingValues(payload) {
+		t.Errorf("脱敏后的载荷仍带路径: %s", v)
+	}
+}
+
+// pathBearingValues 检查载荷字符串取值里是否夹带落盘路径（与 eventbus 契约同口径）
+// 参数：
+//   - payload: 已反解为 map 的载荷
+//
+// 返回值：
+//   - []string: 违规描述，合规时为空
+func pathBearingValues(payload map[string]any) []string {
+	var bad []string
+	for key, val := range payload {
+		s, ok := val.(string)
+		if !ok {
+			continue
+		}
+		if strings.Contains(s, "/uploads/") || strings.Contains(s, `\uploads\`) {
+			bad = append(bad, key+"="+s)
+		}
+	}
+	return bad
+}
+
+// TestExportFailureMsgsAreReadable 失败文案不得带落盘路径
+// 落库文本与 WS 下发共用同一条链路，源头不写路径才是根治
+func TestExportFailureMsgsAreReadable(t *testing.T) {
+	if strings.Contains(exportDirFailureMsg, "/") || strings.Contains(exportDirFailureMsg, "\\") {
+		t.Errorf("exportDirFailureMsg 不应含路径分隔符: %q", exportDirFailureMsg)
 	}
 }

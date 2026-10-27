@@ -11,10 +11,13 @@ RUN adduser -D -u 10001 appuser
 
 WORKDIR /app
 
-# 复制预编译的 gateway 二进制（Linux 交叉编译产物）
+# 复制预编译的二进制（Linux 交叉编译产物）：
+# gateway 主进程 + market-admin（docker exec ./market-admin init 完成超管与演示种子初始化，
+# 与 allinone/prod 部署形态共用同一初始化入口）
 # build.mjs 按 bin/{os}-{arch}/ 布局输出，amd64/arm64 由 BuildKit 的 TARGETARCH 自动注入
 ARG TARGETARCH
 COPY bin/linux-${TARGETARCH}/gateway ./gateway
+COPY bin/linux-${TARGETARCH}/market-admin ./market-admin
 
 # 复制前端编译产物（非源码）
 COPY bin/static ./static
@@ -23,7 +26,7 @@ COPY bin/static ./static
 # 不能放进 /app/uploads —— 该目录在 compose 部署中被宿主目录挂载，镜像内文件会被遮蔽
 COPY deploy/seed-assets/products ./seed/products
 
-RUN chmod +x ./gateway && chown -R appuser:appuser /app
+RUN chmod +x ./gateway ./market-admin && chown -R appuser:appuser /app
 
 USER appuser
 

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc/codes"
@@ -34,6 +35,10 @@ import (
 type PaymentService struct {
 	db  *mysql.Instance
 	cfg *config.Config
+
+	// redisClient 事件总线发布用（支付异常告警经 WS 推送后台）；
+	// 未注入（单测/精简部署）时事件发布静默跳过
+	redisClient *redis.Client
 
 	// payMu 保护以下支付配置缓存字段的并发读写
 	payMu sync.RWMutex
@@ -67,6 +72,17 @@ func NewPaymentService(db *mysql.Instance, cfg *config.Config) *PaymentService {
 		log.Printf("初始化支付配置失败: %v", err)
 	}
 	s.reloadPayConfig()
+	return s
+}
+
+// WithRedis 注入 Redis 客户端（可选，用于支付异常告警的事件总线发布）
+// 参数：
+//   - client: Redis 客户端
+//
+// 返回值：
+//   - *PaymentService: 自身（链式调用）
+func (s *PaymentService) WithRedis(client *redis.Client) *PaymentService {
+	s.redisClient = client
 	return s
 }
 

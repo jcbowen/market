@@ -5,6 +5,8 @@
         <n-select v-model:value="status" :options="statusOptions" placeholder="售后状态" clearable style="width: 140px" @update:value="onSearch" />
         <n-button type="primary" @click="onSearch">查询</n-button>
       </n-space>
+      <!-- 实时退款事件只提示不自动重载：本页可筛选/翻页/行内审核，自动重排会打断正在处理的行 -->
+      <NewDataAlert :types="['order.refund']" :loaded-at="lastLoadedAt" @refresh="loadData" />
       <n-data-table
         :columns="tableColumns"
         :data="list"
@@ -79,6 +81,7 @@ import { NButton, NSpace, NTag, NDataTable, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getRefundList, approveRefund, rejectRefund, retryRefund, resetRefundRetry } from '@/api/order'
 import OrderDetailModal from './detail.vue'
+import NewDataAlert from '@/components/NewDataAlert.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import type { Refund, RefundItem } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
@@ -449,6 +452,9 @@ async function submitReset() {
   }
 }
 
+/** 售后单列表最近一次加载完成的时间戳，供 NewDataAlert 归零陈旧提示 */
+const lastLoadedAt = ref(0)
+
 /**
  * 加载售后单分页数据
  */
@@ -468,6 +474,8 @@ async function loadData() {
     // 错误提示由请求拦截器统一弹出
   } finally {
     loading.value = false
+    // 通知「有新数据」提示条：屏幕上的列表已重新拉取，陈旧计数作废
+    lastLoadedAt.value = Date.now()
   }
 }
 

@@ -57,14 +57,12 @@ COPY bin/static ./static
 COPY bin/config.docker.yaml ./config.yaml
 COPY src/backend/deploy/entrypoint-app.sh /entrypoint-app.sh
 
-# 演示种子：素材打进镜像由 gateway 直接服务 /uploads/seed/**（不能放 /app/uploads，
-# 该目录部署时被宿主目录挂载、会遮蔽镜像内容）；init.dev.sql 与 seed-init.sh 供
-# SERVICE_NAME=seed-init 一次性任务在 APP_ENV=stage 且库为空时导入
+# 演示种子素材：打进镜像由 gateway 直接服务 /uploads/seed/**（不能放 /app/uploads，
+# 该目录部署时被宿主目录挂载、会遮蔽镜像内容）；演示数据本身由 admin-init 一次性任务
+# （market-admin init）经内嵌数据包导入（非 production 且空库时），不再携带 SQL 种子文件
 COPY deploy/seed-assets/products ./seed/products
-COPY deploy/init.dev.sql ./seed/init.dev.sql
-COPY src/backend/deploy/seed-init.sh /seed-init.sh
 
-RUN chmod +x /entrypoint-app.sh /seed-init.sh ./gateway ./user-service ./product-service \
+RUN chmod +x /entrypoint-app.sh ./gateway ./user-service ./product-service \
     ./order-service ./cart-service ./payment-service ./market-admin ./geoip-download \
     && chown -R appuser:appuser /app
 

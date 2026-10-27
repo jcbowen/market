@@ -97,10 +97,14 @@ const canSaveFavorites = computed(
 )
 
 /**
- * 当前账号可见的应用：权限码缺省视为登录即可
+ * 当前账号可见的应用：权限码缺省视为登录即可；superOnly 应用仅超管可见
  */
 const visibleApps = computed(() =>
-  APP_REGISTRY.filter((app) => !app.permission || authStore.isSuperAdmin || authStore.hasPermission(app.permission)),
+  APP_REGISTRY.filter(
+    (app) =>
+      (!app.permission || authStore.isSuperAdmin || authStore.hasPermission(app.permission)) &&
+      (!app.superOnly || authStore.isSuperAdmin),
+  ),
 )
 
 /**

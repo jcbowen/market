@@ -1,6 +1,8 @@
 <template>
   <n-card title="订单列表">
     <n-space vertical :size="16">
+      <!-- 实时事件只提示不自动重载：本页可筛选/翻页/行内操作，自动重排会打断正在处理的行 -->
+      <NewDataAlert :types="['order.paid', 'order.refund']" :loaded-at="lastLoadedAt" @refresh="loadData" />
       <!-- 状态概览卡片：点击卡片即筛选对应状态；窄屏每行 3 张，桌面每行 6 张 -->
       <n-grid v-if="stats" :cols="6" :x-gap="12" item-responsive>
         <n-gi v-for="card in statCards" :key="card.label" span="2" l="1">
@@ -287,6 +289,7 @@ import { createOrderExportTask, completeOrder, getOrderList, verifyPickup, assig
 import { getFulfillers } from '@/api/user'
 import { getProductList } from '@/api/product'
 import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
+import NewDataAlert from '@/components/NewDataAlert.vue'
 import OrderDetailModal from './detail.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 import UserPicker from '@/components/UserPicker.vue'
@@ -1170,6 +1173,9 @@ async function createExport() {
   }
 }
 
+/** 列表最近一次加载完成的时间戳，供 NewDataAlert 归零陈旧提示 */
+const lastLoadedAt = ref(0)
+
 /**
  * 加载订单分页数据；失败时清空列表并展示错误态
  */
@@ -1187,6 +1193,8 @@ async function loadData() {
     list.value = []
   } finally {
     loading.value = false
+    // 通知「有新数据」提示条：屏幕上的列表已重新拉取，陈旧计数作废
+    lastLoadedAt.value = Date.now()
   }
 }
 

@@ -83,7 +83,9 @@ beforeEach(() => {
   document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
 })
 
-describe('401 会话收口', () => {
+// 单跑每例约 1.8s（成本在 loadRequestModule 的 vi.resetModules + 重新 import axios），
+// 全量并发时会被 CPU 争用顶到默认 5s 超时而偶发红，故按套件放宽预算
+describe('401 会话收口', { timeout: 20000 }, () => {
   it('业务码 11001 触发收口回调并跳转登录页', async () => {
     const mod = await loadRequestModule()
     const onUnauthorized = vi.fn()

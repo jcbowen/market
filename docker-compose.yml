@@ -204,6 +204,9 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
+      # docker exec ./market-admin init（start-all 调用）继承此变量定位运行时配置；
+      # gateway 主进程 command 内的内联 CONFIG_FILE 与之同值，互不冲突
+      CONFIG_FILE: /app/runtime/config.yaml
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}

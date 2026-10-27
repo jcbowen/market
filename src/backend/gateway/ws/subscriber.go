@@ -16,7 +16,8 @@ import (
 // 订阅重连间隔：Redis 断连/订阅异常后的重试等待
 const resubscribeDelay = 3 * time.Second
 
-// RunOrderEventSubscriber 订阅订单事件频道（支付成功 + 退款），按社区转发给在线管理员连接
+// RunOrderEventSubscriber 订阅后台实时通知的事件频道（订单支付成功、退款、导出任务终态、管理员权限变更），
+// 按事件语义分别以社区广播 / 管理员定向 / 全员提醒转发给在线管理员连接
 // 阻塞运行，应在独立 goroutine 中启动；ctx 取消后优雅退出。
 // Redis 不可用时不阻断 gateway 启动：订阅失败按间隔重试，期间仅丢失实时通知（不补偿），
 // 后台订单列表数据不受影响
@@ -61,15 +62,23 @@ func RunOrderEventSubscriber(ctx context.Context, cfg *config.Config, hub *Hub) 
 // 返回值：
 //   - error: 订阅或消费过程中的错误（ctx 取消时返回 nil）
 func subscribeOnce(ctx context.Context, rds *goredis.Client, hub *Hub) error {
-	sub := rds.Subscribe(ctx, eventbus.ChannelOrderPaid, eventbus.ChannelOrderRefund, eventbus.ChannelAdminPermissionChanged)
+	sub := rds.Subscribe(ctx,
+		eventbus.ChannelOrderPaid,
+		eventbus.ChannelOrderRefund,
+		eventbus.ChannelExportTask,
+		eventbus.ChannelPaymentAnomaly,
+		eventbus.ChannelAdminPermissionChanged,
+	)
 	defer func() { _ = sub.Close() }()
 
 	// 确认订阅建立后再进入消费循环，避免「以为在收、实际订阅未就绪」的静默丢失
 	if _, err := sub.Receive(ctx); err != nil {
 		return err
 	}
-	log.Printf("[ws] 已订阅事件频道: %s, %s, %s",
-		eventbus.ChannelOrderPaid, eventbus.ChannelOrderRefund, eventbus.ChannelAdminPermissionChanged)
+	log.Printf("[ws] 已订阅事件频道: %s, %s, %s, %s, %s",
+		eventbus.ChannelOrderPaid, eventbus.ChannelOrderRefund,
+		eventbus.ChannelExportTask, eventbus.ChannelPaymentAnomaly,
+		eventbus.ChannelAdminPermissionChanged)
 
 	ch := sub.Channel()
 	for {
@@ -85,7 +94,8 @@ func subscribeOnce(ctx context.Context, rds *goredis.Client, hub *Hub) error {
 	}
 }
 
-// dispatchEvent 按频道解析事件并按社区广播
+// dispatchEvent 按频道解析事件并选择下发范围（社区广播 / 管理员定向 / 全员），
+// 数据类事件的权限门槛统一在 hub 的 msgRequiredPerm 判定
 //
 // 参数：
 //   - hub: WebSocket 集线器
@@ -111,6 +121,30 @@ func dispatchEvent(hub *Hub, channel string, payload []byte) {
 		}
 		hub.BroadcastToCommunity(evt.CommunityID, &Message{
 			Type: eventbus.MsgTypeOrderRefund,
+			Data: evt,
+		})
+	case eventbus.ChannelExportTask:
+		evt := eventbus.ParseExportTaskEvent(payload)
+		if evt == nil {
+			log.Printf("[ws] 导出任务事件解析失败，已忽略: %s", string(payload))
+			return
+		}
+		// 导出是创建人个人的后台动作，按管理员定向推送，不惊动同社区其他管理员；
+		// 事件带任务 ID/行数/失败原因属业务数据，权限门槛由 msgRequiredPerm 统一判定
+		hub.BroadcastToAdmins([]int64{evt.AdminID}, &Message{
+			Type: eventbus.MsgTypeExportTaskChanged,
+			Data: evt,
+		})
+	case eventbus.ChannelPaymentAnomaly:
+		evt := eventbus.ParsePaymentAnomalyEvent(payload)
+		if evt == nil {
+			log.Printf("[ws] 支付异常事件解析失败，已忽略: %s", string(payload))
+			return
+		}
+		// 异常队列按社区隔离（含 community_id=0 仅超管可见的口径），告警按社区广播；
+		// 挂账金额/单号属业务数据，权限门槛由 msgRequiredPerm 统一判定
+		hub.BroadcastToCommunity(evt.CommunityID, &Message{
+			Type: eventbus.MsgTypePaymentAnomalyDetected,
 			Data: evt,
 		})
 	case eventbus.ChannelAdminPermissionChanged:

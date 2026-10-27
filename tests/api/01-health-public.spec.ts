@@ -18,7 +18,7 @@ test.describe('健康检查与公开接口', () => {
     const body = (await resp.json()) as PageData<{ id: number; name: string; status: number }>;
     expect(body.code).toBe(0);
     expect(Array.isArray(body.data?.list)).toBe(true);
-    // init.dev.sql 预置社区应存在
+    // 演示种子包预置社区应存在
     expect(body.data!.list.length).toBeGreaterThan(0);
   });
 

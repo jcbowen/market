@@ -150,7 +150,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'Dashboard' })
-import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref } from 'vue'
 import { formatMoney } from '@/utils/format'
 import { useRouter } from 'vue-router'
 import {
@@ -180,6 +180,7 @@ import { getPaymentAnomalies, getRefundList } from '@/api/order'
 import { getStockWarnings } from '@/api/inventory'
 import type { ProductRankingItem, RevenueReportItem } from '@/api/statistics'
 import { useAuthStore } from '@/stores/auth'
+import { onRealtime } from '@/utils/realtime'
 
 /**
  * 工作台首页
@@ -461,35 +462,36 @@ const quickActions = computed(() => {
 // --- 数据加载 ---
 
 /**
- * 并发加载工作台各区块数据
- * 使用 allSettled：单个接口失败只置空对应区块，不影响其他区块渲染
+ * 近 7 日区间（含今天）的起止日期
+ * @returns {{ startDate: string, endDate: string }} YYYY-MM-DD 格式，供报表类接口入参
  */
-async function loadAll() {
-  const sevenDaysAgo = (() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 6)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })()
-  const today = (() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })()
+function recentRange(): { startDate: string; endDate: string } {
+  const format = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - 6)
+  return { startDate: format(start), endDate: format(end) }
+}
 
-  const [dashRes, orderRes, refundPendingRes, refundProcessingRes, anomalyRes, stockRes, revenueRes, rankRes] = await Promise.allSettled([
-    getDashboardStatistics(),
+/**
+ * 加载待办计数区（订单待办 / 售后待办 / 支付异常 / 库存预警）
+ * 拆分理由：WS 事件驱动的刷新只拉这一部分，避免每次事件放大到全量 8 个请求
+ * 使用 allSettled：单个接口失败只保留对应项旧值，不影响其他项渲染
+ * @returns  Promise，无返回值（结果写入 orderStats 等响应式状态）
+ * @异常   不抛出，接口失败静默
+ * @示例   await loadTodos()
+ */
+async function loadTodos() {
+  const [orderRes, refundPendingRes, refundProcessingRes, anomalyRes, stockRes] = await Promise.allSettled([
     getOrderStatistics({}),
     getRefundList({ page: 1, page_size: 1, status: 1 }),
     getRefundList({ page: 1, page_size: 1, status: 4 }),
     // 只取 1 条最小化开销：待办计数用响应的 pending（社区范围内待处理总数，不随筛选变化）
     getPaymentAnomalies({ page: 1, page_size: 1 }),
     getStockWarnings(),
-    getRevenueReport({ start_date: sevenDaysAgo, end_date: today, group_by: 'day' }),
-    getProductRankings({ start_date: sevenDaysAgo, end_date: today, limit: 5 }),
   ])
 
-  if (dashRes.status === 'fulfilled' && dashRes.value.data.code === 0) {
-    Object.assign(statistics, dashRes.value.data.data)
-  }
   if (orderRes.status === 'fulfilled' && orderRes.value.data.code === 0) {
     orderStats.pending_pay = orderRes.value.data.data.pending_pay
     orderStats.pending_ship = orderRes.value.data.data.pending_ship
@@ -507,6 +509,27 @@ async function loadAll() {
   if (stockRes.status === 'fulfilled' && stockRes.value.data.code === 0) {
     stockWarningCount.value = stockRes.value.data.data?.length ?? 0
   }
+}
+
+/**
+ * 加载核心指标与图表（今日概览 / 近 7 日营收趋势 / 热销 TOP5）
+ * 日粒度聚合接口开销高于计数，只在进入页面时拉取，不参与事件驱动刷新
+ * 使用 allSettled：单个接口失败只置空对应区块，不影响其他区块渲染
+ * @returns  Promise，无返回值（结果写入 statistics / revenueTrend / hotProducts）
+ * @异常   不抛出，接口失败静默
+ * @示例   await loadCharts()
+ */
+async function loadCharts() {
+  const { startDate, endDate } = recentRange()
+  const [dashRes, revenueRes, rankRes] = await Promise.allSettled([
+    getDashboardStatistics(),
+    getRevenueReport({ start_date: startDate, end_date: endDate, group_by: 'day' }),
+    getProductRankings({ start_date: startDate, end_date: endDate, limit: 5 }),
+  ])
+
+  if (dashRes.status === 'fulfilled' && dashRes.value.data.code === 0) {
+    Object.assign(statistics, dashRes.value.data.data)
+  }
   if (revenueRes.status === 'fulfilled' && revenueRes.value.data.code === 0) {
     buildRevenueTrend(revenueRes.value.data.data || [])
   }
@@ -515,16 +538,93 @@ async function loadAll() {
   }
 }
 
+/**
+ * 并发加载工作台各区块数据（进入页面 / 从其他页切回时全量刷新）
+ * @returns Promise，两个分区均settled 后 resolve
+ */
+async function loadAll() {
+  await Promise.all([loadTodos(), loadCharts()])
+}
+
+// --- 事件驱动的待办刷新 ---
+
+/** 待办刷新冷却窗口（毫秒）：早高峰连发多单只刷一次，窗口尾部的连发补刷一次 */
+const TODOS_REFRESH_COOLDOWN = 8000
+
+/** 页面是否处于激活态（keep-alive 缓存下未激活时不响应事件，避免后台页堆积无效请求） */
+let isActive = false
+/** 冷却期定时器句柄，非空表示正处于冷却窗口内 */
+let todosCooldownTimer: ReturnType<typeof setTimeout> | null = null
+/** 冷却期内是否又收到了新事件（决定窗口结束时是否补刷一次） */
+let todosTrailingPending = false
+/** 实时事件订阅的退订集合，卸载时逐一调用 */
+let disposeRealtime: Array<() => void> = []
+
+/**
+ * 收到影响待办计数的 WS 事件后的合并刷新
+ * 前沿立即刷（首单零延迟）+ 冷却窗口内后续事件在窗口结束时补刷一次（不漏末期变更）
+ * @returns 无
+ * @示例   onRealtime('order.paid', onTodosSignal)
+ */
+function onTodosSignal() {
+  if (!isActive) return
+  if (todosCooldownTimer) {
+    todosTrailingPending = true
+    return
+  }
+  void loadTodos()
+  todosCooldownTimer = setTimeout(() => {
+    todosCooldownTimer = null
+    if (!todosTrailingPending) return
+    todosTrailingPending = false
+    onTodosSignal()
+  }, TODOS_REFRESH_COOLDOWN)
+}
+
+/** 清理待办刷新的定时器与订阅（页面卸载/失活时调用） */
+function clearTodosRefresh() {
+  if (todosCooldownTimer) {
+    clearTimeout(todosCooldownTimer)
+    todosCooldownTimer = null
+  }
+  todosTrailingPending = false
+}
+
 let firstActivated = true
-onMounted(loadAll)
+
+onMounted(() => {
+  isActive = true
+  void loadAll()
+  // 影响待办计数的事件：支付成功改订单/库存口径，退款改售后与待收款口径，
+  // 支付异常检出改「支付异常」待办数（异常队列 pending）
+  disposeRealtime = [
+    onRealtime('order.paid', onTodosSignal),
+    onRealtime('order.refund', onTodosSignal),
+    onRealtime('payment.anomaly_detected', onTodosSignal),
+  ]
+})
 
 // keep-alive 缓存下，从其他页面切回工作台时刷新待办与指标
 onActivated(() => {
+  isActive = true
   if (firstActivated) {
     firstActivated = false
     return
   }
+  clearTodosRefresh()
   loadAll()
+})
+
+onDeactivated(() => {
+  isActive = false
+  clearTodosRefresh()
+})
+
+onBeforeUnmount(() => {
+  isActive = false
+  clearTodosRefresh()
+  disposeRealtime.forEach((dispose) => dispose())
+  disposeRealtime = []
 })
 </script>
 

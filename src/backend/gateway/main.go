@@ -519,6 +519,11 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.PUT("/banners/:id", gwMiddleware.RequirePermission("marketing:update"), adminHandler.UpdateBanner)
 			authAdmin.DELETE("/banners/:id", gwMiddleware.RequirePermission("marketing:delete"), adminHandler.DeleteBanner)
 
+			// 数据导入（应用中心 · 数据包）：初期仅超管，handler 内 IsSuperAdmin 双闸
+			authAdmin.GET("/data-import/packages", gwMiddleware.RequirePermission("product:create"), adminHandler.ListDataPackages)
+			authAdmin.POST("/data-import/preview", gwMiddleware.RequirePermission("product:create"), adminHandler.PreviewDataImport)
+			authAdmin.POST("/data-import/import", gwMiddleware.RequirePermission("product:create"), adminHandler.ImportDataPackage)
+
 			authAdmin.GET("/settings/site", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetSiteSetting)
 			authAdmin.PUT("/settings/site", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateSiteSetting)
 			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentSetting)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/jcbowen/market/src/backend/common/eventbus"
@@ -100,6 +101,8 @@ func TestUpgraderUsesSameHostOriginCheck(t *testing.T) {
  *
  * 覆盖：
  *   - 数据类事件只送达持 order:view（或超管/通配）的连接；
+ *   - 新增数据类事件已在 msgRequiredPerm 登记（漏登记即向无权限连接下发业务数据）；
+ *   - 导出任务事件按创建人定向，定向不是绕过权限门槛的后门；
  *   - 未登记权限要求的类型（权限变更提醒）恒送达——权限被收窄者仍需收到提醒；
  *   - 快照缺失（perms 为 nil）按无权限处理，收不到数据类事件；
  *   - ID<=0 的连接不参与社区/管理员定向匹配（遗留全局角色 community_id=0 不得命中）；
@@ -303,4 +306,118 @@ func TestKickClosesMatchedClients(t *testing.T) {
 	}
 	// 空集广播仍不应 panic
 	h.BroadcastToCommunity(2, &Message{Type: eventbus.MsgTypeOrderPaid})
+}
+
+// TestAllDataClassTypesAreGated 数据类事件权限门槛全量回归
+// 门槛清单的唯一来源是 eventbus.DataClassMsgTypes，msgRequiredPerm 由它生成；
+// 新增数据类事件只需往清单追加一项即被本用例自动覆盖，不需要再改这里的硬编码列表
+// （本用例同时盯住反向漂移：提醒类被误登记、或映射表被绕过私自加项）
+//
+// 参数：
+//   - t: 测试句柄
+func TestAllDataClassTypesAreGated(t *testing.T) {
+	// 清单完整性：现存的 4 类数据事件一项都不能少
+	for _, want := range []string{
+		eventbus.MsgTypeOrderPaid,
+		eventbus.MsgTypeOrderRefund,
+		eventbus.MsgTypeExportTaskChanged,
+		eventbus.MsgTypePaymentAnomalyDetected,
+	} {
+		if !slices.Contains(eventbus.DataClassMsgTypes, want) {
+			t.Errorf("%s 未列入 DataClassMsgTypes，会向无权限连接下发业务数据", want)
+		}
+	}
+
+	none := NewClientPermissions(false, nil)
+	for _, typ := range eventbus.DataClassMsgTypes {
+		perm, ok := msgRequiredPerm[typ]
+		if !ok {
+			t.Errorf("%s 未登记 msgRequiredPerm，会向无权限连接下发业务数据", typ)
+			continue
+		}
+		if perm != PermOrderView {
+			t.Errorf("%s 权限门槛口径漂移 got=%q want=%q", typ, perm, PermOrderView)
+		}
+		if (&Client{perms: none}).canRecv(typ) {
+			t.Errorf("%s 无权限连接仍可接收", typ)
+		}
+	}
+
+	// 提醒类：刻意不设门槛，登记进来就是回归
+	reminderTypes := []string{
+		eventbus.MsgTypeAdminPermissionChanged,
+		MsgTypeHello,
+		MsgTypePing,
+	}
+	for _, typ := range reminderTypes {
+		if _, ok := msgRequiredPerm[typ]; ok {
+			t.Errorf("%s 属提醒类，不应登记权限门槛（被收窄权限者将收不到通知）", typ)
+		}
+		if !(&Client{perms: none}).canRecv(typ) {
+			t.Errorf("%s 被门槛过滤", typ)
+		}
+	}
+
+	// 反向漂移：映射表若被绕过清单私自加项，说明两处口径开始各说各话
+	for typ := range msgRequiredPerm {
+		if !slices.Contains(eventbus.DataClassMsgTypes, typ) {
+			t.Errorf("msgRequiredPerm 存在清单外的登记项 %s，应统一走 DataClassMsgTypes", typ)
+		}
+	}
+}
+
+// TestExportTaskEventTargetedAndGated 导出任务事件：只达创建人，且定向不绕过权限门槛
+// 参数：
+//   - t: 测试句柄
+func TestExportTaskEventTargetedAndGated(t *testing.T) {
+	h := NewHub()
+	creator := registerTestClient(h, 1, 41, "creator", NewClientPermissions(false, []string{PermOrderView}))
+	// 创建人本人若无订单权限，同样不该被「定向」放行
+	creatorNoPerm := registerTestClient(h, 1, 42, "creator-no-perm", NewClientPermissions(false, []string{"product:view"}))
+	colleague := registerTestClient(h, 1, 43, "colleague", NewClientPermissions(false, []string{PermOrderView}))
+
+	msg := &Message{Type: eventbus.MsgTypeExportTaskChanged, Data: map[string]any{"task_id": 9, "state": eventbus.ExportTaskStateDone}}
+	h.BroadcastToAdmins([]int64{41}, msg)
+	h.BroadcastToAdmins([]int64{42}, msg)
+
+	if got := receivedTypes(t, creator); len(got) != 1 || got[0] != eventbus.MsgTypeExportTaskChanged {
+		t.Errorf("创建人未收到本人为自己任务的下发: %v", got)
+	}
+	if got := receivedTypes(t, creatorNoPerm); len(got) != 0 {
+		t.Errorf("定向推送绕过了权限门槛: %v", got)
+	}
+	if got := receivedTypes(t, colleague); len(got) != 0 {
+		t.Errorf("非创建人收到了他人的导出事件: %v", got)
+	}
+}
+
+// TestPaymentAnomalyEventCommunityGated 支付异常事件：按社区广播且受权限门槛约束
+// 事件带挂账单号与金额属业务数据；community_id=0（未知归属）不得命中任何社区连接，
+// 超管的全量可见性走异常队列 HTTP 接口，WS 不例外放行
+// 参数：
+//   - t: 测试句柄
+func TestPaymentAnomalyEventCommunityGated(t *testing.T) {
+	h := NewHub()
+	withPerm := registerTestClient(h, 1, 51, "with-perm", NewClientPermissions(false, []string{"product:view", PermOrderView}))
+	noPerm := registerTestClient(h, 1, 52, "no-perm", NewClientPermissions(false, []string{"product:view"}))
+	elsewhere := registerTestClient(h, 2, 53, "elsewhere", NewClientPermissions(false, []string{PermOrderView}))
+	unknownCommunity := registerTestClient(h, 3, 54, "unknown-community", NewClientPermissions(false, []string{PermOrderView}))
+
+	// 正常社区归属：同社区持权限者可达，无权限与异社区不可达
+	h.BroadcastToCommunity(1, &Message{Type: eventbus.MsgTypePaymentAnomalyDetected, Data: map[string]any{"payment_no": "P1"}})
+	if got := receivedTypes(t, withPerm); len(got) != 1 || got[0] != eventbus.MsgTypePaymentAnomalyDetected {
+		t.Errorf("同社区持权限连接未收到支付异常告警: %v", got)
+	}
+	if got := receivedTypes(t, noPerm); len(got) != 0 {
+		t.Errorf("无 order:view 的连接收到了支付异常告警: %v", got)
+	}
+	if got := receivedTypes(t, elsewhere); len(got) != 0 {
+		t.Errorf("异社区连接收到了他社区支付异常告警: %v", got)
+	}
+
+	// 未知归属（community_id=0）：按「不推送」处理，不等于全员广播
+	h.BroadcastToCommunity(0, &Message{Type: eventbus.MsgTypePaymentAnomalyDetected, Data: map[string]any{"payment_no": "P2"}})
+	if got := receivedTypes(t, unknownCommunity); len(got) != 0 {
+		t.Errorf("community_id=0 的告警命中了社区连接: %v", got)
+	}
 }

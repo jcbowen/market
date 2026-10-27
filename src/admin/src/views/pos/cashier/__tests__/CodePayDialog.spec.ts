@@ -5,7 +5,8 @@ import { naiveTestComponents } from './naiveStubs'
 
 /**
  * CodePayDialog 付款码扫码弹窗状态机单测（收银台收款核心链路）
- * 覆盖：0 元拦截 / 渠道拒绝清码重扫 / 扣款成功 emit / PAYING 轮询 / 改现金出口 / 关闭守卫
+ * 覆盖：0 元拦截 / 渠道拒绝清码重扫 / 扣款成功 emit / PAYING 轮询 / WS 事件加速核实 /
+ *       改现金出口 / 关闭守卫
  */
 
 const { payPosOrderCode, getPosOrderPayStatus, payPosOrderCash } = vi.hoisted(() => ({
@@ -16,14 +17,36 @@ const { payPosOrderCode, getPosOrderPayStatus, payPosOrderCash } = vi.hoisted(()
 
 vi.mock('@/api/order', () => ({ payPosOrderCode, getPosOrderPayStatus, payPosOrderCash }))
 
+/** 弹窗订阅的实时事件处理器（type → 回调列表），供测试内手动投递 */
+const { realtimeHandlers, isRealtimeConnected } = vi.hoisted(() => ({
+  realtimeHandlers: new Map<string, Array<(data: unknown) => void>>(),
+  isRealtimeConnected: vi.fn(() => false),
+}))
+
+vi.mock('@/utils/realtime', () => ({
+  isRealtimeConnected,
+  onRealtime: (type: string, handler: (data: unknown) => void) => {
+    realtimeHandlers.set(type, [...(realtimeHandlers.get(type) ?? []), handler])
+    return () => realtimeHandlers.delete(type)
+  },
+}))
+
 const { useMessage } = vi.hoisted(() => ({ useMessage: vi.fn() }))
 vi.mock('naive-ui', () => ({ useMessage }))
 
 const warningMock = vi.fn()
 beforeEach(() => {
   vi.clearAllMocks()
+  realtimeHandlers.clear()
+  // 默认按「WS 断开」口径（兜底 2s 轮询），需要在线口径的用例自行覆盖
+  isRealtimeConnected.mockReturnValue(false)
   useMessage.mockReturnValue({ warning: warningMock, info: vi.fn(), success: vi.fn(), error: vi.fn() })
 })
+
+/** 投递一个实时事件到弹窗订阅的处理器 */
+function emitRealtime(type: string, data: Record<string, unknown>) {
+  realtimeHandlers.get(type)?.forEach((handler) => handler(data))
+}
 
 /** 默认弹窗入参（待支付订单凭据） */
 const baseProps = {
@@ -131,6 +154,107 @@ describe('CodePayDialog', () => {
     }
     expect(wrapper.find('.codepay-tip').text()).toContain('改用现金')
     expect(wrapper.emitted('paid')).toBeUndefined()
+  })
+
+  it('PAYING 期间收到本单 order.paid：立刻核实并收工（不等轮询）', async () => {
+    vi.useFakeTimers()
+    payPosOrderCode.mockResolvedValue({ data: { code: 0, data: { state: 'PAYING' } } })
+    getPosOrderPayStatus.mockResolvedValue({ data: { code: 0, data: { paid: true } } })
+
+    const wrapper = mountDialog()
+    await submitCode(wrapper)
+    expect(wrapper.emitted('paid')).toBeUndefined()
+
+    emitRealtime('order.paid', { order_no: 'POSTEST-D' })
+    await flushPromises()
+
+    // 资金结论仍来自权威查询，事件只负责叫醒
+    expect(getPosOrderPayStatus).toHaveBeenCalledWith(300, 'ZFPOSTEST')
+    expect(wrapper.emitted('paid')).toEqual([[{ payLabel: '付款码支付', via: 'code', pickupCode: '8888' }]])
+    // 收工后清掉定时器：不再重复查询、不重复出小票
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(getPosOrderPayStatus).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('paid')).toHaveLength(1)
+  })
+
+  it('同社区其他订单的支付事件不触发本弹窗核实', async () => {
+    payPosOrderCode.mockResolvedValue({ data: { code: 0, data: { state: 'PAYING' } } })
+    getPosOrderPayStatus.mockResolvedValue({ data: { code: 0, data: { paid: true } } })
+
+    const wrapper = mountDialog()
+    await submitCode(wrapper)
+
+    emitRealtime('order.paid', { order_no: 'POSTEST-OTHER' })
+    await flushPromises()
+    expect(getPosOrderPayStatus).not.toHaveBeenCalled()
+    expect(wrapper.emitted('paid')).toBeUndefined()
+  })
+
+  it('事件与在途轮询重叠只收工一次（不出两张小票）', async () => {
+    vi.useFakeTimers()
+    payPosOrderCode.mockResolvedValue({ data: { code: 0, data: { state: 'PAYING' } } })
+    getPosOrderPayStatus.mockResolvedValue({ data: { code: 0, data: { paid: true } } })
+
+    const wrapper = mountDialog()
+    await submitCode(wrapper)
+
+    // 同一轮内连投两次：两笔核实同时在途
+    emitRealtime('order.paid', { order_no: 'POSTEST-D' })
+    emitRealtime('order.paid', { order_no: 'POSTEST-D' })
+    await flushPromises()
+    expect(wrapper.emitted('paid')).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(wrapper.emitted('paid')).toHaveLength(1)
+  })
+
+  it('旧单核实结果晚到且已换单：整份丢弃，不给新单出小票', async () => {
+    vi.useFakeTimers()
+    payPosOrderCode.mockResolvedValue({ data: { code: 0, data: { state: 'PAYING' } } })
+    // 第一笔（D）的核实挂起，第二笔（E）的核实直接判未收款
+    const pendingResolvers: Array<(v: unknown) => void> = []
+    getPosOrderPayStatus
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            pendingResolvers.push(resolve)
+          }),
+      )
+      .mockResolvedValue({ data: { code: 0, data: { paid: false } } })
+
+    const wrapper = mountDialog()
+    await submitCode(wrapper)
+    emitRealtime('order.paid', { order_no: 'POSTEST-D' })
+    await flushPromises()
+    expect(getPosOrderPayStatus).toHaveBeenCalledTimes(1)
+
+    // 收银员关窗换单：paidEmitted 复位、订单号换成 POSTEST-E
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true, orderNo: 'POSTEST-E', orderId: 301, paymentNo: 'ZFPOTHER' })
+    expect(wrapper.emitted('paid')).toBeUndefined()
+
+    // D 的渠道事实在 E 的弹窗上下文里返回 —— 只能丢弃，否则小票与取货码张冠李戴
+    pendingResolvers[0]?.({ data: { code: 0, data: { paid: true } } })
+    await flushPromises()
+    expect(wrapper.emitted('paid')).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(wrapper.emitted('paid')).toBeUndefined()
+  })
+
+  it('WS 在线时轮询间隔放宽到 5s（断开时保持 2s 兜底）', async () => {
+    vi.useFakeTimers()
+    isRealtimeConnected.mockReturnValue(true)
+    payPosOrderCode.mockResolvedValue({ data: { code: 0, data: { state: 'PAYING' } } })
+    getPosOrderPayStatus.mockResolvedValue({ data: { code: 0, data: { paid: false } } })
+
+    const wrapper = mountDialog()
+    await submitCode(wrapper)
+
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(getPosOrderPayStatus).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(getPosOrderPayStatus).toHaveBeenCalledTimes(1)
   })
 
   it('扣款失败改用现金：调 pay-cash 后 emit paid（现金路径）', async () => {

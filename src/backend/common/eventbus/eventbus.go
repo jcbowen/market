@@ -112,6 +112,63 @@ func ParseOrderRefundEvent(payload []byte) *OrderRefundEvent {
 	return &evt
 }
 
+// 导出任务状态变更事件频道：order 服务在任务置「已完成/失败」后发布，
+// gateway 订阅后按创建人管理员定向推送（导出是个人的后台动作，不该惊动同社区其他人），
+// 用于让下载中心立即取文件，替代面板内的 3s 轮询
+const ChannelExportTask = "market:export:task"
+
+// 导出任务状态变更事件类型标识（WebSocket 消息体的 type 字段）
+const MsgTypeExportTaskChanged = "export.task_changed"
+
+// 导出任务事件状态：文件已生成，可下载
+const ExportTaskStateDone = "done"
+
+// 导出任务事件状态：生成失败，error_msg 为失败原因
+const ExportTaskStateFailed = "failed"
+
+// ExportTaskEvent 导出任务状态变更事件载荷
+// 刻意不含文件路径：文件位置属服务端内部信息，下载仍走带归属校验的既有接口
+type ExportTaskEvent struct {
+	// TaskID 任务 ID
+	TaskID int64 `json:"task_id"`
+	// AdminID 任务创建人管理员 ID（gateway 按此定向推送）
+	AdminID int64 `json:"admin_id"`
+	// CommunityID 任务归属社区 ID（0=超管跨社区）
+	CommunityID int64 `json:"community_id"`
+	// ExportType 导出类型，当前仅 orders
+	ExportType string `json:"export_type"`
+	// State 事件状态（ExportTaskStateDone / ExportTaskStateFailed）
+	State string `json:"state"`
+	// FileName 下载文件名（完成态）
+	FileName string `json:"file_name,omitempty"`
+	// RowCount 导出数据行数（完成态）
+	RowCount int64 `json:"row_count"`
+	// ErrorMsg 失败原因；行数上限截断时复用该字段承载「部分导出」提示语
+	ErrorMsg string `json:"error_msg,omitempty"`
+	// EventTime 事件时间（服务端格式 yyyy-MM-dd HH:mm:ss）
+	EventTime string `json:"event_time"`
+}
+
+// ParseExportTaskEvent 反序列化导出任务状态变更事件
+//
+// 参数：
+//   - payload: Redis Pub/Sub 消息体（JSON 字节）
+//
+// 返回值：
+//   - *ExportTaskEvent: 事件载荷，payload 非法 JSON 时返回 nil
+//
+// 使用示例：
+//
+//	evt := eventbus.ParseExportTaskEvent(msg.Payload)
+//	if evt != nil { ... }
+func ParseExportTaskEvent(payload []byte) *ExportTaskEvent {
+	var evt ExportTaskEvent
+	if err := json.Unmarshal(payload, &evt); err != nil {
+		return nil
+	}
+	return &evt
+}
+
 // 管理员权限变更事件频道：user 服务发布（角色增删改 / 任职调整 / 账号停启用），
 // gateway 订阅后经 WebSocket 提醒在线管理员刷新本地权限快照（菜单/路由守卫）。
 // 后端鉴权本就实时，此事件只消除前端观感滞后，属尽力而为的补充通知
@@ -149,4 +206,63 @@ func ParseAdminPermissionChangedEvent(payload []byte) *AdminPermissionChangedEve
 		return nil
 	}
 	return &evt
+}
+
+// 支付异常/挂账人工介入告警事件频道：payment 服务在异常流水落库后发布，
+// gateway 订阅后按社区广播给在线管理员，让异常队列的待处理项即刻叫醒人（语音 + 列表刷新），
+// 而不是等人自己打开异常页才发现。WS 不持久化，人不在后台时告警会永久错过，
+// 权威仍是异常队列的 pending 计数本身，本事件只是提前叫醒
+const ChannelPaymentAnomaly = "market:payment:anomaly"
+
+// 支付异常/挂账人工介入告警事件类型标识（WebSocket 消息体的 type 字段）
+const MsgTypePaymentAnomalyDetected = "payment.anomaly_detected"
+
+// PaymentAnomalyEvent 支付异常/挂账人工介入告警事件载荷
+// 只带定位凭据与金额，不带原始报文与对账轨迹：排查仍走带权限的异常队列接口
+type PaymentAnomalyEvent struct {
+	// Kind 流水类别（payment 服务 model.NotifyKind*：3 系统检出挂账 8 人工核实挂账 6 放弃对账）
+	Kind int32 `json:"kind"`
+	// OrderNo 订单号快照（流水解析不出订单时可能为空）
+	OrderNo string `json:"order_no"`
+	// PaymentNo 支付单号
+	PaymentNo string `json:"payment_no"`
+	// CommunityID 归属社区 ID（0=未知，仅超管全量队列可见）
+	CommunityID int64 `json:"community_id"`
+	// Amount 支付单金额（元）；支付单查不到时为 0
+	Amount float64 `json:"amount"`
+	// EventTime 事件时间（服务端格式 yyyy-MM-dd HH:mm:ss）
+	EventTime string `json:"event_time"`
+}
+
+// ParsePaymentAnomalyEvent 反序列化支付异常告警事件
+//
+// 参数：
+//   - payload: Redis Pub/Sub 消息体（JSON 字节）
+//
+// 返回值：
+//   - *PaymentAnomalyEvent: 事件载荷，payload 非法 JSON 时返回 nil
+func ParsePaymentAnomalyEvent(payload []byte) *PaymentAnomalyEvent {
+	var evt PaymentAnomalyEvent
+	if err := json.Unmarshal(payload, &evt); err != nil {
+		return nil
+	}
+	return &evt
+}
+
+// PermOrderView 数据类事件统一要求的权限点（与 middleware 权限目录同一字符串）。
+// 定义在事件契约包里供 gateway/ws 生成权限映射：两侧共用一份口径，避免推送门槛与接口权限漂移
+const PermOrderView = "order:view"
+
+// DataClassMsgTypes 数据类消息类型清单：承载业务数据的事件全在此列
+// （订单支付、订单退款、导出任务终态、支付异常告警）。
+// gateway/ws 的 msgRequiredPerm 由本清单生成——新增数据类事件只需在此追加一行；
+// 漏加会被 hub_test 的 TestMsgRequiredPermCoversAllDataClassTypes 判红，
+// 不会出现「未在映射表登记即恒可接收」把业务数据下发给无权限连接的情况。
+// 提醒类消息（admin.permission_changed、hello、ping）刻意不列入：
+// 权限被收窄的管理员必须收到权限变更通知才能刷新本地快照，加门槛会让提醒对它自己失效
+var DataClassMsgTypes = []string{
+	MsgTypeOrderPaid,
+	MsgTypeOrderRefund,
+	MsgTypeExportTaskChanged,
+	MsgTypePaymentAnomalyDetected,
 }

@@ -1,7 +1,7 @@
 import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
-/** 管理端默认账号（init.dev.sql 预置） */
+/** 管理端默认账号（演示种子包预置） */
 const ADMIN_USER = process.env.TEST_ADMIN_USER ?? 'admin';
 const ADMIN_PASS = process.env.TEST_ADMIN_PASS ?? 'admin123';
 

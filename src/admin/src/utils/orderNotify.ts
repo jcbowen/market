@@ -1,45 +1,25 @@
-import { useAuthStore } from '@/stores/auth'
+import { onRealtime, isRealtimeConnected } from './realtime'
+import { runAsAnnouncer, setupNotifyLeader } from './notifyLeader'
+import type { OrderPaidInfo, OrderRefundInfo } from './realtime'
 
 /**
- * 新订单 WebSocket 语音通知管理器
+ * 后台订单事件播报层（实时通道 utils/realtime.ts 的订阅者之一）
  *
- * 职责：
- * - 登录就绪且已选定社区时，与 gateway 建立 WS 长连接（不设权限门槛：
- *   权限被收窄的管理员恰恰需要收到权限变更提醒以刷新本地快照）
- * - 断线自动重连（指数退避 2s 起步，封顶 60s；收到服务端 hello 后复位），
- *   重连前先探测续期 access cookie（30s 节流），避免过期后裸重连持续失败
- * - 收到 order.paid 事件：播放提示音（WebAudio 合成，无需音频文件）+ 语音播报（Web Speech）
- * - 收到 order.refund 事件：按动作区分"退款申请/订单退款"话术播报
- * - 收到 admin.permission_changed 事件：防抖合并后拉取 /admin/info 刷新权限快照
- *   （菜单与路由守卫基于 store computed，刷新即生效）；页面切回前台时限流兜底刷新一次，
- *   覆盖 WS 丢消息场景
- * - 服务端在送达该事件后会断开本连接（其握手时刻的权限快照已作废），onclose 的自动重连
- *   即可按最新上下文重新握手，无需在此额外处理
- * - 浏览器自动播放限制：首次用户交互时解锁 AudioContext 与语音合成
+ * 职责边界：只负责把事件变成人能感知到的提醒——提示音（WebAudio 合成）、
+ * 语音播报（Web Speech）、浏览器系统通知（失焦兜底）。
+ * 连接管理、断线重连、事件分发、权限快照刷新都在 realtime 层，本文件不持有 socket。
  *
- * 服务端消息协议（docs/需求文档/06-接口设计）：
- * - {type:'hello'} 连接建立欢迎
- * - {type:'order.paid', data:{order_no,community_id,pay_amount,delivery_type,source,status,pay_time}}
- * - {type:'order.refund', data:{order_no,community_id,refund_no,amount,delivery_type,source,action,operator_type,reason,event_time}}
- * - {type:'admin.permission_changed', data:{admin_ids?,community_ids?,reason?}}
- * 未知 type 静默忽略（前后端独立演进的前向兼容）
+ * 不做权限判定：服务端在推送时刻按握手权限快照过滤数据类事件
+ * （gateway/ws/hub.go 的 msgRequiredPerm），无 order:view 的连接收不到 order.paid /
+ * order.refund；前端判定挡不住越权，服务端过滤是唯一安全边界。
+ *
+ * 多标签页选主：每个 tab 各持一条 WS 连接，同一事件会送达所有 tab；
+ * 发声（提示音/语音/系统通知）经 notifyLeader 选主，只有 leader tab 出声
+ * （Web Locks 长期持锁，降级 BroadcastChannel 认领，详见 notifyLeader.ts）。
+ * 数据同步不经过本层，各 tab 照常刷自己的数据。
+ *
+ * 浏览器自动播放限制：首次用户交互时解锁 AudioContext 与语音合成。
  */
-
-/** 重连基础间隔（毫秒） */
-const RECONNECT_BASE_DELAY = 2000
-/** 重连最大间隔（毫秒） */
-const RECONNECT_MAX_DELAY = 60000
-/** 两次 token 续期探测的最小间隔（毫秒），重连风暴期间节流 */
-const REFRESH_PROBE_INTERVAL = 30000
-
-/** 当前连接实例（单例） */
-let socket: WebSocket | null = null
-/** 重连定时器句柄 */
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-/** 下次重连等待时长（指数退避） */
-let retryDelay = RECONNECT_BASE_DELAY
-/** 主动关闭标记：登出/社区切换重连时不触发自动重连 */
-let intentionallyClosed = false
 
 /** WebAudio 上下文（懒创建，用于合成提示音） */
 let audioCtx: AudioContext | null = null
@@ -47,67 +27,8 @@ let audioCtx: AudioContext | null = null
 let speechUnlocked = false
 /** 持有当前播报语句的强引用：Chrome 有 utterance 被 GC 导致播到一半静音的已知问题 */
 let lastUtterance: SpeechSynthesisUtterance | null = null
-
-/**
- * 订单支付成功事件载荷（与后端 common/eventbus.OrderPaidEvent 对齐）
- */
-interface OrderPaidInfo {
-  /** 订单号 */
-  order_no: string
-  /** 订单归属社区 ID */
-  community_id: number
-  /** 实付金额（元） */
-  pay_amount: number
-  /** 配送方式 1自提 2配送 3到店 */
-  delivery_type: number
-  /** 订单来源 1C端用户 2收银台代客 */
-  source: number
-  /** 支付完成后的订单状态 */
-  status: number
-  /** 支付时间 */
-  pay_time: string
-}
-
-/**
- * 订单退款事件载荷（与后端 common/eventbus.OrderRefundEvent 对齐）
- */
-interface OrderRefundInfo {
-  /** 订单号 */
-  order_no: string
-  /** 订单归属社区 ID */
-  community_id: number
-  /** 退款单号 */
-  refund_no: string
-  /** 本笔退款金额（元） */
-  amount: number
-  /** 配送方式 1自提 2配送 3到店 */
-  delivery_type: number
-  /** 订单来源 1C端用户 2收银台代客 */
-  source: number
-  /** 事件动作 apply=申请退款(待审核) completed=退款成功 */
-  action: 'apply' | 'completed' | string
-  /** 操作者类型 user/admin/system */
-  operator_type: string
-  /** 退款原因 */
-  reason: string
-  /** 事件时间 */
-  event_time: string
-}
-
-/**
- * 拼接 WS 握手 URL
- * 浏览器 WebSocket 握手无法自定义请求头，鉴权凭登录时后端下发的 httpOnly
- * access cookie（随同源握手自动携带，令牌不落 URL 与访问日志），
- * 由网关 WSAuthMiddleware 映射到标准请求头后走既有 admin 鉴权链；
- * community_id 非敏感，仍经查询参数传递（声明推送过滤维度）
- * @param communityId 当前社区 ID
- * @returns 完整 ws/wss URL
- */
-function buildWsUrl(communityId: number): string {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const params = new URLSearchParams({ community_id: String(communityId) })
-  return `${proto}//${location.host}/api/v1/admin/ws?${params.toString()}`
-}
+/** 订阅注册标记：setupOrderNotify 幂等，重复调用不会叠加一份播报 */
+let installed = false
 
 /**
  * 取（或懒创建）WebAudio 上下文
@@ -132,8 +53,8 @@ function getAudioContext(): AudioContext | null {
  * - 语音合成：必须在用户手势调用栈内真实入队一条语句（Safari 才会放行后续
  *   异步回调里的 speak，Chrome/Safari 均会忽略空串语句，故用零音量空格），
  *   并顺带触发音色列表加载（Chrome 异步 getVoices）
- * - 浏览器通知授权：与语音解锁独立推进——若首次交互发生在登录前（WS 尚未连接，
- *   申请不到权限框），后续每次交互都会补申请，避免授权时机死锁；
+ * - 浏览器通知授权：与语音解锁独立推进——若首次交互发生在连接建立前（WS 尚未
+ *   连上，申请不到权限框），后续每次交互都会补申请，避免授权时机死锁；
  *   用户拒绝后 permission 不再是 default，自然不再打扰
  */
 function unlockAudio() {
@@ -149,7 +70,7 @@ function unlockAudio() {
       // 语音合成不可用不影响提示音
     }
   }
-  if (socket && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+  if (isRealtimeConnected() && typeof Notification !== 'undefined' && Notification.permission === 'default') {
     void Notification.requestPermission()
   }
 }
@@ -224,39 +145,43 @@ function showBrowserNotification(title: string, body: string, tag: string) {
 }
 
 /**
- * 播报新订单语音通知
+ * 播报新订单语音通知（经多 tab 选主，只有 leader tab 出声）
  * 到店单按"到店收款"话术，其余按"新订单"话术，均含金额；
  * 页面失焦时追加浏览器系统通知兜底视觉通道
  * @param data 事件载荷
  */
 function notifyOrderPaid(data: OrderPaidInfo) {
-  playDingDong()
-  const amount = Number((data.pay_amount ?? 0).toFixed(2))
-  const text = data.delivery_type === 3
-    ? `您有一笔到店收款，金额${amount}元`
-    : `您有新订单，金额${amount}元，请及时处理`
-  showBrowserNotification(data.delivery_type === 3 ? '到店收款' : '新订单',
-    `订单 ${data.order_no} 已支付，请及时处理`, `order-paid-${data.order_no}`)
-  speak(text)
+  runAsAnnouncer(`paid-${data.order_no}`, () => {
+    playDingDong()
+    const amount = Number((data.pay_amount ?? 0).toFixed(2))
+    const text = data.delivery_type === 3
+      ? `您有一笔到店收款，金额${amount}元`
+      : `您有新订单，金额${amount}元，请及时处理`
+    showBrowserNotification(data.delivery_type === 3 ? '到店收款' : '新订单',
+      `订单 ${data.order_no} 已支付，请及时处理`, `order-paid-${data.order_no}`)
+    speak(text)
+  })
 }
 
 /**
- * 播报退款事件语音通知
+ * 播报退款事件语音通知（经多 tab 选主，只有 leader tab 出声）
  * C 端申请（待审核）按"退款申请"话术提醒后台处理；退款成功按"订单退款"话术；
  * 页面失焦时追加浏览器系统通知兜底视觉通道
  * @param data 事件载荷
  */
 function notifyOrderRefund(data: OrderRefundInfo) {
-  playDingDong()
-  const amount = Number((data.amount ?? 0).toFixed(2))
-  const isApply = data.action === 'apply'
-  const text = isApply
-    ? `您有一笔退款申请，金额${amount}元，请及时处理`
-    : `订单已退款，金额${amount}元`
-  showBrowserNotification(isApply ? '退款申请' : '订单退款',
-    `订单 ${data.order_no} ${isApply ? '申请退款，请及时处理' : `已退款${amount}元`}`,
-    `order-refund-${data.refund_no}`)
-  speak(text)
+  runAsAnnouncer(`refund-${data.refund_no}`, () => {
+    playDingDong()
+    const amount = Number((data.amount ?? 0).toFixed(2))
+    const isApply = data.action === 'apply'
+    const text = isApply
+      ? `您有一笔退款申请，金额${amount}元，请及时处理`
+      : `订单已退款，金额${amount}元`
+    showBrowserNotification(isApply ? '退款申请' : '订单退款',
+      `订单 ${data.order_no} ${isApply ? '申请退款，请及时处理' : `已退款${amount}元`}`,
+      `order-refund-${data.refund_no}`)
+    speak(text)
+  })
 }
 
 /**
@@ -278,164 +203,28 @@ function speak(text: string) {
 }
 
 /**
- * 处理服务端下发的 WS 消息
- * @param event 消息事件
+ * 注册订单播报订阅（幂等，由 App.vue 在建连前调用一次）
+ * 订阅表挂在 realtime 层、与 socket 实例无关：服务端因权限变更踢线后自动重连，
+ * 本层无需重新订阅
+ * 使用示例：setupOrderNotify()
  */
-function onMessage(event: MessageEvent) {
-  let msg: { type?: string; data?: OrderPaidInfo & OrderRefundInfo }
-  try {
-    msg = JSON.parse(String(event.data))
-  } catch {
-    return
-  }
-  switch (msg.type) {
-    case 'hello':
-      // 连接确认：复位退避间隔
-      retryDelay = RECONNECT_BASE_DELAY
-      break
-    case 'order.paid':
-      if (msg.data) {
-        console.info('[orderNotify] 收到新订单事件：', msg.data)
-        notifyOrderPaid(msg.data)
-      }
-      break
-    case 'order.refund':
-      if (msg.data) {
-        console.info('[orderNotify] 收到退款事件：', msg.data)
-        notifyOrderRefund(msg.data)
-      }
-      break
-    case 'admin.permission_changed':
-      // 权限变更：防抖合并（社区权限上限等批量调整会连发多条）后刷新快照
-      schedulePermissionRefresh()
-      break
-    default:
-      break
-  }
-}
-
-/** 权限快照刷新防抖等待（毫秒）：合并窗口内多条事件只拉取一次 */
-const PERMISSION_REFRESH_DEBOUNCE = 1500
-/** 权限快照刷新定时器句柄 */
-let permissionRefreshTimer: ReturnType<typeof setTimeout> | null = null
-
-/**
- * 防抖调度权限快照刷新：拉取 /admin/info 按当前社区语境实时重算，
- * 菜单与路由守卫基于 store computed，刷新即生效，无需 reload
- * 真防抖（每次事件都重置窗口）：批量调整会连发多条事件，若只认首个定时器，
- * 窗口内的后续事件会被吞掉且不再触发，恰好在「连续改多个角色」时漏刷
- */
-function schedulePermissionRefresh() {
-  if (permissionRefreshTimer) clearTimeout(permissionRefreshTimer)
-  permissionRefreshTimer = setTimeout(() => {
-    permissionRefreshTimer = null
-    const auth = useAuthStore()
-    if (!auth.isAuthenticated) return
-    void auth.fetchAdminInfo().catch(() => {})
-  }, PERMISSION_REFRESH_DEBOUNCE)
-}
-
-/** 页面切回前台时的权限兜底刷新最小间隔（毫秒），覆盖 WS 丢消息场景 */
-const VISIBILITY_REFRESH_INTERVAL = 10000
-/** 上次切回前台刷新时间戳 */
-let lastVisibilityRefreshAt = 0
-
-// 页面从后台切回前台时限流兜底刷新一次权限快照：
-// WS 通知是尽力而为（Redis 断连/发送缓冲满会丢消息且不补偿），
-// 空闲后台页恰好是纯 WS 流量，兜底刷新保证滞后最终收敛
-if (typeof document !== 'undefined') {
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return
-    const auth = useAuthStore()
-    if (!auth.isAuthenticated) return
-    const now = Date.now()
-    if (now - lastVisibilityRefreshAt < VISIBILITY_REFRESH_INTERVAL) return
-    lastVisibilityRefreshAt = now
-    void auth.fetchAdminInfo().catch(() => {})
+export function setupOrderNotify() {
+  if (installed) return
+  installed = true
+  // 发声跨 tab 选主（locks → channel 认领 → 不去重，三级降级）
+  setupNotifyLeader()
+  onRealtime('order.paid', (data: unknown) => {
+    if (!data) return
+    const info = data as OrderPaidInfo
+    console.info('[orderNotify] 收到新订单事件：', info)
+    notifyOrderPaid(info)
   })
-}
-
-/**
- * 调度下一次重连（指数退避）
- */
-function scheduleReconnect() {
-  reconnectTimer = setTimeout(() => connectOrderNotify(), retryDelay)
-  retryDelay = Math.min(retryDelay * 2, RECONNECT_MAX_DELAY)
-}
-
-/** 上次 token 续期探测时间戳 */
-let lastRefreshProbeAt = 0
-
-/**
- * WS 断连后的 token 续期探测（尽力而为）
- * WS 握手凭 cookie 里的 access_token 鉴权，过期后若仅靠裸重连会持续失败，
- * 直到其他 HTTP 请求恰好触发刷新——空闲后台页正是纯 WS 流量，会一直收不到通知。
- * 此处在重连前主动调 refresh 接口续期；30s 节流避免重连风暴期反复请求。
- * 续期失败（refresh 也过期/账号被停用/网关不可达）返回 false，调用方应停止重连，
- * 登录态收口交给 HTTP 请求拦截器（用户下次操作时统一跳转登录页）
- * @returns 是否可继续重连
- */
-async function probeTokenRefresh(): Promise<boolean> {
-  const now = Date.now()
-  if (now - lastRefreshProbeAt < REFRESH_PROBE_INTERVAL) return true
-  lastRefreshProbeAt = now
-  const ok = await useAuthStore().refreshAccessToken()
-  if (!ok) console.warn('[orderNotify] 登录态续期失败，停止 WS 重连（等待页面重新登录）')
-  return ok
-}
-
-/**
- * 建立新订单通知 WS 连接（幂等）
- * 未登录 / 未选定社区时直接跳过（不设权限门槛，登录即可接入）；
- * 已有存活的连接时不再重复创建
- */
-export function connectOrderNotify() {
-  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-    return
-  }
-  const auth = useAuthStore()
-  if (!auth.isAuthenticated || auth.currentCommunityId <= 0) {
-    return
-  }
-  intentionallyClosed = false
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  const sock = new WebSocket(buildWsUrl(auth.currentCommunityId))
-  socket = sock
-  sock.onopen = () => {
-    retryDelay = RECONNECT_BASE_DELAY
-  }
-  sock.onmessage = onMessage
-  // onerror 后浏览器必然触发 onclose，重连统一收口在 onclose
-  sock.onerror = () => sock.close()
-  sock.onclose = () => {
-    // 已被新连接替换（如社区切换）时静默退出，避免旧连接触发多余重连
-    if (socket !== sock) return
-    socket = null
-    if (intentionallyClosed) return
-    // 重连前先探测续期：握手凭 cookie 里的 access_token，过期后裸重连只会持续失败；
-    // 探测失败（refresh 已失效）时不再排重连，登录态由 HTTP 拦截器统一收口
-    void probeTokenRefresh().then((ok) => {
-      if (ok && !intentionallyClosed) scheduleReconnect()
-    })
-  }
-}
-
-/**
- * 断开新订单通知 WS 连接（登出、权限丧失、社区切换时调用）
- */
-export function disconnectOrderNotify() {
-  intentionallyClosed = true
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  if (socket) {
-    socket.close()
-    socket = null
-  }
+  onRealtime('order.refund', (data: unknown) => {
+    if (!data) return
+    const info = data as OrderRefundInfo
+    console.info('[orderNotify] 收到退款事件：', info)
+    notifyOrderRefund(info)
+  })
 }
 
 // 首次交互解锁音频（浏览器自动播放策略），常驻监听、内部幂等

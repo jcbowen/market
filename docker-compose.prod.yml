@@ -251,37 +251,11 @@ services:
     logging: *default_logging
 
   # ===== 一次性任务 =====
-  # 演示种子导入（幂等）：APP_ENV=stage（线上演示/灰度）且库中无社区时，把镜像内置的
-  # 演示数据（与本地 start-all.mjs 同一份 init.dev.sql）导入；其它环境脚本直接跳过。
-  # 必须先于 admin-init —— 后者在零社区时会补建内置社区，先建社区会让种子导入
-  # 误判为「已初始化」而跳过；因此 admin-init 依赖本任务成功退出。
-  seed-init:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
-    container_name: market-seed-init
-    restart: "no"
-    environment:
-      TZ: Asia/Shanghai
-      SERVICE_NAME: seed-init
-      APP_ENV: ${APP_ENV:-}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_ROOT_PASSWORD}
-    depends_on:
-      user-service:
-        condition: service_healthy
-      product-service:
-        condition: service_healthy
-      order-service:
-        condition: service_healthy
-      cart-service:
-        condition: service_healthy
-      payment-service:
-        condition: service_healthy
-    healthcheck:
-      disable: true
-    logging: *default_logging
-
   # 超管账号初始化（幂等）：等待 user-service 就绪后执行 market-admin init，
-  # 凭据输出到本容器日志。首启后可 docker compose down 移除，或保留待重跑
-  # （重复执行无副作用）。交互式管理终端：docker exec -it market-gateway ./market-admin
+  # 凭据输出到本容器日志。init 同时负责演示种子导入（非 production 且空库时，
+  # 数据来自镜像内置演示包，先于默认社区兜底执行）。首启后可 docker compose down
+  # 移除，或保留待重跑（重复执行无副作用）。
+  # 交互式管理终端：docker exec -it market-gateway ./market-admin
   admin-init:
     image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
     container_name: market-admin-init
@@ -290,14 +264,14 @@ services:
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: market-admin
+      APP_ENV: ${APP_ENV:-}
       MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
-      # 演示种子先落库，超管初始化才不会在零社区库上补建社区
-      seed-init:
-        condition: service_completed_successfully
       user-service:
+        condition: service_healthy
+      product-service:
         condition: service_healthy
     healthcheck:
       disable: true

@@ -35,6 +35,7 @@ type server struct {
 	marketingService  *service.MarketingService
 	bannerService     *service.BannerService
 	attachmentService *service.AttachmentService
+	dataImportService *service.DataImportService
 }
 
 // newServer 创建商品服务 gRPC 实现
@@ -49,7 +50,7 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 	if err := attachmentService.EnsureDefaultAttachmentConfig(); err != nil {
 		log.Printf("初始化默认附件配置失败: %v", err)
 	}
-	return &server{
+	s := &server{
 		categoryService:   service.NewCategoryService(db),
 		productService:    service.NewProductService(db),
 		skuService:        service.NewSkuService(db),
@@ -64,6 +65,9 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 		bannerService:     service.NewBannerService(db),
 		attachmentService: attachmentService,
 	}
+	// 数据导入依赖商品/Banner/营销三个服务的创建链路，须在其后构造
+	s.dataImportService = service.NewDataImportService(db, s.productService, s.bannerService, s.marketingService)
+	return s
 }
 
 // readError 读接口错误归一：仅「记录不存在」透出 NotFound，其余一律 Internal
@@ -1366,4 +1370,45 @@ func (s *server) DeleteAttachmentLocalVerified(ctx stdctx.Context, _ *common.Emp
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &product.AttachmentMigrateDeleteBatchResp{Deleted: deleted}, nil
+}
+
+// ListDataPackages 数据包列表（应用中心 · 数据包）
+func (s *server) ListDataPackages(ctx stdctx.Context, req *product.ListDataPackagesReq) (*product.ListDataPackagesResp, error) {
+	return s.dataImportService.ListPackages()
+}
+
+// PreviewDataImport 数据导入预检报告
+func (s *server) PreviewDataImport(ctx stdctx.Context, req *product.DataImportPreviewReq) (*product.DataImportPreviewResp, error) {
+	if req.CommunityId <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "缺少目标社区")
+	}
+	return s.dataImportService.Preview(ctx, req.PackageKey, &service.PreviewRequest{
+		CommunityID: req.CommunityId,
+		Selected:    rpcKeySet(req.SelectedKeys),
+	})
+}
+
+// ImportDataPackage 执行数据导入
+func (s *server) ImportDataPackage(ctx stdctx.Context, req *product.DataImportReq) (*product.DataImportResp, error) {
+	if req.CommunityId <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "缺少目标社区")
+	}
+	return s.dataImportService.Import(ctx, req.PackageKey, &service.ImportRequest{
+		CommunityID: req.CommunityId,
+		Selected:    rpcKeySet(req.SelectedKeys),
+		Excluded:    rpcKeySet(req.ExcludedKeys),
+		OnSale:      req.OnSale,
+	})
+}
+
+// rpcKeySet proto 重复字符串字段 → 集合（空切片 = 未提供 = 全选语义）
+func rpcKeySet(keys []string) map[string]bool {
+	if len(keys) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		m[k] = true
+	}
+	return m
 }

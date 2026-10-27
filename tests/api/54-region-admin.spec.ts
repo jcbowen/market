@@ -9,7 +9,7 @@ import { newAdminContext, assertOk, asList, type ApiResponse, type PageData } fr
  *   - parent_code 筛选：重庆市(50) 下级均为 level>=2 且 parent_code=50
  *   - level 筛选：level=1 均为省级
  *   - status 筛选：status=1 均为启用
- * 数据口径：deploy/init.dev.sql 精简种子后 regions 仅保留重庆市（1 省级 + 37 区县），
+ * 数据口径：演示种子包（full-demo.json）导入后 regions 仅保留重庆市（1 省级 + 37 区县），
  * 用例一律以重庆为锚点；需要全国数据时在后台「行政区划 → 检查更新」同步
  * 覆盖（C 端 GET /regions/locate）：
  *   - 结构合法：code=0、province/city 为 null（回环定位未命中）、longitude/latitude 数字

@@ -144,7 +144,7 @@
  * 权限版式：普通管理员仅见自己创建的任务（不显示创建人/下载人名单，无删除入口）；
  *           超管可见全部任务，行内显示创建人、下载留痕名单（完整名单 tooltip）与删除按钮
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NBadge, NButton, NEmpty, NIcon, NPagination, NPopover, NSpin, NTag, NText, NTooltip, useDialog, useMessage } from 'naive-ui'
 import { CloudDownloadOutline, DocumentTextOutline, DocumentsOutline, SyncOutline, TimeOutline, AlertCircleOutline } from '@vicons/ionicons5'
 import {
@@ -157,10 +157,16 @@ import {
 } from '@/api/order'
 import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
+import { isRealtimeConnected, onRealtime, type ExportTaskChangedInfo } from '@/utils/realtime'
 
 const PAGE_SIZE = 20
-/** 生成中任务轮询间隔（ms）：面板打开时 3s，关闭后台标轮询 30s */
+/**
+ * 生成中任务轮询间隔（ms）：
+ * - 面板打开：WS 断开时 3s；WS 已连时放宽到 15s（任务完成事件会即时叫醒，轮询退为兜底）
+ * - 面板关闭：30s 慢速轮询只为角标
+ */
 const POLL_OPEN_MS = 3000
+const POLL_OPEN_WS_MS = 15000
 const POLL_CLOSED_MS = 30000
 
 /** 下载留痕记录结构（downloaders JSON 数组元素） */
@@ -198,13 +204,23 @@ const badgeCount = computed(() => Math.max(0, undownloaded.value - baseline.valu
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+/** 实时通道在线状态（由本地 'connection' 事件维护，供轮询频率自适应） */
+const realtimeUp = ref(isRealtimeConnected())
+
+/** 实时事件退订函数 */
+let disposeRealtime: Array<() => void> = []
+
 /** 是否有在途任务（面板底部提示） */
 const hasRunning = computed(() => tasks.value.some((t) => t.status === 1 || t.status === 2))
 
 /**
- * 轮询周期：面板打开时加快轮询（用户盯着看），关闭时慢速轮询只为角标
+ * 轮询周期：面板打开时加快轮询（用户盯着看），关闭时慢速轮询只为角标；
+ * WS 已连时打开面板也放宽到 15s（完成事件即时叫醒，轮询退为丢消息的兜底）
  */
-const pollMs = computed(() => (visible.value ? POLL_OPEN_MS : POLL_CLOSED_MS))
+const pollMs = computed(() => {
+  if (!visible.value) return POLL_CLOSED_MS
+  return realtimeUp.value ? POLL_OPEN_WS_MS : POLL_OPEN_MS
+})
 
 /**
  * 任务条件摘要（创建时的快照；为空降级为导出类型文案）
@@ -299,15 +315,14 @@ function traceText(t: ExportTask): string {
 
 /**
  * 面板开合回调：打开即刷新列表（响应内含未下载总数，打开后基线落定、角标清零）
+ * 轮询周期的切换由 watch(pollMs) 统一负责
  * @param v 是否打开
  */
 function onPopoverToggle(v: boolean) {
-  if (v) {
-    page.value = 1
-    pendingBaseline = true
-    void loadTasks()
-  }
-  restartPolling()
+  if (!v) return
+  page.value = 1
+  pendingBaseline = true
+  void loadTasks()
 }
 
 /**
@@ -435,7 +450,7 @@ function onDelete(t: ExportTask) {
 }
 
 /**
- * 重启轮询（面板开合后按新周期）
+ * 重启轮询（面板开合或 WS 在线状态变化后按新周期）
  */
 function restartPolling() {
   if (pollTimer) clearInterval(pollTimer)
@@ -449,13 +464,39 @@ function restartPolling() {
   }, pollMs.value)
 }
 
+// 轮询周期随面板开合 / WS 通断变化重启（自适应频率的唯一收口点）
+watch(pollMs, restartPolling)
+
+/**
+ * 导出任务终态事件：本人为创建人的任务完成/失败即刻刷新，不等轮询
+ * 服务端已按 admin_id 定向下发，此处再核一次只为「同账号多连接」下的自校验（成本为零）
+ * @param data 事件载荷（ExportTaskChangedInfo）
+ */
+function onExportTaskChanged(data: ExportTaskChangedInfo) {
+  if (!data || data.admin_id !== authStore.admin?.id) return
+  if (visible.value) {
+    void loadTasks()
+  } else {
+    void refreshBadge()
+  }
+}
+
 onMounted(() => {
   void refreshBadge()
   restartPolling()
+  disposeRealtime = [
+    onRealtime('export.task_changed', (data: ExportTaskChangedInfo) => onExportTaskChanged(data)),
+    // 连接建立/断开时刷新在线态，pollMs 随之重算并重启轮询（断开即回到 3s 兜底）
+    onRealtime('connection', (data: { connected: boolean }) => {
+      realtimeUp.value = !!data?.connected
+    }),
+  ]
 })
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  disposeRealtime.forEach((dispose) => dispose())
+  disposeRealtime = []
 })
 </script>
 

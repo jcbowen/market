@@ -157,6 +157,74 @@ service ProductService {
   rpc VerifyAttachmentItem(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
   rpc DeleteAttachmentLocal(AttachmentMigrateItemReq) returns (AttachmentMigrateItemInfo);
   rpc DeleteAttachmentLocalVerified(common.Empty) returns (AttachmentMigrateDeleteBatchResp);
+
+  // 数据导入（应用中心 · 数据包；实现见 service/dataimport*.go，初期仅超管）
+  rpc ListDataPackages(ListDataPackagesReq) returns (ListDataPackagesResp);
+  rpc PreviewDataImport(DataImportPreviewReq) returns (DataImportPreviewResp);
+  rpc ImportDataPackage(DataImportReq) returns (DataImportResp);
+}
+
+// --- 数据导入 ---
+message DataPackageSectionInfo {
+  string key = 1;        // 条目标识：catalog / banners / marketing ...
+  string name = 2;       // 展示名
+  string description = 3;
+  int32 item_count = 4;  // 可导入条目数
+}
+
+message DataPackageInfo {
+  string key = 1;
+  string name = 2;
+  string description = 3;
+  repeated DataPackageSectionInfo sections = 4;
+}
+
+message ListDataPackagesReq {
+  int64 community_id = 1; // 目标社区（当前选中社区）
+}
+
+message ListDataPackagesResp {
+  repeated DataPackageInfo packages = 1;
+}
+
+message DataImportPreviewReq {
+  int64 community_id = 1;
+  string package_key = 2;
+  // 勾选明细（条目 key，如 cat-1 / prod-3 / banner-1）；空 = 全选
+  repeated string selected_keys = 3;
+}
+
+// DataImportItem 预检/执行结果条目
+// action: create=将新建 skip=已存在跳过 depend_missing=依赖缺失
+// status: created=已创建 skipped=已跳过 failed=失败
+message DataImportItem {
+  string section_key = 1;
+  string item_key = 2;
+  string name = 3;
+  string action = 4;
+  string detail = 5;
+  bool selected = 6; // 预检默认勾选态（depend_missing 固定 false）
+  string status = 7; // 执行结果：created / skipped / failed（预检时为空）
+  string message = 8; // 补充信息（失败原因等）
+}
+
+message DataImportPreviewResp {
+  repeated DataImportItem items = 1;
+}
+
+message DataImportReq {
+  int64 community_id = 1;
+  string package_key = 2;
+  repeated string selected_keys = 3; // 空 = 全选
+  repeated string excluded_keys = 4; // 预检后手动排除的条目
+  bool on_sale = 5;                  // 导入后商品状态：true=上架（默认）false=下架
+}
+
+message DataImportResp {
+  int32 created = 1;
+  int32 skipped = 2;
+  int32 failed = 3;
+  repeated DataImportItem details = 4;
 }
 
 // --- 分类 ---

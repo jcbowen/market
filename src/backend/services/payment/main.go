@@ -38,7 +38,7 @@ func main() {
 	}
 	rds := bootstrap.InitRedis(cfg)
 
-	paymentService := service.NewPaymentService(db, cfg)
+	paymentService := service.NewPaymentService(db, cfg).WithRedis(rds.GetClient())
 
 	// debugger 进程级日志：与 gateway 共享 debug_logs 表（ServiceName 由 entrypoint
 	// 按进程名覆写配置副本为 payment-service），供对账调度器等异步进程记录摘要；

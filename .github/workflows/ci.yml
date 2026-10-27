@@ -521,12 +521,12 @@ jobs:
           # app 镜像（多容器部署）依赖的配置模板与入口脚本（后者随 checkout 提供）
           test -f bin/config.docker.yaml
           test -f src/backend/deploy/entrypoint-app.sh
-          # 演示种子素材与导入脚本随镜像打包（三个 Dockerfile 的 COPY deploy/seed-assets/products），
+          # 演示种子素材与数据包随镜像打包（三个 Dockerfile 的 COPY deploy/seed-assets/products；
+          # 数据包 seeddata/full-demo.json 由 go:embed 编进 product-service，缺失即编译失败），
           # 缺文件会让 /uploads/seed/** 全 404、stage 环境无演示数据，故与二进制同批校验
-          test -f deploy/init.dev.sql
           test -f deploy/seed-assets/images.json
           test -f deploy/seed-assets/products/latiao.png
-          test -f src/backend/deploy/seed-init.sh
+          test -f src/backend/services/product/service/seeddata/full-demo.json
           chmod +x bin/linux-amd64/* bin/linux-arm64/*
 
       # FROM market-base（apt 层已固化）仅 COPY 无需 QEMU；但 app 镜像基于

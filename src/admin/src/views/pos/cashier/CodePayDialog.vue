@@ -50,11 +50,14 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { getPosOrderPayStatus, payPosOrderCode, payPosOrderCash } from '@/api/order'
 import { formatAmount } from '@/utils/format'
+import { isRealtimeConnected, onRealtime, type OrderPaidInfo } from '@/utils/realtime'
 
 /**
  * 付款码扫码收款弹窗（收银台通用）
  * 商品下单 / 直接收款 / 订单查询「继续收款」共用：传入待支付订单凭据即扫即收；
- * PAID 出小票（emit paid）、PAYING 轮询（2s 间隔、3 分钟超时）、FAILED 清码重扫；
+ * PAID 出小票（emit paid）、PAYING 轮询核实（WS 在线 5s / 断开 2s，3 分钟超时；
+ * 收到本订单的 order.paid 事件即刻核实一次，事件只是叫醒、资金结论仍来自 pay-status 查询）、
+ * FAILED 清码重扫；
  * 「改用现金收款」按钮：调 pay-cash 关旧单收现金（扣款失败换支付方式的核心出口）
  */
 
@@ -94,6 +97,21 @@ const cashing = ref(false)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 /** 轮询起始时间（超过 3 分钟仍 PAYING 提示走订单列表处理） */
 let pollStart = 0
+/** 本轮是否已判定收款成功（WS 触发与轮询可能同时在途，避免重复收工出两张小票） */
+let paidEmitted = false
+/** 在途核实对应的订单号：关窗换单后，旧单晚到的结果不得在新弹窗上下文里收工 */
+let inFlightOrderNo = ''
+/** 实时事件退订句柄 */
+let disposeRealtime: (() => void) | null = null
+
+// 订阅本订单的支付成功事件，命中即立刻核实一次（弹窗常驻挂载，是否响应由 state 判定）
+disposeRealtime = onRealtime('order.paid', (data: unknown) => {
+  if (!data) return
+  const info = data as OrderPaidInfo
+  if (info.order_no !== props.orderNo) return
+  if (!props.show || state.value !== 'polling') return
+  void confirmPaidOnce()
+})
 
 // 弹窗每次打开：重置状态并聚焦输入框（扫码枪即扫即得）
 watch(
@@ -103,12 +121,17 @@ watch(
     state.value = 'idle'
     authCode.value = ''
     failMessage.value = ''
+    paidEmitted = false
+    // 上一单的在途核实靠「订单号不符即丢弃」兜住，不依赖这里清空
+    inFlightOrderNo = ''
     setTimeout(() => inputRef.value?.focus(), 100)
   },
 )
 
 onBeforeUnmount(() => {
   clearPoll()
+  disposeRealtime?.()
+  disposeRealtime = null
 })
 
 /** 清理轮询定时器 */
@@ -117,6 +140,40 @@ function clearPoll() {
     clearTimeout(pollTimer)
     pollTimer = null
   }
+}
+
+/**
+ * 向渠道核实一次是否已收款（权威口径始终是这个 HTTP 查询，WS 事件只负责提前叫醒）
+ * 命中即清定时器并收工；WS 触发与轮询在途重叠时由 paidEmitted 保证只收工一次。
+ * 结果与当前弹窗订单不符时整份丢弃：收银员关窗换单时，旧单的在途请求可能晚于新单返回，
+ * 若照旧收工就会把上一笔的到账当成当前这一笔（小票与取货码张冠李戴）
+ * @returns 是否已确认当前订单收款成功
+ */
+async function confirmPaidOnce(): Promise<boolean> {
+  const target = props.orderNo
+  inFlightOrderNo = target
+  try {
+    const res = await getPosOrderPayStatus(props.orderId, props.paymentNo)
+    // 判定放在 await 之后：并发的另一次核实可能已经先收工
+    if (inFlightOrderNo !== target || target !== props.orderNo) return false
+    if (res.data.code === 0 && res.data.data.paid && !paidEmitted) {
+      paidEmitted = true
+      clearPoll()
+      // 轮询/事件路径都拿不到实际扣款渠道，小票按「付款码支付」展示
+      emit('paid', { payLabel: '付款码支付', via: 'code', pickupCode: props.pickupCode })
+      return true
+    }
+  } catch {
+    // 单次核实失败忽略，下一轮继续
+  } finally {
+    if (inFlightOrderNo === target) inFlightOrderNo = ''
+  }
+  return false
+}
+
+/** 在途核实间隔：WS 在线时放宽到 5s（事件会即时叫醒），断开时保持 2s 兜底 */
+function pollIntervalMs(): number {
+  return isRealtimeConnected() ? 5000 : 2000
 }
 
 /**
@@ -148,6 +205,7 @@ async function submitAuthCode() {
     }
     if (data.state === 'PAYING') {
       state.value = 'polling'
+      paidEmitted = false
       pollStart = Date.now()
       schedulePoll()
       return
@@ -168,30 +226,21 @@ async function submitAuthCode() {
 }
 
 /**
- * PAYING 在途轮询：向渠道核实是否已收款，已收款补收工；持续在途则 2 秒后再查；
+ * PAYING 在途轮询：向渠道核实是否已收款，已收款补收工；持续在途则按 pollIntervalMs 再查；
  * 超过 3 分钟仍未定则停止轮询提示改走订单列表，避免收银台无限等
  */
 function schedulePoll() {
   clearPoll()
   pollTimer = setTimeout(async () => {
     if (!props.show || state.value !== 'polling') return
-    try {
-      const res = await getPosOrderPayStatus(props.orderId, props.paymentNo)
-      if (res.data.code === 0 && res.data.data.paid) {
-        // 轮询路径拿不到实际扣款渠道，小票按「付款码支付」展示
-        emit('paid', { payLabel: '付款码支付', via: 'code', pickupCode: props.pickupCode })
-        return
-      }
-    } catch {
-      // 单次轮询失败忽略，下一轮继续
-    }
+    if (await confirmPaidOnce()) return
     if (Date.now() - pollStart > 3 * 60 * 1000) {
       state.value = 'failed'
       failMessage.value = '顾客长时间未完成支付，可改用现金收款或到「订单查询」处理该笔订单'
       return
     }
     schedulePoll()
-  }, 2000)
+  }, pollIntervalMs())
 }
 
 /**

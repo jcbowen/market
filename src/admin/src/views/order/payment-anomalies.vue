@@ -60,7 +60,7 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'PaymentAnomalies' })
-import { computed, h, onMounted, onUnmounted, ref } from 'vue'
+import { computed, h, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { formatAmount } from '@/utils/format'
 import { NButton, NSpace, NTag, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -68,6 +68,7 @@ import { getPaymentAnomalies, handlePaymentAnomaly } from '@/api/order'
 import type { PaymentAnomaly } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
 import { reopenModal } from '@/utils/modal'
+import { onRealtime } from '@/utils/realtime'
 import {
   NOTIFY_HANDLED,
   NOTIFY_RESULT,
@@ -339,8 +340,16 @@ function onPageChange(page: number) {
 
 /**
  * 加载异常流水分页数据
+ * 已有请求在途时不并发发新请求（两次结果会相互覆盖），改由 trailingReload 记一笔，
+ * 本次落定后按最新筛选/分页补刷一次。
+ * 本页没有轮询兜底，「return 掉这一次」等于把实时检出或用户的查询永久错过，
+ * 直到人工翻页或重新进入才会看到
  */
 async function loadData() {
+  if (loading.value) {
+    trailingReload = true
+    return
+  }
   loading.value = true
   try {
     const res = await getPaymentAnomalies({
@@ -361,15 +370,66 @@ async function loadData() {
     // 错误提示由请求拦截器统一弹出
   } finally {
     loading.value = false
+    if (trailingReload) {
+      trailingReload = false
+      void loadData()
+    }
   }
 }
 
+/** 页面是否处于激活态（keep-alive 缓存下失活期间不响应事件，避免缓存页空转拉取） */
+let isActive = false
+/** 首次激活标记：keep-alive 下 onMounted 与 onActivated 先后触发，激活补刷要跳过第一次避免重复请求 */
+let firstActivate = true
+/** 在途请求期间是否又有刷新请求（事件或用户操作，决定本次落定后补刷一次） */
+let trailingReload = false
+/** 实时事件退订函数 */
+let disposeRealtime: Array<() => void> = []
+
+/**
+ * 注册支付异常检出事件的即时刷新订阅（幂等：重复调用先退订旧的）
+ * onMounted 与 onActivated 都调一次：页面被 keep-alive 缓存时两者先后触发，
+ * 未被缓存时只有 onMounted 触发——订阅不能依赖 keep-alive 行为
+ */
+function registerRealtime() {
+  disposeRealtime.forEach((dispose) => dispose())
+  disposeRealtime = [onRealtime('payment.anomaly_detected', () => {
+    if (!isActive) return
+    void loadData()
+  })]
+}
+
 onMounted(() => {
+  isActive = true
   loadData()
+  registerRealtime()
   window.addEventListener('resize', updateNarrow)
 })
 
 onUnmounted(() => {
+  isActive = false
   window.removeEventListener('resize', updateNarrow)
+  disposeRealtime.forEach((dispose) => dispose())
+  disposeRealtime = []
+})
+
+// keep-alive 激活期间收到支付异常检出事件即刻刷新列表与 pending 红标；
+// 事件只是叫醒，数据权威仍是本页的异常队列 HTTP 查询
+onActivated(() => {
+  isActive = true
+  registerRealtime()
+  // 失活期间退订了事件，切回来若不补拉一次，那段窗口里检出的异常会一直看不到
+  // （本页没有轮询兜底，只能靠激活刷新 + 激活期事件订阅）
+  if (firstActivate) {
+    firstActivate = false
+    return
+  }
+  void loadData()
+})
+
+onDeactivated(() => {
+  isActive = false
+  disposeRealtime.forEach((dispose) => dispose())
+  disposeRealtime = []
 })
 </script>

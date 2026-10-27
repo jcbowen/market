@@ -189,8 +189,8 @@ function loadGatewayPort() {
   return '18080';
 }
 
-// 开发测试账号（与 deploy/init.dev.sql 头注释同步维护；库内密码为 bcrypt 哈希，
-// 明文仅存在于 SQL 注释与文档，此处常量化集中管理，修改测试数据时两处同步）
+// 开发测试账号（来源：product 服务内嵌演示数据包 full-demo.json，经 market-admin init
+// 导入；修改演示账号时同步改 tools/gen-data-package.mjs 并重新生成 JSON）
 const DEV_ADMIN_ACCOUNT = 'admin / admin123';
 const DEV_USER_ACCOUNT = '13800138000 / 验证码 123456';
 
@@ -298,36 +298,14 @@ for (let i = 1; i <= 60; i++) {
   }
 }
 
-// 初始化测试数据（仅开发环境：脚本含弱口令管理员与测试业务数据，生产环境禁止导入）
-console.log('==> 初始化测试数据...');
-if (dotenv.get('APP_ENV') === 'production' || process.env.APP_ENV === 'production') {
-  console.log('    已跳过：APP_ENV=production 生产环境禁止导入开发测试数据（deploy/init.dev.sql）');
-} else {
-  const exists = dockerExec([
-    ...MYSQL_EXEC_ARGS,
-    '-i', 'market-mysql', 'mysql', '-uroot', 'market',
-    '--default-character-set=utf8mb4', '-N', '-s', '-e', 'SELECT id FROM communities LIMIT 1',
-  ], MYSQL_EXEC_ENV);
-  if (exists.ok && /^\d+\s*$/m.test(exists.stdout.trim())) {
-    console.log('    测试数据已存在，跳过初始化');
-  } else {
-    const sql = fs.readFileSync(path.join(ROOT_DIR, 'deploy', 'init.dev.sql'), 'utf8');
-    const r = spawnSync('docker', [
-      'exec', ...MYSQL_EXEC_ARGS, '-i', 'market-mysql', 'mysql', '-uroot', 'market',
-      '--default-character-set=utf8mb4',
-    ], {
-      input: sql,
-      encoding: 'utf8',
-      shell: needsShell('docker'),
-      env: { ...process.env, ...MYSQL_EXEC_ENV },
-    });
-    if (r.status === 0) {
-      console.log('    测试数据初始化完成');
-    } else {
-      console.log('警告: 测试数据初始化失败');
-    }
-  }
-}
+// 初始化超管账号与演示种子（幂等，可在服务就绪后重试）：
+// market-admin init 内部等待各服务表迁移完成，先经内嵌演示数据包导入演示种子
+// （替代原 deploy/init.dev.sql SQL 导入，非 production 且空库时执行），
+// 再兜底超管账号与默认社区；弱口令演示账号仅存在于演示包，生产环境 init 自动跳过
+console.log('==> 初始化超管账号与演示种子...');
+await runWithRepair(ctx, 'docker', [
+  'exec', 'market-gateway', './market-admin', 'init', '--timeout', '300',
+], { cwd: ROOT_DIR, step: '初始化超管与演示种子' });
 
 // 等待 Gateway 健康
 console.log('==> 等待 Gateway 就绪...');

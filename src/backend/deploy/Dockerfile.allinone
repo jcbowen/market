@@ -64,11 +64,10 @@ COPY bin/static ./static
 COPY bin/config.allinone.yaml ./config.yaml
 COPY src/backend/deploy/entrypoint.sh /entrypoint.sh
 
-# 演示种子：素材打进镜像由网关直接服务 /uploads/seed/**（不能放 /app/uploads，
-# 该目录部署时被宿主目录挂载、会遮蔽镜像内容）；init.dev.sql 供 APP_ENV=stage 时
-# 由 entrypoint 在库为空时导入，与开发环境同一份演示数据
+# 演示种子素材：打进镜像由网关直接服务 /uploads/seed/**（不能放 /app/uploads，
+# 该目录部署时被宿主目录挂载、会遮蔽镜像内容）；演示数据本身由 market-admin init
+# 经内嵌数据包导入（非 production 且空库时），不再携带 SQL 种子文件
 COPY deploy/seed-assets/products ./seed/products
-COPY deploy/init.dev.sql ./seed/init.dev.sql
 
 RUN chmod +x /entrypoint.sh ./gateway ./user-service ./product-service \
     ./order-service ./cart-service ./payment-service ./market-admin ./geoip-download

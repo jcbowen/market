@@ -41,16 +41,21 @@ const (
 	MsgTypePing = "ping"
 )
 
-// PermOrderView 订单数据类事件所需权限点（与 middleware 权限目录同一字符串，
-// 刻意不 import middleware：ws 包被 middleware 侧链路引用，反向依赖会成环）
-const PermOrderView = "order:view"
+// PermOrderView 订单数据类事件所需权限点（口径定义在事件契约包，ws 侧只转发别名，
+// 保持既有引用不变；刻意不 import middleware：ws 包被 middleware 侧链路引用，反向依赖会成环）
+const PermOrderView = eventbus.PermOrderView
 
 // msgRequiredPerm 消息类型 → 推送所需权限点（未登记即视为不设门槛）
-// 新增数据类事件必须在此登记，否则等于向无权限连接下发业务数据
-var msgRequiredPerm = map[string]string{
-	eventbus.MsgTypeOrderPaid:   PermOrderView,
-	eventbus.MsgTypeOrderRefund: PermOrderView,
-}
+// 由 eventbus.DataClassMsgTypes 清单生成：新增数据类事件只需往清单里追加一项，
+// 本映射自动跟上，不会出现「加了事件忘了登记＝向无权限连接下发业务数据」。
+// 提醒类消息（admin.permission_changed/hello/ping）不在清单内，保持无门槛
+var msgRequiredPerm = func() map[string]string {
+	m := make(map[string]string, len(eventbus.DataClassMsgTypes))
+	for _, typ := range eventbus.DataClassMsgTypes {
+		m[typ] = PermOrderView
+	}
+	return m
+}()
 
 // Message 服务端下发的统一消息结构
 type Message struct {

@@ -14,29 +14,33 @@ import { zhCN, dateZhCN } from 'naive-ui'
 import { storeToRefs } from 'pinia'
 import type { GlobalThemeOverrides } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
-import { connectOrderNotify, disconnectOrderNotify } from '@/utils/orderNotify'
+import { connectRealtime, disconnectRealtime } from '@/utils/realtime'
+import { setupOrderNotify } from '@/utils/orderNotify'
 
 /**
  * 后台 WebSocket 长连接管理（订单语音通知 + 权限变更提醒）
+ * 通道本身在 utils/realtime.ts（连接与事件分发），播报是它的一个订阅者，
+ * 先注册订阅再建连，避免建连瞬间即收到事件时无人消费；
  * 登录就绪且已选定社区即建立连接，**不设权限码门槛**：权限被收窄的管理员恰恰需要
  * 收到权限变更提醒以刷新本地快照，加门槛会让提醒对它自己失效（服务端网关会按握手
  * 时刻的权限快照过滤数据类事件，订单内容不会因为放宽建连条件而多发给无权限连接）；
- * 登出或未选定社区时断开（社区切换由 currentCommunityId 变化触发断开重连）
+ * 登出或未选定社区时断开（社区切换由 connectRealtime 识别社区变化后自行断旧重连）
  */
+setupOrderNotify()
 const authStore = useAuthStore()
 const { isReady, currentCommunityId } = storeToRefs(authStore)
 watch(
   [isReady, currentCommunityId],
   ([ready, communityId]) => {
     if (ready && communityId > 0) {
-      connectOrderNotify()
+      connectRealtime()
     } else {
-      disconnectOrderNotify()
+      disconnectRealtime()
     }
   },
   { immediate: true },
 )
-onUnmounted(() => disconnectOrderNotify())
+onUnmounted(() => disconnectRealtime())
 
 /**
  * 全局主题配置
