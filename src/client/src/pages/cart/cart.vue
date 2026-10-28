@@ -27,7 +27,16 @@
       <!-- 按社区分组展示 -->
       <view v-for="group in groupedItems" :key="group.community_id" class="community-group">
         <view class="community-header">
-          <u-checkbox v-model="group.selected" shape="circle" @change="onGroupSelectChange(group)" />
+          <!-- uview-plus 的 u-checkbox 独立使用不支持 v-model（emits 仅 change/update:checked，
+               状态回显只认 checked prop）：必须用 :checked + usedAlone + @update:checked，
+               下同（商品项/底部全选） -->
+          <u-checkbox
+            :key="`g${group.community_id}-${checkboxSyncTick}`"
+            :checked="group.selected"
+            :usedAlone="true"
+            shape="circle"
+            @update:checked="onGroupSelectChange(group)"
+          />
           <u-icon name="map-fill" size="16" color="#07c160" />
           <text class="community-name">{{ group.community_name }}</text>
         </view>
@@ -41,10 +50,11 @@
           >
             <view class="cart-item" :class="{ 'cart-item-invalid': item.invalid }">
               <u-checkbox
-                v-model="item.selected"
+                :checked="item.selected"
+                :usedAlone="true"
                 shape="circle"
                 :disabled="item.invalid"
-                @change="onSelect(item)"
+                @update:checked="(val: boolean) => onSelect(item, val)"
               />
               <image class="item-image" :src="item.product_image || '/static/logo.png'" mode="aspectFill" />
               <view class="item-info">
@@ -79,7 +89,13 @@
       <!-- 底部结算栏 -->
       <view class="footer-bar">
         <view class="select-all" @click="toggleSelectAll()">
-          <u-checkbox v-model="isAllSelected" shape="circle" />
+          <u-checkbox
+            :key="`all-${checkboxSyncTick}`"
+            :checked="isAllSelected"
+            :usedAlone="true"
+            shape="circle"
+            @update:checked="toggleSelectAll($event)"
+          />
           <text>全选</text>
         </view>
         <view class="total-wrap">
@@ -260,10 +276,12 @@ const selectedIds = computed(() =>
   validItems.value.filter((item) => item.selected).map((item) => item.id),
 )
 
-const isAllSelected = computed({
-  get: () => validItems.value.length > 0 && validItems.value.every((item) => item.selected),
-  set: (val: boolean) => toggleSelectAll(val),
-})
+/** 底部全选框回显：全部有效商品选中才点亮（回写由 @update:checked -> toggleSelectAll 完成） */
+const isAllSelected = computed(() => validItems.value.length > 0 && validItems.value.every((item) => item.selected))
+
+/** 聚合勾选框重挂载计数：无可翻转项时（如整组失效）点击不会引起 checked prop 变化，
+ * 组件内部状态会与真实态脱节，递增 key 强制重挂载按 checked prop 回显真实状态 */
+const checkboxSyncTick = ref(0)
 
 onShow(() => {
   if (!userStore.isLogin) {
@@ -383,14 +401,20 @@ async function loadCart() {
 
 /**
  * 切换单个商品选中状态
- * u-checkbox v-model 已先行翻转 item.selected（乐观更新），失败时回滚并触发列表重算
+ * u-checkbox 独立使用不回写 v-model，新值由 @update:checked 显式传入（与 u-number-box 同模式）；
+ * 本地乐观更新 item.selected（checked prop 变化经组件内部 watcher 联动勾选框），
+ * 提交失败时回滚，prop 回跳触发 watcher 使勾选框回弹真实状态
  * @param item 购物车项
+ * @param selected 变更后的选中状态
  */
-async function onSelect(item: CartItem) {
-  const r = await commitWrite(updateCartItem(item.id, { selected: item.selected }))
+async function onSelect(item: CartItem, selected: boolean) {
+  const prev = item.selected
+  if (prev === selected) return
+  item.selected = selected
+  const r = await commitWrite(updateCartItem(item.id, { selected }))
   if (!r.ok && r.latest) {
-    item.selected = !item.selected
-    // 浅拷贝触发 groupedItems 重算，分组勾选框回弹真实状态
+    item.selected = prev
+    // 浅拷贝触发 groupedItems 重算，分组勾选框同步回弹真实状态
     items.value = [...items.value]
   }
 }
@@ -398,14 +422,29 @@ async function onSelect(item: CartItem) {
 /**
  * 切换整个社区分组的选中状态
  * 社区 ID > 0 时走批量选中接口（一次请求替代逐项 PUT 的 N+1）；
- * community_id 为 0 的兜底分组无法按社区过滤（0 表示全部），保留逐项更新
+ * community_id 为 0 的兜底分组无法按社区过滤（0 表示全部），保留逐项更新。
+ * 目标态从 items 真实选中态计算（不信任勾选框内部状态），本地乐观翻转该组选中项，
+ * 保证失败回滚时 checked prop 有值变化、分组勾选框能经 watcher 回弹真实状态
  * @param group 社区分组
  */
 async function onGroupSelectChange(group: { community_id: number; items: CartItem[] }) {
   const target = group.items.some((item) => !item.selected)
   if (group.community_id > 0) {
+    // 乐观更新：失效项服务端强制未选中，跳过不翻
+    const flipped = group.items.filter((item) => !item.invalid && item.selected !== target)
+    if (!flipped.length) {
+      // 无可翻转项（如整组失效）：重挂载勾选框回显真实状态
+      checkboxSyncTick.value++
+      return
+    }
+    flipped.forEach((item) => {
+      item.selected = target
+    })
     const r = await commitWrite(selectAllCartItems(target, group.community_id))
     if (!r.ok) {
+      flipped.forEach((item) => {
+        item.selected = !target
+      })
       // 失败时触发重算，分组勾选框回弹真实状态
       items.value = [...items.value]
     }
@@ -599,12 +638,27 @@ async function onClearInvalid() {
 
 /**
  * 全选/取消全选
+ * 目标态显式传入（勾选框 @update:checked）或按当前全选态取反（点击"全选"文字区域）；
+ * 本地乐观翻转有效项选中态（失效项服务端强制未选中，跳过），
+ * 失败回滚时 checked prop 回跳，全选框与商品项勾选框均经 watcher 回弹真实状态
  * @param selected 是否选中
  */
 async function toggleSelectAll(selected?: boolean) {
   const target = selected !== undefined ? selected : !isAllSelected.value
+  const flipped = validItems.value.filter((item) => item.selected !== target)
+  if (!flipped.length) {
+    // 无可翻转项（如全部失效）：重挂载勾选框回显真实状态
+    checkboxSyncTick.value++
+    return
+  }
+  flipped.forEach((item) => {
+    item.selected = target
+  })
   const r = await commitWrite(selectAllCartItems(target))
   if (!r.ok) {
+    flipped.forEach((item) => {
+      item.selected = !target
+    })
     // 失败时触发重算，全选框回弹真实状态
     items.value = [...items.value]
   }
