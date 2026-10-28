@@ -53,6 +53,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'AdminList' })
 import { ref, onMounted, computed, h } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { NButton, NSpace, NTag } from 'naive-ui'
 import { useMessage, useDialog } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -321,8 +322,13 @@ function remove(row: AdminInfo) {
   })
 }
 
-onMounted(() => {
+// 角色下拉与账号列表的加载（首屏与切回本页共用）
+function loadAll() {
   loadRoles()
   loadData()
-})
+}
+
+onMounted(loadAll)
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新（其他管理员新建账号/角色后同步）
+refreshOnActivated(loadAll)
 </script>

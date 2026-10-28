@@ -390,6 +390,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'PaymentSetting' })
 import { computed, onMounted, reactive, ref } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useDialog, useMessage } from 'naive-ui'
 import type { UploadCustomRequestOptions } from 'naive-ui'
 import { getPaymentSetting, updatePaymentSetting, uploadPaymentCert, getClientChannels } from '@/api/admin'
@@ -1006,7 +1007,9 @@ async function copyURL(url: string) {
   }
 }
 
-onMounted(() => {
+// 首屏与「切回本页」共用同一组加载：支付配置 + 渠道勾选项
+// keep-alive 缓存下再次进入只触发 onActivated，不重新拉取会带着旧值整份 PUT 覆盖他人改动
+function loadAll() {
   loadPaymentSetting()
   // 勾选项数据源：渠道管理维护的客户端渠道；加载失败不阻断支付配置页
   getClientChannels()
@@ -1016,7 +1019,10 @@ onMounted(() => {
     .catch(() => {
       clientChannels.value = []
     })
-})
+}
+
+onMounted(loadAll)
+refreshOnActivated(loadAll)
 </script>
 
 <style lang="scss" scoped>

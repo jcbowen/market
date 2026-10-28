@@ -248,10 +248,21 @@ message ListProductsReq {
 
 message GetProductReq {
   int64 id = 1;
+  // 数据作用域：>0 时强校验商品归属社区。C 端公开出口由网关保证恒 >0
+  // （公开路由不解析令牌，缺社区只能来自 query；<=0 会被网关直接拒绝，
+  //  不再是「跳过归属校验」的旁路）；管理端按当前社区语境填，超管为 0
   int64 community_id = 2;
   // 可售校验（P1-4）：true 时商品非上架态（status≠1，下架/仓库中/定时上架中）直接报错，
   // 供加购等交易入口收口「可售」判定；公开详情与管理端详情不传，保持原行为
+  // （下架商品要能打开页面，只按 public_view 抹交易字段而非报错）
   bool require_sellable = 3;
+  // 放行软删除行（status=2）：仅管理端详情/编辑回显传 true；
+  // 缺省 false 时按 ID 直查也排除已删除商品（列表口径本就恒排除）
+  bool include_deleted = 4;
+  // 公开口径：true 时由服务层脱敏（service.RedactPublicProductDetail）——
+  // cost_price/safety_stock 一律归零，商品非上架态再抹价格/划线价/库存与富文本正文；
+  // sku_code/barcode 保留（收银台规格名兜底与扫码加购依赖）。C 端出口恒传 true，管理端不传
+  bool public_view = 5;
 
 }
 
@@ -459,12 +470,19 @@ message SpecInfo {
 // --- SKU ---
 message ListSkusReq {
   int64 product_id = 1;
+  // 公开口径：true 时只抹经营字段（cost_price/safety_stock，见 service.RedactPublicSku）——
+  // 能列出该商品就说明它在售，价格本就要展示。C 端出口恒传 true；
+  // 管理端库存工作台/进销存需要成本价，不传
+  bool public_view = 2;
 }
 
 message GetSkuByIdReq {
   int64 id = 1;
   // 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区读取（超管传 0 放行）
   int64 community_id = 2;
+  // 公开口径：同 ListSkusReq，只抹经营字段；商品上下架状态的价格脱敏由详情出口收口
+  // （本出口只拿到 SKU，不掌握商品状态）
+  bool public_view = 3;
 
 }
 
@@ -1440,7 +1458,10 @@ message FlashSaleItemInfo {
   int32 limit_per_user = 9;
   // 商品 ID：由服务端随 SKU 一并回填，避免调用方为拿 product_id 逐行再查一次 SKU
   int64 product_id = 10;
-
+  // 商品封面图（已按附件访问域名拼接为完整地址）：C 端列表展示用
+  string product_image = 11;
+  // 已售数量（flash_sale_items.sold_count 真实值，扣减秒杀库存时累加）
+  int32 sold = 12;
 }
 
 message ListFlashSalesResp {

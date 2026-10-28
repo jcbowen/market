@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
@@ -19,6 +20,11 @@ import (
 // 履约工作台（B）：后台指派配送 + C 端工作台查单/送货状态流转
 // 自提核销复用 VerifyPickup（operator_type=staff）；决策点②送达强制拍照留证
 // ============================================================================
+
+// fulfillmentMaxPageSize 履约台单次查单页长上限
+// 履约是「人工逐单处理」的界面，页长放大只会让整页装配（每单要取用户与地址）线性变慢，
+// 网关 fulfillment.go 用同一数值先收敛，避免把超限请求打到服务层再回退
+const fulfillmentMaxPageSize = 50
 
 // AssignDelivery 后台指派/取消指派配送员
 // 校验：配送单、状态在待处理区（2/3，配送中/完成后不可改指派）、社区归属；
@@ -124,13 +130,8 @@ func (s *OrderService) ListFulfillmentOrders(ctx context.Context, req *order.Lis
 		return nil, 0, err
 	}
 
-	page, pageSize := int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize())
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 || pageSize > 50 {
-		pageSize = 10
-	}
+	// 履约台单次查单上限 50（网关 fulfillmentMaxPageSize 同口径，超限即收敛而不是回退首页大小）
+	page, pageSize := pageparam.ClampMax(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()), fulfillmentMaxPageSize)
 	var list []*model.Order
 	if err := query.
 		Order("created_at DESC").

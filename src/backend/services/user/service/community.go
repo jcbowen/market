@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"google.golang.org/grpc/codes"
 
@@ -10,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -49,16 +51,8 @@ func (s *CommunityService) ListCommunities(ctx context.Context, req *user.ListCo
 		page = int(req.Pagination.Page)
 		pageSize = int(req.Pagination.PageSize)
 	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
-	// 服务层兜底上限：HTTP 网关已按 maxPageSize 收敛，但 gRPC 可被内部或直连调用传入超大值
-	if pageSize > 200 {
-		pageSize = 200
-	}
+	// 批量档位：社区选择器与超管总览要一次取全量（网关按 500 请求），社区表规模有限
+	page, pageSize = pageparam.ClampBatch(page, pageSize)
 
 	var total int64
 	var list []*model.Community
@@ -101,6 +95,9 @@ func (s *CommunityService) GetCommunity(ctx context.Context, id int64) (*model.C
 }
 
 // ListNearbyCommunities 查询附近社区（按距离排序，固定返回前 10 个）
+// 经纬度非有限值（NaN/±Inf）时不做距离排序，退化为按 id 升序取前 10：
+// 这两个值可由 ?longitude=NaN 直达（strconv.ParseFloat 认 NaN/Inf 为合法浮点字面量，
+// 且不报错），拼进 SQL 后 MySQL 把 NaN 当列名、把 +Inf 当语法错误，公开列表接口直接 500
 // 参数：
 //   - ctx: 上下文
 //   - longitude: 经度
@@ -124,11 +121,36 @@ func (s *CommunityService) ListNearbyCommunities(ctx context.Context, longitude,
 	var list []*model.Community
 	// 按经纬度平面距离近似排序，固定返回最近的 10 个社区；
 	// 排序字段已废弃，同距离时按创建时间升序（id asc）兜底
-	err := db.Order(fmt.Sprintf(
-		"POWER(longitude - %v, 2) + POWER(latitude - %v, 2) ASC, id asc",
-		longitude, latitude,
-	)).Limit(limit).Find(&list).Error
+	err := db.Order(nearbyOrderSQL(longitude, latitude)).Limit(limit).Find(&list).Error
 	return list, int(total), err
+}
+
+// nearbyOrderSQL 组装附近社区的排序片段
+// 只接受有限浮点数：坐标值经 %v 直接进 SQL，NaN/±Inf 会让 MySQL 报错而非退化排序
+// 参数：
+//   - longitude: 经度
+//   - latitude: 纬度
+//
+// 返回值：
+//   - string: ORDER BY 片段（非法坐标时退化为 id asc）
+//
+// 使用示例：
+//   - db.Order(nearbyOrderSQL(120.1, 30.2))
+func nearbyOrderSQL(longitude, latitude float64) string {
+	if isNonFinite(longitude) || isNonFinite(latitude) {
+		return "id asc"
+	}
+	return fmt.Sprintf("POWER(longitude - %v, 2) + POWER(latitude - %v, 2) ASC, id asc", longitude, latitude)
+}
+
+// isNonFinite 判定浮点数是否为 NaN 或 ±Inf
+// 参数：
+//   - v: 待判定值
+//
+// 返回值：
+//   - bool: 非有限值时为 true
+func isNonFinite(v float64) bool {
+	return math.IsNaN(v) || math.IsInf(v, 0)
 }
 
 // ToCommunityInfo 将社区模型转换为 proto 社区信息
@@ -262,15 +284,62 @@ func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.Update
 	return c, nil
 }
 
-// DeleteCommunity 删除社区
+// communityHardReferences 删除社区前必须为空的本地关联
+// communities 无软删列（base.MysqlBaseModel 不含 deleted_at），DeleteCommunity 是硬删，
+// 一旦有残留引用就是指向不存在社区的孤儿行；商品与订单分属 product/order 服务，
+// 由网关在发起删除前各自计数（见 gateway/handler/admin.go DeleteCommunity）
+var communityHardReferences = []struct {
+	model any
+	label string
+}{
+	{&model.UserCommunity{}, "会员社区归属"},
+	{&model.Address{}, "收货地址"},
+	{&model.AdminCommunity{}, "管理员任职"},
+	{&model.Role{}, "社区角色"},
+}
+
+// DeleteCommunity 删除社区（先做引用守卫，再在同一事务内硬删）
+// 阻塞条件：仍有会员归属、收货地址、管理员任职或社区角色挂在本社区；
+// 非阻塞的浏览态引用（users.community_id 记录的是「当前所在社区」）在删除时归零，
+// 由 C 端重新选择社区，避免留下悬空 ID
 // 参数：
 //   - ctx: 上下文
 //   - id: 社区 ID
 //
 // 返回：
-//   - error: 错误信息
+//   - error: 参数非法（InvalidArgument）、社区不存在（NotFound）、
+//     仍有引用（FailedPrecondition，文案含具体引用类型与条数）或数据库错误
+//
+// 使用示例：
+//   - err := s.communityService.DeleteCommunity(ctx, req.Id)
 func (s *CommunityService) DeleteCommunity(ctx context.Context, id int64) error {
-	return s.db.GetDb().WithContext(ctx).Delete(&model.Community{}, id).Error
+	if id <= 0 {
+		return bizerr.New(codes.InvalidArgument, "缺少社区 ID")
+	}
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, ref := range communityHardReferences {
+			var n int64
+			if err := tx.Model(ref.model).Where("community_id = ?", id).Count(&n).Error; err != nil {
+				return err
+			}
+			if n > 0 {
+				return bizerr.New(codes.FailedPrecondition,
+					fmt.Sprintf("该社区仍有 %d 条%s，请先清理后再删除", n, ref.label))
+			}
+		}
+		if err := tx.Model(&model.User{}).Where("community_id = ?", id).
+			Update("community_id", 0).Error; err != nil {
+			return err
+		}
+		res := tx.Delete(&model.Community{}, id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return bizerr.New(codes.NotFound, "社区不存在")
+		}
+		return nil
+	})
 }
 
 // _ 占位，避免 common 未使用告警

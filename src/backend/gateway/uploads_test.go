@@ -22,8 +22,9 @@ import (
  * 覆盖：
  *   - /uploads/seed/** 取自镜像内置素材目录，/uploads/** 取自运行期附件目录
  *   - 两个根目录互不串用（种子目录取不到附件，反之亦然）
- *   - exports 私有段直链与穿越形态均 404（导出仅走鉴权下载接口）
+ *   - exports 私有段直链与穿越、大小写变体均 404（导出仅走鉴权下载接口）
  *   - 含 .. 的请求被拒绝，无法逃出所属根目录
+ *   - 归一后仍指向合法附件的路径正常 200（拦截不误伤正常访问）
  *   - 素材缺失时返回 404 而非 500
  */
 
@@ -128,7 +129,7 @@ func TestRegisterUploadsServesBothRoots(t *testing.T) {
 }
 
 // TestRegisterUploadsBlocksExports 验证附件目录下的 exports 私有段在静态路由整体 404
-// 导出文件（含用户数据）只能经订单服务的鉴权下载接口获取，直链与穿越形态都不放行
+// 导出文件（含用户数据）只能经订单服务的鉴权下载接口获取，直链、穿越与大小写变体都不放行
 // 参数：
 //   - t: 测试上下文
 //
@@ -138,9 +139,15 @@ func TestRegisterUploadsBlocksExports(t *testing.T) {
 
 	for _, p := range []string{
 		"/uploads/exports/task.csv",
+		"/uploads/exports",
 		"/uploads/exports/",
 		"/uploads/images/../exports/task.csv",
 		"/uploads/./exports/task.csv",
+		"/uploads/images/20260101/../exports/task.csv",
+		"/uploads/seed/../exports/task.csv",
+		// Windows/macOS 文件系统大小写不敏感，直链与穿越变体都要拦
+		"/uploads/Exports/task.csv",
+		"/uploads/images/../EXPORTS/task.csv",
 	} {
 		code, body := doGet(r, p)
 		if code != http.StatusNotFound {
@@ -148,6 +155,31 @@ func TestRegisterUploadsBlocksExports(t *testing.T) {
 		}
 		if strings.Contains(body, "export-must-not-leak") {
 			t.Fatalf("%s: 导出文件内容泄露", p)
+		}
+	}
+}
+
+// TestRegisterUploadsNormalizesBeforeDispatch 验证归一后的合法路径仍按所属根目录正常下发
+// 目的：拦截 exports 用的是归一路径，正常附件（含可归一为合法附件路径的 . / .. 形态）不得被误伤
+// 参数：
+//   - t: 测试上下文
+//
+// 异常：断言失败即 t.Fatalf
+func TestRegisterUploadsNormalizesBeforeDispatch(t *testing.T) {
+	r, _, _ := newUploadsTestRouter(t)
+
+	for _, p := range []string{
+		"/uploads/images/20260101/01/order.jpg",
+		"/uploads/images/20260101/../20260101/01/order.jpg",
+		"/uploads/images/./20260101/01/order.jpg",
+		"/uploads/images/20260101/01/../01/order.jpg",
+	} {
+		code, body := doGet(r, p)
+		if code != http.StatusOK {
+			t.Fatalf("%s: 归一后应命中附件，期望 200，实际 %d", p, code)
+		}
+		if body != "jpg-upload" {
+			t.Fatalf("%s: 内容不符，期望 %q 实际 %q", p, "jpg-upload", body)
 		}
 	}
 }

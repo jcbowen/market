@@ -30,6 +30,20 @@ interface FlashSale {
   [k: string]: unknown;
 }
 
+/** C 端秒杀列表项内嵌的商品项（网关按商品档案回填图片与已售） */
+interface FlashSaleItem {
+  id: number;
+  sku_id: number;
+  product_id: number;
+  product_name: string;
+  product_image: string;
+  flash_price: number;
+  original_price: number;
+  stock: number;
+  sold: number;
+  limit_per_user: number;
+}
+
 interface FullReduction {
   id: number;
   name: string;
@@ -322,6 +336,19 @@ test.describe.serial('秒杀活动生效', () => {
       );
       const sales = asList<FlashSale>(body);
       expect(sales.length, '秒杀活动列表为空').toBeGreaterThan(0);
+
+      // C 端展示口径：列表项由商品项扁平化而来，图片/已售必须是后端真实回填，
+      // 且页面价格取 original_price（= 下单实付），不能用未生效的 flash_price
+      const mine = sales.filter((s) => String(s.name).startsWith('AUTO-TEST'));
+      expect(mine.length, '未找到本次创建的秒杀活动').toBeGreaterThan(0);
+      const items = (mine[0].items ?? []) as FlashSaleItem[];
+      expect(items.length, '秒杀活动应至少含一个商品项').toBeGreaterThan(0);
+      const item = items.find((it) => it.sku_id === skuIdB);
+      expect(item, '商品项应按 SKU 回填档案').toBeTruthy();
+      expect(item!.original_price, '展示价应等于 SKU 价（下单实付口径）').toBeCloseTo(PRICE_B, 2);
+      expect(item!.flash_price, '活动价仅作为配置下发，不参与收款').toBeCloseTo(FLASH_PRICE, 2);
+      expect(typeof item!.product_image, '商品封面图应由服务端下发').toBe('string');
+      expect(typeof item!.sold, '已售数量应取 flash_sale_items.sold_count 真实值').toBe('number');
     } finally {
       await buyerApi.dispose();
     }
@@ -336,8 +363,8 @@ test.describe.serial('秒杀活动生效', () => {
         (await (await buyerApi.get(`/api/v1/orders/${orderId}`)).json()) as ApiResponse<OrderDetail>,
         '订单详情',
       );
-      // 当前口径：order.go flashSalePriceEnabled=false（秒杀价止血，防超卖资损，
-      // 待 DeductFlashStock + LimitPerUser 完整实现后置 true）——订单链路整体不走秒杀价，
+      // 当前口径：order.go flashSalePriceEnabled=false（阻塞项是每人限购 limit_per_user 未实现，
+      // 单用户可超额抢活动价；秒杀池扣减本身已在 product 侧实现）——订单链路整体不走秒杀价，
       // 按正常价 5.9×2=11.8 计算。开关打开后应改回断言 total = FLASH_PRICE×2 = 3.0。
       expect(detail.total_amount, '止血开关期间应按正常价计算').toBeCloseTo(PRICE_B * 2, 2);
       expect(detail.total_amount, '止血开关期间不应低于秒杀价').toBeGreaterThanOrEqual(FLASH_PRICE * 2);

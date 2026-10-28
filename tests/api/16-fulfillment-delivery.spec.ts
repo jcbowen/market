@@ -35,6 +35,8 @@ interface FulfillmentOrder {
   order_id?: number;
   order_no?: string;
   status?: number;
+  /** 与后端 orders.delivery_type 同值：1 自提 / 2 配送 / 3 到店 */
+  delivery_type?: number;
   [k: string]: unknown;
 }
 
@@ -178,6 +180,52 @@ test.describe.serial('配送协同全链路', () => {
       const found = asList<FulfillmentOrder>(body.data).find((o) => isTargetOrder(o, orderId));
       expect(found, '工作台未见被指派订单').toBeTruthy();
       fulfillOrderId = found!.id;
+    } finally {
+      await fApi.dispose();
+    }
+  });
+
+  /**
+   * 锁定 tab→order_type→delivery_type 映射契约
+   * 后端把 order_type 直接当 orders.delivery_type 过滤（1 自提 / 2 配送），C 端履约工作台两个 tab
+   * 曾因按展示顺序猜值（送货=1、自提=2）整体拿到对调的数据。此处双向断言：
+   * 送货 tab 的参数只能查出配送单，自提 tab 的参数查不到本配送单——前端改错值即红。
+   */
+  test('order_type 与 delivery_type 严格同值（防前端 tab 值漂移）', async ({ playwright }) => {
+    if (!orderId || !fulfiller) test.skip(true, '订单或履约账号未就绪');
+    const fApi = await newAuthedRequest(playwright, fulfiller!.access_token);
+    try {
+      // order_type=2（送货）：只允许出现配送单，且必须含本用例刚创建的配送单
+      const deliveryResp = await fApi.get('/api/v1/fulfillment/orders', {
+        params: { order_type: 2, status_group: 0, page: 1, page_size: 50 },
+      });
+      const deliveryBody = (await deliveryResp.json()) as ApiResponse<FulfillmentOrder[] | { list: FulfillmentOrder[] }>;
+      expect(deliveryBody.code, `送货查单失败: ${deliveryBody.message}`).toBe(0);
+      const deliveryList = asList<FulfillmentOrder>(deliveryBody.data);
+      expect(
+        deliveryList.filter((o) => o.delivery_type !== 2),
+        'order_type=2 返回了非配送单，后端过滤口径已变',
+      ).toEqual([]);
+      expect(
+        deliveryList.some((o) => isTargetOrder(o, orderId)),
+        'order_type=2 未见本用例的配送单',
+      ).toBe(true);
+
+      // order_type=1（自提）：不得出现本配送单，且只允许自提单
+      const pickupResp = await fApi.get('/api/v1/fulfillment/orders', {
+        params: { order_type: 1, status_group: 0, page: 1, page_size: 50 },
+      });
+      const pickupBody = (await pickupResp.json()) as ApiResponse<FulfillmentOrder[] | { list: FulfillmentOrder[] }>;
+      expect(pickupBody.code, `自提查单失败: ${pickupBody.message}`).toBe(0);
+      const pickupList = asList<FulfillmentOrder>(pickupBody.data);
+      expect(
+        pickupList.filter((o) => o.delivery_type !== 1),
+        'order_type=1 返回了非自提单，后端过滤口径已变',
+      ).toEqual([]);
+      expect(
+        pickupList.some((o) => isTargetOrder(o, orderId)),
+        'order_type=1（自提）里出现了配送单，映射已对调',
+      ).toBe(false);
     } finally {
       await fApi.dispose();
     }

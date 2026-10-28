@@ -13,6 +13,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
@@ -199,11 +200,7 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 		return nil, bizerr.ToStatus(err)
 	}
 
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	resp := &product.ListProductsResp{
 		List: make([]*product.ProductInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -225,9 +222,10 @@ func (s *server) ListProducts(ctx stdctx.Context, req *product.ListProductsReq) 
 // GetProduct 获取商品详情
 // 返回商品基础信息、SKU 列表与规格树（单规格时规格树为空）。
 // require_sellable=true 时非上架态商品直接报错（加购等交易入口的可售收口，P1-4）；
-// 公开详情与管理端详情不传，仓库中商品仍可查看
+// include_deleted=true 放行软删除行（仅管理端详情/编辑回显）；
+// public_view=true 走公开出口脱敏（策略见 service.RedactPublicProductDetail）
 func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*product.ProductDetail, error) {
-	p, err := s.productService.GetProduct(ctx, req.Id)
+	p, err := s.productService.GetProduct(ctx, req.Id, req.GetIncludeDeleted())
 	if err != nil {
 		return nil, readError(err, "商品")
 	}
@@ -278,6 +276,9 @@ func (s *server) GetProduct(ctx stdctx.Context, req *product.GetProductReq) (*pr
 		skuInfo.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
 		detail.Skus = append(detail.Skus, skuInfo)
 	}
+	if req.GetPublicView() {
+		service.RedactPublicProductDetail(detail)
+	}
 	return detail, nil
 }
 
@@ -308,6 +309,10 @@ func (s *server) LookupBarcode(ctx stdctx.Context, req *product.LookupBarcodeReq
 	info.CoverImage = s.attachmentService.ToMediaURL(ctx, p.CoverImage)
 	skuInfo := service.ToSkuInfo(sku)
 	skuInfo.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+	// 扫码出口一律走公开口径：成本价与安全库存没有任何调用方需要，
+	// 按条码试探即可读出这两项经营数据；价格与库存保留——本出口同时挂在
+	// 收银台（同一个 handler），扫码加购必须有价格和库存
+	service.RedactPublicSku(skuInfo, false)
 	return &product.LookupBarcodeResp{Product: info, Sku: skuInfo}, nil
 }
 
@@ -398,6 +403,10 @@ func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*produc
 		info := service.ToSkuInfo(sku)
 		// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
 		info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+		if req.GetPublicView() {
+			// 公开出口只抹经营字段：能列出该商品就说明它在售，价格本就要展示
+			service.RedactPublicSku(info, false)
+		}
 		resp.List = append(resp.List, info)
 	}
 	return resp, nil
@@ -406,11 +415,7 @@ func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*produc
 // SearchSkus 社区内 SKU 级搜索（库存工作台列表 + 进销存表单 SKU 选择器共用）
 // 填充冗余商品名 product_name；SKU 规格图片拼接完整访问 URL
 func (s *server) SearchSkus(ctx stdctx.Context, req *product.SearchSkusReq) (*product.SearchSkusResp, error) {
-	page, pageSize := 1, 20
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.ClampWith(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()), 20, pageparam.MaxSize)
 	list, total, err := s.skuService.SearchSkus(ctx, req.CommunityId, req.Keyword, page, pageSize)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -473,6 +478,10 @@ func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*pr
 	info := service.ToSkuInfo(sku)
 	// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
 	info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
+	if req.GetPublicView() {
+		// 本出口只拿到 SKU、不掌握商品上下架状态，价格脱敏由详情出口统一收口
+		service.RedactPublicSku(info, false)
+	}
 	return info, nil
 }
 
@@ -506,7 +515,9 @@ func (s *server) BatchGetSkus(ctx stdctx.Context, req *product.BatchGetSkusReq) 
 }
 
 // BatchGetProducts 商品批量查询（下单明细取商品名/封面/分类，替代逐行 GetProduct）
-// 只回主表字段：调用方不需要 SKU 明细、规格树与图集，避免按行放大附属查询。
+// 只回主表字段 + 一次 GROUP BY 聚合的启用 SKU 数（sku_total）：调用方不需要 SKU 明细、
+// 规格树与图集，避免按行放大附属查询；sku_total 供购物车等展示侧判断「是否多规格可切换」，
+// 整批一条聚合，不随行数放大。
 // require_sellable=true 时任一商品非上架态即整体报错（下单入口的可售收口，P1-4）；
 // tolerate_missing=true 时切到逐项判定口径（缺失/越权项剔除、上架态原样返回交由调用方判定），
 // 优先于 require_sellable，与 BatchGetSkus 的同类开关成对使用
@@ -523,10 +534,19 @@ func (s *server) BatchGetProducts(ctx stdctx.Context, req *product.BatchGetProdu
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
+	productIDs := make([]int64, 0, len(products))
+	for _, p := range products {
+		productIDs = append(productIDs, p.ID)
+	}
+	skuTotal, err := s.skuService.CountActiveSkusByProductIDs(ctx, productIDs)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
 	list := make([]*product.ProductInfo, 0, len(products))
 	for _, p := range products {
 		info := service.ToProductInfo(p, "", nil)
 		info.CoverImage = s.attachmentService.ToMediaURL(ctx, p.CoverImage)
+		info.SkuTotal = skuTotal[p.ID]
 		list = append(list, info)
 	}
 	return &product.BatchGetProductsResp{List: list}, nil
@@ -733,11 +753,7 @@ func (s *server) ListStockInOrders(ctx stdctx.Context, req *product.ListStockInO
 		return nil, bizerr.ToStatus(err)
 	}
 
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	resp := &product.ListStockInOrdersResp{
 		List: make([]*product.StockInOrderInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -799,11 +815,7 @@ func (s *server) ListStockOutOrders(ctx stdctx.Context, req *product.ListStockOu
 		return nil, bizerr.ToStatus(err)
 	}
 
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	resp := &product.ListStockOutOrdersResp{
 		List: make([]*product.StockOutOrderInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -859,11 +871,7 @@ func (s *server) ListStockRecords(ctx stdctx.Context, req *product.ListStockReco
 		return nil, bizerr.ToStatus(err)
 	}
 
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	resp := &product.ListStockRecordsResp{
 		List: make([]*product.StockRecordInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -920,11 +928,7 @@ func (s *server) ListStockChecks(ctx stdctx.Context, req *product.ListStockCheck
 		return nil, bizerr.ToStatus(err)
 	}
 
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	resp := &product.ListStockChecksResp{
 		List: make([]*product.StockCheckInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -1090,7 +1094,8 @@ func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) 
 	}
 
 	// 明细档案批量回填：原先逐行 GetSkuByID + GetProduct（N 行 2N 次查询），
-	// 这里固定 2 次查询取回全部 SKU 与商品；取不到留空而非整体报错，
+	// 这里固定 2 次查询取回全部 SKU 与商品，封面图整批转换再读 1 次附件配置；
+	// 取不到留空而非整体报错，
 	// 与改造前「sku, _ :=」的容错口径一致
 	skuIDs := make([]int64, 0, len(items))
 	for _, item := range items {
@@ -1108,6 +1113,21 @@ func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) 
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
+	// 封面图整批转换：与商品查询同批，ToMediaURLs 内部只读一次附件配置，
+	// 避免逐行 ToMediaURL 造成「每行一次配置查询」（本接口会被网关按活动循环调用）
+	covers := make([]string, 0, len(productIDs))
+	for _, id := range productIDs {
+		if p := productByID[id]; p != nil {
+			covers = append(covers, p.CoverImage)
+			continue
+		}
+		covers = append(covers, "")
+	}
+	coverURLs := s.attachmentService.ToMediaURLs(ctx, covers)
+	coverByProduct := make(map[int64]string, len(productIDs))
+	for i, id := range productIDs {
+		coverByProduct[id] = coverURLs[i]
+	}
 
 	detail := &product.FlashSaleDetail{
 		Info:  service.ToFlashSaleInfo(fs),
@@ -1115,13 +1135,14 @@ func (s *server) GetFlashSale(ctx stdctx.Context, req *product.GetFlashSaleReq) 
 	}
 	for _, item := range items {
 		sku := skuByID[item.SkuID]
-		var productName string
+		var productName, productImage string
 		if sku != nil {
 			if p := productByID[sku.ProductID]; p != nil {
 				productName = p.Name
 			}
+			productImage = coverByProduct[sku.ProductID]
 		}
-		detail.Items = append(detail.Items, service.ToFlashSaleItemInfo(item, sku, productName))
+		detail.Items = append(detail.Items, service.ToFlashSaleItemInfo(item, sku, productName, productImage))
 	}
 	return detail, nil
 }
@@ -1275,9 +1296,11 @@ func (s *server) GetAttachmentConfig(ctx stdctx.Context, req *common.Empty) (*pr
 }
 
 // SaveAttachmentConfig 保存附件配置（Secret 为空或掩码时保留原值）
+// 版本冲突（bizerr Aborted）与参数校验（InvalidArgument）等状态码需原样带到网关，
+// 故走 bizerr.ToStatus 而非统一包成 InvalidArgument
 func (s *server) SaveAttachmentConfig(ctx stdctx.Context, req *product.AttachmentConfig) (*common.CommonResponse, error) {
 	if err := s.attachmentService.SaveConfig(ctx, req); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{}, nil
 }

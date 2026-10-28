@@ -29,7 +29,18 @@ type DataImportExecuteReq struct {
 	TargetUserPhone string   `json:"target_user_phone"` // 指定导入会员（用户券/购物车落到该会员名下）
 }
 
-// ListDataPackages 包列表
+// ListDataPackages 返回可导入的数据包清单（应用中心 · 数据包页）
+// 仅超管可用：路由级 product:create 权限码 + 本函数 IsSuperAdmin 双闸；
+// 清单按当前管理员所属社区返回（各社区的导入进度独立）
+// 参数：
+//   - c: gin 上下文（取管理员社区语境）
+//
+// 返回值：
+//   - 无（响应写回 gin）：成功为包列表；非超管回 11005；RPC 失败按 GRPCError 映射业务码
+//
+// 使用示例：
+//
+//	GET /api/v1/admin/data-import/packages
 func (h *AdminHandler) ListDataPackages(c *gin.Context) {
 	if !middleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
@@ -45,7 +56,19 @@ func (h *AdminHandler) ListDataPackages(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// PreviewDataImport 预检报告
+// PreviewDataImport 导入前预检：解析数据包并与目标社区现状比对，输出新增/冲突/跳过清单
+// 只读，不写库；前端凭预检结果让用户勾选要跳过的条目后再调 ImportDataPackage
+// 异常：package_key 为空或非 JSON → 10001；非超管 → 11005；包文件缺失/解析失败按服务侧错误码透传
+// 参数：
+//   - c: gin 上下文，请求体为 DataImportPreviewReq（selected_keys 空=全选；target_user_phone 指定会员归属）
+//
+// 返回值：
+//   - 无（响应写回 gin）：成功为预检报告（含各条目状态与统计）
+//
+// 使用示例：
+//
+//	POST /api/v1/admin/data-import/preview
+//	{"package_key":"full-demo","selected_keys":[],"target_user_phone":"13800138000"}
 func (h *AdminHandler) PreviewDataImport(c *gin.Context) {
 	if !middleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)
@@ -69,7 +92,20 @@ func (h *AdminHandler) PreviewDataImport(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// ImportDataPackage 执行导入
+// ImportDataPackage 执行导入：把预检选中的条目写入当前社区
+// 与 PreviewDataImport 的区别是本函数有写库副作用且耗时较长（逐段导入商品/优惠券等），
+// on_sale 为 false 时导入的商品保持下架态，避免演示数据直接对 C 端可见
+// 异常：请求体非法 → 10001；非超管 → 11005；包 key 不存在/段校验失败按服务侧错误码透传
+// 参数：
+//   - c: gin 上下文，请求体为 DataImportExecuteReq（excluded_keys 为预检后手动排除项）
+//
+// 返回值：
+//   - 无（响应写回 gin）：成功为逐段导入结果（成功/失败计数与失败原因清单）
+//
+// 使用示例：
+//
+//	POST /api/v1/admin/data-import/import
+//	{"package_key":"full-demo","selected_keys":[],"excluded_keys":[],"on_sale":true,"target_user_phone":"13800138000"}
 func (h *AdminHandler) ImportDataPackage(c *gin.Context) {
 	if !middleware.IsSuperAdmin(c) {
 		response.Error(c, errcode.NoPermission)

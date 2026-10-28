@@ -41,7 +41,7 @@ func NewAboutHandler(cfg *config.Config) *AboutHandler {
 // 版本号取编译注入值（未注入时为 dev）；MySQL/Redis 版本为运行时真实查询结果，
 // 查询失败对应字段返回空串（前端展示「-」），不影响接口整体成功；
 // app_env 以 APP_ENV 环境变量为准（未设置视为开发环境）；
-// deploy_mode 为运行时自动检测的实际部署方式（docker/binary）
+// deploy_mode 为运行时自动检测的实际部署方式（docker/binary），首次请求探测后固定
 // 使用示例：GET /api/v1/admin/about（登录即可访问）
 // 参数：
 //   - c: gin 上下文
@@ -53,11 +53,16 @@ func (h *AboutHandler) Get(c *gin.Context) {
 	response.Success(c, gin.H{
 		"version":       version.AppVersion,
 		"app_env":       env,
-		"deploy_mode":   detectDeployMode(),
+		"deploy_mode":   deployMode(),
 		"mysql_version": h.mysqlVersion(),
 		"redis_version": h.redisVersion(),
 	})
 }
+
+// deployMode 部署方式探测结果（首次调用时探测一次后固定）
+// /proc 遍历与 /.dockerenv 判定在一次进程生命周期内不会变化，
+// 关于页每次请求都全量扫 /proc 属无谓开销（容器内进程多时遍历成本随请求线性放大）
+var deployMode = sync.OnceValue(detectDeployMode)
 
 // detectDeployMode 检测当前实际部署运行方式（三态）
 // 1. 非容器环境（无 /.dockerenv 且 /proc/1/cgroup 无容器运行时标识）→ binary（二进制直接运行）

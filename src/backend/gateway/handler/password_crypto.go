@@ -19,6 +19,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
+	"github.com/jcbowen/market/src/backend/common/pwdpolicy"
 	"github.com/jcbowen/market/src/backend/common/response"
 )
 
@@ -53,8 +54,9 @@ import (
 const PasswordEncryptAlg = "RSA-OAEP-SHA256"
 
 // maxRSAPasswordLen 解密明文的长度上限
-// （RSA-2048 + OAEP-SHA256 单块明文上限 = 模长 256 - 2×SHA-256 长度 64 - 填充开销 2）
-const maxRSAPasswordLen = 190
+// （RSA-2048 + OAEP-SHA256 单块明文上限 = 模长 256 - 2×SHA-256 长度 64 - 填充开销 2），
+// 取口令策略同源常量，避免加密上限与写入校验上限各写一份
+const maxRSAPasswordLen = pwdpolicy.MaxLength
 
 // passwordCrypto 密码传输加密器
 // 持有网关本机的 RSA 私钥与派生指纹，随 AdminHandler 生命周期常驻
@@ -249,7 +251,7 @@ func (h *AdminHandler) decryptPwdField(c *gin.Context, field *string, alg, keyID
 		// 明文兼容通道同样约束字节上限：与加密通道解密后校验对齐，堵死
 		// 「明文通道设超长密码 → 加密通道受 RSA 单块上限永远解不出来 → 账号锁死」的路径。
 		// 用 ParamError 而非 11010——后者语义是密文无效，会触发前端重拉公钥重试，徒劳一轮
-		if l := len(*field); l > maxRSAPasswordLen {
+		if pwdpolicy.TooLong(*field) {
 			response.Error(c, errcode.ParamError,
 				fmt.Sprintf("密码过长：以 UTF-8 编码后不能超过 %d 字节", maxRSAPasswordLen))
 			return false
@@ -278,14 +280,34 @@ func (h *AdminHandler) decryptPwdField(c *gin.Context, field *string, alg, keyID
 		response.Error(c, errcode.PasswordEncryptedError)
 		return false
 	}
-	// 解密明文补长度约束：请求结构体上的 binding min=6 作用在密文（恒 344 字符）上必然通过，
-	// 不在此补校验则加密通道可绕过长度限制设置超短密码（改密/重置链路服务层无二次校验）。
-	// 下限 6 与创建路径的明文校验对齐（存量密码均 ≥6，登录场景无额外影响）；
-	// 上限 190 为 RSA-2048/OAEP-SHA256 单块明文上限，越界密文本就无法成立
-	if l := len(plain); l < 6 || l > maxRSAPasswordLen {
+	// 解密明文只补「长度上限」约束：请求结构体上的 binding min 作用在密文（恒 344 字符）上
+	// 必然通过，上限不补则加密通道可设出解密侧无法复现的超长口令（账号锁死）。
+	// 下限不在这里判——本函数同时服务于登录（admin.go:115），登录提交的是存量口令，
+	// 一旦在此按新下限拦截，6-9 位的历史账号会直接登不进去；下限改由写入路径
+	// 的 validateNewPassword 逐处声明（新建/改密/重置）
+	if l := len(plain); l > maxRSAPasswordLen {
 		response.Error(c, errcode.PasswordEncryptedError)
 		return false
 	}
 	*field = string(plain)
 	return true
+}
+
+// validateNewPassword 校验「设置口令」路径的明文长度（新建/改密/重置共用，登录不调用）
+// 加密通道上 binding min 判的是密文长度、形同虚设，故解密后必须补这一道。
+// 空串直接放行：CreateAdmin 允许「复用已有账号不传密码」，是否必填由 binding 标签判定，
+// 是否够长由服务层在真正建号分支再判一次
+//
+// 参数：
+//   - c: gin 上下文（失败时写响应）
+//   - plain: 解密后的口令明文
+//
+// 返回值：
+//   - bool: true = 达标，继续业务
+func (h *AdminHandler) validateNewPassword(c *gin.Context, plain string) bool {
+	if plain == "" || !pwdpolicy.TooShort(plain) {
+		return true
+	}
+	response.Error(c, errcode.ParamError, pwdpolicy.Message())
+	return false
 }

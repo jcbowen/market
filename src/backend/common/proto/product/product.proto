@@ -309,10 +309,19 @@ message ListProductsReq {
 
 message GetProductReq {
   int64 id = 1;
+  // 社区语境：>0 逐条比对商品归属（跨社区读取直接被拒）；<=0 跳过归属校验，
+  // 只允许管理端超管语境与服务端内部复用使用，C 端公开出口必须显式携带
   int64 community_id = 2;
   // 可售校验（P1-4）：true 时商品非上架态（status≠1，下架/仓库中/定时上架中）直接报错，
-  // 供加购等交易入口收口「可售」判定；公开详情与管理端详情不传，保持原行为
+  // 供加购等交易入口收口「可售」判定；管理端详情不传，保持原行为
   bool require_sellable = 3;
+  // 已删除商品（status=2）放行：仅管理端详情使用（编辑/回溯历史数据要看已删除行），
+  // 其余出口默认 NotFound——软删除的行不应继续对外可取
+  bool include_deleted = 4;
+  // 公开出口标记（C 端匿名/登录详情）：抹掉成本价等内部字段；商品非上架态时再抹掉
+  // 价格与富文本正文，页面保留名称与图片提示「已下架」，避免用公开详情接口
+  // 拉取已下架/定时上架商品的价目与详情内容
+  bool public_view = 5;
 }
 
 message SearchProductsReq {
@@ -351,7 +360,8 @@ message UpdateProductReq {
   string cover_image = 5;
   repeated string images = 6;
   string unit = 7;
-  int32 sort = 8;
+  // 排序：optional 三态（不传=不改动，传 0=真的置 0）；非 optional 时 0 无法与「未传」区分
+  optional int32 sort = 8;
   int32 status = 9;
   int32 min_buy = 10;
   bool is_multi_spec = 11;
@@ -361,9 +371,9 @@ message UpdateProductReq {
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
   // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区修改（超管传 0 放行）
   int64 community_id = 16;
-  // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时置为下架+预约；
-  // 显式传空串表示取消定时（配合 status 决定立即上架或保持下架）
-  string on_sale_at = 17;
+  // 定时上架时间（"2006-01-02 15:04:05"）：optional 三态——
+  // 不传=维持原预约不变；显式传未来时间=置为下架+预约；显式传空串=取消定时（配合 status 决定立即上架或保持下架）
+  optional string on_sale_at = 17;
   // 商品富文本详情（服务端白名单消毒后的 HTML；admin 全量提交，直接覆盖）
   string content = 18;
 }
@@ -437,6 +447,7 @@ message ProductInfo {
   int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
   string on_sale_at = 22;     // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
   string content = 23;        // 商品富文本详情（服务端已消毒的 HTML，C 端 rich-text 渲染）
+  int32 sku_total = 24;       // 启用 SKU 数（仅 BatchGetProducts 批量回填，其余出口为 0）
 }
 
 message ProductDetail {
@@ -513,12 +524,18 @@ message SpecInfo {
 // --- SKU ---
 message ListSkusReq {
   int64 product_id = 1;
+  // 公开出口标记（C 端 /skus）：抹掉成本价与安全库存；sku_code/barcode 保留
+  // （收银台规格名兜底与扫码加购依赖）
+  bool public_view = 2;
 }
 
 message GetSkuByIdReq {
   int64 id = 1;
   // 操作者社区语境：>0 时服务端强校验 SKU 归属，防止跨社区读取（超管传 0 放行）
   int64 community_id = 2;
+  // 公开出口标记（C 端 /skus/:id）：同 ListSkusReq，只抹成本价与安全库存；
+  // 本出口不掌握商品上下架状态，价格脱敏由详情出口收口
+  bool public_view = 3;
 }
 
 message CreateSkuReq {
@@ -1482,6 +1499,11 @@ message FlashSaleItemInfo {
   double original_price = 7;
   int32 stock = 8;
   int32 limit_per_user = 9;
+  // 商品封面图（已按附件访问域名拼接为完整地址）：C 端列表展示用，
+  // 由服务端随明细批量回填，避免调用方逐行再查一次商品
+  string product_image = 11;
+  // 已售数量（flash_sale_items.sold_count 真实值，扣减秒杀库存时累加）
+  int32 sold = 12;
 }
 
 message ListFlashSalesResp {

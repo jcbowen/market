@@ -8,6 +8,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -129,11 +130,7 @@ func (s *server) ListOrders(ctx stdctx.Context, req *order.ListOrdersReq) (*orde
 		return nil, bizerr.ToStatus(err)
 	}
 
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	resp := &order.ListOrdersResp{
 		List: make([]*order.OrderInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -266,13 +263,8 @@ func (s *server) ListFulfillmentOrders(ctx stdctx.Context, req *order.ListFulfil
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
-	page, pageSize := int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize())
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 || pageSize > 50 {
-		pageSize = 10
-	}
+	// 与 order 服务 ListFulfillmentOrders 同口径收敛，保证回显的 page_size 与实际返回一致
+	page, pageSize := pageparam.ClampMax(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()), 50)
 	resp := &order.ListFulfillmentOrdersResp{
 		List: make([]*order.OrderInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{
@@ -451,11 +443,7 @@ func (s *server) ListRefunds(ctx stdctx.Context, req *order.ListRefundsReq) (*or
 		return nil, bizerr.ToStatus(err)
 	}
 
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	resp := &order.ListRefundsResp{
 		List: make([]*order.RefundInfo, 0, len(list)),
 		Pagination: &common.PaginationResponse{

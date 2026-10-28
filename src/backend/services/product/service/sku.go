@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -224,6 +226,52 @@ func (s *SkuService) FindSkusByIDs(ctx context.Context, ids []int64) (map[int64]
 	return byID, nil
 }
 
+// CountActiveSkusByProductIDs 按商品聚合启用 SKU 数（一次 GROUP BY，供批量出口回填）
+// 存活口径与 ListSkusByProductID / syncProductAggregates 一致：只统计 status=1 的 SKU，
+// 禁用或被移除的规格不计入，调用方据此判断「是否多规格可切换」。
+// 无启用 SKU 的商品在结果中不出现在 map 里（取值为 0），不做补零。
+//
+// 参数：
+//   - ctx: 上下文
+//   - productIDs: 商品 ID 集合（重复、0 与负数自动忽略）
+//
+// 返回值：
+//   - map[int64]int32: 商品 ID -> 启用 SKU 数
+//   - error: 数据库错误
+//
+// 使用示例：
+//
+//	skuTotal, err := svc.CountActiveSkusByProductIDs(ctx, []int64{1, 2})
+func (s *SkuService) CountActiveSkusByProductIDs(ctx context.Context, productIDs []int64) (map[int64]int32, error) {
+	positive := make([]int64, 0, len(productIDs))
+	for _, id := range productIDs {
+		if id > 0 {
+			positive = append(positive, id)
+		}
+	}
+	if len(positive) == 0 {
+		return map[int64]int32{}, nil
+	}
+
+	var rows []struct {
+		ProductID int64 `gorm:"column:product_id"`
+		Total     int32 `gorm:"column:total"`
+	}
+	if err := s.db.GetDb().WithContext(ctx).Table("product_skus").
+		Select("product_id, COUNT(*) AS total").
+		Where("product_id IN ? AND status = 1", dedupIDs(positive)).
+		Group("product_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	countByProduct := make(map[int64]int32, len(rows))
+	for _, row := range rows {
+		countByProduct[row.ProductID] = row.Total
+	}
+	return countByProduct, nil
+}
+
 // dedupIDs 去重并保持首次出现顺序
 //
 // 参数：
@@ -418,12 +466,7 @@ type SkuWithProduct struct {
 //   - int64: 总数
 //   - error: 错误信息
 func (s *SkuService) SearchSkus(ctx context.Context, communityID int64, keyword string, page, pageSize int) ([]*SkuWithProduct, int64, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 200 {
-		pageSize = 20
-	}
+	page, pageSize = pageparam.Clamp(page, pageSize)
 
 	query := s.db.GetDb().WithContext(ctx).
 		Table("product_skus AS s").
@@ -431,7 +474,7 @@ func (s *SkuService) SearchSkus(ctx context.Context, communityID int64, keyword 
 		Where("s.community_id = ?", communityID).
 		Where("s.status = ?", 1)
 	if kw := strings.TrimSpace(keyword); kw != "" {
-		like := "%" + kw + "%"
+		like := likeutil.Contains(kw)
 		query = query.Where("(p.name LIKE ? OR s.sku_code LIKE ? OR s.barcode LIKE ?)", like, like, like)
 	}
 

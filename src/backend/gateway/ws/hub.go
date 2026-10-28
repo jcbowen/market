@@ -218,14 +218,19 @@ func (h *Hub) Register(c *Client) {
 //
 // 参数：
 //   - c: 客户端连接
-func (h *Hub) Unregister(c *Client) {
+//
+// 返回值：
+//   - bool: 本次调用是否真的摘除了连接；false 表示该连接此前已不在在线集合中
+//     （客户端主动断开与踢线竞态时会走到这里），供 kick 统计实际踢线数
+func (h *Hub) Unregister(c *Client) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, ok := h.clients[c]; !ok {
-		return
+		return false
 	}
 	delete(h.clients, c)
 	close(c.send)
+	return true
 }
 
 // Count 当前在线连接数（健康信息用）
@@ -394,12 +399,14 @@ func (h *Hub) KickAll() int {
 
 // kick 按判定断开匹配连接：先在 RLock 内取快照，释放锁后逐个 Unregister
 // （Unregister 需要写锁，锁内调用会重入死锁）
+// 计数以 Unregister 的返回值为准：快照取出后到逐个注销之间，连接可能已被客户端主动断开
+// 注销（读循环退出也会调 Unregister），此时返回 false，不计入实际断开数
 //
 // 参数：
 //   - match: 连接匹配判定
 //
 // 返回值：
-//   - int: 实际断开的连接数
+//   - int: 实际断开的连接数（不含快照后已被其他路径注销的连接）
 func (h *Hub) kick(match func(*Client) bool) int {
 	h.mu.RLock()
 	targets := make([]*Client, 0, 8)
@@ -409,10 +416,13 @@ func (h *Hub) kick(match func(*Client) bool) int {
 		}
 	}
 	h.mu.RUnlock()
+	kicked := 0
 	for _, c := range targets {
-		h.Unregister(c)
+		if h.Unregister(c) {
+			kicked++
+		}
 	}
-	return len(targets)
+	return kicked
 }
 
 // positiveIDSet 过滤出 >0 的 ID 集合（0 是「全局」占位，不作为社区/管理员 ID 匹配）

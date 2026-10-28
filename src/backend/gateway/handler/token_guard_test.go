@@ -22,19 +22,22 @@ import (
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
+	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 )
 
 /**
- * refresh 令牌黑名单与刷新加固（P1-5）测试
+ * 令牌黑名单与刷新加固（P1-5 + C5）测试
  *
- * 背景：refresh 令牌原为纯无状态 JWT，7 天有效期内停用管理员/已登出会话仍可续期。
- * 修法三道：黑名单（轮转后旧 jti 即失效）+ 账号实时校验（查库，停用/删除即拒）+ 轮转。
+ * 背景：令牌原为纯无状态 JWT，有效期内停用管理员/已登出会话照样可用——refresh（7 天）
+ * 能继续续期，access（2 小时）能直接调接口，「登出」只剩前端删本地存储。
+ * 修法四道：黑名单（轮转后旧 jti 即失效）+ 账号实时校验（查库，停用/删除即拒）+
+ * 轮转 + access 也带 jti 并在鉴权时查验（C5）。
  *
  * 运行方式：
  *   离线用例（无外部依赖）：
- *     go test ./gateway/handler/ -run 'TestRefreshJtiKeyNaming|TestRefreshGuardFailOpen|TestRefreshTokenRejects|TestRefreshTokenRotatesIn' -v
+ *     go test ./gateway/handler/ -run 'TestTokenJtiKeyNaming|TestTokenGuardFailOpen|TestRefreshTokenRejects|TestRefreshTokenRotatesIn|TestPresentedAccessToken' -v
  *   集成用例（需本地 Redis，与登录锁定测试同一套 env）：
- *     TEST_REDIS_PASSWORD=xxx go test ./gateway/handler/ -run 'TestRefreshGuardRevokeThenRevoked|TestRefreshTokenBlacklistReplay' -v
+ *     TEST_REDIS_PASSWORD=xxx go test ./gateway/handler/ -run 'TestTokenGuardRevokeThenRevoked|TestRefreshTokenBlacklistReplay|TestLogoutRevokesAccessAndRefresh' -v
  *
  * 覆盖：
  *   - 键命名带独立前缀，与登录锁定键（loginfail）不撞；
@@ -43,27 +46,29 @@ import (
  *   - 停用/删除/查库故障分别拒为 AccountDisabled/InvalidToken/Internal；
  *   - access 令牌、空令牌、乱码令牌不得用于刷新；
  *   - 响应体与 cookie 两种模式都能拿到轮转后的新 refresh 令牌；
- *   - 集成：刷新一次后旧令牌即进黑名单，重放被拒且不再查库，新令牌可链式轮转。
+ *   - 登出取令牌的通道：Authorization 头（含大小写 bearer）与后台 httpOnly cookie；
+ *   - 集成：刷新一次后旧令牌即进黑名单，重放被拒且不再查库，新令牌可链式轮转；
+ *   - 集成：登出同时吊销 access 与 refresh，两端令牌此后都不再被服务端接受。
  */
 
-// TestRefreshJtiKeyNaming 验证黑名单键命名（离线）：独立前缀，与登录锁定命名空间区分
-func TestRefreshJtiKeyNaming(t *testing.T) {
-	if got := refreshJtiKey("abc123"); got != "refreshjti:abc123" {
-		t.Errorf("黑名单键命名不符: %q", refreshJtiKey("abc123"))
+// TestTokenJtiKeyNaming 验证黑名单键命名（离线）：独立前缀，与登录锁定命名空间区分
+func TestTokenJtiKeyNaming(t *testing.T) {
+	if got := tokenJtiKey("abc123"); got != "tokenjti:abc123" {
+		t.Errorf("黑名单键命名不符: %q", got)
 	}
-	if refreshJtiKey("jti-a") == refreshJtiKey("jti-b") {
+	if tokenJtiKey("jti-a") == tokenJtiKey("jti-b") {
 		t.Error("不同 jti 必须映射到不同键")
 	}
-	if refreshJtiKeyPrefix == "loginfail" {
+	if tokenJtiKeyPrefix == "loginfail" {
 		t.Error("黑名单键不应与登录锁定键共用命名空间")
 	}
 }
 
-// TestRefreshGuardRevokeThenRevoked 集成（需 Redis）：吊销即命中、空 jti 不参与、ttl<=0 不落键
-func TestRefreshGuardRevokeThenRevoked(t *testing.T) {
-	guard, ctx, register := newRefreshGuardTestEnv(t)
+// TestTokenGuardRevokeThenRevoked 集成（需 Redis）：吊销即命中、空 jti 不参与、ttl<=0 不落键
+func TestTokenGuardRevokeThenRevoked(t *testing.T) {
+	guard, ctx, register := newTokenGuardTestEnv(t)
 	jti := "REFRESHTEST-" + time.Now().Format("150405.000000")
-	register(refreshJtiKey(jti))
+	register(tokenJtiKey(jti))
 
 	if guard.revoked(ctx, jti) {
 		t.Fatal("吊销前不应命中黑名单")
@@ -81,7 +86,7 @@ func TestRefreshGuardRevokeThenRevoked(t *testing.T) {
 
 	// ttl<=0（令牌已过期）：跳过写键，避免为过期令牌常驻黑名单
 	expired := jti + "-expired"
-	register(refreshJtiKey(expired))
+	register(tokenJtiKey(expired))
 	guard.revoke(ctx, expired, 0)
 	guard.revoke(ctx, expired, -time.Second)
 	if guard.revoked(ctx, expired) {
@@ -89,10 +94,10 @@ func TestRefreshGuardRevokeThenRevoked(t *testing.T) {
 	}
 }
 
-// TestRefreshGuardFailOpenWithoutRedis 验证 Redis 不可用时放行（fail-open）
+// TestTokenGuardFailOpenWithoutRedis 验证 Redis 不可用时放行（fail-open）
 // 吊销是加固项：缓存故障时退化为轮转前行为（旧令牌存活到期），不得阻断正常刷新
-func TestRefreshGuardFailOpenWithoutRedis(t *testing.T) {
-	guard := newRefreshGuard(&config.Config{Redis: jcbaseGo.RedisStruct{
+func TestTokenGuardFailOpenWithoutRedis(t *testing.T) {
+	guard := newTokenGuard(&config.Config{Redis: jcbaseGo.RedisStruct{
 		Host: "127.0.0.1",
 		Port: "1",
 		Db:   "15",
@@ -144,7 +149,7 @@ func newRefreshTestHandler(stub *stubRefreshUserClient) (*AdminHandler, *jwt.Man
 	h := &AdminHandler{
 		jwtManager: m,
 		userClient: stub,
-		refreshGuard: newRefreshGuard(&config.Config{Redis: jcbaseGo.RedisStruct{
+		tokenGuard: newTokenGuard(&config.Config{Redis: jcbaseGo.RedisStruct{
 			Host: "127.0.0.1",
 			Port: "1",
 			Db:   "15",
@@ -356,14 +361,14 @@ func TestRefreshTokenRotatesInCookie(t *testing.T) {
 // TestRefreshTokenBlacklistReplay 集成（需 Redis）：刷新一次后旧令牌即进黑名单
 // 重放被拒且不再查库；轮转后的新令牌可继续链式刷新（不误伤）
 func TestRefreshTokenBlacklistReplay(t *testing.T) {
-	guard, ctx, register := newRefreshGuardTestEnv(t)
+	guard, ctx, register := newTokenGuardTestEnv(t)
 	m := jwt.NewManager(jwt.Config{
 		Secret:          "p1-5-refresh-test-secret",
 		AccessTokenTTL:  2 * time.Minute,
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 	})
 	stub := &stubRefreshUserClient{admin: &user.AdminInfo{Id: 2001, Status: 1}}
-	h := &AdminHandler{jwtManager: m, userClient: stub, refreshGuard: guard}
+	h := &AdminHandler{jwtManager: m, userClient: stub, tokenGuard: guard}
 
 	oldToken, _, err := m.GenerateRefreshToken(2001, jwt.TokenTypeAdmin)
 	if err != nil {
@@ -373,7 +378,7 @@ func TestRefreshTokenBlacklistReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析旧令牌失败: %v", err)
 	}
-	register(refreshJtiKey(oldClaims.ID))
+	register(tokenJtiKey(oldClaims.ID))
 
 	// 首次刷新成功并轮转
 	resp := decodeRefreshResp(t, doRefreshRequest(t, h, oldToken, false))
@@ -405,7 +410,7 @@ func TestRefreshTokenBlacklistReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析新令牌失败: %v", err)
 	}
-	register(refreshJtiKey(newClaims.ID))
+	register(tokenJtiKey(newClaims.ID))
 	next := decodeRefreshResp(t, doRefreshRequest(t, h, newToken, false))
 	if next.Code != errcode.Success {
 		t.Fatalf("轮转后的新令牌应可继续刷新，code = %d(%s)", next.Code, next.Message)
@@ -472,7 +477,7 @@ func TestRefreshTokenRebuildsRoleFromLiveAccount(t *testing.T) {
 	}
 }
 
-// newRefreshGuardTestEnv 构造连到测试 Redis 的黑名单器，并返回键清理登记函数
+// newTokenGuardTestEnv 构造连到测试 Redis 的黑名单器，并返回键清理登记函数
 // TEST_REDIS_PASSWORD 未设置时跳过（与 MySQL 集成测试、登录锁定测试同一守卫口径）
 // 集成用例在签发令牌后才拿得到 jti，故清理键统一在收尾时删除
 //
@@ -480,10 +485,10 @@ func TestRefreshTokenRebuildsRoleFromLiveAccount(t *testing.T) {
 //   - t: 测试对象
 //
 // 返回值：
-//   - *refreshGuard: 黑名单器
+//   - *tokenGuard: 黑名单器
 //   - context.Context: 请求上下文
 //   - func(keys ...string): 键清理登记函数
-func newRefreshGuardTestEnv(t *testing.T) (*refreshGuard, context.Context, func(keys ...string)) {
+func newTokenGuardTestEnv(t *testing.T) (*tokenGuard, context.Context, func(keys ...string)) {
 	t.Helper()
 	if os.Getenv("TEST_REDIS_PASSWORD") == "" {
 		t.Skip("TEST_REDIS_PASSWORD 未设置，跳过 refresh 黑名单集成测试")
@@ -494,7 +499,7 @@ func newRefreshGuardTestEnv(t *testing.T) (*refreshGuard, context.Context, func(
 		Password: os.Getenv("TEST_REDIS_PASSWORD"),
 		Db:       loginTestEnvOr("TEST_REDIS_DB", "15"),
 	}}
-	guard := newRefreshGuard(cfg)
+	guard := newTokenGuard(cfg)
 	ctx := context.Background()
 	// 客户端构造本身不建连，测试须显式 Ping 探测可用性，
 	// 否则连不上只会在断言里表现为「永远未吊销」的假通过
@@ -511,10 +516,119 @@ func newRefreshGuardTestEnv(t *testing.T) (*refreshGuard, context.Context, func(
 			return
 		}
 		if err := rds.Del(context.Background(), registered...).Err(); err != nil {
-			t.Logf("清理 refresh 黑名单键失败（需手工核对 %s: 前缀键）: %v", refreshJtiKeyPrefix, err)
+			t.Logf("清理 refresh 黑名单键失败（需手工核对 %s: 前缀键）: %v", tokenJtiKeyPrefix, err)
 		}
 	})
 	return guard, ctx, func(keys ...string) {
 		registered = append(registered, keys...)
+	}
+}
+
+// TestPresentedAccessToken 登出取 access 令牌的通道（离线，C5）
+// Authorization 头是主通道，后台 H5 的 httpOnly cookie 是 JS 删不掉的那一份，
+// 两处都取一次才算覆盖完整——只看请求头时，cookie 里的令牌登出后仍能用到自然过期
+//
+// 参数：
+//   - t: 测试对象
+func TestPresentedAccessToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newCtx := func(authorization, cookieValue string) *gin.Context {
+		t.Helper()
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/auth/logout", nil)
+		if authorization != "" {
+			req.Header.Set("Authorization", authorization)
+		}
+		if cookieValue != "" {
+			req.AddCookie(&http.Cookie{Name: gwMiddleware.CookieAdminAccessToken, Value: cookieValue})
+		}
+		c.Request = req
+		return c
+	}
+
+	if got := presentedAccessToken(newCtx("Bearer header-token", "")); got != "header-token" {
+		t.Errorf("Bearer 头应取出令牌原文, got=%q", got)
+	}
+	// scheme 大小写不敏感（HTTP 约定），按精确匹配会把 `bearer x` 当成没带令牌
+	if got := presentedAccessToken(newCtx("bearer lower-token", "")); got != "lower-token" {
+		t.Errorf("小写 bearer 应同样取出令牌, got=%q", got)
+	}
+	// 头里不是 Bearer（如 Basic）时回落 cookie；cookie 也没有则空串
+	if got := presentedAccessToken(newCtx("Basic abc", "cookie-token")); got != "cookie-token" {
+		t.Errorf("非 Bearer 头应回落到 httpOnly cookie, got=%q", got)
+	}
+	if got := presentedAccessToken(newCtx("Bearer header-token", "cookie-token")); got != "header-token" {
+		t.Errorf("头与 cookie 同时存在时应以头为准, got=%q", got)
+	}
+	if got := presentedAccessToken(newCtx("", "")); got != "" {
+		t.Errorf("两处都没带令牌时返回空串, got=%q", got)
+	}
+}
+
+// TestLogoutRevokesAccessAndRefresh 集成（需 Redis）：登出同时吊销 access 与 refresh
+// 覆盖 C5 的两个要点：access 也进黑名单（否则登出后仍可用到 2 小时自然过期）、
+// 类型不符的令牌不被顺手吊销（拿会员端的登出请求吊销后台令牌）
+//
+// 参数：
+//   - t: 测试对象
+func TestLogoutRevokesAccessAndRefresh(t *testing.T) {
+	guard, ctx, register := newTokenGuardTestEnv(t)
+	m := jwt.NewManager(jwt.Config{
+		Secret:          "c5-logout-test-secret",
+		AccessTokenTTL:  2 * time.Minute,
+		RefreshTokenTTL: 7 * 24 * time.Hour,
+	})
+
+	access, _, err := m.GenerateAdminAccessToken(1001, "", "community_admin", 9, nil, nil, "c5admin", "登出测试")
+	if err != nil {
+		t.Fatalf("签发 access 令牌失败: %v", err)
+	}
+	refresh, _, err := m.GenerateRefreshToken(1001, jwt.TokenTypeAdmin)
+	if err != nil {
+		t.Fatalf("签发 refresh 令牌失败: %v", err)
+	}
+	// 另一端的令牌：本端登出不得吊销它
+	otherAccess, _, err := m.GenerateAccessToken(2002, jwt.TokenTypeUser, "13800138002", "", 0, nil)
+	if err != nil {
+		t.Fatalf("签发会员 access 令牌失败: %v", err)
+	}
+
+	accessClaims, err := m.ParseToken(access)
+	if err != nil {
+		t.Fatalf("解析 access 令牌失败: %v", err)
+	}
+	refreshClaims, err := m.ParseToken(refresh)
+	if err != nil {
+		t.Fatalf("解析 refresh 令牌失败: %v", err)
+	}
+	otherClaims, err := m.ParseToken(otherAccess)
+	if err != nil {
+		t.Fatalf("解析会员 access 令牌失败: %v", err)
+	}
+	for _, jti := range []string{accessClaims.ID, refreshClaims.ID, otherClaims.ID} {
+		register(tokenJtiKey(jti))
+	}
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/auth/logout", nil)
+	c.Request.Header.Set("Authorization", "Bearer "+access)
+
+	revokePresentedTokens(c, m, guard, jwt.TokenTypeAdmin, refresh)
+
+	if !guard.revoked(ctx, accessClaims.ID) {
+		t.Error("登出应同时吊销 access 令牌（否则服务端在剩余 2 小时内照旧认它）")
+	}
+	if !guard.revoked(ctx, refreshClaims.ID) {
+		t.Error("登出应吊销 refresh 令牌")
+	}
+	if guard.revoked(ctx, otherClaims.ID) {
+		t.Error("类型不符的令牌不应被本端登出吊销")
+	}
+	// 吊销判定可直接被鉴权中间件消费：命中即视为已失效
+	if check := guard.RevocationCheck(); !check(ctx, accessClaims.ID) {
+		t.Error("RevocationCheck 应对已吊销的 access 返回 true")
 	}
 }

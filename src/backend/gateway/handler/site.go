@@ -132,6 +132,23 @@ func (h *AdminHandler) UpdateSiteSetting(c *gin.Context) {
 		return
 	}
 
+	// 乐观并发：站点设置是整份 PUT，表单缓存/多人同时编辑时后保存者会覆盖前一次改动。
+	// 前端把载入时的 version 原样带回，与库中当前值不一致即拒绝提交，提示重新载入。
+	// 不传 version（0，历史调用）保持原行为。校验在网关、写库仍在 user 服务，
+	// 读—比对—写之间仍有毫秒级窗口（彻底串行化要给 SaveSiteConfigReq 加 expected_version，
+	// 改动横跨 proto/服务/网关/前端四层），此处取「覆盖事故基本消除」而非「绝对不可能」。
+	if req.Version > 0 {
+		current, err := h.userClient.GetSiteConfig(c.Request.Context(), &user.GetSiteConfigReq{})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		if current.Version != req.Version {
+			response.Error(c, errcode.DataConflict, "配置已被他人修改，请重新载入后再保存")
+			return
+		}
+	}
+
 	cfg, err := h.userClient.SaveSiteConfig(c.Request.Context(), &user.SaveSiteConfigReq{
 		BaseUrl:        req.BaseURL,
 		SiteName:       req.SiteName,

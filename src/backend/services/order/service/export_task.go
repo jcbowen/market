@@ -18,6 +18,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/eventbus"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -35,6 +36,12 @@ const exportTaskMaxRunning = 2
 // exportDirFailureMsg 落盘目录准备失败的对外文案：
 // os.MkdirAll 的错误文本带完整落盘路径，既不发给 WS 订阅端也不发给列表接口
 const exportDirFailureMsg = "创建导出目录失败"
+
+// 下载中心列表分页档位：默认 20 行、单页最多 100 行（页长过大时逐行取文件信息与签名会线性放大）
+const (
+	exportTaskDefaultPageSize = 20
+	exportTaskMaxPageSize     = 100
+)
 
 // ExportTaskService 后台导出任务服务（下载中心）
 // 职责：创建异步导出任务、分批生成 CSV、任务列表/下载留痕/删除、过期清理
@@ -423,13 +430,7 @@ func (s *ExportTaskService) payTypesOf(ctx context.Context, orderIds []int64) ma
 //   - int32: 未下载数
 //   - error: 查询错误
 func (s *ExportTaskService) ListExportTasks(ctx context.Context, req *order.ListExportTasksReq) ([]*order.ExportTaskInfo, int32, int32, error) {
-	page, pageSize := int(req.Page), int(req.PageSize)
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := pageparam.ClampWith(int(req.Page), int(req.PageSize), exportTaskDefaultPageSize, exportTaskMaxPageSize)
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.ExportTask{})
 	if !req.SuperAdmin {

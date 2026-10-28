@@ -15,6 +15,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/attachment/remote"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
@@ -24,6 +25,13 @@ import (
 
 // 可迁移条目的批量上限（防御性限制，正常后台附件量级远低于此值）
 const migrateScanLimit = 20000
+
+// migrateListDefaultPageSize 迁移清单未传页长时的默认条数
+const migrateListDefaultPageSize = 20
+
+// migrateSkipExportDir 扫描时跳过的顶层子目录名，与网关 exportPrivateDir、
+// order 服务 exportRootDir 的 exports 段是同一约定（三处改名须同步）
+const migrateSkipExportDir = "exports"
 
 // ScanAttachmentMigrate 扫描本地附件目录并与 attachment 表匹配，生成/刷新迁移任务清单
 // 匹配成功的文件按 path upsert 为迁移条目（已有条目保留状态，孤儿文件以 orphan 状态入表），
@@ -162,17 +170,7 @@ func (s *AttachmentService) ScanAttachmentMigrate(ctx context.Context) (*product
 //   - *product.AttachmentMigrateListResp: 条目列表 + 分页 + 概览
 //   - error: 查询失败时返回错误
 func (s *AttachmentService) ListAttachmentMigrateItems(ctx context.Context, req *product.AttachmentMigrateListReq) (*product.AttachmentMigrateListResp, error) {
-	page, pageSize := 1, 20
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 20
-	}
+	page, pageSize := pageparam.ClampWith(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()), migrateListDefaultPageSize, pageparam.MaxSize)
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.AttachmentMigrateItem{})
 	if req.Status != "" {
@@ -614,6 +612,12 @@ func scanLocalAttachmentFiles(root string) (map[string]int64, error) {
 			return err
 		}
 		if d.IsDir() {
+			// 只跳顶层 exports：导出目录与附件共享同一个服务目录（order 服务 exportRootDir 写死
+			// <uploads>/exports），但导出文件不登记进 attachment 表，
+			// 不跳过就会被判成「孤儿文件」写进迁移清单、连订单 CSV（含用户数据）一起上传到 OSS
+			if rel, relErr := filepath.Rel(root, path); relErr == nil && rel == migrateSkipExportDir {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)

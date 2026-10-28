@@ -19,6 +19,8 @@ import (
 	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -661,6 +663,9 @@ const (
 	queryStatusShippingAggregate int32 = 90
 )
 
+// frequentProductDefaultPageSize 会员常买商品排行未传页长时的默认条数（后台弹窗一次展示 5 条）
+const frequentProductDefaultPageSize = 5
+
 // ListOrders 查询订单列表
 // 参数：
 //   - ctx: 上下文
@@ -671,11 +676,7 @@ const (
 //   - int: 总条数
 //   - error: 错误信息
 func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq) ([]*model.Order, int, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.applyOrderListFilters(ctx, req)
 
@@ -784,7 +785,7 @@ func (s *OrderService) applyOrderListFilters(ctx context.Context, req *order.Lis
 	// 后台管理端搜索条件（订单号右模糊走 order_no 唯一索引，前置通配符会使索引失效；
 	// 收货人姓名/电话模糊）
 	if req.OrderNo != "" {
-		db = db.Where("order_no LIKE ?", req.OrderNo+"%")
+		db = db.Where("order_no LIKE ?", likeutil.Prefix(req.OrderNo))
 	}
 	if req.StartTime != "" {
 		db = db.Where("created_at >= ?", req.StartTime)
@@ -798,10 +799,10 @@ func (s *OrderService) applyOrderListFilters(ctx context.Context, req *order.Lis
 		db = db.Where("created_at <= ?", end)
 	}
 	if req.ReceiverName != "" {
-		db = db.Where("contact_name LIKE ?", "%"+req.ReceiverName+"%")
+		db = db.Where("contact_name LIKE ?", likeutil.Contains(req.ReceiverName))
 	}
 	if req.ReceiverPhone != "" {
-		db = db.Where("contact_phone LIKE ?", "%"+req.ReceiverPhone+"%")
+		db = db.Where("contact_phone LIKE ?", likeutil.Contains(req.ReceiverPhone))
 	}
 	// 取货码精确查询（收银台核销 Tab 扫码/输码查单，本社区范围由 CommunityId 条件约束）
 	if req.PickupCode != "" {
@@ -1859,8 +1860,10 @@ func (s *OrderService) applyCoupon(ctx context.Context, userID, couponID int64, 
 	return discount, target.Id, nil
 }
 
-// flashSalePriceEnabled 秒杀价开关：库存扣减与限购校验尚未实现，关闭防止超卖资损；
-// 待 DeductFlashStock + LimitPerUser 完整实现后置为 true
+// flashSalePriceEnabled 秒杀价开关：关闭时按 SKU 原价成交且不扣秒杀池。
+// 阻塞项是每人限购（limit_per_user）校验尚未实现——单用户可超额抢购活动价；
+// 秒杀库存扣减本身已实现（product 侧幂等日志 + 条件更新防活动池超卖），
+// 待 LimitPerUser 落地后置为 true
 const flashSalePriceEnabled = false
 
 // loadFlashSalePrices 一次取回社区当前生效的秒杀价表
@@ -2008,6 +2011,12 @@ func (s *OrderService) GetOrderStatistics(ctx context.Context, req *order.GetOrd
 	return resp, nil
 }
 
+// statisticsExcludedStatuses 营收/销售/热销三处统计共用的排除口径：
+// 待支付(1)与已取消(6)从未成交，已退款(8)为交易未达成的终态，三者都不计入金额与销量；
+// 退款中(7)退款尚未成功，按既定口径仍计入，避免退款一发起就把当日营收整单抹掉。
+// 三处查询必须复用本切片，避免各写一份字面量导致口径漂移。
+var statisticsExcludedStatuses = []int32{1, 6, 8}
+
 // GetSalesStatistics 获取销售统计
 // 参数：
 //   - ctx: 上下文
@@ -2017,7 +2026,7 @@ func (s *OrderService) GetOrderStatistics(ctx context.Context, req *order.GetOrd
 //   - *order.SalesStatisticsResp: 销售统计结果
 //   - error: 错误信息
 func (s *OrderService) GetSalesStatistics(ctx context.Context, req *order.GetSalesStatisticsReq) (*order.SalesStatisticsResp, error) {
-	db := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).Where("status NOT IN ?", []int32{1, 6})
+	db := s.db.GetDb().WithContext(ctx).Model(&model.Order{}).Where("status NOT IN ?", statisticsExcludedStatuses)
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
 	}
@@ -2063,7 +2072,7 @@ func (s *OrderService) GetProductRankings(ctx context.Context, req *order.GetPro
 		Table("order_items").
 		Select("product_id, product_name, SUM(quantity) AS sales_count, SUM(total_price) AS sales_amount").
 		Joins("JOIN orders ON orders.id = order_items.order_id").
-		Where("orders.status NOT IN ?", []int32{1, 6})
+		Where("orders.status NOT IN ?", statisticsExcludedStatuses)
 	if req.CommunityId > 0 {
 		db = db.Where("orders.community_id = ?", req.CommunityId)
 	}
@@ -2138,16 +2147,11 @@ func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.G
 		Order("purchase_count DESC, total_quantity DESC")
 
 	if paged {
-		pageSize := int(req.PageSize)
-		if pageSize <= 0 {
-			pageSize = 5
-		}
-		query = query.Limit(pageSize).Offset((int(req.Page) - 1) * pageSize)
+		page, pageSize := pageparam.ClampWith(int(req.Page), int(req.PageSize), frequentProductDefaultPageSize, pageparam.MaxSize)
+		query = query.Limit(pageSize).Offset((page - 1) * pageSize)
 	} else {
-		limit := int(req.Limit)
-		if limit <= 0 {
-			limit = 10
-		}
+		// C 端 Top N：limit 来自查询参数，同样要封顶（分组聚合的行数放大不受控会拖慢整条订单链路）
+		_, limit := pageparam.ClampWith(1, int(req.Limit), 10, pageparam.MaxSize)
 		query = query.Limit(limit)
 	}
 
@@ -2221,7 +2225,7 @@ func (s *OrderService) GetRevenueReport(ctx context.Context, req *order.GetReven
 	db := s.db.GetDb().WithContext(ctx).
 		Table("orders").
 		Select(dateExpr+" AS date, COALESCE(SUM(pay_amount),0) AS revenue, COUNT(*) AS order_count").
-		Where("status NOT IN ?", []int32{1, 6})
+		Where("status NOT IN ?", statisticsExcludedStatuses)
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
 	}

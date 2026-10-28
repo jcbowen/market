@@ -2,7 +2,7 @@
   <n-card :title="isEdit ? '编辑商品' : '新增商品'">
     <n-form :model="form" label-placement="left" label-width="100px">
       <n-form-item label="商品名称" required>
-        <n-input v-model:value="form.name" placeholder="请输入商品名称" />
+        <n-input v-model:value="form.name" placeholder="请输入商品名称" :maxlength="100" />
       </n-form-item>
       <n-form-item label="商品分类" required>
         <CategoryPicker v-model="form.category_id" :fallback-name="categoryNameFallback" style="width: 100%" />

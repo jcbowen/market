@@ -30,7 +30,7 @@ interface AdminVO {
 }
 
 const STAFF_USER = `t${uniqueSuffix()}`;
-const STAFF_PASS = 'Test1234';
+const STAFF_PASS = 'Test123456';
 const ROLE_PERMS = ['product:view', 'product:update', 'order:view'];
 
 let superApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
@@ -247,7 +247,7 @@ test.describe.serial('员工与角色权限边界', () => {
 });
 
 test.describe.serial('社区管理员与门店设置', () => {
-  const CM_PASS = 'Cm123456';
+  const CM_PASS = 'Cm12345678';
 
   test('11. 自建社区并设置社区管理员', async () => {
     const comm = assertOk(

@@ -104,6 +104,7 @@
     <sku-selector
       v-model:show="showSkuSelector"
       :product="skuSelectorProduct"
+      :community-id="switchItem?.community_id || userStore.communityInfo?.id"
       :initial-sku-id="switchItem?.sku_id || 0"
       :initial-quantity="switchItem?.quantity || 0"
       @confirm="onSkuConfirm"
@@ -776,9 +777,15 @@ function settleCommunity(communityId: number, selectedItems: CartItem[]) {
   position: fixed;
   left: 0;
   right: 0;
-  /* iPhone 全面屏（viewport-fit=cover）下内置 tabBar 实际高 50px + 安全区，
-     只让出 100rpx 会导致结算栏下沿被 tabBar 盖住，需叠加安全区高度 */
+  /* 小程序端：原生 tabBar 由框架从 webview 排除，fixed bottom:0 即紧贴 tabBar 顶边；
+     若额外让出 100rpx 反而在结算栏与 tabBar 间留出灰白条（H5 无此问题）。
+     H5 端：tabBar 是页面内 DOM 元素，需让出 100rpx + 安全区避免结算栏被遮。 */
+  /* #ifdef H5 */
   bottom: calc(100rpx + env(safe-area-inset-bottom));
+  /* #endif */
+  /* #ifdef MP-WEIXIN */
+  bottom: 0;
+  /* #endif */
   display: flex;
   align-items: center;
   padding: 16rpx 30rpx;

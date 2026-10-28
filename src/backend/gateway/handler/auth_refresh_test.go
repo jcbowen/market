@@ -67,13 +67,13 @@ func (s *stubUserRefreshClient) GetUserById(ctx context.Context, in *user.GetUse
 //   - func(keys ...string): 测试键清理登记
 func newAuthRefreshTestHandler(t *testing.T, stub *stubUserRefreshClient) (*AuthHandler, *jwt.Manager, context.Context, func(...string)) {
 	t.Helper()
-	guard, ctx, register := newRefreshGuardTestEnv(t)
+	guard, ctx, register := newTokenGuardTestEnv(t)
 	m := jwt.NewManager(jwt.Config{
 		Secret:          "p1-8-user-refresh-test-secret",
 		AccessTokenTTL:  2 * time.Minute,
 		RefreshTokenTTL: 7 * 24 * time.Hour,
 	})
-	return &AuthHandler{jwtManager: m, userClient: stub, refreshGuard: guard}, m, ctx, register
+	return &AuthHandler{jwtManager: m, userClient: stub, tokenGuard: guard}, m, ctx, register
 }
 
 // decodeUserRefreshResp 投递一次 C 端刷新请求并解析响应码与新令牌
@@ -134,7 +134,7 @@ func TestUserRefreshRejectsReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析旧令牌失败: %v", err)
 	}
-	register(refreshJtiKey(oldClaims.ID))
+	register(tokenJtiKey(oldClaims.ID))
 
 	code, newToken := decodeUserRefreshResp(t, h, oldToken, true)
 	if code != errcode.Success {
@@ -143,7 +143,7 @@ func TestUserRefreshRejectsReplay(t *testing.T) {
 	if newToken == "" || newToken == oldToken {
 		t.Fatal("轮转失败：未拿到新 refresh 令牌")
 	}
-	if !h.refreshGuard.revoked(ctx, oldClaims.ID) {
+	if !h.tokenGuard.revoked(ctx, oldClaims.ID) {
 		t.Fatal("刷新后旧 jti 应已写入黑名单")
 	}
 
@@ -161,7 +161,7 @@ func TestUserRefreshRejectsReplay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析新令牌失败: %v", err)
 	}
-	register(refreshJtiKey(newClaims.ID))
+	register(tokenJtiKey(newClaims.ID))
 	next, _ := decodeUserRefreshResp(t, h, newToken, true)
 	if next != errcode.Success {
 		t.Errorf("轮转后的新令牌应可继续刷新，实得 code = %d", next)
@@ -182,7 +182,7 @@ func TestUserLogoutRevokesRefreshToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析令牌失败: %v", err)
 	}
-	register(refreshJtiKey(claims.ID))
+	register(tokenJtiKey(claims.ID))
 
 	// 以 cookie 承载发起登出
 	gin.SetMode(gin.TestMode)
@@ -195,7 +195,7 @@ func TestUserLogoutRevokesRefreshToken(t *testing.T) {
 	if recorder.Result().StatusCode != http.StatusOK {
 		t.Fatalf("登出应返回 200，实得 %d", recorder.Result().StatusCode)
 	}
-	if !h.refreshGuard.revoked(ctx, claims.ID) {
+	if !h.tokenGuard.revoked(ctx, claims.ID) {
 		t.Fatal("登出后令牌应进黑名单")
 	}
 

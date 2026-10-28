@@ -12,7 +12,9 @@ import { autoName, uniqueSuffix } from '../helpers/data';
  *   - 部署域名唯一来源：三条支付回调地址一律按生效域名派生；支付配置页提交伪造 notify_url 被忽略
  *   - 仅超管可写：具备 settings:update 权限的社区管理员写入返回 11005（读仍开放）
  * 环境说明：用例把 base_url 设为独立测试域名，期间附件外链与支付回调地址随之派生；
- *           afterAll 无条件恢复原值，并把支付回调地址退回按请求域名派生的本机口径，不把测试域名留在库里
+ *           afterAll 无条件恢复原值，并把支付回调地址退回按请求域名派生的本机口径，不把测试域名留在库里；
+ *           站点域名保存的联动补写会把空的附件「访问域名」写成测试域名（图片出库地址前缀随之改变，
+ *           跨模块共享同一单行），故 afterAll 同时恢复附件配置快照，回读期望值按当前访问域名现算
  */
 
 /** 站点设置视图（与网关 handler.SiteSetting 对齐） */
@@ -33,8 +35,15 @@ interface SiteSetting {
   alipay_return_url: string;
 }
 
-/** 支付配置视图（仅断言回调地址派生相关字段） */
-interface PaymentSetting {
+/** 附件配置视图（仅本模块的域名联动补写与恢复所需字段） */
+interface AttachmentConfig {
+  storage_type?: string;
+  visit_domain?: string;
+  updated_at?: string;
+  [k: string]: unknown;
+}
+
+/** 支付配置视图（仅断言回调地址派生相关字段） */interface PaymentSetting {
   wechat?: { notify_url?: string; [k: string]: unknown };
   alipay?: { notify_url?: string; return_url?: string; [k: string]: unknown };
   suggested_urls?: { base_url?: string; wechat_notify_url?: string; alipay_notify_url?: string };
@@ -52,19 +61,31 @@ let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
 let communityId = 0;
 /** 进入模块时的原值，afterAll 无条件恢复 */
 let original: SiteSetting | null = null;
+/**
+ * 附件配置原快照，afterAll 无条件恢复
+ * 用例把站点域名设为测试域名时，站点保存的联动补写会把空的「附件访问域名」写成该测试域名，
+ * 而图片/品牌资源出库按附件访问域名拼完整地址——不恢复会改变后续模块读到的 URL 形态（跨模块共享单行配置）
+ */
+let originalAttachment: AttachmentConfig | null = null;
 
 test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright);
   adminApi = admin.api;
   communityId = admin.communityId;
+  const attach = (await (
+    await adminApi.get('/api/v1/admin/settings/attachment')
+  ).json()) as ApiResponse<AttachmentConfig>;
+  if (attach.code === 0) originalAttachment = attach.data ?? {};
 });
 
 test.afterAll(async () => {
   if (!adminApi) return;
   try {
     if (original) {
+      // 每次保存都会推进版本号，恢复时须携带最新版本提交，否则被乐观锁拒绝（10007）
+      const latest = await readSite();
       const back = (await (
-        await adminApi.put('/api/v1/admin/settings/site', { data: original })
+        await adminApi.put('/api/v1/admin/settings/site', { data: { ...original, version: latest.version } })
       ).json()) as ApiResponse;
       if (back.code !== 0) console.log(`[站点设置] 恢复原值失败 code=${back.code} message=${back.message}`);
 
@@ -78,6 +99,18 @@ test.afterAll(async () => {
         ).json()) as ApiResponse;
         if (again.code !== 0) console.log(`[站点设置] 回调地址退回本机口径失败 code=${again.code} message=${again.message}`);
       }
+    }
+    // 附件访问域名放在最后恢复：站点域名与回调地址的回写都可能再次触发联动补写
+    if (originalAttachment) {
+      const latestAttach = (await (
+        await adminApi.get('/api/v1/admin/settings/attachment')
+      ).json()) as ApiResponse<AttachmentConfig>;
+      const backAttach = (await (
+        await adminApi.put('/api/v1/admin/settings/attachment', {
+          data: { ...originalAttachment, updated_at: latestAttach.data?.updated_at ?? '' },
+        })
+      ).json()) as ApiResponse;
+      if (backAttach.code !== 0) console.log(`[站点设置] 恢复附件访问域名失败 code=${backAttach.code} message=${backAttach.message}`);
     }
   } finally {
     await adminApi.dispose();
@@ -98,6 +131,21 @@ async function readSite(): Promise<SiteSetting> {
     await adminApi.get('/api/v1/admin/settings/site')
   ).json()) as ApiResponse<SiteSetting>;
   return assertOk(body, '读取站点设置');
+}
+
+/**
+ * 读取附件配置
+ * - 函数名: readAttachment
+ * - 参数: 无（使用模块级 adminApi）
+ * - 返回: Promise<AttachmentConfig>
+ * - 异常: 业务码非 0 时经 assertOk 抛 Error
+ * - 使用示例: const domain = (await readAttachment()).visit_domain;
+ */
+async function readAttachment(): Promise<AttachmentConfig> {
+  const body = (await (
+    await adminApi.get('/api/v1/admin/settings/attachment')
+  ).json()) as ApiResponse<AttachmentConfig>;
+  return assertOk(body, '读取附件配置');
 }
 
 /**
@@ -133,10 +181,13 @@ test.describe.serial('站点设置读写与品牌注入', () => {
 
   test('2. 保存品牌与 SEO 字段可回读，版本号递增', async () => {
     const before = original?.version ?? 0;
+    // logo/favicon 出库按附件访问域名拼为完整地址（未配置时保持站内相对路径），
+    // 附件配置是跨模块共享的单行环境态，故回读期望值按当前访问域名现算，不写死相对路径
+    const prefix = ((await readAttachment()).visit_domain ?? '').replace(/\/+$/, '');
     const brand = {
       site_name: autoName('站点'),
-      logo_url: '/uploads/auto-test-logo.png',
-      favicon_url: '/uploads/auto-test-favicon.ico',
+      logo_url: `${prefix}/uploads/auto-test-logo.png`,
+      favicon_url: `${prefix}/uploads/auto-test-favicon.ico`,
       footer_html: `<p><b>© AUTO-TEST 社区商超 版权所有</b></p><p><a href="https://beian.miit.gov.cn/">京ICP备${uniqueSuffix()}号</a></p>`,
       seo_description: 'AUTO-TEST 社区商超：就近自提与配送到家的社区电商',
       seo_keywords: '社区团购,商超,自提',

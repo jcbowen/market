@@ -90,9 +90,12 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'SiteSetting' })
 import { computed, onMounted, reactive, ref } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useMessage } from 'naive-ui'
 import { getSiteSetting, updateSiteSetting } from '@/api/admin'
 import type { SiteSetting } from '@/api/admin'
+import { CODE_DATA_CONFLICT } from '@/api/request'
+import type { BizError } from '@/api/request'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
 import RichTextEditor from '@/components/RichTextEditor.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -205,21 +208,30 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    const res = await updateSiteSetting({ ...form })
+    // version 是载入时的配置版本号，随表单一起提交做乐观并发校验：
+    // 他人已保存过则服务端返回 10007 拒绝，避免旧表单整份覆盖新配置
+    const res = await updateSiteSetting({ ...form, version: setting.value.version })
     message.success('站点设置已保存，立即生效')
     // 附件访问域名此前未配置时已自动沿用本次保存的部署域名，提示用户去附件配置页确认
     if (res.data?.data?.attachment_domain_synced) {
       message.info('附件「自定义访问域名」此前未配置，已自动沿用本次保存的部署域名，可到附件配置页调整', { duration: 6000 })
     }
     await load()
-  } catch {
-    // 错误提示由请求拦截器统一弹出
+  } catch (err) {
+    // 其余错误提示由请求拦截器统一弹出；版本冲突须立即重拉配置刷新版本号，
+    // 否则按同一份旧表单重试会一直撞同一个冲突
+    if ((err as BizError).code === CODE_DATA_CONFLICT) {
+      await load()
+    }
   } finally {
     saving.value = false
   }
 }
 
+// keep-alive 缓存下切回本页不重新挂载，需重新拉取：
+// 带着旧表单值整份 PUT 会覆盖他人刚改的配置，未保存的本地编辑以最新值为准丢弃
 onMounted(load)
+refreshOnActivated(load)
 </script>
 
 <style scoped>

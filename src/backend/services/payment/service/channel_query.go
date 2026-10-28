@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/jcbowen/market/src/backend/services/payment/model"
@@ -146,9 +145,7 @@ func defaultQueryAlipayOrder(ctx context.Context, s *PaymentService, paymentNo s
 		TransactionID: alipayRespString(resp, "trade_no"),
 		Raw:           tradeStatus,
 	}
-	if amount, err := strconv.ParseFloat(alipayRespString(resp, "total_amount"), 64); err == nil {
-		res.Amount = amount
-	}
+	res.Amount = alipayRespAmount(resp, "total_amount")
 	return res, nil
 }
 

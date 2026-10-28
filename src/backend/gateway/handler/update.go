@@ -35,11 +35,22 @@ const (
 )
 
 // updateCache 更新检测结果进程内缓存（同一进程内共享，重启失效）
+// updateFetch 为在途拉取单飞：外网请求移出缓存锁，慢源只阻塞真正等待结果的请求，
+// 不让「刷新缓存」期间的读缓存请求排队，也避免并发同时打双源
 var (
 	updateCacheMu sync.Mutex
 	updateCache   *updateCheckResult
 	updateCacheAt time.Time
+
+	updateFlightMu sync.Mutex
+	updateFlight   *updateFetch
 )
+
+// updateFetch 一次在途的外网检测；结果落缓存后经 done 广播给等待方
+type updateFetch struct {
+	done   chan struct{}
+	result *updateCheckResult
+}
 
 // updateCheckResult 更新检测结果
 type updateCheckResult struct {
@@ -50,7 +61,8 @@ type updateCheckResult struct {
 }
 
 // LatestVersion 返回更新检测结果（供关于页版本号旁提示）
-// 双源并行查询 + 进程内缓存（成功 6 小时 / 失败 10 分钟），外网不可达不影响本接口成功返回
+// 双源并行查询 + 进程内缓存（成功 6 小时 / 失败 10 分钟），缓存过期后同一轮刷新只发一次外网请求；
+// 外网不可达不影响本接口成功返回
 // 使用示例：GET /api/v1/admin/about/updates（登录即可访问）
 // 参数：
 //   - c: gin 上下文
@@ -64,26 +76,57 @@ func (h *AboutHandler) LatestVersion(c *gin.Context) {
 	})
 }
 
-// checkLatestVersion 获取更新检测结果（带缓存）
-// 缓存未过期直接返回；过期后重新查询双源，成功缓存 6 小时、失败缓存 10 分钟
+// checkLatestVersion 获取更新检测结果（带缓存 + 拉取单飞）
+// 缓存命中直接返回；过期后只放一个请求去打外网，其余请求等同一次结果。
+// 外网调用不在缓存锁内：慢源只拖住本轮刷新，不阻塞同时进来的读缓存请求，
+// 也避免「关于」页并发请求各自发起双源查询（旧实现是全局锁串行 + 每请求都打外网）
 // 返回：
 //   - *updateCheckResult: 检测结果（永不返回 nil）
 func checkLatestVersion() *updateCheckResult {
+	if cached, ok := cachedUpdateResult(); ok {
+		return cached
+	}
+
+	updateFlightMu.Lock()
+	if f := updateFlight; f != nil {
+		updateFlightMu.Unlock()
+		<-f.done
+		return f.result
+	}
+	flight := &updateFetch{done: make(chan struct{})}
+	updateFlight = flight
+	updateFlightMu.Unlock()
+
+	flight.result = fetchLatestVersion()
+	updateCacheMu.Lock()
+	updateCache, updateCacheAt = flight.result, time.Now()
+	updateCacheMu.Unlock()
+	updateFlightMu.Lock()
+	updateFlight = nil
+	updateFlightMu.Unlock()
+	close(flight.done)
+	return flight.result
+}
+
+// cachedUpdateResult 读取未过期的缓存结果（锁内只做比较，不含任何外网调用）
+// 失败结果按 updateFailTTL、成功结果按 updateCacheTTL 判定是否过期
+// 返回：
+//   - *updateCheckResult: 缓存命中时的结果
+//   - bool: 是否命中
+func cachedUpdateResult() (*updateCheckResult, bool) {
 	updateCacheMu.Lock()
 	defer updateCacheMu.Unlock()
-
+	if updateCache == nil {
+		return nil, false
+	}
 	ttl := updateCacheTTL
-	if updateCache != nil && updateCache.Error != "" {
+	if updateCache.Error != "" {
 		ttl = updateFailTTL
 	}
-	if updateCache != nil && time.Since(updateCacheAt) < ttl {
-		return updateCache
+	if time.Since(updateCacheAt) >= ttl {
+		return nil, false
 	}
-
-	result := fetchLatestVersion()
-	updateCache = result
-	updateCacheAt = time.Now()
-	return result
+	return updateCache, true
 }
 
 // fetchLatestVersion 并行查询 Docker Hub 与 GHCR 并合并结果

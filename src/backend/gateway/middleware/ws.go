@@ -20,8 +20,11 @@ const CookieAdminAccessToken = "market_admin_access"
 // 后续可继续挂 RequireCommunityAccess（权限码门槛刻意不挂，见下方「注」），
 // 社区校验与普通 admin 接口同一套口径
 //
-// token 来源：httpOnly cookie（新版前端，不落 URL 与日志）优先，
-// 查询参数兜底（旧前端缓存、POS 等未携带 cookie 声明的客户端）
+// token 来源：httpOnly cookie（新版前端，不落 URL）优先，查询参数兜底
+// （旧前端缓存、POS 等未携带 cookie 的客户端保持原握手方式可用）。
+// 兜底窗口：访问日志已按参数名脱敏 ?access_token=（见 logger.go 的 sensitiveQueryKeys），
+// 泄露面收敛到「URL 本身」；待后台与 POS 全部走 cookie 握手后移除本兜底，
+// 移除前需确认无客户端仍依赖查询参数（观察期内可用日志中的 path 复核）
 //
 // 参数：
 //   - manager: JWT 管理器

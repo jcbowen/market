@@ -7,7 +7,7 @@
 
     <template v-else>
       <!-- 模块切换：送货 / 自提核销 -->
-      <u-tabs :list="tabs" :current="currentTab" @change="onTabChange" />
+      <u-tabs :list="tabs" :current="activeTabIndex" @change="onTabChange" />
 
       <!-- 状态组切换：进行中 / 已完成 -->
       <view class="group-bar">
@@ -47,14 +47,14 @@
             <text class="pay-amount">实付 {{ formatPrice(order.pay_amount) }}</text>
             <!-- 送货：开始配送 / 送达拍照 -->
             <u-button
-              v-if="currentTab === 1 && (order.status === 2 || order.status === 3)"
+              v-if="isDeliveryTab && (order.status === 2 || order.status === 3)"
               type="primary"
               size="small"
               text="开始配送"
               @click="onStartDelivery(order)"
             />
             <u-button
-              v-else-if="currentTab === 1 && order.status === 4"
+              v-else-if="isDeliveryTab && order.status === 4"
               type="success"
               size="small"
               text="送达拍照"
@@ -62,7 +62,7 @@
             />
             <!-- 自提：核销 -->
             <u-button
-              v-else-if="currentTab === 2 && (order.status === 2 || order.status === 3)"
+              v-else-if="!isDeliveryTab && (order.status === 2 || order.status === 3)"
               type="success"
               size="small"
               text="核销取货码"
@@ -151,12 +151,19 @@ import type { FulfillmentOrder } from '@/api/fulfillment'
 
 const userStore = useUserStore()
 
-// tab value：1=送货上门 2=自提核销（与后端 order_type 语义一致）
+// tab 的 value 就是后端 order_type，它直接比对 orders.delivery_type（1 自提 2 配送 3 到店），
+// 与展示顺序无关——本项曾因「按展示顺序猜值」把两个 tab 的数据整体对调（送货 tab 查出的是自提单），
+// 2026-10-28 纠正并在此锁定口径：送货=2、自提核销=1
 const tabs = [
-  { name: '送货', value: 1 },
-  { name: '自提核销', value: 2 },
+  { name: '送货', value: 2 },
+  { name: '自提核销', value: 1 },
 ]
-const currentTab = ref(1)
+// u-tabs 的 :current 是「索引」而非 value，两者必须分开持有（混用会让高亮错位一格）
+const activeTabIndex = ref(0)
+/** 当前 tab 对应的后端 order_type */
+const currentOrderType = computed(() => tabs[activeTabIndex.value].value)
+/** 是否送货 tab（决定按钮组与空态文案） */
+const isDeliveryTab = computed(() => currentOrderType.value === 2)
 /** 状态组：0=进行中（待处理+配送中/待核销） 5=已完成/已核销 */
 const groupOptions = [
   { label: '进行中', value: 0 },
@@ -173,7 +180,7 @@ const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 
 const emptyText = computed(() =>
-  currentTab.value === 1
+  isDeliveryTab.value
     ? statusGroup.value === 0
       ? '暂无待配送订单'
       : '暂无已完成订单'
@@ -209,11 +216,13 @@ async function checkStatus() {
 
 /**
  * 切换模块 tab（送货/自提核销）
+ * 只记索引，order_type 由 currentOrderType 派生，避免「索引当值用」再次漂移
  */
 function onTabChange(index: number | { index?: number; name?: string }) {
   // uview-plus tabs change 事件参数在 H5 为 index，App 为对象，统一兼容
   const idx = typeof index === 'number' ? index : index.index ?? 0
-  currentTab.value = idx === 0 ? 1 : 2
+  if (idx === activeTabIndex.value) return
+  activeTabIndex.value = idx
   refreshList()
 }
 
@@ -243,7 +252,7 @@ async function loadOrders() {
   loadStatus.value = 'loading'
   try {
     const res = await getFulfillmentOrders({
-      order_type: currentTab.value,
+      order_type: currentOrderType.value,
       status_group: statusGroup.value,
       page: page.value,
       page_size: pageSize,

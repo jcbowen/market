@@ -296,7 +296,7 @@ export const PAYMENT_CONFIRM_SOURCE = {
   OFFLINE: 4,
 } as const
 
-/** 流水类别：1渠道回调 2对账补同步 3挂账检出(系统) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(人工核实) */
+/** 流水类别：1渠道回调 2对账补同步 3挂账检出(系统) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(人工核实) 9付款码扣款 */
 export const NOTIFY_KIND = {
   CALLBACK: 1,
   RECONCILE: 2,
@@ -306,6 +306,7 @@ export const NOTIFY_KIND = {
   GIVE_UP: 6,
   REFUND_RESET: 7,
   MANUAL_STUCK_CHECK: 8,
+  CODE_PAY: 9,
 } as const
 
 /** 流水结果：1确认成功 2幂等忽略 3验签失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败 11人工恢复退款收敛 */
@@ -323,7 +324,7 @@ export const NOTIFY_RESULT = {
   REFUND_RESET: 11,
 } as const
 
-/** 渠道：1微信 2支付宝（支付流水只涉及在线渠道） */
+/** 流水渠道：1微信 2支付宝 0线下或未知（付款码 5/6 由服务端归一为 1/2） */
 export const PAY_CHANNEL = {
   WECHAT: 1,
   ALIPAY: 2,
@@ -412,6 +413,7 @@ export function notifyKindText(kind: number): string {
     6: '放弃对账',
     7: '人工恢复退款收敛',
     8: '资金挂账(人工核实)',
+    9: '付款码扣款',
   }
   return map[kind] || `类别${kind}`
 }

@@ -345,11 +345,11 @@ message ListOrderPaymentsResp {
 // raw_body/headers 仅当请求 with_raw=true（网关校验 payment:raw:view 权限）时回填
 message PaymentAnomalyInfo {
   int64 id = 1;
-  // 1渠道回调 2对账补同步 3挂账检出(系统) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(后台人工核实)
+  // 1渠道回调 2对账补同步 3挂账检出(系统) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(后台人工核实) 9付款码扣款
   int32 kind = 2;
   // 1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败 11人工恢复退款收敛
   int32 result = 3;
-  // 1微信 2支付宝
+  // 1微信 2支付宝 0线下或未知（服务端按 pay_type 归一：付款码 5→1、6→2）
   int32 channel = 4;
   string payment_no = 5;
   int64 order_id = 6;

@@ -107,6 +107,13 @@ type Config struct {
 			// PendingMaxMinutes 待支付单回查的时间上界（分钟），按微信 prepay 时效取值；
 			// 支付宝侧实际取 min(本值, business.order_timeout 换算分钟)，与下单 timeout_express 对齐
 			PendingMaxMinutes int `json:"pending_max_minutes" yaml:"pending_max_minutes" default:"120"`
+			// ClosedLookbackMinutes 已关单挂账回溯窗口（分钟），与在途单渠道时效（PendingMaxMinutes）分档取值：
+			// 钱可能在关单之后才到账（H5 页面长时间停留、用户在超时边缘完成支付），
+			// 若在途窗口内扫已关单，超过窗口才生效的付款会永久漏检
+			ClosedLookbackMinutes int `json:"closed_lookback_minutes" yaml:"closed_lookback_minutes" default:"1440"`
+			// ClosedThrottleMinutes 已关单挂账回溯的最小间隔（分钟）：关闭单事实变化慢，按低频回溯，
+			// 与 ClosedLookbackMinutes、MaxReconcileCount 共同控制渠道调用成本
+			ClosedThrottleMinutes int `json:"closed_throttle_minutes" yaml:"closed_throttle_minutes" default:"30"`
 			// IntervalSeconds 对账调度轮询间隔（秒）
 			IntervalSeconds int `json:"interval_seconds" yaml:"interval_seconds" default:"60"`
 			// MinAgeSeconds 支付单创建后至少等待多少秒才回查渠道（给正常回调留时间，避免打扰渠道）

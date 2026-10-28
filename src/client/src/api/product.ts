@@ -158,7 +158,8 @@ export function getProducts(params?: {
 /**
  * 获取商品详情
  * @param id 商品 ID
- * @param communityId 社区 ID（可选）
+ * @param communityId 当前浏览社区 ID（必填且 >0：公开路由不解析令牌语境，
+ *   缺参时网关按参数错误拒绝，避免跨社区读取价目与正文；无社区时先用 ensureCommunity 兜底）
  */
 export function getProductDetail(id: number, communityId?: number) {
   return get<{ product: RawProduct; skus: RawSku[]; specs?: RawSpec[] }>(`/products/${id}`, { community_id: communityId }).then((res) => {

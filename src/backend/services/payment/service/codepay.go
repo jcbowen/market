@@ -38,10 +38,13 @@ var (
 // 字段说明：
 //   - State: ChannelStatePaid（扣款成功）/ ChannelStatePaying（用户支付中）/ ChannelStateClosed（确定性失败，可重新扫码）
 //   - TransactionID: 渠道交易号，State=Paid 时有值
+//   - Amount: 渠道侧实收金额（元），State=Paid 且渠道应答带金额时有值；
+//     为零表示渠道未回传金额，调用方回退到支付单应付额
 //   - Message: 失败或在途原因，展示给收银员
 type codePayResult struct {
 	State         string
 	TransactionID string
+	Amount        float64
 	Message       string
 }
 
@@ -180,14 +183,19 @@ func (s *PaymentService) PayByAuthCode(ctx context.Context, req *payment.PayByAu
 		return nil, bizerr.New(codes.Unavailable, "渠道请求失败，请重试")
 	}
 
-	// 扣款成功：复用统一的支付成功处理（金额比对/幂等流转/订单同步），确认来源标线下并记录收银员
+	// 扣款成功：复用统一的支付成功处理（金额比对/幂等流转/订单同步），确认来源标线下并记录收银员。
+	// 金额用渠道实收（渠道未回传时回退应付额）：handlePaySuccess 的分位比对是
+	// 「渠道实收 vs 应付」的二次校验，传应付额等于自己跟自己对账、校验形同虚设
 	if res.State == ChannelStatePaid {
 		if err := s.handlePaySuccess(ctx, &payCallbackParams{
 			PaymentNo:     p.PaymentNo,
 			TransactionID: res.TransactionID,
-			Amount:        p.Amount,
+			Amount:        codePayConfirmAmount(res, &p),
 			ConfirmSource: model.ConfirmSourceOffline,
 			ConfirmRef:    fmt.Sprintf("codepay:%d", req.OperatorId),
+			NotifyKind:    model.NotifyKindCodePay,
+			Channel:       notifyChannelOf(p.PayType),
+			OrderID:       p.OrderID,
 		}); err != nil {
 			return nil, err
 		}
@@ -264,7 +272,12 @@ func defaultWechatAuthCodePay(ctx context.Context, s *PaymentService, p *model.P
 	switch order.TradeState {
 	case wegopayment.TradeStateSuccess, wegopayment.TradeStateRefund:
 		// REFUND（转入退款）说明钱确实收到过，同样按已收款处理
-		return &codePayResult{State: ChannelStatePaid, TransactionID: order.TransactionID}, nil
+		var paid float64
+		if order.Amount != nil {
+			// 微信金额单位为分，统一换算为元
+			paid = float64(order.Amount.Total) / 100
+		}
+		return &codePayResult{State: ChannelStatePaid, TransactionID: order.TransactionID, Amount: paid}, nil
 	case wegopayment.TradeStateUserPaying, wegopayment.TradeStateNotPay:
 		// USERPAYING 用户输密码中；NOTPAY 是「未支付」的在途口径，均交由轮询跟进，不可判死
 		return &codePayResult{State: ChannelStatePaying, Message: order.TradeStateDesc}, nil
@@ -321,11 +334,50 @@ func defaultAlipayAuthCodePay(ctx context.Context, s *PaymentService, p *model.P
 	}
 	switch normalizeAlipayTradeStatus(alipayRespString(resp, "trade_status")) {
 	case ChannelStatePaid:
-		return &codePayResult{State: ChannelStatePaid, TransactionID: alipayRespString(resp, "trade_no")}, nil
+		return &codePayResult{
+			State:         ChannelStatePaid,
+			TransactionID: alipayRespString(resp, "trade_no"),
+			Amount:        alipayRespAmount(resp, "total_amount"),
+		}, nil
 	case ChannelStatePaying:
 		return &codePayResult{State: ChannelStatePaying, Message: alipayRespString(resp, "trade_status")}, nil
 	default:
 		return &codePayResult{State: ChannelStateClosed, Message: alipayRespString(resp, "trade_status")}, nil
+	}
+}
+
+// codePayConfirmAmount 本次支付确认使用的金额（元）
+// 渠道实收优先；渠道应答未带金额（或解析失败）时回退支付单应付额，
+// 否则 handlePaySuccess 会因「金额缺失」直接拒绝确认，把已扣到钱的单卡在待支付
+// 参数：
+//   - res: 渠道归一化结果
+//   - p: 支付单
+//
+// 返回值：
+//   - float64: 用于与应付额做分位比对的金额
+func codePayConfirmAmount(res *codePayResult, p *model.Payment) float64 {
+	if res != nil && res.Amount > 0 {
+		return res.Amount
+	}
+	return p.Amount
+}
+
+// notifyChannelOf 支付单支付方式归一化为流水渠道（1 微信 / 2 支付宝）
+// 直接写 pay_type 会让付款码单（5/6）与线下单（3/4）在异常页的渠道列显示成未知值：
+// 5 归微信、6 归支付宝，线下收款无渠道记 0（前端展示为「-」）
+// 参数：
+//   - payType: 支付方式（1微信 2支付宝 3货到付款 4现金 5微信付款码 6支付宝付款码）
+//
+// 返回值：
+//   - int32: 流水 channel 取值
+func notifyChannelOf(payType int32) int32 {
+	switch payType {
+	case 1, 5:
+		return 1
+	case 2, 6:
+		return 2
+	default:
+		return 0
 	}
 }
 
@@ -345,7 +397,7 @@ func (s *PaymentService) resolveCodePayByQuery(ctx context.Context, p *model.Pay
 	}
 	switch res.State {
 	case ChannelStatePaid:
-		return &codePayResult{State: ChannelStatePaid, TransactionID: res.TransactionID, Message: "该单已支付"}, nil
+		return &codePayResult{State: ChannelStatePaid, TransactionID: res.TransactionID, Amount: res.Amount, Message: "该单已支付"}, nil
 	case ChannelStateNotExist, ChannelStateClosed:
 		return &codePayResult{State: ChannelStateClosed, Message: "渠道交易已关闭，请重新扫码"}, nil
 	default:

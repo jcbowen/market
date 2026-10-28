@@ -272,6 +272,19 @@ func (s *PaymentService) alipayRefund(ctx context.Context, p *model.Payment, ref
 	return nil
 }
 
+// alipayRespAmount 从通用接口的响应体中取金额字段（元）
+// V3 金额按字符串下发（"0.01"），字段缺失或解析失败返回 0，由调用方回退到本地应付额
+// 参数：
+//   - resp: 响应体反序列化结果
+//   - key: 金额字段名（如 total_amount）
+//
+// 返回值：
+//   - float64: 金额（元），取不到时为 0
+func alipayRespAmount(resp map[string]interface{}, key string) float64 {
+	amount, _ := strconv.ParseFloat(alipayRespString(resp, key), 64)
+	return amount
+}
+
 // alipayRespString 从通用接口的响应体中取字符串字段
 // 参数：
 //   - resp: 响应体反序列化结果

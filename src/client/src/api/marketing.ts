@@ -39,10 +39,12 @@ interface BackendFlashSaleItem {
   sku_id: number
   product_id?: number
   product_name?: string
+  product_image?: string
   spec_name?: string
   flash_price: number
   original_price: number
   stock: number
+  sold?: number
   limit_per_user: number
 }
 
@@ -111,11 +113,12 @@ function flattenFlashSales(list: BackendFlashSale[]): FlashSale[] {
         id: item.id ?? activity.id,
         product_id: item.product_id ?? 0,
         product_name: item.product_name || activity.name,
-        product_image: '/static/logo.png',
+        // 图片与已售取接口真实下发值；无封面商品留空，由页面按占位图处理
+        product_image: item.product_image || undefined,
+        sold: item.sold ?? 0,
         flash_price: item.flash_price,
         original_price: item.original_price,
         stock: item.stock,
-        sold: 0,
         start_time: activity.start_time,
         end_time: activity.end_time,
         status: activity.status,

@@ -17,6 +17,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/eventbus"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -183,7 +184,7 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 			if o.Status != 5 {
 				return invalidArg("订单状态不允许申请退款")
 			}
-			hours := s.getCompletedRefundHours(ctx)
+			hours := s.getCompletedRefundHours(tx)
 			if hours <= 0 {
 				return invalidArg("已完成订单不支持在线申请售后，请联系门店协商处理")
 			}
@@ -203,7 +204,7 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 			return invalidArg("该订单存在未完结的退款申请，请等待处理完成")
 		}
 
-		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight, false)
+		calc, err := s.calcRefundOrder(tx, &o, req.Items, req.Amount, req.RefundFreight, false)
 		if err != nil {
 			return err
 		}
@@ -320,7 +321,7 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 
 		// mode=2 仅金额退（不退商品、不回补库存）；mode 0/1 按商品退（空 items 整单退）
 		amountOnly := req.Mode == 2
-		calc, err := s.calcRefundOrder(ctx, &o, req.Items, req.Amount, req.RefundFreight, amountOnly)
+		calc, err := s.calcRefundOrder(tx, &o, req.Items, req.Amount, req.RefundFreight, amountOnly)
 		if err != nil {
 			return err
 		}
@@ -428,7 +429,8 @@ type refundCalc struct {
 // 运费仅整单退按 refund_freight_policy 策略退还（user_decide 时按 refundFreight 勾选），
 // 且不超过剩余可退运费（配送费已含在 pay_amount 内）
 // 参数：
-//   - ctx: 上下文
+//   - tx: 调用方事务句柄；本函数及其全部下游统计必须沿用同一句柄，
+//     否则「已退金额/已退数量」在事务外读取，看不见本事务未提交的写入（详见审查报告 P1-6）
 //   - o: 订单
 //   - reqItems: 退款商品明细（mode=1 时为空表示整单退）
 //   - reqAmount: 客户端传入金额（按商品退时仅允许调低；仅金额退时为必填退款金额）
@@ -438,9 +440,9 @@ type refundCalc struct {
 // 返回值：
 //   - *refundCalc: 汇算结果
 //   - error: 校验失败时返回错误
-func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, reqItems []*order.ApplyRefundItem, reqAmount float64, refundFreight bool, amountOnly bool) (*refundCalc, error) {
+func (s *RefundService) calcRefundOrder(tx *gorm.DB, o *model.Order, reqItems []*order.ApplyRefundItem, reqAmount float64, refundFreight bool, amountOnly bool) (*refundCalc, error) {
 	// 剩余可退总额（money 口径）：实付 - 已成功退款合计（含运费），任何模式都不允许突破
-	refundedMoney, refundedFreight, err := s.refundedMoneyStat(ctx, o.ID)
+	refundedMoney, refundedFreight, err := s.refundedMoneyStat(tx, o.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +475,7 @@ func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, req
 	}
 
 	var orderItems []*model.OrderItem
-	if err := s.db.GetDb().WithContext(ctx).Where("order_id = ?", o.ID).Find(&orderItems).Error; err != nil {
+	if err := tx.Where("order_id = ?", o.ID).Find(&orderItems).Error; err != nil {
 		return nil, err
 	}
 	itemMap := make(map[int64]*model.OrderItem, len(orderItems))
@@ -490,7 +492,7 @@ func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, req
 		return &refundCalc{isFull: isFull, amount: amount}, nil
 	}
 
-	refundedQty, _, err := s.refundedStat(ctx, o.ID)
+	refundedQty, _, err := s.refundedStat(tx, o.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +505,7 @@ func (s *RefundService) calcRefundOrder(ctx context.Context, o *model.Order, req
 	// 运费：仅整单退按策略退还，且不超过剩余可退运费（配送费已含在 pay_amount 内）
 	var freight float64
 	if isFull && freightRemaining > 0 {
-		freight = s.resolveFreight(ctx, o, isFull, refundFreight, freightRemaining)
+		freight = s.resolveFreight(tx, o, isFull, refundFreight, freightRemaining)
 	}
 
 	// 商品部分应退金额：整单退以"剩余可退商品金额"为准（尾差在最后一行兜底）；
@@ -716,16 +718,16 @@ func fixLastLineTailDiff(lines []*refundLine, target float64) {
 
 // refundedStat 统计订单已完成退款的各商品行已退数量与已退商品金额
 // 参数：
-//   - ctx: 上下文
+//   - tx: 查询句柄（申请/代客退款路径传调用方事务，保证读得到本事务未提交的退款写入）
 //   - orderID: 订单 ID
 //
 // 返回值：
 //   - map[int64]int32: order_item_id -> 已退数量
 //   - float64: 已退商品金额合计（不含运费）
 //   - error: 查询失败时返回错误
-func (s *RefundService) refundedStat(ctx context.Context, orderID int64) (map[int64]int32, float64, error) {
+func (s *RefundService) refundedStat(tx *gorm.DB, orderID int64) (map[int64]int32, float64, error) {
 	var items []*model.RefundItem
-	err := s.db.GetDb().WithContext(ctx).
+	err := tx.
 		Table("refund_items").
 		Joins("JOIN refunds ON refunds.id = refund_items.refund_id").
 		Where("refunds.order_id = ? AND refunds.status = 5", orderID).
@@ -746,19 +748,19 @@ func (s *RefundService) refundedStat(ctx context.Context, orderID int64) (map[in
 
 // refundedMoneyStat 统计订单已完成退款的总金额与运费金额（money 口径，剩余可退计算用）
 // 参数：
-//   - ctx: 上下文
+//   - tx: 查询句柄（申请/代客退款路径传调用方事务，避免在事务外读剩余可退）
 //   - orderID: 订单 ID
 //
 // 返回值：
 //   - float64: 已成功退款总金额（含运费）
 //   - float64: 已成功退还的运费合计
 //   - error: 查询失败时返回错误
-func (s *RefundService) refundedMoneyStat(ctx context.Context, orderID int64) (float64, float64, error) {
+func (s *RefundService) refundedMoneyStat(tx *gorm.DB, orderID int64) (float64, float64, error) {
 	var result struct {
 		Total   float64
 		Freight float64
 	}
-	err := s.db.GetDb().WithContext(ctx).Model(&model.Refund{}).
+	err := tx.Model(&model.Refund{}).
 		Select("COALESCE(SUM(amount), 0) AS total, COALESCE(SUM(freight_amount), 0) AS freight").
 		Where("order_id = ? AND status = ?", orderID, 5).
 		Scan(&result).Error
@@ -772,7 +774,7 @@ func (s *RefundService) refundedMoneyStat(ctx context.Context, orderID int64) (f
 // 仅整单退涉及运费；user_decide 策略下按用户勾选结果退还；
 // freightAvail 为剩余可退运费上限（配送费已含在 pay_amount，多笔退款不重复退运费）
 // 参数：
-//   - ctx: 上下文
+//   - tx: 查询句柄（读退款配置用，随调用方事务）
 //   - o: 订单
 //   - isFull: 是否整单退
 //   - userChoosesFreight: user_decide 策略下用户是否选择退运费
@@ -780,11 +782,11 @@ func (s *RefundService) refundedMoneyStat(ctx context.Context, orderID int64) (f
 //
 // 返回值：
 //   - float64: 应退运费金额（2位小数）
-func (s *RefundService) resolveFreight(ctx context.Context, o *model.Order, isFull bool, userChoosesFreight bool, freightAvail float64) float64 {
+func (s *RefundService) resolveFreight(tx *gorm.DB, o *model.Order, isFull bool, userChoosesFreight bool, freightAvail float64) float64 {
 	if !isFull || o.DeliveryFee <= 0 || freightAvail <= 0 {
 		return 0
 	}
-	switch s.getFreightPolicy(ctx) {
+	switch s.getFreightPolicy(tx) {
 	case "always":
 		return freightAvail
 	case "user_decide":
@@ -797,13 +799,13 @@ func (s *RefundService) resolveFreight(ctx context.Context, o *model.Order, isFu
 
 // getFreightPolicy 读取运费退还策略，读取失败或值非法时兜底 always（始终退运费）
 // 参数：
-//   - ctx: 上下文
+//   - tx: 查询句柄（随调用方事务，事务闭包内不得另取全局连接）
 //
 // 返回值：
 //   - string: 运费退还策略
-func (s *RefundService) getFreightPolicy(ctx context.Context) string {
+func (s *RefundService) getFreightPolicy(tx *gorm.DB) string {
 	var row model.RefundConfig
-	if err := s.db.GetDb().WithContext(ctx).First(&row, refundConfigID).Error; err != nil {
+	if err := tx.First(&row, refundConfigID).Error; err != nil {
 		return "always"
 	}
 	if !refundFreightPolicies[row.RefundFreightPolicy] {
@@ -816,13 +818,13 @@ func (s *RefundService) getFreightPolicy(ctx context.Context) string {
 // 配置行不存在/读取失败时兜底 defaultCompletedRefundHours；
 // 返回 0 为合法值，表示显式关闭已完成单的 C 端售后入口
 // 参数：
-//   - ctx: 上下文
+//   - tx: 查询句柄（随调用方事务）
 //
 // 返回值：
 //   - int32: 窗口小时数（>=0）
-func (s *RefundService) getCompletedRefundHours(ctx context.Context) int32 {
+func (s *RefundService) getCompletedRefundHours(tx *gorm.DB) int32 {
 	var row model.RefundConfig
-	if err := s.db.GetDb().WithContext(ctx).First(&row, refundConfigID).Error; err != nil {
+	if err := tx.First(&row, refundConfigID).Error; err != nil {
 		return defaultCompletedRefundHours
 	}
 	if row.CompletedRefundHours < 0 {
@@ -980,11 +982,7 @@ func (s *RefundService) EnsureDefaultRefundConfig() error {
 //   - int: 总条数
 //   - error: 错误信息
 func (s *RefundService) ListRefunds(ctx context.Context, req *order.ListRefundsReq) ([]*model.Refund, int, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Refund{})
 	if req.CommunityId > 0 {

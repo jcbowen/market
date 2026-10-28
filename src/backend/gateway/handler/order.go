@@ -31,6 +31,9 @@ var orderDedup sync.Map // key: string(sha256 fingerprint), value: time.Time
 
 const orderDedupWindow = 5 * time.Second
 
+// cartCleanupTimeout 下单后异步清理购物车的总预算（整批共用，不按条目叠加）
+const cartCleanupTimeout = 30 * time.Second
+
 func init() {
 	// 定期清理过期指纹，防止内存泄漏
 	go func() {
@@ -223,7 +226,10 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 //
 //	go h.cleanupCartAfterOrder(uc.UserID, req.Items)
 func (h *OrderHandler) cleanupCartAfterOrder(userID int64, items []*order.OrderItem) {
-	bgCtx := context.Background()
+	// 异步任务没有请求上下文可继承，必须自带总超时：否则 gRPC 卡住会让这条协程
+	// 长期持有连接与 items 切片，且清理永不结束也不会有任何流水可查
+	bgCtx, cancel := context.WithTimeout(context.Background(), cartCleanupTimeout)
+	defer cancel()
 	failedSkus := make([]int64, 0, len(items))
 	for _, item := range items {
 		if _, err := h.cartClient.RemoveItem(bgCtx, &cart.RemoveItemReq{

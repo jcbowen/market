@@ -10,12 +10,11 @@
         <view class="flash-info">
           <text class="flash-name">{{ item.product_name }}</text>
           <view class="flash-price">
-            <text class="current">{{ formatPrice(item.flash_price) }}</text>
-            <text class="original">{{ formatPrice(item.original_price) }}</text>
+            <text class="current">{{ formatPrice(item.original_price) }}</text>
           </view>
+          <text class="flash-tip">限时活动价暂未生效，以下单实付为准</text>
           <view class="flash-stock">
-            <progress :percent="soldPercent(item)" stroke-width="12" activeColor="#ff4d4f" />
-            <text>已抢 {{ item.sold }}/{{ item.stock }}</text>
+            <text>已售 {{ item.sold }} · 剩余 {{ item.stock }}</text>
           </view>
           <u-button
             size="small"
@@ -46,9 +45,15 @@ const page = ref(1)
 const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 
+/**
+ * 页面显示时回到第 1 页重新加载
+ * 必须一并重置 loadStatus：上一轮已置 nomore 时，加载函数的守卫会让本次重载直接 return，
+ * 列表被清空后不再填充，页面只剩「没有更多了」
+ */
 onShow(() => {
   page.value = 1
   flashSales.value = []
+  loadStatus.value = 'loadmore'
   loadFlashSales()
 })
 
@@ -82,15 +87,6 @@ async function loadFlashSales() {
  */
 function loadMore() {
   loadFlashSales()
-}
-
-/**
- * 计算已售百分比
- * @param item 秒杀活动
- */
-function soldPercent(item: FlashSale): number {
-  if (!item.stock) return 0
-  return Math.min(100, Math.round((item.sold / item.stock) * 100))
 }
 
 /**
@@ -155,21 +151,15 @@ function onBuy(item: FlashSale) {
   color: #ff4d4f;
 }
 
-.flash-price .original {
-  margin-left: 12rpx;
-  font-size: 24rpx;
+.flash-tip {
+  font-size: 22rpx;
   color: #999999;
-  text-decoration: line-through;
 }
 
 .flash-stock {
   display: flex;
   align-items: center;
   gap: 12rpx;
-}
-
-.flash-stock progress {
-  flex: 1;
 }
 
 .flash-stock text {

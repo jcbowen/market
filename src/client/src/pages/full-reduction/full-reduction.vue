@@ -38,9 +38,15 @@ const page = ref(1)
 const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
 
+/**
+ * 页面显示时回到第 1 页重新加载
+ * 必须一并重置 loadStatus：上一轮已置 nomore 时，加载函数的守卫会让本次重载直接 return，
+ * 列表被清空后不再填充
+ */
 onShow(() => {
   page.value = 1
   list.value = []
+  loadStatus.value = 'loadmore'
   loadData()
 })
 

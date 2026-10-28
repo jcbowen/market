@@ -73,6 +73,12 @@ type RegionUpdateTask struct {
 	// 失败原因
 	Error   string `gorm:"column:error;type:varchar(500);comment:失败原因" json:"error"`
 	Applied bool   `gorm:"column:applied;type:tinyint(1);default:0;comment:差异是否已覆盖入库" json:"applied"`
+	// ActiveFlag 进行中占位标记：待执行/拉取中/比对中写 1，任务结束（完成或失败）置 NULL。
+	// 「同一时刻只允许一个进行中任务」原本靠先查后插保证，并发下两条请求都查不到进行中任务、
+	// 各自插入，结果是两条任务同时拉上游、同时写差异，后写覆盖前写。
+	// 单列唯一索引天然允许任意多行 NULL（MySQL 语义），历史任务不受影响，
+	// 只有第二条并发插入会撞唯一键，由服务层转成幂等返回
+	ActiveFlag *int8 `gorm:"column:active_flag;type:tinyint;unique;comment:进行中占位标记，1=进行中，NULL=已结束" json:"-"`
 	// 任务结束时间（未结束时为 NULL；指针类型避免零值空串写入 datetime 报 1292）
 	CreatedAt  string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
 	FinishedAt *string `gorm:"column:finished_at;type:datetime;comment:完成时间" json:"finished_at"`

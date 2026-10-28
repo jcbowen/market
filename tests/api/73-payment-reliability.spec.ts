@@ -351,14 +351,14 @@ test.describe.serial('支付回调可靠性后台链路', () => {
 
       const created = (await (
         await isoCtx.post('/api/v1/admin/admins', {
-          data: { username, password: 'Ff123456', real_name: 'AUTO-TEST 隔离管理员', role_ids: [builtin!.id] },
+          data: { username, password: 'Ff12345678', real_name: 'AUTO-TEST 隔离管理员', role_ids: [builtin!.id] },
         })
       ).json()) as ApiResponse<{ id: number }>;
       expect(created.code, `建隔离社区管理员失败: ${created.message}`).toBe(0);
       staffId = created.data!.id;
 
       const order = await createPickupOrder(3);
-      const info = await adminLogin(playwright.request, username, 'Ff123456');
+      const info = await adminLogin(playwright.request, username, 'Ff12345678');
       otherApi = await playwright.request.newContext({
         extraHTTPHeaders: { Authorization: `Bearer ${info.access_token}`, 'X-Community-Id': String(otherId) },
       });

@@ -710,7 +710,12 @@ func (s *DataImportService) skuExistsByBarcode(ctx context.Context, communityID 
 }
 
 // userIDByPhone 按手机号解析 C 端用户 ID（users 全局段种子以 phone 为幂等键）
+// 空手机号一律拒绝：users.phone 未绑定时存 NULL，而空串在查询里是个具体值，
+// 不带手机号就查会把历史遗留的空串行当成命中用户，引用错人
 func (s *DataImportService) userIDByPhone(ctx context.Context, phone string) (int64, error) {
+	if phone == "" {
+		return 0, bizerr.New(codes.InvalidArgument, "手机号为空，无法按 phone 解析会员")
+	}
 	var row userModel.User
 	err := s.db.GetDb().WithContext(ctx).
 		Where("phone = ?", phone).First(&row).Error

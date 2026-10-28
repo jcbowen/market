@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -430,12 +431,19 @@ func (s *ProductService) saveSkus(
 
 		if skuID > 0 {
 			// 校验 SKU 归属，防止误传其他商品的 ID 导致本商品 SKU 被全部禁用；
-			// 同时读取原库存/成本，用于库存增减时同步批次（批次是扣减唯一来源）
+			// 同时读取原库存/成本，用于库存增减时同步批次（批次是扣减唯一来源）。
+			// 必须 FOR UPDATE 锁行：编辑期间并发扣减/回补会改动 stock，
+			// 读到旧值再算增减量会把批次对成 Σ批次 ≠ 实际库存（后续扣减必失败），
+			// 也让本事务与并发库存写入串行
 			var old model.Sku
 			if err := tx.Select("id", "stock", "cost_price", "sku_code", "community_id").
+				Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("id = ? AND product_id = ?", skuID, p.ID).
 				Take(&old).Error; err != nil {
-				return nil, bizerr.New(codes.NotFound, fmt.Sprintf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID))
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil, bizerr.New(codes.NotFound, fmt.Sprintf("第 %d 个 SKU（id=%d）不存在或不属于该商品", i+1, skuID))
+				}
+				return nil, err
 			}
 			if err := tx.Model(&model.Sku{}).
 				Where("id = ? AND product_id = ?", skuID, p.ID).

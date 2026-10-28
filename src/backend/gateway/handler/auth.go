@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/channel"
-	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -30,9 +29,9 @@ const phoneOpenidPrefix = "phone_"
 type AuthHandler struct {
 	jwtManager *jwt.Manager
 	userClient user.UserServiceClient
-	// refreshGuard refresh 令牌黑名单（P1-8）：与后台共用一套机制——
-	// C 端刷新同样轮转，旧令牌不登记黑名单等于登出只是前端表演
-	refreshGuard *refreshGuard
+	// tokenGuard 令牌黑名单（P1-8 + C5）：与后台共用一套机制——C 端刷新同样轮转，
+	// 登出吊销 access 与 refresh；旧令牌不登记黑名单等于登出只是前端表演
+	tokenGuard *tokenGuard
 }
 
 // NewAuthHandler 创建 C 端认证处理器
@@ -41,15 +40,15 @@ type AuthHandler struct {
 // 参数：
 //   - jwtManager: JWT 管理器
 //   - userClient: user-service gRPC 客户端
-//   - cfg: 全局配置（取 Redis 连接参数，供 refresh 黑名单）
+//   - tokenGuard: 令牌黑名单器（与鉴权中间件共用同一实例，见 NewTokenGuard）
 //
 // 返回：
 //   - *AuthHandler: 认证处理器实例
-func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, cfg *config.Config) *AuthHandler {
+func NewAuthHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, tokenGuard *TokenGuard) *AuthHandler {
 	return &AuthHandler{
-		jwtManager:   jwtManager,
-		userClient:   userClient,
-		refreshGuard: newRefreshGuard(cfg),
+		jwtManager: jwtManager,
+		userClient: userClient,
+		tokenGuard: tokenGuard,
 	}
 }
 
@@ -261,7 +260,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 	// 黑名单原子消费（SETNX）：已用过的旧令牌直接拒，并发重放只有一次能通过
-	if h.refreshGuard.consume(c.Request.Context(), claims.ID, time.Until(claims.ExpiresAt.Time)) {
+	if h.tokenGuard.consume(c.Request.Context(), claims.ID, time.Until(claims.ExpiresAt.Time)) {
 		response.Error(c, errcode.InvalidToken)
 		return
 	}
@@ -340,21 +339,16 @@ func (h *AuthHandler) successResponse(c *gin.Context, u *user.UserInfo) {
 	response.Success(c, result)
 }
 
-// Logout C 端登出：清除 refresh_token 的 httpOnly cookie 并吊销该令牌
+// Logout C 端登出：清除 refresh_token 的 httpOnly cookie 并吊销 access 与 refresh 两枚令牌
 // 本地令牌清理由前端完成，本端点只负责 JS 清不掉的那一份；
-// 不吊销服务端令牌的话，登出后旧 refresh 在剩余有效期内仍能续期出新的 access_token（P1-8）
+// 不吊销服务端令牌的话，登出后旧 refresh 在剩余有效期内仍能续期出新的 access_token（P1-8），
+// 旧 access 更能直接继续调接口直到自然过期（C5）
 //
 // 参数：
 //   - c: gin 上下文
 func (h *AuthHandler) Logout(c *gin.Context) {
 	clearRefreshTokenCookie(c)
-	// 吊销当前 refresh 令牌：解析失败（过期/伪造）时无需处理，令牌本就不可用
-	if token := firstNonEmptyRefreshToken(c, ""); token != "" {
-		if claims, err := h.jwtManager.ParseToken(token); err == nil &&
-			claims.Type == jwt.TokenTypeUser && claims.TokenUse == jwt.TokenUseRefresh {
-			h.refreshGuard.revoke(c.Request.Context(), claims.ID, time.Until(claims.ExpiresAt.Time))
-		}
-	}
+	revokePresentedTokens(c, h.jwtManager, h.tokenGuard, jwt.TokenTypeUser, "")
 	response.Success(c, gin.H{})
 }
 

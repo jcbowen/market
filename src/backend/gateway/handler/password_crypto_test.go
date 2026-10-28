@@ -7,16 +7,19 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/pwdpolicy"
 )
 
 /**
@@ -163,8 +166,23 @@ func TestPasswordKeyFileWinsOverInlineKey(t *testing.T) {
 	}
 }
 
-// TestDecryptPwdFieldPlaintextLengthGuard 解密明文的长度校验：
-// binding min=6 作用在恒 344 字符的密文上必然通过，加密通道不得借此绕过密码长度限制
+// newPwdProbeCtx 构造一个一次性测试上下文（响应写入 recorder，供断言错误码与文案）
+//
+// 返回值：
+//   - *gin.Context: 测试上下文
+//   - *httptest.ResponseRecorder: 响应记录器
+func newPwdProbeCtx() (*gin.Context, *httptest.ResponseRecorder) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/probe", nil)
+	return c, recorder
+}
+
+// TestDecryptPwdFieldPlaintextLengthGuard 口令长度的分层校验（C4）
+// 传输层（decryptPwdField）只判上限：binding min 作用在恒 344 字符的密文上必然通过，
+// 上限不补就会设出加密通道解不出来的超长口令（账号锁死）；
+// 下限不在传输层判——登录与写入口共用本函数，按新下限拦截会让 6-9 位历史口令登不进去；
+// 下限由策略层 validateNewPassword 在写入口（新建/改密/重置）逐处判定
 //
 // 参数：
 //   - t: 测试对象
@@ -183,25 +201,71 @@ func TestDecryptPwdFieldPlaintextLengthGuard(t *testing.T) {
 		if err != nil {
 			t.Fatalf("加密失败: %v", err)
 		}
-		recorder := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(recorder)
-		c.Request = httptest.NewRequest(http.MethodPost, "/probe", nil)
+		c, _ := newPwdProbeCtx()
 		field := base64.StdEncoding.EncodeToString(cipher)
 		return h.decryptPwdField(c, &field, PasswordEncryptAlg, h.pwdCrypto.keyID)
 	}
 
-	if tryDecrypt("abc12") {
-		t.Error("5 位密码密文应被拒绝（加密通道不得绕过 min=6 长度校验）")
+	// tryDecryptPlain 以给定明文走明文兼容通道（未声明 pwd_alg/pwd_key），返回是否放行及响应体
+	tryDecryptPlain := func(plain string) (bool, string) {
+		t.Helper()
+		c, recorder := newPwdProbeCtx()
+		field := plain
+		return h.decryptPwdField(c, &field, "", ""), recorder.Body.String()
 	}
-	if !tryDecrypt("abc123") {
-		t.Error("6 位合法密码密文应解密放行")
+
+	// 传输层不判下限：5 位明文可正常解密（由写入口的策略层拒绝，登录路径原样透传给 bcrypt）
+	if !tryDecrypt("abc12") {
+		t.Error("传输层不应判口令下限：短口令解密应成功，否则存量短口令账号无法登录")
 	}
-	// 明文兼容通道（未声明 pwd_alg/pwd_key）不做长度拦截，行为与一期一致
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/probe", nil)
-	plainField := "abc"
-	if !h.decryptPwdField(c, &plainField, "", "") || plainField != "abc" {
+	// 上限边界：190 恰好是 RSA-2048 + OAEP-SHA256 单块可承载的最大明文
+	// （256 - 2×32 - 2），再长连加密都失败、根本进不了解密分支——
+	// 函数内 len(plain) > maxRSAPasswordLen 的判定是防御性的，越界路径改由明文兼容通道覆盖
+	if !tryDecrypt(strings.Repeat("a", maxRSAPasswordLen)) {
+		t.Errorf("%d 字节口令应解密放行（等于 RSA 单块上限）", maxRSAPasswordLen)
+	}
+
+	// 明文兼容通道不受 RSA 单块限制，是超长口令的真实入口
+	if ok, _ := tryDecryptPlain("abc"); !ok {
 		t.Error("未声明加密时应走明文兼容通道原样放行")
+	}
+	if ok, _ := tryDecryptPlain("abc12"); !ok {
+		t.Error("明文兼容通道不应判口令下限（下限归写入口策略层）")
+	}
+	if ok, body := tryDecryptPlain(strings.Repeat("a", maxRSAPasswordLen+1)); ok {
+		t.Errorf("明文通道超出 %d 字节上限的口令应被拒绝", maxRSAPasswordLen)
+	} else if !strings.Contains(body, fmt.Sprintf("%d", maxRSAPasswordLen)) {
+		t.Errorf("超长拒绝文案应带出上限值，body=%s", body)
+	}
+}
+
+// TestValidateNewPasswordPolicy 写入口下限：低于 pwdpolicy.MinLength 拒绝，空串放行
+// 空串放行对应「复用已有账号可不传密码」，必填与否由 binding 标签负责
+//
+// 参数：
+//   - t: 测试对象
+func TestValidateNewPasswordPolicy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &AdminHandler{}
+
+	probe := func(plain string) (bool, string) {
+		t.Helper()
+		c, recorder := newPwdProbeCtx()
+		return h.validateNewPassword(c, plain), recorder.Body.String()
+	}
+
+	if ok, _ := probe(""); !ok {
+		t.Error("空口令不应由本函数判定（复用账号不传密码的场景应继续走业务校验）")
+	}
+	short := strings.Repeat("a", pwdpolicy.MinLength-1)
+	ok, body := probe(short)
+	if ok {
+		t.Errorf("%d 位口令应被拒绝", len(short))
+	}
+	if !strings.Contains(body, fmt.Sprintf("%d", pwdpolicy.MinLength)) {
+		t.Errorf("拒绝文案应带出长度要求，body=%s", body)
+	}
+	if ok, _ := probe(strings.Repeat("a", pwdpolicy.MinLength)); !ok {
+		t.Errorf("%d 位口令应放行", pwdpolicy.MinLength)
 	}
 }

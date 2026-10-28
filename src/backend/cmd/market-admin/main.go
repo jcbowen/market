@@ -40,6 +40,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"github.com/jcbowen/market/src/backend/common/pwdpolicy"
 	"github.com/jcbowen/market/src/backend/internal/bootstrap"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 	"github.com/jcbowen/market/src/backend/services/user/service"
@@ -50,8 +51,9 @@ const (
 	defaultAdminUsername = "admin"
 	// defaultCommunityName 默认社区名称（可用 MARKET_DEFAULT_COMMUNITY 覆盖）
 	defaultCommunityName = "默认社区"
-	// minPasswordLength 密码最小长度（手动输入与 MARKET_ADMIN_PASSWORD 同口径）
-	minPasswordLength = 8
+	// minPasswordLength 密码最小长度（手动输入与 MARKET_ADMIN_PASSWORD 同口径，
+	// 与后台账号口令策略一致，避免初始账号比 API 建号更宽松）
+	minPasswordLength = pwdpolicy.MinLength
 	// passwordAlphabet 随机密码字符集：剔除 i/l/I/0/O/1 等易混淆字符
 	passwordAlphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	// shutdownMarker 容器优雅停止标记：entrypoint 广播 TERM 前创建，

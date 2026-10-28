@@ -96,6 +96,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'ChannelSetting' })
 import { computed, onMounted, ref } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useMessage } from 'naive-ui'
 import { getClientChannels, updateClientChannel } from '@/api/admin'
 import type { ClientChannel } from '@/api/admin'
@@ -242,9 +243,10 @@ async function saveChannel() {
   }
 }
 
-onMounted(() => {
-  loadChannels()
-})
+// keep-alive 缓存下切回本页不重新挂载，需重新拉取：
+// 带着旧表单值整份 PUT 会覆盖他人刚改的配置，未保存的本地编辑以最新值为准丢弃
+onMounted(loadChannels)
+refreshOnActivated(loadChannels)
 </script>
 
 <style lang="scss" scoped>

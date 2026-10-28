@@ -11,8 +11,9 @@ import (
  *
  * 背景：refresh 令牌原先只靠过期时间（默认 7 天）自然失效，停用管理员与登出
  * 在令牌有效期内永远在线。修法是「轮转 + 黑名单」：每次刷新签发新 refresh 令牌，
- * 旧令牌凭 RegisteredClaims.ID（jti）写入 Redis 黑名单。本文件锁定 jti 的签发口径：
- * refresh 必有且唯一、access 不携带。
+ * 旧令牌凭 RegisteredClaims.ID（jti）写入 Redis 黑名单。C5 把同一口径扩展到
+ * access 令牌——它默认 2 小时有效，登出后若不吊销，旧 access 仍能继续调接口。
+ * 本文件锁定 jti 的签发口径：access 与 refresh 必带且互不相同。
  *
  * 运行方式（无外部依赖）：
  *   go test ./common/jwt/ -v
@@ -77,9 +78,10 @@ func TestRefreshTokenCarriesUniqueJTI(t *testing.T) {
 	}
 }
 
-// TestAccessTokenHasNoJTI 验证 access 令牌不携带 jti
-// access 分钟级短效、自然过期，不参与黑名单；携带 jti 只会诱导误用
-func TestAccessTokenHasNoJTI(t *testing.T) {
+// TestAccessTokenCarriesJTI 验证 access 令牌携带唯一 jti（C5）
+// access 原先不带 jti，登出只能清 cookie、服务端照旧认这枚令牌，
+// 剩余有效期（默认 2 小时）内被盗用的接口全部可用；带上 jti 才谈得上吊销
+func TestAccessTokenCarriesJTI(t *testing.T) {
 	m := newTestManager()
 
 	token, _, err := m.GenerateAccessToken(1001, TokenTypeUser, "13800138000", "", 0, nil)
@@ -93,8 +95,8 @@ func TestAccessTokenHasNoJTI(t *testing.T) {
 	if claims.TokenUse != TokenUseAccess {
 		t.Errorf("token_use = %q, 期望 %q", claims.TokenUse, TokenUseAccess)
 	}
-	if claims.ID != "" {
-		t.Errorf("access 令牌不应携带 jti，实得 %q", claims.ID)
+	if len(claims.ID) != 32 {
+		t.Fatalf("access 令牌应携带 32 字符 jti，实得 %q", claims.ID)
 	}
 
 	adminToken, _, err := m.GenerateAdminAccessToken(1001, "13800138000", "community_admin", 99, []int64{99}, []string{"*"}, "admin", "测试")
@@ -105,8 +107,24 @@ func TestAccessTokenHasNoJTI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("解析管理员 access 令牌失败: %v", err)
 	}
-	if adminClaims.ID != "" {
-		t.Errorf("管理员 access 令牌不应携带 jti，实得 %q", adminClaims.ID)
+	if len(adminClaims.ID) != 32 {
+		t.Errorf("管理员 access 令牌应携带 32 字符 jti，实得 %q", adminClaims.ID)
+	}
+	if adminClaims.ID == claims.ID {
+		t.Error("两次签发的 access 令牌 jti 相同，黑名单会误杀无关令牌")
+	}
+
+	// 同一次登录的 access 与 refresh 也必须不同键：登出吊销 refresh 不应顺手吊销仍在使用中的 access
+	refreshToken, _, err := m.GenerateRefreshToken(1001, TokenTypeUser)
+	if err != nil {
+		t.Fatalf("生成 refresh 令牌失败: %v", err)
+	}
+	refreshClaims, err := m.ParseToken(refreshToken)
+	if err != nil {
+		t.Fatalf("解析 refresh 令牌失败: %v", err)
+	}
+	if refreshClaims.ID == claims.ID {
+		t.Error("access 与 refresh 的 jti 不应相同")
 	}
 }
 
@@ -114,7 +132,10 @@ func TestAccessTokenHasNoJTI(t *testing.T) {
 func TestNewJTIFormat(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 200; i++ {
-		jti := newJTI()
+		jti, err := newJTI()
+		if err != nil {
+			t.Fatalf("第 %d 次生成 jti 失败: %v", i+1, err)
+		}
 		if len(jti) != 32 {
 			t.Fatalf("第 %d 次生成 jti 长度 = %d, 期望 32", i+1, len(jti))
 		}

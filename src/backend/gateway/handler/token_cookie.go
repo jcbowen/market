@@ -181,3 +181,25 @@ func clearAccessTokenCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(gwMiddleware.CookieAdminAccessToken, "", -1, adminCookiePath, "", requestIsHTTPS(c), true)
 }
+
+// presentedAccessToken 取出本次请求携带的 access_token 原文（登出吊销用，C5）
+// 主通道是 `Authorization: Bearer <token>`（小程序/App/POS，以及未启用 cookie 的后台）；
+// 后台 H5 为 WS 握手另下发了一枚 httpOnly access cookie——JS 删不掉也不在请求头里，
+// 只看请求头会漏掉这一份，登出后那枚 cookie 里的令牌仍可用到自然过期
+//
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - string: 令牌原文，两处都没有时返回空串
+func presentedAccessToken(c *gin.Context) string {
+	if auth := c.GetHeader("Authorization"); auth != "" {
+		if parts := strings.SplitN(auth, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+			return parts[1]
+		}
+	}
+	if v, err := c.Cookie(gwMiddleware.CookieAdminAccessToken); err == nil {
+		return v
+	}
+	return ""
+}

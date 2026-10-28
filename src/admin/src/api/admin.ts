@@ -409,10 +409,13 @@ export function getSiteSetting() {
 /**
  * 保存站点设置
  * 覆盖式写入：字段提交空串即清空该配置
- * @param data 站点设置数据（仅品牌字段）
+ * @param data 站点设置数据（仅品牌字段）+ 载入时的 version（乐观并发令牌，
+ *             与服务端当前版本不一致时返回 10007 拒绝提交，需重新载入）
  * @returns 保存结果与新版本号
  */
-export function updateSiteSetting(data: Pick<SiteSetting, 'base_url' | 'site_name' | 'logo_url' | 'favicon_url' | 'footer_html' | 'seo_description' | 'seo_keywords'>) {
+export function updateSiteSetting(
+  data: Pick<SiteSetting, 'base_url' | 'site_name' | 'logo_url' | 'favicon_url' | 'footer_html' | 'seo_description' | 'seo_keywords' | 'version'>,
+) {
   return request<ApiResult<{ success: boolean; version: number; attachment_domain_synced?: boolean }>>({
     url: '/api/v1/admin/settings/site',
     method: 'PUT',

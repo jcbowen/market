@@ -107,6 +107,8 @@ business:
         cancel_guard: true
         auto_refund_stuck: false
         pending_max_minutes: 120     # 待支付单回查时间上界；支付宝侧取 min(本值, order_timeout)
+        closed_lookback_minutes: 1440 # 已关单挂账回溯窗口：迟到付款（关单后才到账）也能被扫到
+        closed_throttle_minutes: 30   # 已关单回溯最小间隔，比在途回查低频以控渠道调用成本
         interval_seconds: 60         # 对账轮询间隔
         min_age_seconds: 60          # 支付单创建后至少等待多久才回查（给正常回调留时间）
         throttle_minutes: 5          # 同一支付单两次回查最小间隔

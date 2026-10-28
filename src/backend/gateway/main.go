@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -190,6 +191,11 @@ func getConfigPath() string {
 //   - cfg: 全局配置
 //   - hub: 后台 WebSocket 集线器
 func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.ServiceClients, cfg *config.Config, hub *ws.Hub) {
+	// 令牌黑名单（C5）：只构造一份实例，刷新/登出往里写、鉴权中间件从中查，
+	// 避免同一份 Redis 状态被 handler 与中间件各连一遍
+	tokenGuard := handler.NewTokenGuard(cfg)
+	gwMiddleware.SetTokenRevocationChecker(tokenGuard.RevocationCheck())
+
 	// HTML 品牌注入须先于路由注册：中间件在路由前命中前端入口页，
 	// 既避免与 r.Static 的 /b/*filepath 通配路由冲突，也让 SPA 深链兜底同样带上品牌
 	h5Path := filepath.Join(getBinDir(), "static", "h5")
@@ -211,7 +217,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	// C 端上传（履约签收照片等）：独立 handler 持有 product 客户端，IsDisplay=false
 	fulfillmentUploadHandler := handler.NewFulfillmentUploadHandler(clients.ProductClient)
 	paymentHandler := handler.NewPaymentHandler(clients.PaymentClient, clients.OrderClient, clients.UserClient)
-	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, cfg)
+	authHandler := handler.NewAuthHandler(jwtManager, clients.UserClient, tokenGuard)
 	// IP 定位：本地 GeoLite2-City 数据库，相对路径以可执行文件所在目录为基准
 	geoipHandler := handler.NewGeoIPHandler(resolveBinPath(cfg.GeoIP.DBPath))
 	// 行政区划：级联选择器懒加载、IP 定位反查区划、后台管理（列表/检查更新/差异覆盖）
@@ -316,7 +322,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 		}
 	}
 
-	adminHandler := handler.NewAdminHandler(jwtManager, clients.UserClient, clients.ProductClient, clients.OrderClient, clients.PaymentClient, cfg)
+	adminHandler := handler.NewAdminHandler(jwtManager, clients.UserClient, clients.ProductClient, clients.OrderClient, clients.PaymentClient, cfg, tokenGuard)
 	// 站点品牌信息：登录页与 C 端首屏免登录读取，仅含非敏感字段
 	apiV1.GET("/site-info", adminHandler.GetPublicSiteInfo)
 	// 多社区模型：权限随当前社区变化，注入实时权限上下文解析器（user 服务）
@@ -678,6 +684,9 @@ const exportPrivateDir = "exports"
 //   - 种子素材目录不存在时（裁剪过的发布包）仅 /<local_dir>/seed/** 返回 404，上传附件不受影响
 //   - 两个根目录各自交给 http.FileServer 处理：路径由标准库 Clean 并拒绝含 .. 的请求，
 //     请求方无法借 URL 逃出根目录
+//   - 判定前先按 path.Clean 归一并把归一结果回写请求路径：种子/附件分流与私有段拦截都必须
+//     看到标准库将要打开的那条路径，否则「前缀看着不像 exports、Clean 后是 exports」的
+//     穿越形态会绕过拦截（标准库自身始终按 / 归一）
 //   - /<local_dir>/exports/** 固定 404：导出文件与附件共享服务目录但含用户数据属私有文件，
 //     下载只走订单服务的鉴权流式接口
 //   - local_dir 变更需重启 gateway 生效（路由在启动时注册）
@@ -689,14 +698,16 @@ func registerUploads(r *gin.Engine, seedRoot, attachmentRoot, localDir string) {
 	seedFS := http.StripPrefix(prefix+"seed/", http.FileServer(http.Dir(seedRoot)))
 	attachmentFS := http.StripPrefix(prefix, http.FileServer(http.Dir(attachmentRoot)))
 	serve := func(c *gin.Context) {
-		// gin 的 *filepath 带前导斜杠，形如 /seed/products/latiao.png
-		fp := c.Param("filepath")
+		// gin 的 *filepath 带前导斜杠，形如 /seed/products/latiao.png；/images/../exports/task.csv
+		// 这类穿越形态归一后才是真正要打开的路径
+		fp := path.Clean(c.Param("filepath"))
+		c.Request.URL.Path = "/" + localDir + fp
 		if strings.HasPrefix(fp, "/seed/") {
 			seedFS.ServeHTTP(c.Writer, c.Request)
 			return
 		}
-		// 导出私有段整体 404（含 ../ 归一后指向 exports 的穿越形态）
-		if strings.HasPrefix(fp, "/"+exportPrivateDir+"/") || strings.HasPrefix(filepath.Clean(fp), "/"+exportPrivateDir+"/") {
+		// 导出私有段整体 404（含归一后指向 exports 的穿越形态，以及大小写不敏感文件系统上的 Exports 变体）
+		if isExportPrivatePath(fp) {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
@@ -704,6 +715,23 @@ func registerUploads(r *gin.Engine, seedRoot, attachmentRoot, localDir string) {
 	}
 	r.GET(prefix+"*filepath", serve)
 	r.HEAD(prefix+"*filepath", serve)
+}
+
+// isExportPrivatePath 判定归一后的相对路径是否落在附件目录的导出私有段内
+// 参数：
+//   - fp: path.Clean 之后、以 / 开头的路径，如 /exports/task.csv、/seed/products/latiao.png
+//
+// 返回值：
+//   - bool: true 表示属导出私有文件，静态路由须整体 404
+//
+// 异常：无（纯字符串判定，不触碰文件系统）
+//
+// 使用示例：
+//   - isExportPrivatePath("/Exports/task.csv") 为 true（Windows/macOS 文件系统大小写不敏感）
+//   - isExportPrivatePath("/images/20260101/01/order.jpg") 为 false
+func isExportPrivatePath(fp string) bool {
+	first, _, _ := strings.Cut(strings.ToLower(strings.TrimPrefix(fp, "/")), "/")
+	return first == exportPrivateDir
 }
 
 // resolveSeedDir 解析演示种子素材根目录

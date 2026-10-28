@@ -13,6 +13,8 @@ import (
 	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/errcode"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -167,7 +169,7 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 	u.Unionid = orPtrValue(req.UnionId, u.Unionid)
 	// 手机号只在请求携带时覆盖：按 openid 命中的已绑手机会员走微信登录时 req.Phone 为空，
 	// 无条件赋值会把存量手机号清空（Save 全量落库），后续按 phone 查找即丢失该账号
-	u.Phone = orValue(req.Phone, u.Phone)
+	u.Phone = orPtrValue(req.Phone, u.Phone)
 	// 昵称只在为空时写入：登录入参不带真实昵称（微信授权昵称另有 user/profile 更新入口），
 	// 避免每次登录把用户自定义昵称刷回默认值
 	if u.Nickname == "" {
@@ -196,7 +198,9 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 	return u, nil
 }
 
-// UpdateUserCommunity 更新用户所属社区
+// UpdateUserCommunity 切换会员当前社区
+// 除改写 users.community_id，同步补写 user_communities 关联：后台的社区语境校验
+// （指派配送、拉黑、会员详情）按关联表判定归属，只改主表会让会员在后台「不存在」
 // 参数：
 //   - ctx: 上下文
 //   - userID: 用户 ID
@@ -208,10 +212,13 @@ func (s *UserService) UpdateUserCommunity(ctx context.Context, userID, community
 	if userID <= 0 || communityID <= 0 {
 		return fmt.Errorf("参数错误")
 	}
-	return s.db.GetDb().WithContext(ctx).
+	if err := s.db.GetDb().WithContext(ctx).
 		Model(&model.User{}).
 		Where("id = ?", userID).
-		Update("community_id", communityID).Error
+		Update("community_id", communityID).Error; err != nil {
+		return err
+	}
+	return s.MarkUserCommunity(ctx, userID, communityID, "user_select")
 }
 
 // UpdateUserProfile 更新用户资料
@@ -337,7 +344,8 @@ func (s *UserService) ListUsers(ctx context.Context, communityID int64, keyword 
 		db = db.Where("id IN (SELECT user_id FROM user_communities WHERE community_id = ?)", communityID)
 	}
 	if keyword != "" {
-		db = db.Where("nickname LIKE ? OR phone LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+		like := likeutil.Contains(keyword)
+		db = db.Where("nickname LIKE ? OR phone LIKE ?", like, like)
 	}
 	if statusFilter >= 0 {
 		db = db.Where("status = ?", statusFilter)
@@ -350,16 +358,8 @@ func (s *UserService) ListUsers(ctx context.Context, communityID int64, keyword 
 		return nil, 0, "", err
 	}
 
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
 	// 服务层兜底上限：HTTP 网关已按 maxPageSize 收敛，但 gRPC 可被内部或直连调用传入超大值
-	if pageSize > 200 {
-		pageSize = 200
-	}
+	page, pageSize = pageparam.Clamp(page, pageSize)
 
 	var list []*model.User
 	offset := (page - 1) * pageSize
@@ -442,7 +442,7 @@ func (s *UserService) getCommunityName(ctx context.Context, id int64) string {
 //   - ctx: 上下文
 //   - userID: 用户 ID
 //   - communityID: 社区 ID
-//   - source: 关联来源（address/order/admin/backfill）
+//   - source: 关联来源（address/order/admin/user_select/backfill）
 //
 // 返回：
 //   - error: 错误信息
@@ -565,7 +565,7 @@ func (s *UserService) CreateMember(ctx context.Context, req *user.CreateMemberRe
 	now := time.Now().Format("2006-01-02 15:04:05")
 	u := &model.User{
 		Openid:      phoneOpenidPrefix(req.Phone),
-		Phone:       req.Phone,
+		Phone:       model.NewPhone(req.Phone),
 		Nickname:    orValue(req.Nickname, defaultNickname(req.Phone)),
 		Gender:      req.Gender,
 		CommunityID: req.CommunityId,
@@ -655,7 +655,7 @@ func (s *UserService) ListFulfillers(ctx context.Context, communityID int64) ([]
 	}
 	list := make([]*user.FulfillerInfo, 0, len(users))
 	for _, u := range users {
-		list = append(list, &user.FulfillerInfo{UserId: u.ID, Nickname: u.Nickname, Phone: u.Phone})
+		list = append(list, &user.FulfillerInfo{UserId: u.ID, Nickname: u.Nickname, Phone: u.PhoneValue()})
 	}
 	return list, nil
 }
@@ -756,7 +756,7 @@ func ToUserInfo(u *model.User) *user.UserInfo {
 		Openid:       u.Openid,
 		AlipayUserId: ptrString(u.AlipayUserID),
 		UnionId:      ptrString(u.Unionid),
-		Phone:        u.Phone,
+		Phone:        u.PhoneValue(),
 		Nickname:     u.Nickname,
 		Avatar:       u.Avatar,
 		Gender:       u.Gender,

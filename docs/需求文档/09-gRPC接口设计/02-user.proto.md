@@ -47,6 +47,8 @@ service UserService {
 
   // 管理员
   rpc GetAdminByUsername(GetAdminByUsernameReq) returns (AdminInfo);
+  // VerifyAdminCredential 登录口令校验：bcrypt 比对在 user 服务内完成，摘要不出服务边界
+  rpc VerifyAdminCredential(VerifyAdminCredentialReq) returns (VerifyAdminCredentialResp);
   rpc ListAdmins(ListAdminsReq) returns (ListAdminsResp);
   rpc CreateAdmin(CreateAdminReq) returns (AdminInfo);
   rpc UpdateAdmin(UpdateAdminReq) returns (AdminInfo);
@@ -362,10 +364,27 @@ message GetAdminByUsernameReq {
   string username = 1;
 }
 
+// VerifyAdminCredentialReq 登录口令校验请求（网关 Login 专用）
+message VerifyAdminCredentialReq {
+  string username = 1;
+  // 明文口令（与 ChangeAdminPassword 同口径，只在内网 gRPC 上流转）
+  string password = 2;
+}
+
+// VerifyAdminCredentialResp 登录口令校验结果
+message VerifyAdminCredentialResp {
+  // 口令是否正确；「账号不存在」由 NotFound 错误表达，与「密码错误」严格区分（登录锁定计数依赖该区分）
+  bool password_valid = 1;
+  // 账号信息（不含口令摘要）
+  AdminInfo admin = 2;
+}
+
 message AdminInfo {
   int64 id = 1;
   string username = 2;
-  string password = 3;
+  // 已废止：user 服务不再下发 bcrypt 摘要（登录校验改由 VerifyAdminCredential 在服务内完成，
+  // 哈希不出服务边界）。字段保留仅为 wire 兼容，禁止在任何出口赋值
+  string password = 3 [deprecated = true];
   string real_name = 4;
   string phone = 5;
   // 以下 role_id / role_code / role_name / community_id 为旧单角色模型遗留字段，仅做兼容填充
@@ -665,7 +684,7 @@ message ApplyRegionUpdateTaskReq {
 message MarkUserCommunityReq {
   int64 user_id = 1;
   int64 community_id = 2;
-  // 记录来源：address 收货地址 / order 下单 / admin 后台添加 / backfill 存量回填
+  // 记录来源：address 收货地址 / order 下单 / admin 后台添加 / pos 收银台 / user_select 会员切换社区 / backfill 存量回填
   string source = 3;
 }
 
@@ -735,7 +754,7 @@ message CheckFulfillerResp {
 - `GetAdminContext`：网关在每次管理端请求时实时调用，解析管理员在 `X-Community-Id` 社区的任职与权限并集（含 `*` 通配），供 `RequireCommunityAccess`（越权社区切换拦截）与 `RequirePermission`（权限点校验）中间件使用；`bound=false` 表示在该社区无任职，直接 403。
 - `GetRole` / `ListRoles(ListRolesReq)`：角色详情与分语境列表；`community_id>0` 返回该社区私有角色，`0` 返回历史保留的全局行（`community_id=0` 的存量数据，已无业务消费方），`include_global=true`（超管视角）附带全局行；`all_communities=true`（仅超管，网关 `?scope=all` 映射）忽略社区语境返回全部社区角色，并批量回填 `community_name`、`assignment_count`（各一条聚合查询，无 N+1），用于超管「社区角色」跨社区只读总览。
 - `CreateRole`：`community_id` 必填且须 `>0`，角色一律社区私有；传 0 由服务端拒绝（历史「全局角色」不再可新建）。
-- `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/backfill，重复记录不报错。
+- `MarkUserCommunity`：会员-社区关联幂等记录（user_communities 表），来源含 address/order/admin/pos/user_select/backfill，重复记录不报错。会员切换当前社区（`UpdateUserCommunity`）也会补写本表，保证「当前社区 ∈ 已绑定社区」。
 - `SetUserStatus` / `CreateMember`：会员拉黑/恢复与按手机号幂等注册（收银台与后台均可用）。`CreateMember` 以手机号为唯一键：未注册时新建会员并归属当前社区语境；已注册时不报错，复用既有会员并把 `user_communities` 关联到当前社区，`source` 标记关联来源（`admin` 后台添加 / `pos` 收银台，缺省 `admin`）。响应 `CreateMemberResp` 返回 `user`（注册或复用的会员信息）与 `is_new`（是否本次新注册）。
 - `CreateOrUpdateUser`（C 端登录链路共用：手机号登录 / 微信登录）：昵称只在为空时写入——新建会员按统一口径补默认值（有手机号为「会员+尾号 4 位」，无手机号为「微信用户」，与 `CreateMember` 一致），已有昵称不会被重复登录覆盖，用户改名走 `UpdateUserProfile`。
 - `ListFulfillers` / `CheckFulfiller`：履约人员（B 履约工作台）列表与实时校验；`CheckFulfiller` 同时用于 C 端工作台入口判断与网关履约接口鉴权。履约人员 = 本社区任职中且绑定会员的员工（`CreateAdminReq.user_id` / `UpdateAdminReq.user_id` 配置，随任职增减自动生效），不再有独立的会员侧标记。

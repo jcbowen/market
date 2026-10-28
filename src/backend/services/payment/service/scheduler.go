@@ -369,8 +369,10 @@ func (s *Scheduler) scanStuck(ctx context.Context, stat *reconcileStat) {
 	defer s.releaseLock(ctx, lockKey, lockValue)
 
 	r := s.payment.cfg.Business.PaymentReconcile
-	updatedAfter := time.Now().Add(-time.Duration(config.ReconcileInt(r.PendingMaxMinutes, 120)) * time.Minute).Format(timeLayout)
-	throttleBefore := time.Now().Add(-time.Duration(config.ReconcileInt(r.ThrottleMinutes, 5)) * time.Minute).Format(timeLayout)
+	// 已关单按回溯窗口（默认 24h）而非在途渠道时效（默认 2h）扫描：
+	// 关单后 updated_at 不再变化，迟到付款若超出在途窗口才生效就永久漏检
+	updatedAfter := time.Now().Add(-time.Duration(config.ReconcileInt(r.ClosedLookbackMinutes, 1440)) * time.Minute).Format(timeLayout)
+	throttleBefore := time.Now().Add(-time.Duration(config.ReconcileInt(r.ClosedThrottleMinutes, 30)) * time.Minute).Format(timeLayout)
 
 	var rows []model.Payment
 	if err := s.payment.db.GetDb().WithContext(ctx).
@@ -402,7 +404,7 @@ func (s *Scheduler) scanStuck(ctx context.Context, stat *reconcileStat) {
 // 返回值：
 //   - reconcileOutcome: 单笔结论，计入本轮统计（见 reconcileStat）
 func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed bool) reconcileOutcome {
-	if !withinReconcileWindow(s.payment.cfg, p) {
+	if !withinReconcileWindow(s.payment.cfg, p, closed) {
 		return outcomeSkipped
 	}
 	res, err := s.payment.queryChannelOrder(ctx, p)
@@ -427,7 +429,7 @@ func (s *Scheduler) reconcileOne(ctx context.Context, p *model.Payment, closed b
 			ConfirmSource: model.ConfirmSourceReconcile,
 			ConfirmRef:    reconcileConfirmRef(p.PaymentNo),
 			NotifyKind:    model.NotifyKindReconcile,
-			Channel:       p.PayType,
+			Channel:       notifyChannelOf(p.PayType),
 			OrderID:       p.OrderID,
 		})
 		s.markReconciled(ctx, p)
@@ -801,8 +803,10 @@ func (s *Scheduler) incrementFailureRetry(ctx context.Context, id int64) {
 	}
 }
 
-// cleanupNotifyLogs 删除超过保留天数的通知流水
+// cleanupNotifyLogs 删除超过保留天数且已销账的通知流水
 // 流水的价值集中在「刚出问题的这段时间」，过期后只占空间；
+// 未销账（handled=0）的异常流水是后台待办队列本身，过期也不删——删掉等于把「这笔钱挂过账」
+// 的事实抹掉，异常页再也查不到，只能靠告警把人叫来看一眼
 // 用「锁键带日期 + 不释放」实现集群级每日一次，无需额外的游标表
 // 参数：
 //   - ctx: 上下文
@@ -816,15 +820,25 @@ func (s *Scheduler) cleanupNotifyLogs(ctx context.Context) int64 {
 		return 0
 	}
 	deadline := time.Now().AddDate(0, 0, -retentionDays).Format(timeLayout)
+	var pending int64
+	if err := s.payment.db.GetDb().WithContext(ctx).Model(&model.NotifyLog{}).
+		Where("created_at < ? AND handled = ?", deadline, model.NotifyPending).
+		Count(&pending).Error; err != nil {
+		log.Printf("[payment-scheduler] 统计过期待处理通知流水失败: %v", err)
+		return -1
+	}
+	if pending > 0 {
+		log.Printf("[CRITICAL] 有 %d 条超过 %d 天仍未销账的支付异常流水，已跳过清理，请核对后台异常队列", pending, retentionDays)
+	}
 	res := s.payment.db.GetDb().WithContext(ctx).
-		Where("created_at < ?", deadline).
+		Where("created_at < ? AND handled = ?", deadline, model.NotifyHandled).
 		Delete(&model.NotifyLog{})
 	if res.Error != nil {
 		log.Printf("[payment-scheduler] 清理通知流水失败: %v", res.Error)
 		return -1
 	}
 	if res.RowsAffected > 0 {
-		log.Printf("[payment-scheduler] 已清理 %d 条超过 %d 天的通知流水", res.RowsAffected, retentionDays)
+		log.Printf("[payment-scheduler] 已清理 %d 条超过 %d 天的已销账通知流水", res.RowsAffected, retentionDays)
 	}
 	return res.RowsAffected
 }
@@ -1179,28 +1193,50 @@ func reconcileConfirmRef(paymentNo string) string {
 	return "reconcile:" + paymentNo
 }
 
-// withinReconcileWindow 判断支付单是否仍在渠道时效内，超出后回查没有意义
-// 微信在线支付下单默认 2 小时失效；支付宝（含付款码）受下单时的 timeout_express（对齐订单超时）约束；
+// withinReconcileWindow 判断支付单是否仍在值得回查的时间窗内，超出后回查没有意义
+// 在途单：微信在线支付下单默认 2 小时失效；支付宝（含付款码）受下单时的 timeout_express（对齐订单超时）约束；
 // 微信付款码单同样随订单超时取消而终止（超时关单走撤销），因此 2/5/6 都按
-// 「配置上限与订单超时取小」判定，避免对已失效交易反复发问
+// 「配置上限与订单超时取小」判定，避免对已失效交易反复发问。
+// 已关单：渠道时效已经不适用——钱可能在关单之后才到账，按 ClosedLookbackMinutes 回溯窗口判定，
+// 不受订单超时收窄，成本由节流间隔与 MaxReconcileCount 控制
 //
 // 参数：
 //   - cfg: 全局配置
 //   - p: 支付单
+//   - closed: 该单是否已关闭（决定用哪一档窗口）
 //
 // 返回值：
-//   - bool: 仍在时效内
-func withinReconcileWindow(cfg *config.Config, p *model.Payment) bool {
+//   - bool: 仍在窗口内
+func withinReconcileWindow(cfg *config.Config, p *model.Payment, closed bool) bool {
 	r := cfg.Business.PaymentReconcile
+	if closed {
+		window := time.Duration(config.ReconcileInt(r.ClosedLookbackMinutes, 1440)) * time.Minute
+		// 已关单按「最后一次状态变化」而非下单时间判定：久经挂起的订单也可能在关单后才收到付款，
+		// 用 created_at 会比扫描 SQL 的 updated_at 口径更严而漏掉这类单；updated_at 缺失时退回 created_at
+		if closedAt, err := parseDBTime(p.UpdatedAt); err == nil {
+			return time.Since(closedAt) <= window
+		}
+		return withinWindowSince(p, window)
+	}
 	window := time.Duration(config.ReconcileInt(r.PendingMaxMinutes, 120)) * time.Minute
 	if p.PayType == 2 || p.PayType == 5 || p.PayType == 6 {
 		if orderTimeout := config.ReconcileInt(cfg.Business.OrderTimeout, 1800); time.Duration(orderTimeout)*time.Second < window {
 			window = time.Duration(orderTimeout) * time.Second
 		}
 	}
+	return withinWindowSince(p, window)
+}
+
+// withinWindowSince 按 created_at 判定支付单是否落在给定窗口内
+// 参数：
+//   - p: 支付单
+//   - window: 窗口时长
+//
+// 返回值：
+//   - bool: 仍在窗口内；created_at 解析不了（历史脏数据）时保守放行，交给节流与上限兜底
+func withinWindowSince(p *model.Payment, window time.Duration) bool {
 	created, err := parseDBTime(p.CreatedAt)
 	if err != nil {
-		// 时间解析不了（历史脏数据）时保守放行，交给节流与上限兜底
 		return true
 	}
 	return time.Since(created) <= window

@@ -204,7 +204,7 @@ func (s *PaymentService) SyncPaymentFromChannel(ctx context.Context, orderID int
 			ConfirmSource: model.ConfirmSourceManual,
 			ConfirmRef:    ref,
 			NotifyKind:    model.NotifyKindManualSync,
-			Channel:       p.PayType,
+			Channel:       notifyChannelOf(p.PayType),
 			OrderID:       p.OrderID,
 			DetectRemark:  actor.trace(),
 		}); err != nil {
@@ -438,7 +438,7 @@ func (s *PaymentService) MarkPaymentPaidManually(ctx context.Context, orderID in
 		ConfirmSource: model.ConfirmSourceManual,
 		ConfirmRef:    model.ConfirmRefManualMark,
 		NotifyKind:    model.NotifyKindManualSync,
-		Channel:       p.PayType,
+		Channel:       notifyChannelOf(p.PayType),
 		OrderID:       p.OrderID,
 		Remark:        remark,
 	})

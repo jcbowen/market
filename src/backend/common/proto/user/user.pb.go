@@ -2448,13 +2448,126 @@ func (x *GetAdminByIdReq) GetId() int64 {
 	return 0
 }
 
+// VerifyAdminCredentialReq 登录口令校验请求（网关 Login 专用）
+type VerifyAdminCredentialReq struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	// 明文口令（与 ChangeAdminPassword 同口径，只在内网 gRPC 上流转）
+	Password      string `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyAdminCredentialReq) Reset() {
+	*x = VerifyAdminCredentialReq{}
+	mi := &file_user_user_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyAdminCredentialReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyAdminCredentialReq) ProtoMessage() {}
+
+func (x *VerifyAdminCredentialReq) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyAdminCredentialReq.ProtoReflect.Descriptor instead.
+func (*VerifyAdminCredentialReq) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *VerifyAdminCredentialReq) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *VerifyAdminCredentialReq) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+// VerifyAdminCredentialResp 登录口令校验结果
+type VerifyAdminCredentialResp struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 口令是否正确；「账号不存在」由 NotFound 错误表达，与「密码错误」严格区分（登录锁定计数依赖该区分）
+	PasswordValid bool `protobuf:"varint,1,opt,name=password_valid,json=passwordValid,proto3" json:"password_valid,omitempty"`
+	// 账号信息（不含口令摘要）
+	Admin         *AdminInfo `protobuf:"bytes,2,opt,name=admin,proto3" json:"admin,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyAdminCredentialResp) Reset() {
+	*x = VerifyAdminCredentialResp{}
+	mi := &file_user_user_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyAdminCredentialResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyAdminCredentialResp) ProtoMessage() {}
+
+func (x *VerifyAdminCredentialResp) ProtoReflect() protoreflect.Message {
+	mi := &file_user_user_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyAdminCredentialResp.ProtoReflect.Descriptor instead.
+func (*VerifyAdminCredentialResp) Descriptor() ([]byte, []int) {
+	return file_user_user_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *VerifyAdminCredentialResp) GetPasswordValid() bool {
+	if x != nil {
+		return x.PasswordValid
+	}
+	return false
+}
+
+func (x *VerifyAdminCredentialResp) GetAdmin() *AdminInfo {
+	if x != nil {
+		return x.Admin
+	}
+	return nil
+}
+
 type AdminInfo struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Id       int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	Username string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
-	Password string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
-	RealName string                 `protobuf:"bytes,4,opt,name=real_name,json=realName,proto3" json:"real_name,omitempty"`
-	Phone    string                 `protobuf:"bytes,5,opt,name=phone,proto3" json:"phone,omitempty"`
+	// 已废止：user 服务不再下发 bcrypt 摘要（登录校验改由 VerifyAdminCredential 在服务内完成，
+	// 哈希不出服务边界）。字段保留仅为 wire 兼容，禁止在任何出口赋值
+	//
+	// Deprecated: Marked as deprecated in user/user.proto.
+	Password string `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	RealName string `protobuf:"bytes,4,opt,name=real_name,json=realName,proto3" json:"real_name,omitempty"`
+	Phone    string `protobuf:"bytes,5,opt,name=phone,proto3" json:"phone,omitempty"`
 	// 以下 role_id / role_code / role_name / community_id 为旧单角色模型遗留字段，仅做兼容填充
 	RoleId      int64  `protobuf:"varint,6,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`
 	RoleCode    string `protobuf:"bytes,7,opt,name=role_code,json=roleCode,proto3" json:"role_code,omitempty"`
@@ -2480,7 +2593,7 @@ type AdminInfo struct {
 
 func (x *AdminInfo) Reset() {
 	*x = AdminInfo{}
-	mi := &file_user_user_proto_msgTypes[28]
+	mi := &file_user_user_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2492,7 +2605,7 @@ func (x *AdminInfo) String() string {
 func (*AdminInfo) ProtoMessage() {}
 
 func (x *AdminInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[28]
+	mi := &file_user_user_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2505,7 +2618,7 @@ func (x *AdminInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdminInfo.ProtoReflect.Descriptor instead.
 func (*AdminInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{28}
+	return file_user_user_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AdminInfo) GetId() int64 {
@@ -2522,6 +2635,7 @@ func (x *AdminInfo) GetUsername() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in user/user.proto.
 func (x *AdminInfo) GetPassword() string {
 	if x != nil {
 		return x.Password
@@ -2647,7 +2761,7 @@ type ListAdminsReq struct {
 
 func (x *ListAdminsReq) Reset() {
 	*x = ListAdminsReq{}
-	mi := &file_user_user_proto_msgTypes[29]
+	mi := &file_user_user_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2659,7 +2773,7 @@ func (x *ListAdminsReq) String() string {
 func (*ListAdminsReq) ProtoMessage() {}
 
 func (x *ListAdminsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[29]
+	mi := &file_user_user_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2672,7 +2786,7 @@ func (x *ListAdminsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAdminsReq.ProtoReflect.Descriptor instead.
 func (*ListAdminsReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{29}
+	return file_user_user_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ListAdminsReq) GetCommunityId() int64 {
@@ -2706,7 +2820,7 @@ type ListAdminsResp struct {
 
 func (x *ListAdminsResp) Reset() {
 	*x = ListAdminsResp{}
-	mi := &file_user_user_proto_msgTypes[30]
+	mi := &file_user_user_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2718,7 +2832,7 @@ func (x *ListAdminsResp) String() string {
 func (*ListAdminsResp) ProtoMessage() {}
 
 func (x *ListAdminsResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[30]
+	mi := &file_user_user_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2731,7 +2845,7 @@ func (x *ListAdminsResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAdminsResp.ProtoReflect.Descriptor instead.
 func (*ListAdminsResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{30}
+	return file_user_user_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ListAdminsResp) GetList() []*AdminInfo {
@@ -2777,7 +2891,7 @@ type CreateAdminReq struct {
 
 func (x *CreateAdminReq) Reset() {
 	*x = CreateAdminReq{}
-	mi := &file_user_user_proto_msgTypes[31]
+	mi := &file_user_user_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2789,7 +2903,7 @@ func (x *CreateAdminReq) String() string {
 func (*CreateAdminReq) ProtoMessage() {}
 
 func (x *CreateAdminReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[31]
+	mi := &file_user_user_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2802,7 +2916,7 @@ func (x *CreateAdminReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAdminReq.ProtoReflect.Descriptor instead.
 func (*CreateAdminReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{31}
+	return file_user_user_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *CreateAdminReq) GetUsername() string {
@@ -2915,7 +3029,7 @@ type UpdateAdminReq struct {
 
 func (x *UpdateAdminReq) Reset() {
 	*x = UpdateAdminReq{}
-	mi := &file_user_user_proto_msgTypes[32]
+	mi := &file_user_user_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2927,7 +3041,7 @@ func (x *UpdateAdminReq) String() string {
 func (*UpdateAdminReq) ProtoMessage() {}
 
 func (x *UpdateAdminReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[32]
+	mi := &file_user_user_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2940,7 +3054,7 @@ func (x *UpdateAdminReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateAdminReq.ProtoReflect.Descriptor instead.
 func (*UpdateAdminReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{32}
+	return file_user_user_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *UpdateAdminReq) GetId() int64 {
@@ -3031,7 +3145,7 @@ type DeleteAdminReq struct {
 
 func (x *DeleteAdminReq) Reset() {
 	*x = DeleteAdminReq{}
-	mi := &file_user_user_proto_msgTypes[33]
+	mi := &file_user_user_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3043,7 +3157,7 @@ func (x *DeleteAdminReq) String() string {
 func (*DeleteAdminReq) ProtoMessage() {}
 
 func (x *DeleteAdminReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[33]
+	mi := &file_user_user_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3056,7 +3170,7 @@ func (x *DeleteAdminReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteAdminReq.ProtoReflect.Descriptor instead.
 func (*DeleteAdminReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{33}
+	return file_user_user_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *DeleteAdminReq) GetId() int64 {
@@ -3084,7 +3198,7 @@ type GetAdminAssignmentsReq struct {
 
 func (x *GetAdminAssignmentsReq) Reset() {
 	*x = GetAdminAssignmentsReq{}
-	mi := &file_user_user_proto_msgTypes[34]
+	mi := &file_user_user_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3096,7 +3210,7 @@ func (x *GetAdminAssignmentsReq) String() string {
 func (*GetAdminAssignmentsReq) ProtoMessage() {}
 
 func (x *GetAdminAssignmentsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[34]
+	mi := &file_user_user_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3109,7 +3223,7 @@ func (x *GetAdminAssignmentsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAdminAssignmentsReq.ProtoReflect.Descriptor instead.
 func (*GetAdminAssignmentsReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{34}
+	return file_user_user_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GetAdminAssignmentsReq) GetAdminId() int64 {
@@ -3132,7 +3246,7 @@ type AdminAssignment struct {
 
 func (x *AdminAssignment) Reset() {
 	*x = AdminAssignment{}
-	mi := &file_user_user_proto_msgTypes[35]
+	mi := &file_user_user_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3144,7 +3258,7 @@ func (x *AdminAssignment) String() string {
 func (*AdminAssignment) ProtoMessage() {}
 
 func (x *AdminAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[35]
+	mi := &file_user_user_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3157,7 +3271,7 @@ func (x *AdminAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdminAssignment.ProtoReflect.Descriptor instead.
 func (*AdminAssignment) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{35}
+	return file_user_user_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *AdminAssignment) GetCommunityId() int64 {
@@ -3191,7 +3305,7 @@ type GetAdminAssignmentsResp struct {
 
 func (x *GetAdminAssignmentsResp) Reset() {
 	*x = GetAdminAssignmentsResp{}
-	mi := &file_user_user_proto_msgTypes[36]
+	mi := &file_user_user_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3203,7 +3317,7 @@ func (x *GetAdminAssignmentsResp) String() string {
 func (*GetAdminAssignmentsResp) ProtoMessage() {}
 
 func (x *GetAdminAssignmentsResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[36]
+	mi := &file_user_user_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3216,7 +3330,7 @@ func (x *GetAdminAssignmentsResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAdminAssignmentsResp.ProtoReflect.Descriptor instead.
 func (*GetAdminAssignmentsResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{36}
+	return file_user_user_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *GetAdminAssignmentsResp) GetList() []*AdminAssignment {
@@ -3239,7 +3353,7 @@ type ChangeAdminPasswordReq struct {
 
 func (x *ChangeAdminPasswordReq) Reset() {
 	*x = ChangeAdminPasswordReq{}
-	mi := &file_user_user_proto_msgTypes[37]
+	mi := &file_user_user_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3251,7 +3365,7 @@ func (x *ChangeAdminPasswordReq) String() string {
 func (*ChangeAdminPasswordReq) ProtoMessage() {}
 
 func (x *ChangeAdminPasswordReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[37]
+	mi := &file_user_user_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3264,7 +3378,7 @@ func (x *ChangeAdminPasswordReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeAdminPasswordReq.ProtoReflect.Descriptor instead.
 func (*ChangeAdminPasswordReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{37}
+	return file_user_user_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ChangeAdminPasswordReq) GetId() int64 {
@@ -3307,7 +3421,7 @@ type GetAdminContextReq struct {
 
 func (x *GetAdminContextReq) Reset() {
 	*x = GetAdminContextReq{}
-	mi := &file_user_user_proto_msgTypes[38]
+	mi := &file_user_user_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3319,7 +3433,7 @@ func (x *GetAdminContextReq) String() string {
 func (*GetAdminContextReq) ProtoMessage() {}
 
 func (x *GetAdminContextReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[38]
+	mi := &file_user_user_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3332,7 +3446,7 @@ func (x *GetAdminContextReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAdminContextReq.ProtoReflect.Descriptor instead.
 func (*GetAdminContextReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{38}
+	return file_user_user_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *GetAdminContextReq) GetAdminId() int64 {
@@ -3365,7 +3479,7 @@ type AdminContextInfo struct {
 
 func (x *AdminContextInfo) Reset() {
 	*x = AdminContextInfo{}
-	mi := &file_user_user_proto_msgTypes[39]
+	mi := &file_user_user_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3377,7 +3491,7 @@ func (x *AdminContextInfo) String() string {
 func (*AdminContextInfo) ProtoMessage() {}
 
 func (x *AdminContextInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[39]
+	mi := &file_user_user_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3390,7 +3504,7 @@ func (x *AdminContextInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdminContextInfo.ProtoReflect.Descriptor instead.
 func (*AdminContextInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{39}
+	return file_user_user_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *AdminContextInfo) GetIsSuper() bool {
@@ -3440,7 +3554,7 @@ type RoleInfo struct {
 
 func (x *RoleInfo) Reset() {
 	*x = RoleInfo{}
-	mi := &file_user_user_proto_msgTypes[40]
+	mi := &file_user_user_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3452,7 +3566,7 @@ func (x *RoleInfo) String() string {
 func (*RoleInfo) ProtoMessage() {}
 
 func (x *RoleInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[40]
+	mi := &file_user_user_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3465,7 +3579,7 @@ func (x *RoleInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoleInfo.ProtoReflect.Descriptor instead.
 func (*RoleInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{40}
+	return file_user_user_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *RoleInfo) GetId() int64 {
@@ -3538,7 +3652,7 @@ type ListRolesReq struct {
 
 func (x *ListRolesReq) Reset() {
 	*x = ListRolesReq{}
-	mi := &file_user_user_proto_msgTypes[41]
+	mi := &file_user_user_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3550,7 +3664,7 @@ func (x *ListRolesReq) String() string {
 func (*ListRolesReq) ProtoMessage() {}
 
 func (x *ListRolesReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[41]
+	mi := &file_user_user_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3563,7 +3677,7 @@ func (x *ListRolesReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRolesReq.ProtoReflect.Descriptor instead.
 func (*ListRolesReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{41}
+	return file_user_user_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ListRolesReq) GetCommunityId() int64 {
@@ -3596,7 +3710,7 @@ type ListRolesResp struct {
 
 func (x *ListRolesResp) Reset() {
 	*x = ListRolesResp{}
-	mi := &file_user_user_proto_msgTypes[42]
+	mi := &file_user_user_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3608,7 +3722,7 @@ func (x *ListRolesResp) String() string {
 func (*ListRolesResp) ProtoMessage() {}
 
 func (x *ListRolesResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[42]
+	mi := &file_user_user_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3621,7 +3735,7 @@ func (x *ListRolesResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRolesResp.ProtoReflect.Descriptor instead.
 func (*ListRolesResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{42}
+	return file_user_user_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ListRolesResp) GetList() []*RoleInfo {
@@ -3642,7 +3756,7 @@ type GetRoleReq struct {
 
 func (x *GetRoleReq) Reset() {
 	*x = GetRoleReq{}
-	mi := &file_user_user_proto_msgTypes[43]
+	mi := &file_user_user_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3654,7 +3768,7 @@ func (x *GetRoleReq) String() string {
 func (*GetRoleReq) ProtoMessage() {}
 
 func (x *GetRoleReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[43]
+	mi := &file_user_user_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3667,7 +3781,7 @@ func (x *GetRoleReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRoleReq.ProtoReflect.Descriptor instead.
 func (*GetRoleReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{43}
+	return file_user_user_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetRoleReq) GetId() int64 {
@@ -3698,7 +3812,7 @@ type CreateRoleReq struct {
 
 func (x *CreateRoleReq) Reset() {
 	*x = CreateRoleReq{}
-	mi := &file_user_user_proto_msgTypes[44]
+	mi := &file_user_user_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3710,7 +3824,7 @@ func (x *CreateRoleReq) String() string {
 func (*CreateRoleReq) ProtoMessage() {}
 
 func (x *CreateRoleReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[44]
+	mi := &file_user_user_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3723,7 +3837,7 @@ func (x *CreateRoleReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRoleReq.ProtoReflect.Descriptor instead.
 func (*CreateRoleReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{44}
+	return file_user_user_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *CreateRoleReq) GetName() string {
@@ -3776,7 +3890,7 @@ type UpdateRoleReq struct {
 
 func (x *UpdateRoleReq) Reset() {
 	*x = UpdateRoleReq{}
-	mi := &file_user_user_proto_msgTypes[45]
+	mi := &file_user_user_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3788,7 +3902,7 @@ func (x *UpdateRoleReq) String() string {
 func (*UpdateRoleReq) ProtoMessage() {}
 
 func (x *UpdateRoleReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[45]
+	mi := &file_user_user_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3801,7 +3915,7 @@ func (x *UpdateRoleReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateRoleReq.ProtoReflect.Descriptor instead.
 func (*UpdateRoleReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{45}
+	return file_user_user_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *UpdateRoleReq) GetId() int64 {
@@ -3857,7 +3971,7 @@ type DeleteRoleReq struct {
 
 func (x *DeleteRoleReq) Reset() {
 	*x = DeleteRoleReq{}
-	mi := &file_user_user_proto_msgTypes[46]
+	mi := &file_user_user_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3869,7 +3983,7 @@ func (x *DeleteRoleReq) String() string {
 func (*DeleteRoleReq) ProtoMessage() {}
 
 func (x *DeleteRoleReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[46]
+	mi := &file_user_user_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3882,7 +3996,7 @@ func (x *DeleteRoleReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRoleReq.ProtoReflect.Descriptor instead.
 func (*DeleteRoleReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{46}
+	return file_user_user_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *DeleteRoleReq) GetId() int64 {
@@ -3917,7 +4031,7 @@ type RegionInfo struct {
 
 func (x *RegionInfo) Reset() {
 	*x = RegionInfo{}
-	mi := &file_user_user_proto_msgTypes[47]
+	mi := &file_user_user_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3929,7 +4043,7 @@ func (x *RegionInfo) String() string {
 func (*RegionInfo) ProtoMessage() {}
 
 func (x *RegionInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[47]
+	mi := &file_user_user_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3942,7 +4056,7 @@ func (x *RegionInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegionInfo.ProtoReflect.Descriptor instead.
 func (*RegionInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{47}
+	return file_user_user_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *RegionInfo) GetCode() string {
@@ -3990,7 +4104,7 @@ type ListRegionChildrenReq struct {
 
 func (x *ListRegionChildrenReq) Reset() {
 	*x = ListRegionChildrenReq{}
-	mi := &file_user_user_proto_msgTypes[48]
+	mi := &file_user_user_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4002,7 +4116,7 @@ func (x *ListRegionChildrenReq) String() string {
 func (*ListRegionChildrenReq) ProtoMessage() {}
 
 func (x *ListRegionChildrenReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[48]
+	mi := &file_user_user_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4015,7 +4129,7 @@ func (x *ListRegionChildrenReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRegionChildrenReq.ProtoReflect.Descriptor instead.
 func (*ListRegionChildrenReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{48}
+	return file_user_user_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *ListRegionChildrenReq) GetParentCode() string {
@@ -4034,7 +4148,7 @@ type ListRegionChildrenResp struct {
 
 func (x *ListRegionChildrenResp) Reset() {
 	*x = ListRegionChildrenResp{}
-	mi := &file_user_user_proto_msgTypes[49]
+	mi := &file_user_user_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4046,7 +4160,7 @@ func (x *ListRegionChildrenResp) String() string {
 func (*ListRegionChildrenResp) ProtoMessage() {}
 
 func (x *ListRegionChildrenResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[49]
+	mi := &file_user_user_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4059,7 +4173,7 @@ func (x *ListRegionChildrenResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRegionChildrenResp.ProtoReflect.Descriptor instead.
 func (*ListRegionChildrenResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{49}
+	return file_user_user_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ListRegionChildrenResp) GetList() []*RegionInfo {
@@ -4086,7 +4200,7 @@ type ListRegionsReq struct {
 
 func (x *ListRegionsReq) Reset() {
 	*x = ListRegionsReq{}
-	mi := &file_user_user_proto_msgTypes[50]
+	mi := &file_user_user_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4098,7 +4212,7 @@ func (x *ListRegionsReq) String() string {
 func (*ListRegionsReq) ProtoMessage() {}
 
 func (x *ListRegionsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[50]
+	mi := &file_user_user_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4111,7 +4225,7 @@ func (x *ListRegionsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRegionsReq.ProtoReflect.Descriptor instead.
 func (*ListRegionsReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{50}
+	return file_user_user_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *ListRegionsReq) GetKeyword() string {
@@ -4159,7 +4273,7 @@ type ListRegionsResp struct {
 
 func (x *ListRegionsResp) Reset() {
 	*x = ListRegionsResp{}
-	mi := &file_user_user_proto_msgTypes[51]
+	mi := &file_user_user_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4171,7 +4285,7 @@ func (x *ListRegionsResp) String() string {
 func (*ListRegionsResp) ProtoMessage() {}
 
 func (x *ListRegionsResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[51]
+	mi := &file_user_user_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4184,7 +4298,7 @@ func (x *ListRegionsResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRegionsResp.ProtoReflect.Descriptor instead.
 func (*ListRegionsResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{51}
+	return file_user_user_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *ListRegionsResp) GetList() []*RegionInfo {
@@ -4211,7 +4325,7 @@ type MatchRegionByNameReq struct {
 
 func (x *MatchRegionByNameReq) Reset() {
 	*x = MatchRegionByNameReq{}
-	mi := &file_user_user_proto_msgTypes[52]
+	mi := &file_user_user_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4223,7 +4337,7 @@ func (x *MatchRegionByNameReq) String() string {
 func (*MatchRegionByNameReq) ProtoMessage() {}
 
 func (x *MatchRegionByNameReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[52]
+	mi := &file_user_user_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4236,7 +4350,7 @@ func (x *MatchRegionByNameReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MatchRegionByNameReq.ProtoReflect.Descriptor instead.
 func (*MatchRegionByNameReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{52}
+	return file_user_user_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *MatchRegionByNameReq) GetName() string {
@@ -4258,7 +4372,7 @@ type RegionMatchInfo struct {
 
 func (x *RegionMatchInfo) Reset() {
 	*x = RegionMatchInfo{}
-	mi := &file_user_user_proto_msgTypes[53]
+	mi := &file_user_user_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4270,7 +4384,7 @@ func (x *RegionMatchInfo) String() string {
 func (*RegionMatchInfo) ProtoMessage() {}
 
 func (x *RegionMatchInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[53]
+	mi := &file_user_user_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4283,7 +4397,7 @@ func (x *RegionMatchInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegionMatchInfo.ProtoReflect.Descriptor instead.
 func (*RegionMatchInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{53}
+	return file_user_user_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *RegionMatchInfo) GetProvince() *RegionInfo {
@@ -4316,7 +4430,7 @@ type RegionDiffItem struct {
 
 func (x *RegionDiffItem) Reset() {
 	*x = RegionDiffItem{}
-	mi := &file_user_user_proto_msgTypes[54]
+	mi := &file_user_user_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4328,7 +4442,7 @@ func (x *RegionDiffItem) String() string {
 func (*RegionDiffItem) ProtoMessage() {}
 
 func (x *RegionDiffItem) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[54]
+	mi := &file_user_user_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4341,7 +4455,7 @@ func (x *RegionDiffItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegionDiffItem.ProtoReflect.Descriptor instead.
 func (*RegionDiffItem) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{54}
+	return file_user_user_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *RegionDiffItem) GetCode() string {
@@ -4407,7 +4521,7 @@ type RegionUpdateTaskInfo struct {
 
 func (x *RegionUpdateTaskInfo) Reset() {
 	*x = RegionUpdateTaskInfo{}
-	mi := &file_user_user_proto_msgTypes[55]
+	mi := &file_user_user_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4419,7 +4533,7 @@ func (x *RegionUpdateTaskInfo) String() string {
 func (*RegionUpdateTaskInfo) ProtoMessage() {}
 
 func (x *RegionUpdateTaskInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[55]
+	mi := &file_user_user_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4432,7 +4546,7 @@ func (x *RegionUpdateTaskInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegionUpdateTaskInfo.ProtoReflect.Descriptor instead.
 func (*RegionUpdateTaskInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{55}
+	return file_user_user_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *RegionUpdateTaskInfo) GetId() int64 {
@@ -4549,7 +4663,7 @@ type GetRegionUpdateTaskReq struct {
 
 func (x *GetRegionUpdateTaskReq) Reset() {
 	*x = GetRegionUpdateTaskReq{}
-	mi := &file_user_user_proto_msgTypes[56]
+	mi := &file_user_user_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4561,7 +4675,7 @@ func (x *GetRegionUpdateTaskReq) String() string {
 func (*GetRegionUpdateTaskReq) ProtoMessage() {}
 
 func (x *GetRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[56]
+	mi := &file_user_user_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4574,7 +4688,7 @@ func (x *GetRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRegionUpdateTaskReq.ProtoReflect.Descriptor instead.
 func (*GetRegionUpdateTaskReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{56}
+	return file_user_user_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *GetRegionUpdateTaskReq) GetId() int64 {
@@ -4595,7 +4709,7 @@ type CreateRegionUpdateTaskReq struct {
 
 func (x *CreateRegionUpdateTaskReq) Reset() {
 	*x = CreateRegionUpdateTaskReq{}
-	mi := &file_user_user_proto_msgTypes[57]
+	mi := &file_user_user_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4607,7 +4721,7 @@ func (x *CreateRegionUpdateTaskReq) String() string {
 func (*CreateRegionUpdateTaskReq) ProtoMessage() {}
 
 func (x *CreateRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[57]
+	mi := &file_user_user_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4620,7 +4734,7 @@ func (x *CreateRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateRegionUpdateTaskReq.ProtoReflect.Descriptor instead.
 func (*CreateRegionUpdateTaskReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{57}
+	return file_user_user_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *CreateRegionUpdateTaskReq) GetSourceType() string {
@@ -4639,7 +4753,7 @@ type ApplyRegionUpdateTaskReq struct {
 
 func (x *ApplyRegionUpdateTaskReq) Reset() {
 	*x = ApplyRegionUpdateTaskReq{}
-	mi := &file_user_user_proto_msgTypes[58]
+	mi := &file_user_user_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4651,7 +4765,7 @@ func (x *ApplyRegionUpdateTaskReq) String() string {
 func (*ApplyRegionUpdateTaskReq) ProtoMessage() {}
 
 func (x *ApplyRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[58]
+	mi := &file_user_user_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4664,7 +4778,7 @@ func (x *ApplyRegionUpdateTaskReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyRegionUpdateTaskReq.ProtoReflect.Descriptor instead.
 func (*ApplyRegionUpdateTaskReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{58}
+	return file_user_user_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *ApplyRegionUpdateTaskReq) GetId() int64 {
@@ -4679,7 +4793,7 @@ type MarkUserCommunityReq struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	UserId      int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	CommunityId int64                  `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	// 记录来源：address 收货地址 / order 下单 / admin 后台添加 / backfill 存量回填
+	// 记录来源：address 收货地址 / order 下单 / admin 后台添加 / pos 收银台 / user_select 会员切换社区 / backfill 存量回填
 	Source        string `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4687,7 +4801,7 @@ type MarkUserCommunityReq struct {
 
 func (x *MarkUserCommunityReq) Reset() {
 	*x = MarkUserCommunityReq{}
-	mi := &file_user_user_proto_msgTypes[59]
+	mi := &file_user_user_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4699,7 +4813,7 @@ func (x *MarkUserCommunityReq) String() string {
 func (*MarkUserCommunityReq) ProtoMessage() {}
 
 func (x *MarkUserCommunityReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[59]
+	mi := &file_user_user_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4712,7 +4826,7 @@ func (x *MarkUserCommunityReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkUserCommunityReq.ProtoReflect.Descriptor instead.
 func (*MarkUserCommunityReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{59}
+	return file_user_user_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *MarkUserCommunityReq) GetUserId() int64 {
@@ -4750,7 +4864,7 @@ type SetUserStatusReq struct {
 
 func (x *SetUserStatusReq) Reset() {
 	*x = SetUserStatusReq{}
-	mi := &file_user_user_proto_msgTypes[60]
+	mi := &file_user_user_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4762,7 +4876,7 @@ func (x *SetUserStatusReq) String() string {
 func (*SetUserStatusReq) ProtoMessage() {}
 
 func (x *SetUserStatusReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[60]
+	mi := &file_user_user_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4775,7 +4889,7 @@ func (x *SetUserStatusReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetUserStatusReq.ProtoReflect.Descriptor instead.
 func (*SetUserStatusReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{60}
+	return file_user_user_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *SetUserStatusReq) GetId() int64 {
@@ -4819,7 +4933,7 @@ type CreateMemberReq struct {
 
 func (x *CreateMemberReq) Reset() {
 	*x = CreateMemberReq{}
-	mi := &file_user_user_proto_msgTypes[61]
+	mi := &file_user_user_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4831,7 +4945,7 @@ func (x *CreateMemberReq) String() string {
 func (*CreateMemberReq) ProtoMessage() {}
 
 func (x *CreateMemberReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[61]
+	mi := &file_user_user_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4844,7 +4958,7 @@ func (x *CreateMemberReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateMemberReq.ProtoReflect.Descriptor instead.
 func (*CreateMemberReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{61}
+	return file_user_user_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *CreateMemberReq) GetPhone() string {
@@ -4902,7 +5016,7 @@ type CreateMemberResp struct {
 
 func (x *CreateMemberResp) Reset() {
 	*x = CreateMemberResp{}
-	mi := &file_user_user_proto_msgTypes[62]
+	mi := &file_user_user_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4914,7 +5028,7 @@ func (x *CreateMemberResp) String() string {
 func (*CreateMemberResp) ProtoMessage() {}
 
 func (x *CreateMemberResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[62]
+	mi := &file_user_user_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4927,7 +5041,7 @@ func (x *CreateMemberResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateMemberResp.ProtoReflect.Descriptor instead.
 func (*CreateMemberResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{62}
+	return file_user_user_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *CreateMemberResp) GetUser() *UserInfo {
@@ -4963,7 +5077,7 @@ type UpdateMemberReq struct {
 
 func (x *UpdateMemberReq) Reset() {
 	*x = UpdateMemberReq{}
-	mi := &file_user_user_proto_msgTypes[63]
+	mi := &file_user_user_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4975,7 +5089,7 @@ func (x *UpdateMemberReq) String() string {
 func (*UpdateMemberReq) ProtoMessage() {}
 
 func (x *UpdateMemberReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[63]
+	mi := &file_user_user_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4988,7 +5102,7 @@ func (x *UpdateMemberReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateMemberReq.ProtoReflect.Descriptor instead.
 func (*UpdateMemberReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{63}
+	return file_user_user_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *UpdateMemberReq) GetId() int64 {
@@ -5038,7 +5152,7 @@ type FulfillerInfo struct {
 
 func (x *FulfillerInfo) Reset() {
 	*x = FulfillerInfo{}
-	mi := &file_user_user_proto_msgTypes[64]
+	mi := &file_user_user_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5050,7 +5164,7 @@ func (x *FulfillerInfo) String() string {
 func (*FulfillerInfo) ProtoMessage() {}
 
 func (x *FulfillerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[64]
+	mi := &file_user_user_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5063,7 +5177,7 @@ func (x *FulfillerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FulfillerInfo.ProtoReflect.Descriptor instead.
 func (*FulfillerInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{64}
+	return file_user_user_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *FulfillerInfo) GetUserId() int64 {
@@ -5096,7 +5210,7 @@ type ListFulfillersReq struct {
 
 func (x *ListFulfillersReq) Reset() {
 	*x = ListFulfillersReq{}
-	mi := &file_user_user_proto_msgTypes[65]
+	mi := &file_user_user_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5108,7 +5222,7 @@ func (x *ListFulfillersReq) String() string {
 func (*ListFulfillersReq) ProtoMessage() {}
 
 func (x *ListFulfillersReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[65]
+	mi := &file_user_user_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5121,7 +5235,7 @@ func (x *ListFulfillersReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFulfillersReq.ProtoReflect.Descriptor instead.
 func (*ListFulfillersReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{65}
+	return file_user_user_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *ListFulfillersReq) GetCommunityId() int64 {
@@ -5140,7 +5254,7 @@ type ListFulfillersResp struct {
 
 func (x *ListFulfillersResp) Reset() {
 	*x = ListFulfillersResp{}
-	mi := &file_user_user_proto_msgTypes[66]
+	mi := &file_user_user_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5152,7 +5266,7 @@ func (x *ListFulfillersResp) String() string {
 func (*ListFulfillersResp) ProtoMessage() {}
 
 func (x *ListFulfillersResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[66]
+	mi := &file_user_user_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5165,7 +5279,7 @@ func (x *ListFulfillersResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFulfillersResp.ProtoReflect.Descriptor instead.
 func (*ListFulfillersResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{66}
+	return file_user_user_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ListFulfillersResp) GetList() []*FulfillerInfo {
@@ -5186,7 +5300,7 @@ type CheckFulfillerReq struct {
 
 func (x *CheckFulfillerReq) Reset() {
 	*x = CheckFulfillerReq{}
-	mi := &file_user_user_proto_msgTypes[67]
+	mi := &file_user_user_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5198,7 +5312,7 @@ func (x *CheckFulfillerReq) String() string {
 func (*CheckFulfillerReq) ProtoMessage() {}
 
 func (x *CheckFulfillerReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[67]
+	mi := &file_user_user_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5211,7 +5325,7 @@ func (x *CheckFulfillerReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckFulfillerReq.ProtoReflect.Descriptor instead.
 func (*CheckFulfillerReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{67}
+	return file_user_user_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *CheckFulfillerReq) GetUserId() int64 {
@@ -5237,7 +5351,7 @@ type CheckFulfillerResp struct {
 
 func (x *CheckFulfillerResp) Reset() {
 	*x = CheckFulfillerResp{}
-	mi := &file_user_user_proto_msgTypes[68]
+	mi := &file_user_user_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5249,7 +5363,7 @@ func (x *CheckFulfillerResp) String() string {
 func (*CheckFulfillerResp) ProtoMessage() {}
 
 func (x *CheckFulfillerResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[68]
+	mi := &file_user_user_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5262,7 +5376,7 @@ func (x *CheckFulfillerResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckFulfillerResp.ProtoReflect.Descriptor instead.
 func (*CheckFulfillerResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{68}
+	return file_user_user_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *CheckFulfillerResp) GetIsFulfiller() bool {
@@ -5292,7 +5406,7 @@ type ClientChannelInfo struct {
 
 func (x *ClientChannelInfo) Reset() {
 	*x = ClientChannelInfo{}
-	mi := &file_user_user_proto_msgTypes[69]
+	mi := &file_user_user_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5304,7 +5418,7 @@ func (x *ClientChannelInfo) String() string {
 func (*ClientChannelInfo) ProtoMessage() {}
 
 func (x *ClientChannelInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[69]
+	mi := &file_user_user_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5317,7 +5431,7 @@ func (x *ClientChannelInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientChannelInfo.ProtoReflect.Descriptor instead.
 func (*ClientChannelInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{69}
+	return file_user_user_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *ClientChannelInfo) GetId() int64 {
@@ -5393,7 +5507,7 @@ type ListClientChannelsReq struct {
 
 func (x *ListClientChannelsReq) Reset() {
 	*x = ListClientChannelsReq{}
-	mi := &file_user_user_proto_msgTypes[70]
+	mi := &file_user_user_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5405,7 +5519,7 @@ func (x *ListClientChannelsReq) String() string {
 func (*ListClientChannelsReq) ProtoMessage() {}
 
 func (x *ListClientChannelsReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[70]
+	mi := &file_user_user_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5418,7 +5532,7 @@ func (x *ListClientChannelsReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListClientChannelsReq.ProtoReflect.Descriptor instead.
 func (*ListClientChannelsReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{70}
+	return file_user_user_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *ListClientChannelsReq) GetOnlyEnabled() bool {
@@ -5437,7 +5551,7 @@ type ListClientChannelsResp struct {
 
 func (x *ListClientChannelsResp) Reset() {
 	*x = ListClientChannelsResp{}
-	mi := &file_user_user_proto_msgTypes[71]
+	mi := &file_user_user_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5449,7 +5563,7 @@ func (x *ListClientChannelsResp) String() string {
 func (*ListClientChannelsResp) ProtoMessage() {}
 
 func (x *ListClientChannelsResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[71]
+	mi := &file_user_user_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5462,7 +5576,7 @@ func (x *ListClientChannelsResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListClientChannelsResp.ProtoReflect.Descriptor instead.
 func (*ListClientChannelsResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{71}
+	return file_user_user_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *ListClientChannelsResp) GetList() []*ClientChannelInfo {
@@ -5481,7 +5595,7 @@ type GetClientChannelReq struct {
 
 func (x *GetClientChannelReq) Reset() {
 	*x = GetClientChannelReq{}
-	mi := &file_user_user_proto_msgTypes[72]
+	mi := &file_user_user_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5493,7 +5607,7 @@ func (x *GetClientChannelReq) String() string {
 func (*GetClientChannelReq) ProtoMessage() {}
 
 func (x *GetClientChannelReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[72]
+	mi := &file_user_user_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5506,7 +5620,7 @@ func (x *GetClientChannelReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetClientChannelReq.ProtoReflect.Descriptor instead.
 func (*GetClientChannelReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{72}
+	return file_user_user_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *GetClientChannelReq) GetCode() string {
@@ -5533,7 +5647,7 @@ type SaveClientChannelReq struct {
 
 func (x *SaveClientChannelReq) Reset() {
 	*x = SaveClientChannelReq{}
-	mi := &file_user_user_proto_msgTypes[73]
+	mi := &file_user_user_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5545,7 +5659,7 @@ func (x *SaveClientChannelReq) String() string {
 func (*SaveClientChannelReq) ProtoMessage() {}
 
 func (x *SaveClientChannelReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[73]
+	mi := &file_user_user_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5558,7 +5672,7 @@ func (x *SaveClientChannelReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveClientChannelReq.ProtoReflect.Descriptor instead.
 func (*SaveClientChannelReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{73}
+	return file_user_user_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *SaveClientChannelReq) GetId() int64 {
@@ -5620,7 +5734,7 @@ type GetUserChannelOpenidReq struct {
 
 func (x *GetUserChannelOpenidReq) Reset() {
 	*x = GetUserChannelOpenidReq{}
-	mi := &file_user_user_proto_msgTypes[74]
+	mi := &file_user_user_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5632,7 +5746,7 @@ func (x *GetUserChannelOpenidReq) String() string {
 func (*GetUserChannelOpenidReq) ProtoMessage() {}
 
 func (x *GetUserChannelOpenidReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[74]
+	mi := &file_user_user_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5645,7 +5759,7 @@ func (x *GetUserChannelOpenidReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserChannelOpenidReq.ProtoReflect.Descriptor instead.
 func (*GetUserChannelOpenidReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{74}
+	return file_user_user_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *GetUserChannelOpenidReq) GetUserId() int64 {
@@ -5672,7 +5786,7 @@ type GetUserChannelOpenidResp struct {
 
 func (x *GetUserChannelOpenidResp) Reset() {
 	*x = GetUserChannelOpenidResp{}
-	mi := &file_user_user_proto_msgTypes[75]
+	mi := &file_user_user_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5684,7 +5798,7 @@ func (x *GetUserChannelOpenidResp) String() string {
 func (*GetUserChannelOpenidResp) ProtoMessage() {}
 
 func (x *GetUserChannelOpenidResp) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[75]
+	mi := &file_user_user_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5697,7 +5811,7 @@ func (x *GetUserChannelOpenidResp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserChannelOpenidResp.ProtoReflect.Descriptor instead.
 func (*GetUserChannelOpenidResp) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{75}
+	return file_user_user_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *GetUserChannelOpenidResp) GetOpenid() string {
@@ -5726,7 +5840,7 @@ type UpsertUserChannelIdentityReq struct {
 
 func (x *UpsertUserChannelIdentityReq) Reset() {
 	*x = UpsertUserChannelIdentityReq{}
-	mi := &file_user_user_proto_msgTypes[76]
+	mi := &file_user_user_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5738,7 +5852,7 @@ func (x *UpsertUserChannelIdentityReq) String() string {
 func (*UpsertUserChannelIdentityReq) ProtoMessage() {}
 
 func (x *UpsertUserChannelIdentityReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[76]
+	mi := &file_user_user_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5751,7 +5865,7 @@ func (x *UpsertUserChannelIdentityReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpsertUserChannelIdentityReq.ProtoReflect.Descriptor instead.
 func (*UpsertUserChannelIdentityReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{76}
+	return file_user_user_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *UpsertUserChannelIdentityReq) GetUserId() int64 {
@@ -5809,7 +5923,7 @@ type SiteConfigInfo struct {
 
 func (x *SiteConfigInfo) Reset() {
 	*x = SiteConfigInfo{}
-	mi := &file_user_user_proto_msgTypes[77]
+	mi := &file_user_user_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5821,7 +5935,7 @@ func (x *SiteConfigInfo) String() string {
 func (*SiteConfigInfo) ProtoMessage() {}
 
 func (x *SiteConfigInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[77]
+	mi := &file_user_user_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5834,7 +5948,7 @@ func (x *SiteConfigInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SiteConfigInfo.ProtoReflect.Descriptor instead.
 func (*SiteConfigInfo) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{77}
+	return file_user_user_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *SiteConfigInfo) GetId() int64 {
@@ -5915,7 +6029,7 @@ type GetSiteConfigReq struct {
 
 func (x *GetSiteConfigReq) Reset() {
 	*x = GetSiteConfigReq{}
-	mi := &file_user_user_proto_msgTypes[78]
+	mi := &file_user_user_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5927,7 +6041,7 @@ func (x *GetSiteConfigReq) String() string {
 func (*GetSiteConfigReq) ProtoMessage() {}
 
 func (x *GetSiteConfigReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[78]
+	mi := &file_user_user_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5940,7 +6054,7 @@ func (x *GetSiteConfigReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSiteConfigReq.ProtoReflect.Descriptor instead.
 func (*GetSiteConfigReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{78}
+	return file_user_user_proto_rawDescGZIP(), []int{80}
 }
 
 // SaveSiteConfigReq 保存站点设置
@@ -5961,7 +6075,7 @@ type SaveSiteConfigReq struct {
 
 func (x *SaveSiteConfigReq) Reset() {
 	*x = SaveSiteConfigReq{}
-	mi := &file_user_user_proto_msgTypes[79]
+	mi := &file_user_user_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5973,7 +6087,7 @@ func (x *SaveSiteConfigReq) String() string {
 func (*SaveSiteConfigReq) ProtoMessage() {}
 
 func (x *SaveSiteConfigReq) ProtoReflect() protoreflect.Message {
-	mi := &file_user_user_proto_msgTypes[79]
+	mi := &file_user_user_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5986,7 +6100,7 @@ func (x *SaveSiteConfigReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SaveSiteConfigReq.ProtoReflect.Descriptor instead.
 func (*SaveSiteConfigReq) Descriptor() ([]byte, []int) {
-	return file_user_user_proto_rawDescGZIP(), []int{79}
+	return file_user_user_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *SaveSiteConfigReq) GetBaseUrl() string {
@@ -6266,11 +6380,17 @@ const file_user_user_proto_rawDesc = "" +
 	"\x15GetAdminByUsernameReq\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\"!\n" +
 	"\x0fGetAdminByIdReq\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\"\x9f\x04\n" +
+	"\x02id\x18\x01 \x01(\x03R\x02id\"R\n" +
+	"\x18VerifyAdminCredentialReq\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\"i\n" +
+	"\x19VerifyAdminCredentialResp\x12%\n" +
+	"\x0epassword_valid\x18\x01 \x01(\bR\rpasswordValid\x12%\n" +
+	"\x05admin\x18\x02 \x01(\v2\x0f.user.AdminInfoR\x05admin\"\xa3\x04\n" +
 	"\tAdminInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1a\n" +
-	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
-	"\bpassword\x18\x03 \x01(\tR\bpassword\x12\x1b\n" +
+	"\busername\x18\x02 \x01(\tR\busername\x12\x1e\n" +
+	"\bpassword\x18\x03 \x01(\tB\x02\x18\x01R\bpassword\x12\x1b\n" +
 	"\treal_name\x18\x04 \x01(\tR\brealName\x12\x14\n" +
 	"\x05phone\x18\x05 \x01(\tR\x05phone\x12\x17\n" +
 	"\arole_id\x18\x06 \x01(\x03R\x06roleId\x12\x1b\n" +
@@ -6556,7 +6676,7 @@ const file_user_user_proto_rawDesc = "" +
 	"\vfooter_html\x18\t \x01(\tR\n" +
 	"footerHtml\x12'\n" +
 	"\x0fseo_description\x18\a \x01(\tR\x0eseoDescription\x12!\n" +
-	"\fseo_keywords\x18\b \x01(\tR\vseoKeywords2\x8c\x1b\n" +
+	"\fseo_keywords\x18\b \x01(\tR\vseoKeywords2\xe6\x1b\n" +
 	"\vUserService\x123\n" +
 	"\vGetUserById\x12\x14.user.GetUserByIdReq\x1a\x0e.user.UserInfo\x129\n" +
 	"\x0eGetUserByPhone\x12\x17.user.GetUserByPhoneReq\x1a\x0e.user.UserInfo\x129\n" +
@@ -6585,7 +6705,8 @@ const file_user_user_proto_rawDesc = "" +
 	"\x16CreateRegionUpdateTask\x12\x1f.user.CreateRegionUpdateTaskReq\x1a\x1a.user.RegionUpdateTaskInfo\x12O\n" +
 	"\x13GetRegionUpdateTask\x12\x1c.user.GetRegionUpdateTaskReq\x1a\x1a.user.RegionUpdateTaskInfo\x12O\n" +
 	"\x15ApplyRegionUpdateTask\x12\x1e.user.ApplyRegionUpdateTaskReq\x1a\x16.common.CommonResponse\x12B\n" +
-	"\x12GetAdminByUsername\x12\x1b.user.GetAdminByUsernameReq\x1a\x0f.user.AdminInfo\x126\n" +
+	"\x12GetAdminByUsername\x12\x1b.user.GetAdminByUsernameReq\x1a\x0f.user.AdminInfo\x12X\n" +
+	"\x15VerifyAdminCredential\x12\x1e.user.VerifyAdminCredentialReq\x1a\x1f.user.VerifyAdminCredentialResp\x126\n" +
 	"\fGetAdminById\x12\x15.user.GetAdminByIdReq\x1a\x0f.user.AdminInfo\x127\n" +
 	"\n" +
 	"ListAdmins\x12\x13.user.ListAdminsReq\x1a\x14.user.ListAdminsResp\x124\n" +
@@ -6628,7 +6749,7 @@ func file_user_user_proto_rawDescGZIP() []byte {
 	return file_user_user_proto_rawDescData
 }
 
-var file_user_user_proto_msgTypes = make([]protoimpl.MessageInfo, 80)
+var file_user_user_proto_msgTypes = make([]protoimpl.MessageInfo, 82)
 var file_user_user_proto_goTypes = []any{
 	(*GetUserByIdReq)(nil),               // 0: user.GetUserByIdReq
 	(*GetUserByPhoneReq)(nil),            // 1: user.GetUserByPhoneReq
@@ -6658,200 +6779,205 @@ var file_user_user_proto_goTypes = []any{
 	(*ListCommunitiesResp)(nil),          // 25: user.ListCommunitiesResp
 	(*GetAdminByUsernameReq)(nil),        // 26: user.GetAdminByUsernameReq
 	(*GetAdminByIdReq)(nil),              // 27: user.GetAdminByIdReq
-	(*AdminInfo)(nil),                    // 28: user.AdminInfo
-	(*ListAdminsReq)(nil),                // 29: user.ListAdminsReq
-	(*ListAdminsResp)(nil),               // 30: user.ListAdminsResp
-	(*CreateAdminReq)(nil),               // 31: user.CreateAdminReq
-	(*UpdateAdminReq)(nil),               // 32: user.UpdateAdminReq
-	(*DeleteAdminReq)(nil),               // 33: user.DeleteAdminReq
-	(*GetAdminAssignmentsReq)(nil),       // 34: user.GetAdminAssignmentsReq
-	(*AdminAssignment)(nil),              // 35: user.AdminAssignment
-	(*GetAdminAssignmentsResp)(nil),      // 36: user.GetAdminAssignmentsResp
-	(*ChangeAdminPasswordReq)(nil),       // 37: user.ChangeAdminPasswordReq
-	(*GetAdminContextReq)(nil),           // 38: user.GetAdminContextReq
-	(*AdminContextInfo)(nil),             // 39: user.AdminContextInfo
-	(*RoleInfo)(nil),                     // 40: user.RoleInfo
-	(*ListRolesReq)(nil),                 // 41: user.ListRolesReq
-	(*ListRolesResp)(nil),                // 42: user.ListRolesResp
-	(*GetRoleReq)(nil),                   // 43: user.GetRoleReq
-	(*CreateRoleReq)(nil),                // 44: user.CreateRoleReq
-	(*UpdateRoleReq)(nil),                // 45: user.UpdateRoleReq
-	(*DeleteRoleReq)(nil),                // 46: user.DeleteRoleReq
-	(*RegionInfo)(nil),                   // 47: user.RegionInfo
-	(*ListRegionChildrenReq)(nil),        // 48: user.ListRegionChildrenReq
-	(*ListRegionChildrenResp)(nil),       // 49: user.ListRegionChildrenResp
-	(*ListRegionsReq)(nil),               // 50: user.ListRegionsReq
-	(*ListRegionsResp)(nil),              // 51: user.ListRegionsResp
-	(*MatchRegionByNameReq)(nil),         // 52: user.MatchRegionByNameReq
-	(*RegionMatchInfo)(nil),              // 53: user.RegionMatchInfo
-	(*RegionDiffItem)(nil),               // 54: user.RegionDiffItem
-	(*RegionUpdateTaskInfo)(nil),         // 55: user.RegionUpdateTaskInfo
-	(*GetRegionUpdateTaskReq)(nil),       // 56: user.GetRegionUpdateTaskReq
-	(*CreateRegionUpdateTaskReq)(nil),    // 57: user.CreateRegionUpdateTaskReq
-	(*ApplyRegionUpdateTaskReq)(nil),     // 58: user.ApplyRegionUpdateTaskReq
-	(*MarkUserCommunityReq)(nil),         // 59: user.MarkUserCommunityReq
-	(*SetUserStatusReq)(nil),             // 60: user.SetUserStatusReq
-	(*CreateMemberReq)(nil),              // 61: user.CreateMemberReq
-	(*CreateMemberResp)(nil),             // 62: user.CreateMemberResp
-	(*UpdateMemberReq)(nil),              // 63: user.UpdateMemberReq
-	(*FulfillerInfo)(nil),                // 64: user.FulfillerInfo
-	(*ListFulfillersReq)(nil),            // 65: user.ListFulfillersReq
-	(*ListFulfillersResp)(nil),           // 66: user.ListFulfillersResp
-	(*CheckFulfillerReq)(nil),            // 67: user.CheckFulfillerReq
-	(*CheckFulfillerResp)(nil),           // 68: user.CheckFulfillerResp
-	(*ClientChannelInfo)(nil),            // 69: user.ClientChannelInfo
-	(*ListClientChannelsReq)(nil),        // 70: user.ListClientChannelsReq
-	(*ListClientChannelsResp)(nil),       // 71: user.ListClientChannelsResp
-	(*GetClientChannelReq)(nil),          // 72: user.GetClientChannelReq
-	(*SaveClientChannelReq)(nil),         // 73: user.SaveClientChannelReq
-	(*GetUserChannelOpenidReq)(nil),      // 74: user.GetUserChannelOpenidReq
-	(*GetUserChannelOpenidResp)(nil),     // 75: user.GetUserChannelOpenidResp
-	(*UpsertUserChannelIdentityReq)(nil), // 76: user.UpsertUserChannelIdentityReq
-	(*SiteConfigInfo)(nil),               // 77: user.SiteConfigInfo
-	(*GetSiteConfigReq)(nil),             // 78: user.GetSiteConfigReq
-	(*SaveSiteConfigReq)(nil),            // 79: user.SaveSiteConfigReq
-	(*common.Pagination)(nil),            // 80: common.Pagination
-	(*common.PaginationResponse)(nil),    // 81: common.PaginationResponse
-	(*common.CommonResponse)(nil),        // 82: common.CommonResponse
+	(*VerifyAdminCredentialReq)(nil),     // 28: user.VerifyAdminCredentialReq
+	(*VerifyAdminCredentialResp)(nil),    // 29: user.VerifyAdminCredentialResp
+	(*AdminInfo)(nil),                    // 30: user.AdminInfo
+	(*ListAdminsReq)(nil),                // 31: user.ListAdminsReq
+	(*ListAdminsResp)(nil),               // 32: user.ListAdminsResp
+	(*CreateAdminReq)(nil),               // 33: user.CreateAdminReq
+	(*UpdateAdminReq)(nil),               // 34: user.UpdateAdminReq
+	(*DeleteAdminReq)(nil),               // 35: user.DeleteAdminReq
+	(*GetAdminAssignmentsReq)(nil),       // 36: user.GetAdminAssignmentsReq
+	(*AdminAssignment)(nil),              // 37: user.AdminAssignment
+	(*GetAdminAssignmentsResp)(nil),      // 38: user.GetAdminAssignmentsResp
+	(*ChangeAdminPasswordReq)(nil),       // 39: user.ChangeAdminPasswordReq
+	(*GetAdminContextReq)(nil),           // 40: user.GetAdminContextReq
+	(*AdminContextInfo)(nil),             // 41: user.AdminContextInfo
+	(*RoleInfo)(nil),                     // 42: user.RoleInfo
+	(*ListRolesReq)(nil),                 // 43: user.ListRolesReq
+	(*ListRolesResp)(nil),                // 44: user.ListRolesResp
+	(*GetRoleReq)(nil),                   // 45: user.GetRoleReq
+	(*CreateRoleReq)(nil),                // 46: user.CreateRoleReq
+	(*UpdateRoleReq)(nil),                // 47: user.UpdateRoleReq
+	(*DeleteRoleReq)(nil),                // 48: user.DeleteRoleReq
+	(*RegionInfo)(nil),                   // 49: user.RegionInfo
+	(*ListRegionChildrenReq)(nil),        // 50: user.ListRegionChildrenReq
+	(*ListRegionChildrenResp)(nil),       // 51: user.ListRegionChildrenResp
+	(*ListRegionsReq)(nil),               // 52: user.ListRegionsReq
+	(*ListRegionsResp)(nil),              // 53: user.ListRegionsResp
+	(*MatchRegionByNameReq)(nil),         // 54: user.MatchRegionByNameReq
+	(*RegionMatchInfo)(nil),              // 55: user.RegionMatchInfo
+	(*RegionDiffItem)(nil),               // 56: user.RegionDiffItem
+	(*RegionUpdateTaskInfo)(nil),         // 57: user.RegionUpdateTaskInfo
+	(*GetRegionUpdateTaskReq)(nil),       // 58: user.GetRegionUpdateTaskReq
+	(*CreateRegionUpdateTaskReq)(nil),    // 59: user.CreateRegionUpdateTaskReq
+	(*ApplyRegionUpdateTaskReq)(nil),     // 60: user.ApplyRegionUpdateTaskReq
+	(*MarkUserCommunityReq)(nil),         // 61: user.MarkUserCommunityReq
+	(*SetUserStatusReq)(nil),             // 62: user.SetUserStatusReq
+	(*CreateMemberReq)(nil),              // 63: user.CreateMemberReq
+	(*CreateMemberResp)(nil),             // 64: user.CreateMemberResp
+	(*UpdateMemberReq)(nil),              // 65: user.UpdateMemberReq
+	(*FulfillerInfo)(nil),                // 66: user.FulfillerInfo
+	(*ListFulfillersReq)(nil),            // 67: user.ListFulfillersReq
+	(*ListFulfillersResp)(nil),           // 68: user.ListFulfillersResp
+	(*CheckFulfillerReq)(nil),            // 69: user.CheckFulfillerReq
+	(*CheckFulfillerResp)(nil),           // 70: user.CheckFulfillerResp
+	(*ClientChannelInfo)(nil),            // 71: user.ClientChannelInfo
+	(*ListClientChannelsReq)(nil),        // 72: user.ListClientChannelsReq
+	(*ListClientChannelsResp)(nil),       // 73: user.ListClientChannelsResp
+	(*GetClientChannelReq)(nil),          // 74: user.GetClientChannelReq
+	(*SaveClientChannelReq)(nil),         // 75: user.SaveClientChannelReq
+	(*GetUserChannelOpenidReq)(nil),      // 76: user.GetUserChannelOpenidReq
+	(*GetUserChannelOpenidResp)(nil),     // 77: user.GetUserChannelOpenidResp
+	(*UpsertUserChannelIdentityReq)(nil), // 78: user.UpsertUserChannelIdentityReq
+	(*SiteConfigInfo)(nil),               // 79: user.SiteConfigInfo
+	(*GetSiteConfigReq)(nil),             // 80: user.GetSiteConfigReq
+	(*SaveSiteConfigReq)(nil),            // 81: user.SaveSiteConfigReq
+	(*common.Pagination)(nil),            // 82: common.Pagination
+	(*common.PaginationResponse)(nil),    // 83: common.PaginationResponse
+	(*common.CommonResponse)(nil),        // 84: common.CommonResponse
 }
 var file_user_user_proto_depIdxs = []int32{
-	80, // 0: user.ListUsersReq.pagination:type_name -> common.Pagination
+	82, // 0: user.ListUsersReq.pagination:type_name -> common.Pagination
 	4,  // 1: user.ListUsersResp.list:type_name -> user.UserInfo
-	81, // 2: user.ListUsersResp.pagination:type_name -> common.PaginationResponse
+	83, // 2: user.ListUsersResp.pagination:type_name -> common.PaginationResponse
 	4,  // 3: user.BatchGetUsersResp.list:type_name -> user.UserInfo
 	16, // 4: user.ListAddressesResp.list:type_name -> user.AddressInfo
-	80, // 5: user.ListCommunitiesReq.pagination:type_name -> common.Pagination
-	80, // 6: user.ListNearbyCommunitiesReq.pagination:type_name -> common.Pagination
+	82, // 5: user.ListCommunitiesReq.pagination:type_name -> common.Pagination
+	82, // 6: user.ListNearbyCommunitiesReq.pagination:type_name -> common.Pagination
 	19, // 7: user.ListCommunitiesResp.list:type_name -> user.CommunityInfo
-	81, // 8: user.ListCommunitiesResp.pagination:type_name -> common.PaginationResponse
-	40, // 9: user.AdminInfo.roles:type_name -> user.RoleInfo
-	80, // 10: user.ListAdminsReq.pagination:type_name -> common.Pagination
-	28, // 11: user.ListAdminsResp.list:type_name -> user.AdminInfo
-	81, // 12: user.ListAdminsResp.pagination:type_name -> common.PaginationResponse
-	40, // 13: user.AdminAssignment.roles:type_name -> user.RoleInfo
-	35, // 14: user.GetAdminAssignmentsResp.list:type_name -> user.AdminAssignment
-	40, // 15: user.ListRolesResp.list:type_name -> user.RoleInfo
-	47, // 16: user.ListRegionChildrenResp.list:type_name -> user.RegionInfo
-	80, // 17: user.ListRegionsReq.pagination:type_name -> common.Pagination
-	47, // 18: user.ListRegionsResp.list:type_name -> user.RegionInfo
-	81, // 19: user.ListRegionsResp.pagination:type_name -> common.PaginationResponse
-	47, // 20: user.RegionMatchInfo.province:type_name -> user.RegionInfo
-	47, // 21: user.RegionMatchInfo.city:type_name -> user.RegionInfo
-	54, // 22: user.RegionUpdateTaskInfo.added:type_name -> user.RegionDiffItem
-	54, // 23: user.RegionUpdateTaskInfo.updated:type_name -> user.RegionDiffItem
-	54, // 24: user.RegionUpdateTaskInfo.removed:type_name -> user.RegionDiffItem
-	4,  // 25: user.CreateMemberResp.user:type_name -> user.UserInfo
-	64, // 26: user.ListFulfillersResp.list:type_name -> user.FulfillerInfo
-	69, // 27: user.ListClientChannelsResp.list:type_name -> user.ClientChannelInfo
-	0,  // 28: user.UserService.GetUserById:input_type -> user.GetUserByIdReq
-	1,  // 29: user.UserService.GetUserByPhone:input_type -> user.GetUserByPhoneReq
-	2,  // 30: user.UserService.CreateOrUpdateUser:input_type -> user.CreateUserReq
-	3,  // 31: user.UserService.UpdateUserCommunity:input_type -> user.UpdateCommunityReq
-	6,  // 32: user.UserService.ListUsers:input_type -> user.ListUsersReq
-	8,  // 33: user.UserService.BatchGetUsers:input_type -> user.BatchGetUsersReq
-	10, // 34: user.UserService.ListAddresses:input_type -> user.ListAddressesReq
-	11, // 35: user.UserService.GetAddress:input_type -> user.GetAddressReq
-	12, // 36: user.UserService.CreateAddress:input_type -> user.CreateAddressReq
-	13, // 37: user.UserService.UpdateAddress:input_type -> user.UpdateAddressReq
-	14, // 38: user.UserService.DeleteAddress:input_type -> user.DeleteAddressReq
-	15, // 39: user.UserService.SetDefaultAddress:input_type -> user.SetDefaultAddressReq
-	20, // 40: user.UserService.ListCommunities:input_type -> user.ListCommunitiesReq
-	18, // 41: user.UserService.GetCommunity:input_type -> user.GetCommunityReq
-	24, // 42: user.UserService.ListNearbyCommunities:input_type -> user.ListNearbyCommunitiesReq
-	21, // 43: user.UserService.CreateCommunity:input_type -> user.CreateCommunityReq
-	22, // 44: user.UserService.UpdateCommunity:input_type -> user.UpdateCommunityInfoReq
-	23, // 45: user.UserService.DeleteCommunity:input_type -> user.DeleteCommunityReq
-	5,  // 46: user.UserService.UpdateUserProfile:input_type -> user.UpdateUserProfileReq
-	63, // 47: user.UserService.UpdateMember:input_type -> user.UpdateMemberReq
-	48, // 48: user.UserService.ListRegionChildren:input_type -> user.ListRegionChildrenReq
-	50, // 49: user.UserService.ListRegions:input_type -> user.ListRegionsReq
-	52, // 50: user.UserService.MatchRegionByName:input_type -> user.MatchRegionByNameReq
-	57, // 51: user.UserService.CreateRegionUpdateTask:input_type -> user.CreateRegionUpdateTaskReq
-	56, // 52: user.UserService.GetRegionUpdateTask:input_type -> user.GetRegionUpdateTaskReq
-	58, // 53: user.UserService.ApplyRegionUpdateTask:input_type -> user.ApplyRegionUpdateTaskReq
-	26, // 54: user.UserService.GetAdminByUsername:input_type -> user.GetAdminByUsernameReq
-	27, // 55: user.UserService.GetAdminById:input_type -> user.GetAdminByIdReq
-	29, // 56: user.UserService.ListAdmins:input_type -> user.ListAdminsReq
-	31, // 57: user.UserService.CreateAdmin:input_type -> user.CreateAdminReq
-	32, // 58: user.UserService.UpdateAdmin:input_type -> user.UpdateAdminReq
-	33, // 59: user.UserService.DeleteAdmin:input_type -> user.DeleteAdminReq
-	34, // 60: user.UserService.GetAdminAssignments:input_type -> user.GetAdminAssignmentsReq
-	37, // 61: user.UserService.ChangeAdminPassword:input_type -> user.ChangeAdminPasswordReq
-	38, // 62: user.UserService.GetAdminContext:input_type -> user.GetAdminContextReq
-	41, // 63: user.UserService.ListRoles:input_type -> user.ListRolesReq
-	43, // 64: user.UserService.GetRole:input_type -> user.GetRoleReq
-	44, // 65: user.UserService.CreateRole:input_type -> user.CreateRoleReq
-	45, // 66: user.UserService.UpdateRole:input_type -> user.UpdateRoleReq
-	46, // 67: user.UserService.DeleteRole:input_type -> user.DeleteRoleReq
-	59, // 68: user.UserService.MarkUserCommunity:input_type -> user.MarkUserCommunityReq
-	60, // 69: user.UserService.SetUserStatus:input_type -> user.SetUserStatusReq
-	61, // 70: user.UserService.CreateMember:input_type -> user.CreateMemberReq
-	65, // 71: user.UserService.ListFulfillers:input_type -> user.ListFulfillersReq
-	67, // 72: user.UserService.CheckFulfiller:input_type -> user.CheckFulfillerReq
-	70, // 73: user.UserService.ListClientChannels:input_type -> user.ListClientChannelsReq
-	72, // 74: user.UserService.GetClientChannel:input_type -> user.GetClientChannelReq
-	73, // 75: user.UserService.SaveClientChannel:input_type -> user.SaveClientChannelReq
-	74, // 76: user.UserService.GetUserChannelOpenid:input_type -> user.GetUserChannelOpenidReq
-	76, // 77: user.UserService.UpsertUserChannelIdentity:input_type -> user.UpsertUserChannelIdentityReq
-	78, // 78: user.UserService.GetSiteConfig:input_type -> user.GetSiteConfigReq
-	79, // 79: user.UserService.SaveSiteConfig:input_type -> user.SaveSiteConfigReq
-	4,  // 80: user.UserService.GetUserById:output_type -> user.UserInfo
-	4,  // 81: user.UserService.GetUserByPhone:output_type -> user.UserInfo
-	4,  // 82: user.UserService.CreateOrUpdateUser:output_type -> user.UserInfo
-	82, // 83: user.UserService.UpdateUserCommunity:output_type -> common.CommonResponse
-	7,  // 84: user.UserService.ListUsers:output_type -> user.ListUsersResp
-	9,  // 85: user.UserService.BatchGetUsers:output_type -> user.BatchGetUsersResp
-	17, // 86: user.UserService.ListAddresses:output_type -> user.ListAddressesResp
-	16, // 87: user.UserService.GetAddress:output_type -> user.AddressInfo
-	16, // 88: user.UserService.CreateAddress:output_type -> user.AddressInfo
-	16, // 89: user.UserService.UpdateAddress:output_type -> user.AddressInfo
-	82, // 90: user.UserService.DeleteAddress:output_type -> common.CommonResponse
-	82, // 91: user.UserService.SetDefaultAddress:output_type -> common.CommonResponse
-	25, // 92: user.UserService.ListCommunities:output_type -> user.ListCommunitiesResp
-	19, // 93: user.UserService.GetCommunity:output_type -> user.CommunityInfo
-	25, // 94: user.UserService.ListNearbyCommunities:output_type -> user.ListCommunitiesResp
-	19, // 95: user.UserService.CreateCommunity:output_type -> user.CommunityInfo
-	19, // 96: user.UserService.UpdateCommunity:output_type -> user.CommunityInfo
-	82, // 97: user.UserService.DeleteCommunity:output_type -> common.CommonResponse
-	4,  // 98: user.UserService.UpdateUserProfile:output_type -> user.UserInfo
-	4,  // 99: user.UserService.UpdateMember:output_type -> user.UserInfo
-	49, // 100: user.UserService.ListRegionChildren:output_type -> user.ListRegionChildrenResp
-	51, // 101: user.UserService.ListRegions:output_type -> user.ListRegionsResp
-	53, // 102: user.UserService.MatchRegionByName:output_type -> user.RegionMatchInfo
-	55, // 103: user.UserService.CreateRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
-	55, // 104: user.UserService.GetRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
-	82, // 105: user.UserService.ApplyRegionUpdateTask:output_type -> common.CommonResponse
-	28, // 106: user.UserService.GetAdminByUsername:output_type -> user.AdminInfo
-	28, // 107: user.UserService.GetAdminById:output_type -> user.AdminInfo
-	30, // 108: user.UserService.ListAdmins:output_type -> user.ListAdminsResp
-	28, // 109: user.UserService.CreateAdmin:output_type -> user.AdminInfo
-	28, // 110: user.UserService.UpdateAdmin:output_type -> user.AdminInfo
-	82, // 111: user.UserService.DeleteAdmin:output_type -> common.CommonResponse
-	36, // 112: user.UserService.GetAdminAssignments:output_type -> user.GetAdminAssignmentsResp
-	82, // 113: user.UserService.ChangeAdminPassword:output_type -> common.CommonResponse
-	39, // 114: user.UserService.GetAdminContext:output_type -> user.AdminContextInfo
-	42, // 115: user.UserService.ListRoles:output_type -> user.ListRolesResp
-	40, // 116: user.UserService.GetRole:output_type -> user.RoleInfo
-	40, // 117: user.UserService.CreateRole:output_type -> user.RoleInfo
-	40, // 118: user.UserService.UpdateRole:output_type -> user.RoleInfo
-	82, // 119: user.UserService.DeleteRole:output_type -> common.CommonResponse
-	82, // 120: user.UserService.MarkUserCommunity:output_type -> common.CommonResponse
-	82, // 121: user.UserService.SetUserStatus:output_type -> common.CommonResponse
-	62, // 122: user.UserService.CreateMember:output_type -> user.CreateMemberResp
-	66, // 123: user.UserService.ListFulfillers:output_type -> user.ListFulfillersResp
-	68, // 124: user.UserService.CheckFulfiller:output_type -> user.CheckFulfillerResp
-	71, // 125: user.UserService.ListClientChannels:output_type -> user.ListClientChannelsResp
-	69, // 126: user.UserService.GetClientChannel:output_type -> user.ClientChannelInfo
-	69, // 127: user.UserService.SaveClientChannel:output_type -> user.ClientChannelInfo
-	75, // 128: user.UserService.GetUserChannelOpenid:output_type -> user.GetUserChannelOpenidResp
-	82, // 129: user.UserService.UpsertUserChannelIdentity:output_type -> common.CommonResponse
-	77, // 130: user.UserService.GetSiteConfig:output_type -> user.SiteConfigInfo
-	77, // 131: user.UserService.SaveSiteConfig:output_type -> user.SiteConfigInfo
-	80, // [80:132] is the sub-list for method output_type
-	28, // [28:80] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	83, // 8: user.ListCommunitiesResp.pagination:type_name -> common.PaginationResponse
+	30, // 9: user.VerifyAdminCredentialResp.admin:type_name -> user.AdminInfo
+	42, // 10: user.AdminInfo.roles:type_name -> user.RoleInfo
+	82, // 11: user.ListAdminsReq.pagination:type_name -> common.Pagination
+	30, // 12: user.ListAdminsResp.list:type_name -> user.AdminInfo
+	83, // 13: user.ListAdminsResp.pagination:type_name -> common.PaginationResponse
+	42, // 14: user.AdminAssignment.roles:type_name -> user.RoleInfo
+	37, // 15: user.GetAdminAssignmentsResp.list:type_name -> user.AdminAssignment
+	42, // 16: user.ListRolesResp.list:type_name -> user.RoleInfo
+	49, // 17: user.ListRegionChildrenResp.list:type_name -> user.RegionInfo
+	82, // 18: user.ListRegionsReq.pagination:type_name -> common.Pagination
+	49, // 19: user.ListRegionsResp.list:type_name -> user.RegionInfo
+	83, // 20: user.ListRegionsResp.pagination:type_name -> common.PaginationResponse
+	49, // 21: user.RegionMatchInfo.province:type_name -> user.RegionInfo
+	49, // 22: user.RegionMatchInfo.city:type_name -> user.RegionInfo
+	56, // 23: user.RegionUpdateTaskInfo.added:type_name -> user.RegionDiffItem
+	56, // 24: user.RegionUpdateTaskInfo.updated:type_name -> user.RegionDiffItem
+	56, // 25: user.RegionUpdateTaskInfo.removed:type_name -> user.RegionDiffItem
+	4,  // 26: user.CreateMemberResp.user:type_name -> user.UserInfo
+	66, // 27: user.ListFulfillersResp.list:type_name -> user.FulfillerInfo
+	71, // 28: user.ListClientChannelsResp.list:type_name -> user.ClientChannelInfo
+	0,  // 29: user.UserService.GetUserById:input_type -> user.GetUserByIdReq
+	1,  // 30: user.UserService.GetUserByPhone:input_type -> user.GetUserByPhoneReq
+	2,  // 31: user.UserService.CreateOrUpdateUser:input_type -> user.CreateUserReq
+	3,  // 32: user.UserService.UpdateUserCommunity:input_type -> user.UpdateCommunityReq
+	6,  // 33: user.UserService.ListUsers:input_type -> user.ListUsersReq
+	8,  // 34: user.UserService.BatchGetUsers:input_type -> user.BatchGetUsersReq
+	10, // 35: user.UserService.ListAddresses:input_type -> user.ListAddressesReq
+	11, // 36: user.UserService.GetAddress:input_type -> user.GetAddressReq
+	12, // 37: user.UserService.CreateAddress:input_type -> user.CreateAddressReq
+	13, // 38: user.UserService.UpdateAddress:input_type -> user.UpdateAddressReq
+	14, // 39: user.UserService.DeleteAddress:input_type -> user.DeleteAddressReq
+	15, // 40: user.UserService.SetDefaultAddress:input_type -> user.SetDefaultAddressReq
+	20, // 41: user.UserService.ListCommunities:input_type -> user.ListCommunitiesReq
+	18, // 42: user.UserService.GetCommunity:input_type -> user.GetCommunityReq
+	24, // 43: user.UserService.ListNearbyCommunities:input_type -> user.ListNearbyCommunitiesReq
+	21, // 44: user.UserService.CreateCommunity:input_type -> user.CreateCommunityReq
+	22, // 45: user.UserService.UpdateCommunity:input_type -> user.UpdateCommunityInfoReq
+	23, // 46: user.UserService.DeleteCommunity:input_type -> user.DeleteCommunityReq
+	5,  // 47: user.UserService.UpdateUserProfile:input_type -> user.UpdateUserProfileReq
+	65, // 48: user.UserService.UpdateMember:input_type -> user.UpdateMemberReq
+	50, // 49: user.UserService.ListRegionChildren:input_type -> user.ListRegionChildrenReq
+	52, // 50: user.UserService.ListRegions:input_type -> user.ListRegionsReq
+	54, // 51: user.UserService.MatchRegionByName:input_type -> user.MatchRegionByNameReq
+	59, // 52: user.UserService.CreateRegionUpdateTask:input_type -> user.CreateRegionUpdateTaskReq
+	58, // 53: user.UserService.GetRegionUpdateTask:input_type -> user.GetRegionUpdateTaskReq
+	60, // 54: user.UserService.ApplyRegionUpdateTask:input_type -> user.ApplyRegionUpdateTaskReq
+	26, // 55: user.UserService.GetAdminByUsername:input_type -> user.GetAdminByUsernameReq
+	28, // 56: user.UserService.VerifyAdminCredential:input_type -> user.VerifyAdminCredentialReq
+	27, // 57: user.UserService.GetAdminById:input_type -> user.GetAdminByIdReq
+	31, // 58: user.UserService.ListAdmins:input_type -> user.ListAdminsReq
+	33, // 59: user.UserService.CreateAdmin:input_type -> user.CreateAdminReq
+	34, // 60: user.UserService.UpdateAdmin:input_type -> user.UpdateAdminReq
+	35, // 61: user.UserService.DeleteAdmin:input_type -> user.DeleteAdminReq
+	36, // 62: user.UserService.GetAdminAssignments:input_type -> user.GetAdminAssignmentsReq
+	39, // 63: user.UserService.ChangeAdminPassword:input_type -> user.ChangeAdminPasswordReq
+	40, // 64: user.UserService.GetAdminContext:input_type -> user.GetAdminContextReq
+	43, // 65: user.UserService.ListRoles:input_type -> user.ListRolesReq
+	45, // 66: user.UserService.GetRole:input_type -> user.GetRoleReq
+	46, // 67: user.UserService.CreateRole:input_type -> user.CreateRoleReq
+	47, // 68: user.UserService.UpdateRole:input_type -> user.UpdateRoleReq
+	48, // 69: user.UserService.DeleteRole:input_type -> user.DeleteRoleReq
+	61, // 70: user.UserService.MarkUserCommunity:input_type -> user.MarkUserCommunityReq
+	62, // 71: user.UserService.SetUserStatus:input_type -> user.SetUserStatusReq
+	63, // 72: user.UserService.CreateMember:input_type -> user.CreateMemberReq
+	67, // 73: user.UserService.ListFulfillers:input_type -> user.ListFulfillersReq
+	69, // 74: user.UserService.CheckFulfiller:input_type -> user.CheckFulfillerReq
+	72, // 75: user.UserService.ListClientChannels:input_type -> user.ListClientChannelsReq
+	74, // 76: user.UserService.GetClientChannel:input_type -> user.GetClientChannelReq
+	75, // 77: user.UserService.SaveClientChannel:input_type -> user.SaveClientChannelReq
+	76, // 78: user.UserService.GetUserChannelOpenid:input_type -> user.GetUserChannelOpenidReq
+	78, // 79: user.UserService.UpsertUserChannelIdentity:input_type -> user.UpsertUserChannelIdentityReq
+	80, // 80: user.UserService.GetSiteConfig:input_type -> user.GetSiteConfigReq
+	81, // 81: user.UserService.SaveSiteConfig:input_type -> user.SaveSiteConfigReq
+	4,  // 82: user.UserService.GetUserById:output_type -> user.UserInfo
+	4,  // 83: user.UserService.GetUserByPhone:output_type -> user.UserInfo
+	4,  // 84: user.UserService.CreateOrUpdateUser:output_type -> user.UserInfo
+	84, // 85: user.UserService.UpdateUserCommunity:output_type -> common.CommonResponse
+	7,  // 86: user.UserService.ListUsers:output_type -> user.ListUsersResp
+	9,  // 87: user.UserService.BatchGetUsers:output_type -> user.BatchGetUsersResp
+	17, // 88: user.UserService.ListAddresses:output_type -> user.ListAddressesResp
+	16, // 89: user.UserService.GetAddress:output_type -> user.AddressInfo
+	16, // 90: user.UserService.CreateAddress:output_type -> user.AddressInfo
+	16, // 91: user.UserService.UpdateAddress:output_type -> user.AddressInfo
+	84, // 92: user.UserService.DeleteAddress:output_type -> common.CommonResponse
+	84, // 93: user.UserService.SetDefaultAddress:output_type -> common.CommonResponse
+	25, // 94: user.UserService.ListCommunities:output_type -> user.ListCommunitiesResp
+	19, // 95: user.UserService.GetCommunity:output_type -> user.CommunityInfo
+	25, // 96: user.UserService.ListNearbyCommunities:output_type -> user.ListCommunitiesResp
+	19, // 97: user.UserService.CreateCommunity:output_type -> user.CommunityInfo
+	19, // 98: user.UserService.UpdateCommunity:output_type -> user.CommunityInfo
+	84, // 99: user.UserService.DeleteCommunity:output_type -> common.CommonResponse
+	4,  // 100: user.UserService.UpdateUserProfile:output_type -> user.UserInfo
+	4,  // 101: user.UserService.UpdateMember:output_type -> user.UserInfo
+	51, // 102: user.UserService.ListRegionChildren:output_type -> user.ListRegionChildrenResp
+	53, // 103: user.UserService.ListRegions:output_type -> user.ListRegionsResp
+	55, // 104: user.UserService.MatchRegionByName:output_type -> user.RegionMatchInfo
+	57, // 105: user.UserService.CreateRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
+	57, // 106: user.UserService.GetRegionUpdateTask:output_type -> user.RegionUpdateTaskInfo
+	84, // 107: user.UserService.ApplyRegionUpdateTask:output_type -> common.CommonResponse
+	30, // 108: user.UserService.GetAdminByUsername:output_type -> user.AdminInfo
+	29, // 109: user.UserService.VerifyAdminCredential:output_type -> user.VerifyAdminCredentialResp
+	30, // 110: user.UserService.GetAdminById:output_type -> user.AdminInfo
+	32, // 111: user.UserService.ListAdmins:output_type -> user.ListAdminsResp
+	30, // 112: user.UserService.CreateAdmin:output_type -> user.AdminInfo
+	30, // 113: user.UserService.UpdateAdmin:output_type -> user.AdminInfo
+	84, // 114: user.UserService.DeleteAdmin:output_type -> common.CommonResponse
+	38, // 115: user.UserService.GetAdminAssignments:output_type -> user.GetAdminAssignmentsResp
+	84, // 116: user.UserService.ChangeAdminPassword:output_type -> common.CommonResponse
+	41, // 117: user.UserService.GetAdminContext:output_type -> user.AdminContextInfo
+	44, // 118: user.UserService.ListRoles:output_type -> user.ListRolesResp
+	42, // 119: user.UserService.GetRole:output_type -> user.RoleInfo
+	42, // 120: user.UserService.CreateRole:output_type -> user.RoleInfo
+	42, // 121: user.UserService.UpdateRole:output_type -> user.RoleInfo
+	84, // 122: user.UserService.DeleteRole:output_type -> common.CommonResponse
+	84, // 123: user.UserService.MarkUserCommunity:output_type -> common.CommonResponse
+	84, // 124: user.UserService.SetUserStatus:output_type -> common.CommonResponse
+	64, // 125: user.UserService.CreateMember:output_type -> user.CreateMemberResp
+	68, // 126: user.UserService.ListFulfillers:output_type -> user.ListFulfillersResp
+	70, // 127: user.UserService.CheckFulfiller:output_type -> user.CheckFulfillerResp
+	73, // 128: user.UserService.ListClientChannels:output_type -> user.ListClientChannelsResp
+	71, // 129: user.UserService.GetClientChannel:output_type -> user.ClientChannelInfo
+	71, // 130: user.UserService.SaveClientChannel:output_type -> user.ClientChannelInfo
+	77, // 131: user.UserService.GetUserChannelOpenid:output_type -> user.GetUserChannelOpenidResp
+	84, // 132: user.UserService.UpsertUserChannelIdentity:output_type -> common.CommonResponse
+	79, // 133: user.UserService.GetSiteConfig:output_type -> user.SiteConfigInfo
+	79, // 134: user.UserService.SaveSiteConfig:output_type -> user.SiteConfigInfo
+	82, // [82:135] is the sub-list for method output_type
+	29, // [29:82] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_user_user_proto_init() }
@@ -6859,14 +6985,14 @@ func file_user_user_proto_init() {
 	if File_user_user_proto != nil {
 		return
 	}
-	file_user_user_proto_msgTypes[32].OneofWrappers = []any{}
+	file_user_user_proto_msgTypes[34].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_user_user_proto_rawDesc), len(file_user_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   80,
+			NumMessages:   82,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

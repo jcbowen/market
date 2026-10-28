@@ -17,6 +17,9 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/dberr"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -55,6 +58,18 @@ const (
 
 // regionHTTPTimeout 拉取上游数据的超时时间
 const regionHTTPTimeout = 30 * time.Second
+
+// regionTaskTimeout 单次区划更新任务的总超时（后台协程自带，不继承请求上下文）
+// 覆盖「库内全量读 + 差异写回」两段数据库工作，上游 HTTP 另有各自的请求超时
+const regionTaskTimeout = 10 * time.Minute
+
+// regionDefaultPageSize 区划列表默认页长（历史口径，未传分页时的每页条数）
+const regionDefaultPageSize = 20
+
+// regionActiveFlagIndex active_flag 单列唯一索引在库中的名字
+// GORM 对单列 `unique` tag 生成的约束名固定为 uni_<表名>_<列名>（与 users/payments 等表实测一致）；
+// 判定冲突时按该名字收窄，避免把别的唯一键冲突误读成「已有进行中任务」
+const regionActiveFlagIndex = "uni_region_update_tasks_active_flag"
 
 // RegionDiffItem 更新任务差异条目（JSON 存储于任务表）
 type RegionDiffItem struct {
@@ -117,26 +132,19 @@ func (s *RegionService) ListChildren(ctx context.Context, parentCode string) ([]
 //   - int: 总条数
 //   - error: 错误信息
 func (s *RegionService) ListRegions(ctx context.Context, req *user.ListRegionsReq) ([]*model.Region, int, error) {
-	page, pageSize := 1, 20
+	page, pageSize := 1, regionDefaultPageSize
 	if req.Pagination != nil {
 		page = int(req.Pagination.Page)
 		pageSize = int(req.Pagination.PageSize)
 	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 20
-	}
 	// 服务层兜底上限：HTTP 网关已按 maxPageSize 收敛，但 gRPC 可被内部或直连调用传入超大值
-	if pageSize > 200 {
-		pageSize = 200
-	}
+	// 默认页长沿用行政区划历史口径
+	page, pageSize = pageparam.ClampWith(page, pageSize, regionDefaultPageSize, pageparam.MaxSize)
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Region{})
 	if kw := strings.TrimSpace(req.Keyword); kw != "" {
 		kw = strings.TrimSuffix(kw, "%")
-		like := "%" + kw + "%"
+		like := likeutil.Contains(kw)
 		db = db.Where("code LIKE ? OR name LIKE ?", like, like)
 	}
 	if req.ParentCode != "" {
@@ -223,7 +231,7 @@ func (s *RegionService) matchRegionByLevel(ctx context.Context, level int32, can
 	}
 	var r model.Region
 	err := s.db.GetDb().WithContext(ctx).
-		Where("level = ? AND status = ? AND name LIKE ?", level, model.RegionStatusActive, kw+"%").
+		Where("level = ? AND status = ? AND name LIKE ?", level, model.RegionStatusActive, likeutil.Prefix(kw)).
 		Order("code asc").
 		First(&r).Error
 	if err == gorm.ErrRecordNotFound {
@@ -252,6 +260,9 @@ func (s *RegionService) getRegionByCode(ctx context.Context, code string) (*mode
 // 同一时刻仅允许一个进行中的任务（待执行/拉取中/比对中），
 // 已存在进行中任务时直接返回该任务（幂等），避免重复拉取；
 // sourceType 决定拉取通道：default 常规多源镜像 / official 民政部官方源（兜底修正）
+// 并发口径：先查只是快速路径，两条请求同时查会同时得到「无进行中任务」并各自插入、
+// 各自起协程去拉同一份上游数据、再把差异结果互相覆盖；
+// 落库由 active_flag 的单列唯一索引裁决，撞键即认定已有进行中任务并转为幂等返回
 // 参数：
 //   - ctx: 上下文
 //   - sourceType: 数据源类型，空值按 default 处理
@@ -260,16 +271,12 @@ func (s *RegionService) getRegionByCode(ctx context.Context, code string) (*mode
 //   - *model.RegionUpdateTask: 新建或进行中的任务
 //   - error: 错误信息
 func (s *RegionService) CreateRegionUpdateTask(ctx context.Context, sourceType string) (*model.RegionUpdateTask, error) {
-	var existing model.RegionUpdateTask
-	err := s.db.GetDb().WithContext(ctx).
-		Where("status IN (?)", []int32{model.RegionTaskStatusPending, model.RegionTaskStatusFetching, model.RegionTaskStatusDiffing}).
-		Order("id desc").
-		First(&existing).Error
-	if err == nil {
-		return &existing, nil
-	}
-	if err != gorm.ErrRecordNotFound {
+	existing, err := s.findInProgressRegionTask(ctx)
+	if err != nil {
 		return nil, err
+	}
+	if existing != nil {
+		return existing, nil
 	}
 
 	source := regionDataSource
@@ -278,17 +285,56 @@ func (s *RegionService) CreateRegionUpdateTask(ctx context.Context, sourceType s
 	} else {
 		sourceType = RegionSourceTypeDefault
 	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	activeFlag := int8(1)
 	task := &model.RegionUpdateTask{
-		Status: model.RegionTaskStatusPending,
-		Source: source,
+		Status:     model.RegionTaskStatusPending,
+		Source:     source,
+		ActiveFlag: &activeFlag,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(task).Error; err != nil {
+		// 快速路径漏判时由索引分出胜负：输的一方不报错给前端，而是返回赢家那条任务
+		if dberr.IsDuplicate(err, regionActiveFlagIndex) {
+			winner, findErr := s.findInProgressRegionTask(ctx)
+			if findErr != nil {
+				return nil, findErr
+			}
+			if winner != nil {
+				return winner, nil
+			}
+			// 撞了索引却查不到进行中任务：赢家已结束并释放占位，本次插入仍失败属异常，原样上抛
+			return nil, err
+		}
 		return nil, err
 	}
 
 	// 异步执行拉取与比对：任务表自身记录状态，前端轮询任务详情
 	go s.runUpdateTask(task.ID, sourceType)
 	return task, nil
+}
+
+// findInProgressRegionTask 查询当前进行中的区划任务
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - *model.RegionUpdateTask: 进行中的任务（无进行中任务时为 nil）
+//   - error: 查询错误
+func (s *RegionService) findInProgressRegionTask(ctx context.Context) (*model.RegionUpdateTask, error) {
+	var task model.RegionUpdateTask
+	err := s.db.GetDb().WithContext(ctx).
+		Where("status IN (?)", []int32{model.RegionTaskStatusPending, model.RegionTaskStatusFetching, model.RegionTaskStatusDiffing}).
+		Order("id desc").
+		First(&task).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
 }
 
 // GetRegionUpdateTask 查询更新任务详情（含差异明细）
@@ -405,20 +451,26 @@ func (s *RegionService) ApplyRegionUpdateTask(ctx context.Context, id int64) err
 // runUpdateTask 执行更新任务：按 sourceType 拉取上游数据 → 与库内比对 → 差异写回任务表
 // default 走镜像多源，official 走民政部官方源（慢、带重试，仅兜底）
 // 状态流转：待执行 → 拉取中 → 比对中 → 完成/失败
+// 上下文口径：本函数由 CreateRegionUpdateTask 以独立协程发起，不继承 HTTP 请求上下文
+// （请求结束不该打断已在跑的任务），但必须自带总超时：卡死的工作会永远停在「拉取中」，
+// 既占住 active_flag 让后续任务全被幂等返回，也让前端一直轮询一个不会结束的任务；
+// 超时后终态写入改用未过期的上下文补记，保证占位一定被释放
 // 参数：
 //   - taskID: 任务 ID
 //   - sourceType: 数据源类型（default / official）
 func (s *RegionService) runUpdateTask(taskID int64, sourceType string) {
+	ctx, cancel := context.WithTimeout(context.Background(), regionTaskTimeout)
+	defer cancel()
+
 	fail := func(err error) {
-		_ = s.db.GetDb().Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
-			"status":      model.RegionTaskStatusFailed,
-			"error":       truncateRegionError(err.Error()),
-			"finished_at": time.Now().Format("2006-01-02 15:04:05"),
-		}).Error
+		s.finishRegionTask(context.Background(), taskID, map[string]any{
+			"status": model.RegionTaskStatusFailed,
+			"error":  truncateRegionError(err.Error()),
+		})
 	}
 
 	// 拉取中：锁定任务为执行状态，防止期间被重复应用
-	if err := s.db.GetDb().Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).
 		Update("status", model.RegionTaskStatusFetching).Error; err != nil {
 		fail(err)
 		return
@@ -429,6 +481,8 @@ func (s *RegionService) runUpdateTask(taskID int64, sourceType string) {
 		source string
 		err    error
 	)
+	// 上游拉取不设本任务的 ctx：每个请求自带 regionHTTPTimeout，候选源数量有限，
+	// 整体耗时天然有界；此处超时主要约束下面的库内比对与写回
 	if sourceType == RegionSourceTypeOfficial {
 		nodes, source, err = fetchOfficialRegions()
 	} else {
@@ -438,25 +492,68 @@ func (s *RegionService) runUpdateTask(taskID int64, sourceType string) {
 		fail(err)
 		return
 	}
-	if err := s.db.GetDb().Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).
 		Updates(map[string]interface{}{"status": model.RegionTaskStatusDiffing, "source": source}).Error; err != nil {
 		fail(err)
 		return
 	}
 
-	if err := s.diffAndStore(taskID, nodes); err != nil {
+	if err := s.diffAndStore(ctx, taskID, nodes); err != nil {
 		fail(err)
 	}
 }
 
+// finishRegionTask 写任务终态并释放进行中占位
+// active_flag 置 NULL 是把「同一时刻只有一个进行中任务」的唯一索引槽位交还给下一条任务；
+// 只在终态调用（完成/失败），中间态（拉取中/比对中）保持占位
+// 参数：
+//   - ctx: 上下文（终态补记须用未过期的上下文）
+//   - taskID: 任务 ID
+//   - fields: 终态字段（status/error/差异计数等，函数内追加 active_flag 与 finished_at）
+//
+// 返回值：
+//   - error: 写入错误
+func (s *RegionService) finishRegionTask(ctx context.Context, taskID int64, fields map[string]any) error {
+	fields["active_flag"] = nil
+	fields["finished_at"] = time.Now().Format("2006-01-02 15:04:05")
+	return s.db.GetDb().WithContext(ctx).Model(&model.RegionUpdateTask{}).
+		Where("id = ?", taskID).Updates(fields).Error
+}
+
+// ReleaseStaleRegionTasks 启动时回收上次进程遗留的「进行中」区划任务
+// 任务由后台协程推进，进程被杀或重启会让它永远停在待执行/拉取中/比对中，
+// 而 active_flag 占位只在终态释放——不回收的话，之后每次创建任务都会幂等返回这条死任务，
+// 区划同步功能整体不可用；服务刚起来时不可能有本进程在跑的任务，故一律判为中断失败
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - int64: 回收的任务条数
+//   - error: 写入错误
+//
+// 使用示例：
+//   - service.NewRegionService(db).ReleaseStaleRegionTasks(stdctx.Background())
+func (s *RegionService) ReleaseStaleRegionTasks(ctx context.Context) (int64, error) {
+	res := s.db.GetDb().WithContext(ctx).Model(&model.RegionUpdateTask{}).
+		Where("status IN (?)", []int32{model.RegionTaskStatusPending, model.RegionTaskStatusFetching, model.RegionTaskStatusDiffing}).
+		Updates(map[string]any{
+			"status":      model.RegionTaskStatusFailed,
+			"error":       truncateRegionError("服务重启导致任务中断，已自动标记失败"),
+			"active_flag": nil,
+			"finished_at": time.Now().Format("2006-01-02 15:04:05"),
+		})
+	return res.RowsAffected, res.Error
+}
+
 // diffAndStore 与库内全量比对并写回差异结果
 // 参数：
+//   - ctx: 上下文（带任务总超时，库内全量读与终态写回都受其约束）
 //   - taskID: 任务 ID
 //   - nodes: 上游区划树
 //
 // 返回：
 //   - error: 错误信息
-func (s *RegionService) diffAndStore(taskID int64, nodes []*remoteRegionNode) error {
+func (s *RegionService) diffAndStore(ctx context.Context, taskID int64, nodes []*remoteRegionNode) error {
 	// 展平上游数据：code → item
 	// 层级不按树深度推断（该源直辖市下直接挂区县），而是按代码位数：
 	// 2 位省级 / 4 位地级 / 6 位县级；parent_code 直接取树上的父节点
@@ -488,7 +585,7 @@ func (s *RegionService) diffAndStore(taskID int64, nodes []*remoteRegionNode) er
 	}
 
 	var local []*model.Region
-	if err := s.db.GetDb().Find(&local).Error; err != nil {
+	if err := s.db.GetDb().WithContext(ctx).Find(&local).Error; err != nil {
 		return err
 	}
 	localMap := make(map[string]*model.Region, len(local))
@@ -529,7 +626,7 @@ func (s *RegionService) diffAndStore(taskID int64, nodes []*remoteRegionNode) er
 	updatedJSON, _ := json.Marshal(updated)
 	removedJSON, _ := json.Marshal(removed)
 
-	return s.db.GetDb().Model(&model.RegionUpdateTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+	return s.finishRegionTask(ctx, taskID, map[string]any{
 		"status":        model.RegionTaskStatusDone,
 		"total_remote":  len(remote),
 		"total_local":   len(local),
@@ -539,8 +636,7 @@ func (s *RegionService) diffAndStore(taskID int64, nodes []*remoteRegionNode) er
 		"added_json":    string(addedJSON),
 		"updated_json":  string(updatedJSON),
 		"removed_json":  string(removedJSON),
-		"finished_at":   time.Now().Format("2006-01-02 15:04:05"),
-	}).Error
+	})
 }
 
 // fetchRemoteRegions 依次尝试多源拉取上游区划 JSON

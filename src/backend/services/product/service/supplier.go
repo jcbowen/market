@@ -6,6 +6,8 @@ import (
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
@@ -35,18 +37,14 @@ func NewSupplierService(db *mysql.Instance) *SupplierService {
 //   - *product.ListSuppliersResp: 分页列表
 //   - error: 错误信息
 func (s *SupplierService) ListSuppliers(ctx context.Context, req *product.ListSuppliersReq) (*product.ListSuppliersResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Supplier{})
 	if req.CommunityId > 0 {
 		db = db.Where("community_id = ?", req.CommunityId)
 	}
 	if req.Keyword != "" {
-		kw := "%" + req.Keyword + "%"
+		kw := likeutil.Contains(req.Keyword)
 		db = db.Where("name LIKE ? OR contact_name LIKE ? OR phone LIKE ?", kw, kw, kw)
 	}
 	if req.Status > 0 {

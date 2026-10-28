@@ -6,6 +6,8 @@ import (
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 )
@@ -79,7 +81,7 @@ func (s *ReportService) GetInventorySummaryReport(ctx context.Context, req *prod
 	var keywordArgs []interface{}
 	if req.Keyword != "" {
 		keywordSQL = " AND (p.name LIKE ? OR s.sku_code LIKE ?)"
-		kw := "%" + req.Keyword + "%"
+		kw := likeutil.Contains(req.Keyword)
 		keywordArgs = []interface{}{kw, kw}
 	}
 	args = append(args, keywordArgs...)
@@ -178,7 +180,7 @@ func (s *ReportService) GetProfitReport(ctx context.Context, req *product.GetPro
 	args := []interface{}{start, end, req.CommunityId}
 	if req.Keyword != "" {
 		baseWhere += " AND (p.name LIKE ? OR s.sku_code LIKE ?)"
-		kw := "%" + req.Keyword + "%"
+		kw := likeutil.Contains(req.Keyword)
 		args = append(args, kw, kw)
 	}
 
@@ -242,19 +244,7 @@ const reportMaxPageSize = 100
 //
 //	page, pageSize, offset := reportPage(req.Pagination)
 func reportPage(pg *common.Pagination) (int, int, int) {
-	page, pageSize := 1, 10
-	if pg != nil {
-		page, pageSize = int(pg.Page), int(pg.PageSize)
-	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
-	if pageSize > reportMaxPageSize {
-		pageSize = reportMaxPageSize
-	}
+	page, pageSize := pageparam.ClampMax(int(pg.GetPage()), int(pg.GetPageSize()), reportMaxPageSize)
 	return page, pageSize, (page - 1) * pageSize
 }
 

@@ -63,6 +63,33 @@ test.describe.serial('购物车', () => {
     expect(item?.quantity).toBeGreaterThanOrEqual(3);
   });
 
+  test('并发加购同 SKU 不报冲突且数量精确累加', async () => {
+    // 回归（审查 P2 · cart upsert）：旧实现「先查后写」，并发两条都读到不存在，
+    // 第二条 Create 撞 uk_user_sku 会把原始 1062 抛给前端；
+    // 改单条 upsert 后累加在数据库侧完成，最终数量必须精确等于各次请求之和且只有一行
+    const sku = await pickSku(api, undefined, communityId);
+    const readRow = async () => {
+      const cart = (await (await api.get('/api/v1/cart')).json()) as ApiResponse<{ items: CartItem[] }>;
+      return cart.data!.items.filter((i) => i.sku_id === sku.id);
+    };
+    const before = (await readRow())[0]?.quantity ?? 0;
+
+    const adds = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        api.post('/api/v1/cart/items', {
+          data: { product_id: sku.product_id, sku_id: sku.id, quantity: 1 },
+        }),
+      ),
+    );
+    for (const resp of adds) {
+      expect(((await resp.json()) as ApiResponse).code).toBe(0);
+    }
+
+    const rows = await readRow();
+    expect(rows.length).toBe(1);
+    expect(rows[0].quantity).toBe(before + 5);
+  });
+
   test('修改数量生效', async () => {
     if (!addedId) test.skip(true, '前置加购未成功');
     const resp = await api.put(`/api/v1/cart/items/${addedId}`, { data: { quantity: 2 } });

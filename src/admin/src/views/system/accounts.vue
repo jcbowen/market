@@ -17,7 +17,7 @@
   <n-modal v-model:show="showModal" title="新增账号" preset="card" style="width: 520px; max-width: 90vw">
     <n-space vertical>
       <n-input v-model:value="form.username" placeholder="用户名（登录账号，全局唯一）" />
-      <n-input v-model:value="form.password" type="password" show-password-on="click" placeholder="初始密码（至少 6 位）" />
+      <n-input v-model:value="form.password" type="password" show-password-on="click" :placeholder="`初始密码（${PASSWORD_LENGTH_TIP}）`" />
       <n-input v-model:value="form.real_name" placeholder="真实姓名" />
       <n-input v-model:value="form.phone" placeholder="手机号" />
       <n-button type="primary" @click="submitCreate">保存</n-button>
@@ -28,7 +28,7 @@
   <n-modal v-model:show="showResetModal" title="重置密码" preset="card" style="width: 420px; max-width: 90vw">
     <n-space vertical>
       <n-text>为「{{ resetForm.username }}」设置新密码：</n-text>
-      <n-input v-model:value="resetForm.password" type="password" show-password-on="click" placeholder="新密码（至少 6 位）" />
+      <n-input v-model:value="resetForm.password" type="password" show-password-on="click" :placeholder="`新密码（${PASSWORD_LENGTH_TIP}）`" />
       <n-button type="primary" @click="submitResetPassword">确定</n-button>
     </n-space>
   </n-modal>
@@ -66,11 +66,13 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'AccountList' })
 import { ref, onMounted, h } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { NButton, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getAccountList, createAccount, updateAccountStatus, resetAccountPassword, getAccountAssignments } from '@/api/user'
 import type { Account, AccountAssignment } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
+import { PASSWORD_LENGTH_TIP, isPasswordTooShort } from '@/constants/security'
 
 /**
  * 账号管理页面（系统管理空间，超管专用）
@@ -188,8 +190,8 @@ async function submitCreate() {
     message.warning('请填写用户名')
     return
   }
-  if (form.value.password.length < 6) {
-    message.warning('初始密码长度至少 6 位')
+  if (isPasswordTooShort(form.value.password)) {
+    message.warning(`初始${PASSWORD_LENGTH_TIP}`)
     return
   }
   await createAccount({
@@ -258,8 +260,8 @@ function confirmResetPassword(row: Account) {
  * 提交重置密码
  */
 async function submitResetPassword() {
-  if (resetForm.value.password.length < 6) {
-    message.warning('密码长度至少 6 位')
+  if (isPasswordTooShort(resetForm.value.password)) {
+    message.warning(`密码${PASSWORD_LENGTH_TIP}`)
     return
   }
   await resetAccountPassword(resetForm.value.id, resetForm.value.password)
@@ -268,4 +270,6 @@ async function submitResetPassword() {
 }
 
 onMounted(loadData)
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新，避免展示离开前的旧账号
+refreshOnActivated(loadData)
 </script>

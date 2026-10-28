@@ -17,9 +17,9 @@ import (
 type NotifyLog struct {
 	base.MysqlBaseModel
 	ID        int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
-	Kind      int32  `gorm:"column:kind;type:tinyint;not null;default:1;index:idx_notify_kind_result_created,priority:1;index:idx_notify_handled_created,priority:1;comment:1渠道回调 2对账补同步 3挂账检出(系统:回调/对账) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(后台人工核实)" json:"kind"`
+	Kind      int32  `gorm:"column:kind;type:tinyint;not null;default:1;index:idx_notify_kind_result_created,priority:1;index:idx_notify_handled_created,priority:1;comment:1渠道回调 2对账补同步 3挂账检出(系统:回调/对账) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(后台人工核实) 9付款码扣款" json:"kind"`
 	Result    int32  `gorm:"column:result;type:tinyint;not null;index:idx_notify_kind_result_created,priority:2;comment:1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败 11人工恢复退款收敛" json:"result"`
-	Channel   int32  `gorm:"column:channel;type:tinyint;not null;comment:1微信 2支付宝" json:"channel"`
+	Channel   int32  `gorm:"column:channel;type:tinyint;not null;comment:1微信 2支付宝 0线下或未知（付款码 5/6 按渠道归一为 1/2）" json:"channel"`
 	PaymentNo string `gorm:"column:payment_no;type:varchar(50);not null;default:'';index;comment:支付单号，验签失败时可能解析不出而为空" json:"payment_no"`
 	OrderID   int64  `gorm:"column:order_id;type:bigint;not null;default:0;index;comment:订单 ID，同上可为 0" json:"order_id"`
 	OrderNo   string `gorm:"column:order_no;type:varchar(50);not null;default:'';comment:订单号快照，order_id 解析不出时后台仍可定位" json:"order_no"`
@@ -68,6 +68,10 @@ const (
 	// 刻意拆开：待办里「谁先发现的」直接决定后续追查方向——系统检出说明回调/关单链路有洞，
 	// 人工检出说明那笔单早已超窗调度器不再覆盖，两者的处置与统计口径不能混在一张表里
 	NotifyKindManualStuckCheck = 8
+	// NotifyKindCodePay 收银台付款码（B扫C）渠道扣款确认
+	// 付款码支付没有异步通知（微信 V3 明确不走 notify_url），结果来自同步应答或回查，
+	// 记成 kind=1 渠道回调会污染「回调丢失率」口径，故单列一类
+	NotifyKindCodePay = 9
 )
 
 // 流水结果（NotifyLog.Result）

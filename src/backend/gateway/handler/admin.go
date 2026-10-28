@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -43,8 +42,9 @@ type AdminHandler struct {
 	cfg           *config.Config
 	// guard 登录失败锁定（D1）：按账号计数，防分布式慢速猜密码
 	guard *loginGuard
-	// refreshGuard refresh 令牌黑名单（P1-5）：轮转吊销旧令牌，停用/登出即时生效
-	refreshGuard *refreshGuard
+	// tokenGuard 令牌黑名单（P1-5 + C5）：刷新轮转吊销旧 refresh，登出吊销本次会话的
+	// access 与 refresh；鉴权中间件读同一份状态，故启动时只构造一个实例注入两边
+	tokenGuard *tokenGuard
 	// pwdCrypto 密码传输加密器：RSA 私钥解密前端密文（见 password_crypto.go 协议约定）
 	pwdCrypto *passwordCrypto
 }
@@ -57,10 +57,11 @@ type AdminHandler struct {
 //   - orderClient: order-service gRPC 客户端
 //   - paymentClient: payment-service gRPC 客户端，用于支付配置读写
 //   - cfg: 全局配置指针
+//   - tokenGuard: 令牌黑名单器（与鉴权中间件共用同一实例，见 NewTokenGuard）
 //
 // 返回值：
 //   - *AdminHandler: 管理员处理器实例
-func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, productClient product.ProductServiceClient, orderClient order.OrderServiceClient, paymentClient payment.PaymentServiceClient, cfg *config.Config) *AdminHandler {
+func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient, productClient product.ProductServiceClient, orderClient order.OrderServiceClient, paymentClient payment.PaymentServiceClient, cfg *config.Config, tokenGuard *TokenGuard) *AdminHandler {
 	return &AdminHandler{
 		jwtManager:    jwtManager,
 		userClient:    userClient,
@@ -69,7 +70,7 @@ func NewAdminHandler(jwtManager *jwt.Manager, userClient user.UserServiceClient,
 		paymentClient: paymentClient,
 		cfg:           cfg,
 		guard:         newLoginGuard(cfg),
-		refreshGuard:  newRefreshGuard(cfg),
+		tokenGuard:    tokenGuard,
 		pwdCrypto:     newPasswordCrypto(cfg),
 	}
 }
@@ -123,12 +124,13 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		return
 	}
 
-	admin, err := h.userClient.GetAdminByUsername(ctx, &user.GetAdminByUsernameReq{Username: req.Username})
+	// 口令比对下沉到 user 服务：网关只拿「账号是否存在 / 口令对错」，bcrypt 摘要不再跨边界下发
+	verifyResp, err := h.userClient.VerifyAdminCredential(ctx, &user.VerifyAdminCredentialReq{Username: req.Username, Password: req.Password})
 	if err != nil {
 		// 只有「账号不存在」算凭证失败、计入锁定；服务不可用等故障不得污染计数，
 		// 否则 user-service 抖动或数据库故障会把正常管理员连带锁在门外
 		if status.Code(err) != codes.NotFound {
-			log.Printf("[WARN] 管理员登录查询账号失败 username=%s: %v", maskAccount(req.Username), err)
+			log.Printf("[WARN] 管理员登录校验凭证失败 username=%s: %v", maskAccount(req.Username), err)
 			response.Error(c, errcode.InternalServerError)
 			return
 		}
@@ -136,7 +138,8 @@ func (h *AdminHandler) Login(c *gin.Context) {
 		response.Error(c, errcode.IncorrectUsernameOrPassword)
 		return
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(req.Password)); err != nil {
+	admin := verifyResp.Admin
+	if !verifyResp.PasswordValid {
 		h.guard.recordFailure(ctx, loginSceneAdmin, req.Username)
 		response.Error(c, errcode.IncorrectUsernameOrPassword)
 		return
@@ -199,22 +202,16 @@ func (h *AdminHandler) Login(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// AdminLogout 后台登出：清除 refresh_token 与 access_token 的 httpOnly cookie 并吊销 refresh 令牌
+// AdminLogout 后台登出：清除 refresh_token 与 access_token 的 httpOnly cookie 并吊销这两枚令牌
 // 前端本地 access_token 由 JS 自行删除，JS 删不掉的 cookie 必须由后端下发过期值清除；
-// 吊销黑名单（P1-5）让服务端也不再认这枚 refresh 令牌——否则登出只是前端表演，
-// 令牌在剩余有效期内仍可刷新出新 access_token
+// 吊销黑名单让服务端也不再认这组令牌（P1-5 + C5）——否则登出只是前端表演，
+// refresh 在剩余有效期内仍能续期，access 更是直接继续调接口直到 2 小时自然过期
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) AdminLogout(c *gin.Context) {
 	clearRefreshTokenCookie(c)
 	clearAccessTokenCookie(c)
-	// 吊销当前 refresh 令牌：解析失败（过期/伪造）时无需处理，令牌本就不可用
-	if token := firstNonEmptyRefreshToken(c, ""); token != "" {
-		if claims, err := h.jwtManager.ParseToken(token); err == nil &&
-			claims.Type == jwt.TokenTypeAdmin && claims.TokenUse == jwt.TokenUseRefresh {
-			h.refreshGuard.revoke(c.Request.Context(), claims.ID, time.Until(claims.ExpiresAt.Time))
-		}
-	}
+	revokePresentedTokens(c, h.jwtManager, h.tokenGuard, jwt.TokenTypeAdmin, "")
 	response.Success(c, gin.H{})
 }
 
@@ -472,14 +469,21 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-	response.SuccessWithPage(c, resp.List, int(resp.Pagination.Total), page, pageSize)
+	// 逐行走 toAdminVO 白名单：proto AdminInfo 是跨服务的全量结构，直接透传
+	// 会让后续新增的内部字段（历史上就含口令摘要）默认出现在列表响应里
+	list := make([]gin.H, 0, len(resp.List))
+	for _, item := range resp.List {
+		list = append(list, h.toAdminVO(item))
+	}
+	response.SuccessWithPage(c, list, int(resp.Pagination.Total), page, pageSize)
 }
 
 // CreateAdminReq 创建员工请求
 // username 已存在时复用该账号（不修改其密码），仅追加当前社区任职
 type CreateAdminReq struct {
-	Username string  `json:"username" binding:"required"`
-	Password string  `json:"password"`
+	Username string `json:"username" binding:"required"`
+	// 可选（复用账号不传）；传值时长度下限同 pwdpolicy.MinLength
+	Password string  `json:"password" binding:"omitempty,min=10"`
 	RealName string  `json:"real_name"`
 	Phone    string  `json:"phone"`
 	RoleIDs  []int64 `json:"role_ids" binding:"required,min=1"`
@@ -500,6 +504,9 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		return
 	}
 	if !h.decryptPwdField(c, &req.Password, req.PwdAlg, req.PwdKey) {
+		return
+	}
+	if !h.validateNewPassword(c, req.Password) {
 		return
 	}
 
@@ -605,7 +612,9 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 // ChangeAdminPasswordReq 修改管理员密码请求
 type ChangeAdminPasswordReq struct {
 	OldPassword string `json:"old_password" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	// 长度下限与 pwdpolicy.MinLength 同口径；加密通道上该标签判的是密文长度，
+	// 明文长度由解密后的 validateNewPassword 复判
+	NewPassword string `json:"new_password" binding:"required,min=10"`
 	// 密文传输声明：两个密码字段同批加密上送（语义同 AdminLoginReq）
 	PwdAlg string `json:"pwd_alg"`
 	PwdKey string `json:"pwd_key"`
@@ -629,6 +638,10 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 	// 密文传输：新旧密码同批解密
 	if !h.decryptPwdField(c, &req.OldPassword, req.PwdAlg, req.PwdKey) ||
 		!h.decryptPwdField(c, &req.NewPassword, req.PwdAlg, req.PwdKey) {
+		return
+	}
+	// 只判新密码长度：旧密码是存量口令，按新下限判定会让历史短口令账号登得上却改不了密
+	if !h.validateNewPassword(c, req.NewPassword) {
 		return
 	}
 
@@ -725,7 +738,8 @@ func (h *AdminHandler) ListAllAccounts(c *gin.Context) {
 // CreateAccountReq 全局新增账号请求（仅建账号，不在任何社区任职）
 type CreateAccountReq struct {
 	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required,min=6"`
+	// 长度下限同 ChangeAdminPasswordReq.NewPassword（口径见 pwdpolicy）
+	Password string `json:"password" binding:"required,min=10"`
 	RealName string `json:"real_name"`
 	Phone    string `json:"phone"`
 	// 密文传输声明（语义同 AdminLoginReq）
@@ -749,6 +763,9 @@ func (h *AdminHandler) CreateAccount(c *gin.Context) {
 		return
 	}
 	if !h.decryptPwdField(c, &req.Password, req.PwdAlg, req.PwdKey) {
+		return
+	}
+	if !h.validateNewPassword(c, req.Password) {
 		return
 	}
 
@@ -818,7 +835,8 @@ func (h *AdminHandler) UpdateAccountStatus(c *gin.Context) {
 
 // ResetAccountPasswordReq 超管重置账号密码请求
 type ResetAccountPasswordReq struct {
-	NewPassword string `json:"new_password" binding:"required,min=6"`
+	// 长度下限同 ChangeAdminPasswordReq.NewPassword（口径见 pwdpolicy）
+	NewPassword string `json:"new_password" binding:"required,min=10"`
 	// 密文传输声明（语义同 AdminLoginReq）
 	PwdAlg string `json:"pwd_alg"`
 	PwdKey string `json:"pwd_key"`
@@ -844,6 +862,9 @@ func (h *AdminHandler) ResetAccountPassword(c *gin.Context) {
 		return
 	}
 	if !h.decryptPwdField(c, &req.NewPassword, req.PwdAlg, req.PwdKey) {
+		return
+	}
+	if !h.validateNewPassword(c, req.NewPassword) {
 		return
 	}
 
@@ -954,7 +975,8 @@ func (h *AdminHandler) ListCommunityAdmins(c *gin.Context) {
 type AddCommunityAdminReq struct {
 	Username string `json:"username" binding:"required"`
 	// 新建账号时的初始密码；username 已存在（复用账号）时可省略
-	Password string `json:"password"`
+	// 传值时长度下限同 pwdpolicy.MinLength
+	Password string `json:"password" binding:"omitempty,min=10"`
 	RealName string `json:"real_name"`
 	Phone    string `json:"phone"`
 	// 密文传输声明（语义同 AdminLoginReq）
@@ -983,6 +1005,9 @@ func (h *AdminHandler) AddCommunityAdmin(c *gin.Context) {
 		return
 	}
 	if !h.decryptPwdField(c, &req.Password, req.PwdAlg, req.PwdKey) {
+		return
+	}
+	if !h.validateNewPassword(c, req.Password) {
 		return
 	}
 
@@ -1506,7 +1531,7 @@ func (h *AdminHandler) RefreshToken(c *gin.Context) {
 	}
 	// 黑名单原子消费（P1-5 + P1-7）：SETNX 一次完成「查旧 jti 是否用过 + 登记为已用」，
 	// 同一枚令牌被并发提交两次时只有先抢到的那次能刷新
-	if h.refreshGuard.consume(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)) {
+	if h.tokenGuard.consume(ctx, claims.ID, time.Until(claims.ExpiresAt.Time)) {
 		response.Error(c, errcode.InvalidToken)
 		return
 	}
@@ -1728,6 +1753,8 @@ func (h *AdminHandler) DeleteCategory(c *gin.Context) {
 // --- 商品管理 ---
 
 // GetAdminProduct 获取管理端商品详情（含 SKU 列表与规格树）
+// include_deleted=true：管理端列表显式筛 status=2 时列得出已删除商品，
+// 详情若一并拒绝就会出现「列表看得见、点进去报不存在」；成本价等内部字段也只有此出口保留
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetAdminProduct(c *gin.Context) {
@@ -1737,7 +1764,11 @@ func (h *AdminHandler) GetAdminProduct(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.productClient.GetProduct(c.Request.Context(), &product.GetProductReq{Id: id, CommunityId: h.scopeCommunityID(c)})
+	resp, err := h.productClient.GetProduct(c.Request.Context(), &product.GetProductReq{
+		Id:             id,
+		CommunityId:    h.scopeCommunityID(c),
+		IncludeDeleted: true,
+	})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -1921,6 +1952,9 @@ func (h *AdminHandler) CreateProduct(c *gin.Context) {
 }
 
 // UpdateProductReq 更新商品请求
+// sort 与 on_sale_at 为指针，用于区分「未传」与「传零值」：
+//   - sort：不传=不改动排序，传 0=置 0
+//   - on_sale_at：不传=维持原预约不变，显式空串=取消定时（见 proto UpdateProductReq.on_sale_at）
 type UpdateProductReq struct {
 	CategoryID   int64             `json:"category_id"`
 	Name         string            `json:"name"`
@@ -1929,13 +1963,13 @@ type UpdateProductReq struct {
 	CoverImage   string            `json:"cover_image"`
 	Images       []string          `json:"images"`
 	Unit         string            `json:"unit"`
-	Sort         int32             `json:"sort"`
+	Sort         *int32            `json:"sort"`
 	Status       int32             `json:"status"`
 	MinBuy       int32             `json:"min_buy"`
 	IsMultiSpec  bool              `json:"is_multi_spec"`
 	ShowSales    *bool             `json:"show_sales"`
+	OnSaleAt     *string           `json:"on_sale_at"`
 	VirtualSales int32             `json:"virtual_sales"`
-	OnSaleAt     string            `json:"on_sale_at"` // 定时上架时间（空=取消定时）
 	Specs        []*SpecReqItem    `json:"specs"`
 	SkuItems     []*SkuItemReqItem `json:"sku_items"`
 }
@@ -2375,16 +2409,17 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 		return
 	}
 
-	// 跨社区查询（community_id=0）时回显订单所属社区名称
+	// 跨社区查询（community_id=0）时回显订单所属社区名称：整批一次列表 RPC 后查表，
+	// 不再按行 GetCommunity（一页最多放大成「不同社区数」次往返）
 	communityNames := map[int64]string{}
 	if communityID == 0 {
+		ids := make([]int64, 0, len(resp.List))
 		for _, o := range resp.List {
-			if o.CommunityId > 0 && communityNames[o.CommunityId] == "" {
-				if comm, err := h.userClient.GetCommunity(c.Request.Context(), &user.GetCommunityReq{Id: o.CommunityId}); err == nil && comm != nil {
-					communityNames[o.CommunityId] = comm.Name
-				}
+			if o.CommunityId > 0 {
+				ids = append(ids, o.CommunityId)
 			}
 		}
+		communityNames = h.communityNamesByIDs(c.Request.Context(), ids)
 	}
 
 	// 逐行 RPC 收口：会员名与支付方式原先每行各 1 次调用（一页 50 行即 100 次往返），
@@ -2655,6 +2690,60 @@ func (h *AdminHandler) batchUserNames(c *gin.Context, orders []*order.OrderInfo,
 	return names, nil
 }
 
+// communityNameMaxPages 社区名批量回显的翻页上限（200/页 × 10 页 = 2000 个社区，
+// 远超实际社区规模，仅为防止分页口径漂移时翻页失控）
+const communityNameMaxPages = 10
+
+// communityNamesByIDs 批量取社区名（整批分页列表，替代按行 GetCommunity）
+// 跨社区订单列表原先按「本页不同社区数」逐个 RPC，页大、社区多时往返显著；
+// 改为按 200/页拉取（user 服务对 page_size 同值封顶），凑齐所需 ID 或翻完上限即停。
+// 取不到（RPC 失败、社区数超过翻页上限）时该 ID 留空，沿用原「查询失败不阻断列表」的退化口径
+//
+// 参数：
+//   - ctx: 请求上下文
+//   - ids: 需要的社区 ID（重复、0 与负数自动忽略）
+//
+// 返回值：
+//   - map[int64]string: 社区 ID -> 社区名
+//
+// 使用示例：
+//
+//	names := h.communityNamesByIDs(c.Request.Context(), communityIDsOfOrders(resp.List))
+func (h *AdminHandler) communityNamesByIDs(ctx context.Context, ids []int64) map[int64]string {
+	names := make(map[int64]string, len(ids))
+	want := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			want[id] = struct{}{}
+		}
+	}
+	if len(want) == 0 {
+		return names
+	}
+
+	const pageSize = 200
+	for page := 1; page <= communityNameMaxPages; page++ {
+		resp, err := h.userClient.ListCommunities(ctx, &user.ListCommunitiesReq{
+			Pagination:      &common.Pagination{Page: int32(page), PageSize: pageSize},
+			IncludeDisabled: true,
+			Status:          -1, // 全部状态：停业社区的歷史订单同样要回显名称
+		})
+		if err != nil {
+			log.Printf("[admin] 批量取社区名失败（列表按空名展示）: %v", err)
+			break
+		}
+		for _, item := range resp.List {
+			if _, ok := want[item.Id]; ok {
+				names[item.Id] = item.Name
+			}
+		}
+		if len(names) == len(want) || len(resp.List) < pageSize {
+			break
+		}
+	}
+	return names
+}
+
 // batchOrderPayTypes 批量取订单列表涉及的支付方式（0=未支付/未知）
 // 参数：
 //   - c: gin 上下文
@@ -2704,9 +2793,17 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		return
 	}
 
-	o := resp.Order
+	// 主体缺失单点收口：proto 里 order 字段可空，服务侧「成功返回但不带订单主体」属异常响应。
+	// 原先下游既判空又无条件解引用（构造 data 时直接取 o.Id），两种口径混用等于都没兜住；
+	// 现统一在此判定，后续流程一律按非空主体处理
+	o := resp.GetOrder()
+	if o == nil {
+		response.Error(c, errcode.NotFound, "订单不存在")
+		return
+	}
+
 	userName := ""
-	if o != nil && o.UserId > 0 {
+	if o.UserId > 0 {
 		userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: o.UserId})
 		if err == nil && userResp != nil {
 			userName = userResp.Nickname
@@ -2716,13 +2813,10 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		}
 	}
 	// 支付方式（与列表共用口径；0=未支付/未知）
-	payType, payTypeText := int32(0), ""
-	if o != nil {
-		payType, payTypeText = h.adminOrderPayInfo(c, o.Id)
-	}
+	payType, payTypeText := h.adminOrderPayInfo(c, o.Id)
 
 	address := gin.H{"name": "", "phone": "", "address": ""}
-	if o != nil && o.ContactName != "" {
+	if o.ContactName != "" {
 		address["name"] = o.ContactName
 		address["phone"] = o.ContactPhone
 		address["address"] = o.ContactAddress
@@ -5105,6 +5199,11 @@ func (h *AdminHandler) UpdateCommunity(c *gin.Context) {
 }
 
 // DeleteCommunity 删除社区
+// communities 无软删列，这里是真删，删除前逐服务查引用：
+// 会员归属/收货地址/管理员任职/社区角色由 user 服务自带守卫（FailedPrecondition），
+// 商品与订单分属 product/order 服务，网关各取一次总数（page_size=1 只为拿 pagination.total）；
+// 已软删商品（status=2）不计入——其行只是历史快照，且能产生软删商品说明该社区有过交易，
+// 订单计数已覆盖这类场景
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) DeleteCommunity(c *gin.Context) {
@@ -5114,12 +5213,55 @@ func (h *AdminHandler) DeleteCommunity(c *gin.Context) {
 		return
 	}
 
+	if reason := h.communityBusinessRefs(c, id); reason != "" {
+		response.Error(c, errcode.OperationNotAllowed, reason)
+		return
+	}
+
 	_, err = h.userClient.DeleteCommunity(c.Request.Context(), &user.DeleteCommunityReq{Id: id})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
 	response.Success(c, gin.H{"id": id})
+}
+
+// communityBusinessRefs 汇总社区仍在营业面上被引用的数据，返回阻塞文案（空串表示可删）
+// 任一下游查询失败时返回保守文案：拿不准有没有引用就不删，
+// 静默放行会让「查不到」变成「判定为没有引用」，把一个还有订单的社区硬删掉
+// 参数：
+//   - c: gin 上下文
+//   - id: 社区 ID
+//
+// 返回值：
+//   - string: 阻塞原因（含条数）；无引用且查询成功时为空串
+func (h *AdminHandler) communityBusinessRefs(c *gin.Context, id int64) string {
+	one := &common.Pagination{Page: 1, PageSize: 1}
+	products, err := h.productClient.ListProducts(c.Request.Context(), &product.ListProductsReq{
+		CommunityId: id,
+		Pagination:  one,
+	})
+	if err != nil {
+		return "商品数据查询失败，未能确认该社区是否仍有商品，请稍后重试"
+	}
+	orders, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
+		CommunityId: id,
+		Pagination:  one,
+	})
+	if err != nil {
+		return "订单数据查询失败，未能确认该社区是否仍有订单，请稍后重试"
+	}
+	var blocks []string
+	if n := products.GetPagination().GetTotal(); n > 0 {
+		blocks = append(blocks, fmt.Sprintf("%d 个商品", n))
+	}
+	if n := orders.GetPagination().GetTotal(); n > 0 {
+		blocks = append(blocks, fmt.Sprintf("%d 笔订单", n))
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	return "该社区仍有 " + strings.Join(blocks, "、") + "，请先处理后再删除"
 }
 
 // --- 门店设置（社区级资料/配置，社区管理员可自助维护） ---
@@ -5553,7 +5695,35 @@ func (h *AdminHandler) toAdminVO(admin *user.AdminInfo) gin.H {
 		// 绑定会员的昵称/手机号（列表展示与编辑回显用；未绑定或会员不存在时为空）
 		"user_nickname": admin.UserNickname,
 		"user_phone":    admin.UserPhone,
+		// 任职角色（「本社区角色」列与编辑回显 role_ids 依赖）
+		"roles": toAdminRoleVOList(admin.Roles),
 	}
+}
+
+// toAdminRoleVOList 将管理员任职角色转换为视图对象，只保留展示与回显所需字段
+// 不透出 permissions：权限由 GetAdminContext 按社区实时解析，随员工行下发会让人误以为是权威口径
+// 参数：
+//   - roles: proto 角色列表（可为空）
+//
+// 返回值：
+//   - []gin.H: 视图对象列表；无角色时返回 nil（序列化省略该字段）
+func toAdminRoleVOList(roles []*user.RoleInfo) []gin.H {
+	if len(roles) == 0 {
+		return nil
+	}
+	out := make([]gin.H, 0, len(roles))
+	for _, r := range roles {
+		if r == nil {
+			continue
+		}
+		out = append(out, gin.H{
+			"id":           r.Id,
+			"name":         r.Name,
+			"code":         r.Code,
+			"community_id": r.CommunityId,
+		})
+	}
+	return out
 }
 
 // orderStatusText 将订单状态码转换为后台展示文案

@@ -10,6 +10,8 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/dberr"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/services/order/model"
@@ -25,6 +27,10 @@ import (
  * - 现金合计 = 现金收款 - 现金退款（钱箱应交金额）
  * - 进行中班次实时计算；交班时把统计冻结为 JSON 快照存 statistics_json
  */
+
+// shiftListMaxPageSize 班次列表页长上限：每行都要跑一次统计（收款/退款按支付方式分组），
+// 页长放大是逐行统计的线性放大，超限直接收敛
+const shiftListMaxPageSize = 100
 
 // ShiftService 收银台交班业务服务
 type ShiftService struct {
@@ -43,6 +49,8 @@ func NewShiftService(db *mysql.Instance) *ShiftService {
 
 // StartShift 开工：创建进行中班次
 // 校验：同操作员同社区已有进行中班次时拒绝（防止重复开工导致统计分裂）
+// 两道防线：先查后拦给出友好提示；库层复合唯一索引 uq_shift_active 兜住「查后写」窗口内的
+// 并发双击与 POS 弱网重发（撞索引即回退成同一业务提示，不再产生双开班次）
 // 参数：
 //   - ctx: 上下文
 //   - req: 开工请求
@@ -69,20 +77,40 @@ func (s *ShiftService) StartShift(ctx context.Context, req *order.StartShiftReq)
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
+	activeFlag := int8(1)
 	m := &model.PosShift{
 		CommunityID:  req.CommunityId,
 		OperatorID:   req.OperatorId,
 		OperatorName: req.OperatorName,
 		StartTime:    now,
 		Status:       1,
+		ActiveFlag:   &activeFlag,
 		Note:         req.Note,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(m).Error; err != nil {
+		// 并发开工：两次 Create 都通过了上面的 Count 检查，由库层唯一索引分出胜负
+		if isDuplicateShiftActiveErr(err) {
+			return nil, bizerr.New(codes.FailedPrecondition, "您已有进行中的班次，无需重复开工")
+		}
 		return nil, err
 	}
 	return s.toShiftInfo(ctx, m, true)
+}
+
+// isDuplicateShiftActiveErr 判断错误是否为进行中班次的复合唯一索引冲突
+// 只认 uq_shift_active 这一把索引，避免把无关的 1062（其它键冲突）误判成「重复开工」
+// 参数：
+//   - err: Create 返回的错误
+//
+// 返回值：
+//   - bool: true 表示本次开工与已有进行中班次撞了 uq_shift_active
+//
+// 使用示例：
+//   - if isDuplicateShiftActiveErr(err) { 返回「您已有进行中的班次，无需重复开工」 }
+func isDuplicateShiftActiveErr(err error) bool {
+	return dberr.IsDuplicate(err, "uq_shift_active")
 }
 
 // GetCurrentShift 查询当前进行中班次（含实时统计）
@@ -143,11 +171,13 @@ func (s *ShiftService) EndShift(ctx context.Context, req *order.EndShiftReq) (*o
 
 	now := time.Now().Format("2006-01-02 15:04:05")
 	// 条件更新防并发：仅进行中班次可交班（重复提交时第二次不生效）
+	// active_flag 同时置 NULL：释放 uq_shift_active 占位，操作员交班后即可再次开工
 	res := s.db.GetDb().WithContext(ctx).Model(&model.PosShift{}).
 		Where("id = ? AND status = ?", m.ID, 1).
 		Updates(map[string]interface{}{
 			"status":          int32(2),
 			"end_time":        &now,
+			"active_flag":     nil,
 			"note":            req.Note,
 			"statistics_json": string(raw),
 			"updated_at":      now,
@@ -182,17 +212,7 @@ func (s *ShiftService) ListShifts(ctx context.Context, req *order.ListShiftsReq)
 	if req.CommunityId <= 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "缺少社区信息")
 	}
-	page, pageSize := int32(1), int32(10)
-	if req.Pagination != nil {
-		page = req.Pagination.Page
-		pageSize = req.Pagination.PageSize
-	}
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 || pageSize > 100 {
-		pageSize = 10
-	}
+	page, pageSize := pageparam.ClampMax(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()), shiftListMaxPageSize)
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.PosShift{}).Where("community_id = ?", req.CommunityId)
 	if req.OperatorId > 0 {
@@ -207,7 +227,7 @@ func (s *ShiftService) ListShifts(ctx context.Context, req *order.ListShiftsReq)
 		return nil, err
 	}
 	var list []*model.PosShift
-	if err := db.Order("id desc").Offset(int((page - 1) * pageSize)).Limit(int(pageSize)).Find(&list).Error; err != nil {
+	if err := db.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&list).Error; err != nil {
 		return nil, err
 	}
 
@@ -225,8 +245,8 @@ func (s *ShiftService) ListShifts(ctx context.Context, req *order.ListShiftsReq)
 		List: respList,
 		Pagination: &common.PaginationResponse{
 			Total:    int32(total),
-			Page:     page,
-			PageSize: pageSize,
+			Page:     int32(page),
+			PageSize: int32(pageSize),
 		},
 	}, nil
 }

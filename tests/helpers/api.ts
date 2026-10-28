@@ -419,7 +419,7 @@ export async function createFulfillerStaff(
   const resp = await api.post('/api/v1/admin/admins', {
     data: {
       username: `auto_ff_${uniquePhone()}`,
-      password: 'Ff123456',
+      password: 'Ff12345678',
       real_name: 'AUTO-TEST 履约员工',
       role_ids: [builtin.id],
       user_id: memberUserId,

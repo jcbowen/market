@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
 
@@ -96,6 +97,66 @@ func EnsureTradeAccess(scope int64, p *model.Product, sku *model.Sku, requireSel
 		}
 	}
 	return nil
+}
+
+// RedactPublicProductDetail 公开出口（C 端商品详情）脱敏
+// 无条件抹掉 SKU 上的经营字段（见 RedactPublicSku）；
+// 商品非上架态（下架/仓库中/定时上架未到点/已删除）时再抹掉价格与富文本正文：
+// C 端列表按 status=1 过滤，详情若继续透传价目就成了绕过列表口径取价目的旁路
+// （含定时上架商品提前泄露活动价）。页面仍拿得到名称与图片，据此提示「已下架」
+//
+// 参数：
+//   - detail: 已组装好的商品详情（原地修改；nil 或不含商品主体时直接返回）
+//
+// 使用示例：
+//
+//	if req.GetPublicView() {
+//		service.RedactPublicProductDetail(detail)
+//	}
+func RedactPublicProductDetail(detail *product.ProductDetail) {
+	if detail == nil || detail.Product == nil {
+		return
+	}
+	hideTrade := detail.Product.Status != ProductStatusOnSale
+	for _, sku := range detail.Skus {
+		RedactPublicSku(sku, hideTrade)
+	}
+	if !hideTrade {
+		return
+	}
+	detail.Product.Price = 0
+	detail.Product.MinPrice = 0
+	detail.Product.MaxPrice = 0
+	detail.Product.OriginalPrice = 0
+	detail.Product.Stock = 0
+	detail.Product.Content = ""
+}
+
+// RedactPublicSku 抹掉 SKU 视图上的经营字段
+// 成本价与安全库存是给进货/补货看的内部数据，此前随 C 端公开出口整块下发，
+// 等于把毛利与补货策略摊给任意访问者（C 端页面并不消费它们）；
+// 不动 sku_code：收银台用它兜底规格名（OrderTab 的 `spec_name || sku_code`），
+// 而编码本身不含经营信息，抹掉只会打掉收银台的展示兜底
+//
+// 参数：
+//   - sku: SKU 视图对象（原地修改，nil 直接返回）
+//   - hideTrade: 是否同时抹掉成交价与库存（商品非上架态时为 true）
+//
+// 使用示例：
+//
+//	service.RedactPublicSku(info, false)
+func RedactPublicSku(sku *product.SkuInfo, hideTrade bool) {
+	if sku == nil {
+		return
+	}
+	sku.CostPrice = 0
+	sku.SafetyStock = 0
+	if !hideTrade {
+		return
+	}
+	sku.Price = 0
+	sku.OriginalPrice = 0
+	sku.Stock = 0
 }
 
 // productIDOf 取商品 ID 供告警定位（nil 安全，批量入口可能只加载 SKU 一侧）

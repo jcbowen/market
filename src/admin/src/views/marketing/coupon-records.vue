@@ -41,6 +41,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'CouponRecords' })
 import { ref, onMounted, watch, h } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useRouter, useRoute } from 'vue-router'
 import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -234,6 +235,12 @@ watch(
   () => void loadData()
 )
 
+// 优惠券下拉数据源与领取/发放记录的加载（首屏与切回本页共用）
+function loadAll() {
+  void loadCoupons()
+  void loadData()
+}
+
 onMounted(() => {
   // 支持从优惠券列表跳转带 coupon_id 预筛选
   const q = route.query.coupon_id
@@ -241,7 +248,9 @@ onMounted(() => {
     const id = Number(q)
     if (Number.isFinite(id) && id > 0) filterCouponId.value = id
   }
-  void loadCoupons()
-  void loadData()
+  loadAll()
 })
+
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新，避免展示离开前的旧记录
+refreshOnActivated(loadAll)
 </script>

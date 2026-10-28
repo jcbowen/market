@@ -239,15 +239,20 @@ export interface UserCoupon {
   status: number
 }
 
-/** 秒杀活动 */
+/** 秒杀活动（列表项由后端秒杀商品项扁平化而来，字段均为接口真实下发值） */
 export interface FlashSale {
   id: number
   product_id: number
   product_name: string
-  product_image: string
+  /** 商品封面图（后端已按附件域名拼为完整地址），无封面商品为空，页面按占位图处理 */
+  product_image?: string
+  /** 活动价：当前仅作为活动配置存在，下单实付仍按 SKU 价，故不在页面作为可售价格展示 */
   flash_price: number
+  /** SKU 价：与下单实付一致，页面按此价格展示 */
   original_price: number
+  /** 活动剩余库存（flash_sale_items.stock，扣减秒杀池后为余量） */
   stock: number
+  /** 已售数量（flash_sale_items.sold_count） */
   sold: number
   start_time: string
   end_time: string

@@ -1,7 +1,7 @@
 <template>
-  <view class="category-page">
+  <view class="category-page" :style="{ top: statusBarHeight + 'px' }">
     <!-- 顶部社区与搜索栏 -->
-    <view class="top-bar">
+    <view class="top-bar" :style="capsuleReserve ? { right: capsuleReserve + 'px' } : {}">
       <view v-show="!isSearching" class="community-bar" @click="goCommunitySelect">
         <u-icon name="map-fill" size="18" color="#07c160" />
         <text class="community-name">{{ communityName }}</text>
@@ -102,6 +102,10 @@
         <!-- 底部占位，避免内容被固定购物车栏遮挡 -->
         <view style="height: 140rpx" />
       </scroll-view>
+
+      <!-- 分类标题吸顶层：scroll-view 为原生组件，position:sticky 在 mp-weixin 不生效，
+           故在 scroll-view 之外用绝对定位层随滚动联动显示当前分类名，H5/小程序行为统一 -->
+      <view v-show="showStickyTitle" class="sticky-title">{{ activeCategoryName }}</view>
     </view>
 
     <!-- 搜索结果 -->
@@ -150,6 +154,7 @@
     <sku-selector
       v-model:show="showSkuPopup"
       :product="currentProduct"
+      :community-id="userStore.communityInfo?.id"
       @confirm="onSkuConfirm"
     />
 
@@ -207,6 +212,7 @@
     <sku-selector
       v-model:show="showCartSkuPopup"
       :product="cartSkuProduct"
+      :community-id="cartSwitchItem?.community_id || userStore.communityInfo?.id"
       :initial-sku-id="cartSwitchItem?.sku_id || 0"
       :initial-quantity="cartSwitchItem?.quantity || 0"
       @confirm="onCartSkuConfirm"
@@ -225,7 +231,7 @@ import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
 import { getBanners, getCategories, getProducts, getProductByBarcode, getProductDetail, searchProducts } from '@/api/product'
 import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart'
-import { getCommunityList } from '@/api/user'
+import { ensureCommunity } from '@/utils/community'
 import { formatPrice } from '@/utils/format'
 import { goOrderConfirm, goLogin, goCommunitySelect, goPage, goProductDetail } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
@@ -244,6 +250,25 @@ const userStore = useUserStore()
 const cartStore = useCartStore()
 const instance = getCurrentInstance()
 
+/** 状态栏高度（px）。小程序端 uniapp 注入的 --status-bar-height 固定为 25px（编译期常量），
+ *  灵动岛/刘海屏机型真实状态栏更高（约 47~60px），顶栏会被遮挡，需运行时取真实值；
+ *  H5 端为 0，维持原 var(--status-bar-height, 0px) 行为 */
+const statusBarHeight = ref(0)
+/** 小程序端顶栏右侧让出的胶囊按钮预留宽度（px），避免扫码按钮被胶囊遮挡；H5 为 0 不让位 */
+const capsuleReserve = ref(0)
+// #ifdef MP-WEIXIN
+try {
+  const windowInfo = uni.getWindowInfo()
+  statusBarHeight.value = windowInfo.statusBarHeight || 0
+  const menuRect = uni.getMenuButtonBoundingClientRect()
+  if (menuRect && menuRect.left > 0) {
+    capsuleReserve.value = windowInfo.windowWidth - menuRect.left + 8
+  }
+} catch {
+  // 取不到时保持 0，走 CSS 变量兜底
+}
+// #endif
+
 const categories = ref<Category[]>([])
 const categoryProducts = ref<Record<number, Product[]>>({})
 const activeCategoryId = ref(0)
@@ -252,6 +277,12 @@ const rightScrollTop = ref(0)
 const leftScrollIntoView = ref('')
 const lastCommunityId = ref<number | undefined>(undefined)
 const banners = ref<Banner[]>([])
+/** 各分类分区的固定内容内偏移（scroll-view 原生滚动不改变该值，配合 scrollTop 可实时计算当前分类） */
+const sectionOffsets = ref<{ id: number; top: number; bottom: number }[]>([])
+/** 右侧列表（scroll-view）相对页面视口的固定顶部坐标，用于吸顶/高亮联动的阈值判断 */
+const listViewportTop = ref(0)
+/** measureSections 空结果重试计数，避免数据/渲染未就绪时一次性度量失败导致吸顶/高亮不跟随 */
+let measureRetry = 0
 
 /** 分类页 Banner 图片列表 */
 const bannerImages = computed(() =>
@@ -264,7 +295,15 @@ const bannerImages = computed(() =>
 /** 顶部社区入口展示名，未选社区时引导选择 */
 const communityName = computed(() => userStore.communityInfo?.name || '选择社区')
 
+/** 当前高亮分类名，用于吸顶标题层展示 */
+const activeCategoryName = computed(() => {
+  const cat = categories.value.find((c) => c.id === activeCategoryId.value)
+  return cat?.name || ''
+})
+
 const isSearching = ref(false)
+/** 右侧列表顶部是否显示吸顶分类名层 */
+const showStickyTitle = ref(false)
 const keyword = ref('')
 const searchResults = ref<Product[]>([])
 const searchLoading = ref(false)
@@ -374,27 +413,6 @@ function onBannerClick(index: number) {
 }
 
 /**
- * 确保当前社区信息存在
- * 本地未选中社区时，获取社区列表并默认选中第一个；已登录时同步服务端，同步失败降级为本地选中
- * @throws 无可选社区时抛出错误，由调用方终止加载
- */
-async function ensureCommunity() {
-  if (userStore.communityInfo?.id) return
-  const res = await getCommunityList({ page: 1, page_size: 1 })
-  const first = res.data?.list?.[0]
-  if (!first) {
-    uni.showToast({ title: '暂无可选社区', icon: 'none' })
-    throw new Error('no community')
-  }
-  try {
-    await userStore.switchCommunity(first)
-  } catch {
-    // 同步服务端失败时降级为本地选中，保证页面仍可浏览
-    userStore.setCommunity(first)
-  }
-}
-
-/**
  * 加载所有分类的商品（首屏），用于右侧无缝滚动展示
  */
 async function loadAllCategoryProducts() {
@@ -421,6 +439,7 @@ async function loadAllCategoryProducts() {
   await nextTick()
   setTimeout(() => {
     observeSections()
+    measureSections()
   }, 200)
 }
 
@@ -457,6 +476,8 @@ function scrollRightToCategory(id: number) {
     clickScrollTimer = null
     rightScrollIntoView.value = ''
   }, 800) as unknown as number
+  // 点击分类必然触发滚动，吸顶标题层应随之显示当前分类名
+  showStickyTitle.value = true
 
   // #ifdef H5
   nextTick(() => {
@@ -480,6 +501,56 @@ function scrollRightToCategory(id: number) {
   // #endif
 }
 
+/**
+ * 测量各分类分区的固定内容内偏移。
+ * mp-weixin 的 scroll-view 为原生组件，其内部元素 boundingClientRect 相对内容顶部（不随原生滚动变化），
+ * 正好作为内容内偏移；H5 端在 scrollTop=0 时获取同样得到初始内容偏移。配合滚动事件的 scrollTop 即可实时判定当前分类，
+ * 规避 mp-weixin 下「用 boundingClientRect 计算当前分区」因坐标不随滚动变化而失效的坑。
+ */
+function measureSections() {
+  const query = uni.createSelectorQuery()
+  query.select('.right-list').boundingClientRect()
+  query.selectAll('.category-section').boundingClientRect()
+  query.exec((res) => {
+    const listRect = res[0] as { top: number } | null
+    if (listRect) listViewportTop.value = listRect.top
+    const list = (res[1] || []) as { id?: string; top: number; height: number }[]
+    const offsets = list
+      .map((s) => ({
+        id: Number(s.id?.replace('category-', '')) || 0,
+        top: s.top,
+        bottom: s.top + s.height,
+      }))
+      .filter((s) => s.id)
+    if (offsets.length) {
+      sectionOffsets.value = offsets
+      measureRetry = 0
+    } else if (measureRetry < 3) {
+      // 数据/渲染尚未就绪，延迟重试（如首屏商品接口较慢）
+      measureRetry += 1
+      setTimeout(() => measureSections(), 400)
+    }
+  })
+}
+
+/**
+ * 根据右侧列表滚动位置计算当前所处分类 ID
+ * @param scrollTop 当前滚动偏移
+ */
+function computeStickyCategory(scrollTop: number): number {
+  if (!sectionOffsets.value.length) return 0
+  const probe = scrollTop + 10
+  for (const s of sectionOffsets.value) {
+    if (probe >= s.top && probe < s.bottom) return s.id
+  }
+  // 兜底：取最后一个起始位置不超过探针的分类
+  let found = 0
+  for (const s of sectionOffsets.value) {
+    if (s.top <= probe) found = s.id
+  }
+  return found
+}
+
 /** 右侧列表滚动监听对象 */
 let sectionObserver: any = null
 
@@ -488,7 +559,6 @@ let sectionObserver: any = null
  * 当某个分区进入顶部可视区域时，联动高亮左侧对应分类
  */
 function observeSections() {
-  if (!instance?.proxy) return
   if (sectionObserver) {
     try {
       sectionObserver.disconnect()
@@ -496,20 +566,20 @@ function observeSections() {
       // ignore
     }
   }
-  sectionObserver = uni.createIntersectionObserver(instance.proxy, {
+  sectionObserver = uni.createIntersectionObserver(null as any, {
     thresholds: [0],
     initialRatio: 0,
   })
-  sectionObserver.relativeTo('.right-list', { top: 0 }).observe('.category-section', (res: any) => {
+  // 注意：mp-weixin 的 scroll-view 是原生组件，relativeTo 一个原生 scroll-view 节点不被支持，
+  // 必须用 relativeToViewport 才能正确感知内部节点滚动；回调里用 boundingClientRect.top 与列表视口顶部比较。
+  sectionObserver.relativeToViewport().observe('.category-section', (res: any) => {
     if (isClickScrolling) return
     const id = Number(res?.id?.replace('category-', ''))
-    if (!id || !res?.intersectionRatio) return
-    // 收紧联动条件：分区顶部到达列表顶部附近（<=20px）才视为当前分区，
-    // 避免分区刚露出一点就过早高亮（阈值与 updateActiveCategoryByScroll 保持一致）
+    if (!id) return
     const sectionTop = res?.boundingClientRect?.top
-    const listTop = res?.relativeRect?.top
-    if (typeof sectionTop !== 'number' || typeof listTop !== 'number') return
-    if (sectionTop - listTop > 20) return
+    if (typeof sectionTop !== 'number') return
+    // 当前分区顶部到达右侧列表顶部附近时，视为当前所处分类（阈值与 updateActiveCategoryByScroll 一致）
+    if (sectionTop - listViewportTop.value > 20) return
     if (id !== activeCategoryId.value) {
       activeCategoryId.value = id
       leftScrollIntoView.value = `menu-${id}`
@@ -526,6 +596,15 @@ function onRightScroll(e: any) {
   if (isClickScrolling) return
   const scrollTop = e?.detail?.scrollTop ?? 0
   rightScrollTop.value = scrollTop
+  // 列表滚动时联动吸顶标题层：滚离顶部即显示当前分类名，回到顶部隐藏
+  showStickyTitle.value = scrollTop > 0
+  // 同步高亮左侧分类（与吸顶标题一致）：用内容内 section 偏移 + 实时 scrollTop 计算，跨端稳定，
+  // 规避 mp-weixin 下坐标不随滚动变化导致高亮/吸顶标题不跟随的问题
+  const id = computeStickyCategory(scrollTop)
+  if (id && id !== activeCategoryId.value) {
+    activeCategoryId.value = id
+    leftScrollIntoView.value = `menu-${id}`
+  }
   if (scrollTimer) return
   scrollTimer = setTimeout(() => {
     scrollTimer = null
@@ -954,12 +1033,21 @@ function onSettlement() {
 <style scoped>
 .category-page {
   position: fixed;
-  top: 0;
+  /* 自定义导航下小程序 webview 从屏幕顶端（含状态栏）开始渲染。
+     真实状态栏高度由脚本运行时取值后内联覆盖（小程序端 --status-bar-height 固定 25px，
+     灵动岛机型会被遮挡）；此处 CSS 变量仅作脚本异常时的兜底，H5 端为 0 不受影响 */
+  top: var(--status-bar-height, 0px);
   left: 0;
   right: 0;
-  /* iPhone 全面屏（viewport-fit=cover）下内置 tabBar 实际高 50px + 安全区，
-     只让出 100rpx 会导致底部购物车条压住 tabBar 图标，需叠加安全区高度 */
+  /* 小程序端：原生 tabBar 由框架从 webview 中排除，fixed bottom:0 即紧贴 tabBar 顶边；
+     若额外让出 100rpx 反而在购物车条与 tabBar 之间留出灰白条（H5 无此问题）。
+     H5 端：tabBar 是页面内 DOM 元素，需让出 100rpx + 安全区避免购物车条被遮。 */
+  /* #ifdef H5 */
   bottom: calc(100rpx + env(safe-area-inset-bottom));
+  /* #endif */
+  /* #ifdef MP-WEIXIN */
+  bottom: 0;
+  /* #endif */
   /* 高于根层级 uni-tabbar（z-index 998），避免 SKU 弹窗被困在本层叠上下文内被 tabBar 遮挡 */
   z-index: 999;
   background-color: #f5f5f5;
@@ -1104,14 +1192,27 @@ function onSettlement() {
 }
 
 .category-title {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   padding: 16rpx 0;
   font-size: 28rpx;
   font-weight: bold;
   color: #333333;
   background-color: #f5f5f5;
+}
+
+/* 吸顶分类名层：绝对定位覆盖在右侧列表顶部，随滚动联动当前分类名。
+   置于 scroll-view 之外，规避小程序下 sticky 在原生 scroll-view 内失效的问题 */
+.sticky-title {
+  position: absolute;
+  top: 0;
+  left: 200rpx;
+  right: 0;
+  z-index: 5;
+  padding: 16rpx 20rpx;
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #333333;
+  background-color: #f5f5f5;
+  box-sizing: border-box;
 }
 
 .section-empty {

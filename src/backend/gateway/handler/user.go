@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -326,6 +327,31 @@ func (h *UserHandler) DeleteAddress(c *gin.Context) {
 	response.Success(c, gin.H{"id": id})
 }
 
+// parseCoordinates 解析查询串里的经纬度
+// 非法值一律按「未定位」处理（返回 0,0，走普通分页列表而不是附近社区）：
+// strconv.ParseFloat 会把 "NaN"/"Inf" 当合法浮点字面量且不报错，
+// 原样透传会让距离排序拿非有限值参与计算，越界坐标同理无意义
+// 参数：
+//   - c: gin 上下文（读 longitude / latitude 查询参数）
+//
+// 返回值：
+//   - float64: 经度（非法或未提供时为 0）
+//   - float64: 纬度（非法或未提供时为 0）
+//
+// 使用示例：
+//   - longitude, latitude := parseCoordinates(c)
+func parseCoordinates(c *gin.Context) (float64, float64) {
+	longitude, err := strconv.ParseFloat(c.Query("longitude"), 64)
+	if err != nil || math.IsNaN(longitude) || math.IsInf(longitude, 0) || math.Abs(longitude) > 180 {
+		return 0, 0
+	}
+	latitude, err := strconv.ParseFloat(c.Query("latitude"), 64)
+	if err != nil || math.IsNaN(latitude) || math.IsInf(latitude, 0) || math.Abs(latitude) > 90 {
+		return 0, 0
+	}
+	return longitude, latitude
+}
+
 // ListCommunities 获取社区列表（公开接口）
 // 支持关键词搜索与基于经纬度的附近社区排序
 // 参数：
@@ -333,8 +359,7 @@ func (h *UserHandler) DeleteAddress(c *gin.Context) {
 func (h *UserHandler) ListCommunities(c *gin.Context) {
 	page, pageSize := parsePageParams(c)
 	keyword := c.Query("keyword")
-	longitude, _ := strconv.ParseFloat(c.Query("longitude"), 64)
-	latitude, _ := strconv.ParseFloat(c.Query("latitude"), 64)
+	longitude, latitude := parseCoordinates(c)
 
 	var resp *user.ListCommunitiesResp
 	var err error

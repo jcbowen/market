@@ -14,7 +14,10 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
+	"github.com/jcbowen/market/src/backend/common/pwdpolicy"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
 
@@ -73,6 +76,30 @@ func (s *AdminService) GetAdminByUsername(ctx context.Context, username string) 
 	return &a, nil
 }
 
+// VerifyAdminCredential 登录口令校验：把 bcrypt 比对留在本服务内，摘要不出服务边界
+// 网关登录只需要「账号是否存在」与「口令对不对」两个结论，不需要拿到哈希自己比；
+// 若把摘要下发给网关，任何一处出口忘了过滤（如员工列表）就等于泄露可离线爆破的凭据
+// 参数：
+//   - ctx: 上下文
+//   - username: 登录用户名
+//   - password: 明文口令（网关已完成解密与失败限流）
+//
+// 返回：
+//   - *model.Admin: 账号；口令错误时也返回，调用方需据此区分「禁用」与「密码错误」
+//   - bool: 口令是否正确
+//   - error: 账号不存在为 NotFound；其他错误原样返回（调用方不得计入登录失败锁定）
+//
+// 使用示例：
+//
+//	admin, valid, err := svc.VerifyAdminCredential(ctx, "boss", "123456")
+func (s *AdminService) VerifyAdminCredential(ctx context.Context, username, password string) (*model.Admin, bool, error) {
+	a, err := s.GetAdminByUsername(ctx, username)
+	if err != nil {
+		return nil, false, err
+	}
+	return a, CheckPassword(password, a.Password) == nil, nil
+}
+
 // GetAdminById 按 ID 查询管理员
 // 供 refresh 链路实时校验账号状态（P1-5）：停用/删除的管理员必须立即失去续期能力，
 // 不能只靠登录时的那一次 status 检查
@@ -112,19 +139,11 @@ func (s *AdminService) GetAdminById(ctx context.Context, id int64) (*model.Admin
 //   - int: 总条数
 //   - error: 错误信息
 func (s *AdminService) ListAdmins(ctx context.Context, communityID int64, keyword string, page, pageSize int) ([]*model.Admin, map[int64][]*model.AdminCommunity, int, error) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
 	// 服务层兜底上限：HTTP 网关已按 maxPageSize 收敛，但 gRPC 可被内部或直连调用传入超大值
-	if pageSize > 200 {
-		pageSize = 200
-	}
+	page, pageSize = pageparam.Clamp(page, pageSize)
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Admin{})
 	if keyword != "" {
-		like := "%" + keyword + "%"
+		like := likeutil.Contains(keyword)
 		db = db.Where("username LIKE ? OR real_name LIKE ? OR phone LIKE ?", like, like, like)
 	}
 	if communityID > 0 {
@@ -189,9 +208,7 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 		if err != gorm.ErrRecordNotFound {
 			return nil, err
 		}
-		if len(req.Password) < 6 {
-			return nil, bizerr.New(codes.InvalidArgument, "新账号密码长度至少 6 位")
-		}
+		// 口令长度由 hashPassword 统一兜底（不足返回 InvalidArgument）
 		hashed, err := hashPassword(req.Password)
 		if err != nil {
 			return nil, err
@@ -235,9 +252,7 @@ func (s *AdminService) CreateAdmin(ctx context.Context, req *user.CreateAdminReq
 			// 复用已有账号
 			a = &existing
 		case gorm.ErrRecordNotFound:
-			if len(req.Password) < 6 {
-				return bizerr.New(codes.InvalidArgument, "新账号密码长度至少 6 位")
-			}
+			// 口令长度由 hashPassword 统一兜底（不足返回 InvalidArgument，事务回滚）
 			hashed, err := hashPassword(req.Password)
 			if err != nil {
 				return err
@@ -865,14 +880,19 @@ func replaceAssignmentsTx(tx *gorm.DB, adminID int64, communityID int64, roleIDs
 	return nil
 }
 
-// hashPassword 对密码进行 bcrypt 哈希
+// hashPassword 对密码进行 bcrypt 哈希（所有写入口的唯一口令落库路径）
+// 长度下限在这里兜底：网关 binding 的 min 标签作用在密文上、加密通道判不到明文，
+// 收在本函数后创建/改密/重置三条链路一律覆盖，不再各写一份数字
 // 参数：
 //   - password: 明文密码
 //
 // 返回：
 //   - string: 哈希后的密码
-//   - error: 错误信息
+//   - error: 长度不足返回 InvalidArgument；其他为 bcrypt 错误
 func hashPassword(password string) (string, error) {
+	if pwdpolicy.TooShort(password) {
+		return "", bizerr.New(codes.InvalidArgument, pwdpolicy.Message())
+	}
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(bytes), err
 }
@@ -889,6 +909,7 @@ func CheckPassword(password, hashed string) error {
 }
 
 // ToAdminInfo 将管理员模型转换为 proto 管理员信息
+// 不拷贝口令摘要：AdminInfo.password 已废止，登录校验走 VerifyAdminCredential 在本服务内比对
 // 参数：
 //   - a: 管理员模型
 //   - communityIDs: 任职社区 ID 列表（可选，超管传空）
@@ -903,7 +924,6 @@ func ToAdminInfo(a *model.Admin, communityIDs []int64, roles []*model.Role) *use
 	info := &user.AdminInfo{
 		Id:           a.ID,
 		Username:     a.Username,
-		Password:     a.Password,
 		RealName:     a.RealName,
 		Phone:        a.Phone,
 		CommunityIds: communityIDs,

@@ -89,6 +89,8 @@ business:
         cancel_guard: null
         auto_refund_stuck: null
         pending_max_minutes: 120
+        closed_lookback_minutes: 1440
+        closed_throttle_minutes: 30
         interval_seconds: 60
         min_age_seconds: 60
         throttle_minutes: 5

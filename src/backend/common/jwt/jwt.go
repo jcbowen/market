@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -72,6 +73,8 @@ func NewManager(cfg Config) *Manager {
 }
 
 // GenerateAccessToken 生成 access token
+// 与 refresh 令牌一样携带随机 jti：黑名单以 jti 为键，登出/停用可把这枚
+// 剩余有效期最长 2 小时的接口令牌立即吊销（C5）
 // 参数：
 //   - userID: 用户/管理员 ID
 //   - tokenType: token 类型，user 或 admin
@@ -85,7 +88,7 @@ func NewManager(cfg Config) *Manager {
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateAccessToken(userID int64, tokenType, phone, role string, communityID int64, permissions []string) (string, time.Time, error) {
-	return m.generateToken(userID, tokenType, TokenUseAccess, phone, role, communityID, nil, permissions, "", "", "", m.config.AccessTokenTTL)
+	return m.generateToken(userID, tokenType, TokenUseAccess, phone, role, communityID, nil, permissions, "", "", m.config.AccessTokenTTL)
 }
 
 // GenerateAdminAccessToken 生成管理员 access token
@@ -106,12 +109,11 @@ func (m *Manager) GenerateAccessToken(userID int64, tokenType, phone, role strin
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateAdminAccessToken(userID int64, phone, role string, communityID int64, communityIDs []int64, permissions []string, username, realName string) (string, time.Time, error) {
-	return m.generateToken(userID, TokenTypeAdmin, TokenUseAccess, phone, role, communityID, communityIDs, permissions, username, realName, "", m.config.AccessTokenTTL)
+	return m.generateToken(userID, TokenTypeAdmin, TokenUseAccess, phone, role, communityID, communityIDs, permissions, username, realName, m.config.AccessTokenTTL)
 }
 
 // GenerateRefreshToken 生成 refresh token
-// 携带随机 jti（RegisteredClaims.ID）：刷新时轮转旧令牌，凭 jti 写入 Redis 黑名单，
-// 使旧令牌在用后立即失效（防重放），也供登出时主动吊销
+// 携带随机 jti：刷新时轮转旧令牌，凭 jti 写入 Redis 黑名单，使旧令牌用后立即失效（防重放）
 // 参数：
 //   - userID: 用户/管理员 ID
 //   - tokenType: token 类型
@@ -121,7 +123,7 @@ func (m *Manager) GenerateAdminAccessToken(userID int64, phone, role string, com
 //   - 过期时间
 //   - 错误
 func (m *Manager) GenerateRefreshToken(userID int64, tokenType string) (string, time.Time, error) {
-	return m.generateToken(userID, tokenType, TokenUseRefresh, "", "", 0, nil, nil, "", "", newJTI(), m.config.RefreshTokenTTL)
+	return m.generateToken(userID, tokenType, TokenUseRefresh, "", "", 0, nil, nil, "", "", m.config.RefreshTokenTTL)
 }
 
 // generateToken 统一生成 token
@@ -136,16 +138,22 @@ func (m *Manager) GenerateRefreshToken(userID int64, tokenType string) (string, 
 //   - permissions: 权限列表（可选）
 //   - username: 登录用户名（管理员可选）
 //   - realName: 真实姓名（管理员可选）
-//   - jti: 令牌唯一标识（refresh 令牌必填，供黑名单定位；access 传空）
 //   - ttl: 有效期
 //
 // 返回：
 //   - token 字符串
 //   - 过期时间
 //   - 错误
-func (m *Manager) generateToken(userID int64, tokenType, tokenUse, phone, role string, communityID int64, communityIDs []int64, permissions []string, username, realName, jti string, ttl time.Duration) (string, time.Time, error) {
+func (m *Manager) generateToken(userID int64, tokenType, tokenUse, phone, role string, communityID int64, communityIDs []int64, permissions []string, username, realName string, ttl time.Duration) (string, time.Time, error) {
 	now := time.Now()
 	expireAt := now.Add(ttl)
+
+	// access 与 refresh 一律携带 jti：黑名单以 jti 为键，缺了它这枚令牌只能等自然过期，
+	// 登出就退化成「前端表演」（C5）
+	jti, err := newJTI()
+	if err != nil {
+		return "", time.Time{}, err
+	}
 
 	claims := Claims{
 		UserID:       userID,
@@ -197,17 +205,29 @@ func (m *Manager) ParseToken(tokenString string) (*Claims, error) {
 }
 
 // newJTI 生成随机令牌唯一标识（16 字节熵，hex 编码 32 字符）
-// refresh 令牌签发时必填：刷新轮转与登出吊销都以 jti 为键写 Redis 黑名单，
-// 随机源不可用时退回落空（该令牌将无法被单独吊销，等价于轮转前行为）
+// access 与 refresh 签发都必填：刷新轮转、登出吊销、停用即时失效都以 jti 为键写 Redis 黑名单。
+// 随机源不可用时**拒绝签发**而不是退回落空——落空等于签出一枚永远无法单独吊销的令牌，
+// 调用方若忽略该缺陷继续放行，登出与停用会静默失效
+//
+// 参数：
+//   - 无
 //
 // 返回值：
-//   - string: jti；随机源失败时返回空串
-func newJTI() string {
+//   - string: jti
+//   - error: 随机源失败时返回错误（签发失败）
+//
+// 使用示例：
+//
+//	jti, err := newJTI()
+//	if err != nil {
+//		return "", time.Time{}, err
+//	}
+func newJTI() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		return ""
+		return "", fmt.Errorf("生成令牌标识失败（随机源不可用）: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // int64ToString int64 转 string 的辅助函数

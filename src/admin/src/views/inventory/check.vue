@@ -26,6 +26,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockCheck' })
 import { ref, onMounted, h } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useRouter } from 'vue-router'
 import { NButton } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -100,4 +101,6 @@ function onPageChange(page: number) {
 }
 
 onMounted(loadData)
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新，避免展示离开前的旧盘点单
+refreshOnActivated(loadData)
 </script>

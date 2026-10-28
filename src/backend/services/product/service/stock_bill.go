@@ -13,6 +13,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
@@ -280,11 +282,7 @@ func (s *StockBillService) receivePurchaseOrder(tx *gorm.DB, purchaseOrderID int
 //   - int: 总条数
 //   - error: 错误信息
 func (s *StockBillService) ListStockInOrders(ctx context.Context, req *product.ListStockInOrdersReq) ([]*model.StockInOrder, int, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.StockInOrder{})
 	if req.CommunityId > 0 {
@@ -513,11 +511,7 @@ func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product
 //   - int: 总条数
 //   - error: 错误信息
 func (s *StockBillService) ListStockOutOrders(ctx context.Context, req *product.ListStockOutOrdersReq) ([]*model.StockOutOrder, int, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.StockOutOrder{})
 	if req.CommunityId > 0 {
@@ -606,11 +600,7 @@ func (s *StockBillService) GetStockOutOrder(ctx context.Context, req *product.Ge
 //   - *product.ListStockBatchesResp: 批次列表（含商品信息回填）
 //   - error: 错误信息
 func (s *StockBillService) ListStockBatches(ctx context.Context, req *product.ListStockBatchesReq) (*product.ListStockBatchesResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.StockBatch{})
 	if req.CommunityId > 0 {
@@ -623,7 +613,7 @@ func (s *StockBillService) ListStockBatches(ctx context.Context, req *product.Li
 		db = db.Where("stock_batches.quantity > 0")
 	}
 	if req.Keyword != "" {
-		kw := "%" + req.Keyword + "%"
+		kw := likeutil.Contains(req.Keyword)
 		db = db.Joins("JOIN product_skus s ON s.id = stock_batches.sku_id").
 			Joins("JOIN products p ON p.id = s.product_id").
 			Where("p.name LIKE ? OR s.sku_code LIKE ? OR stock_batches.batch_no LIKE ?", kw, kw, kw)

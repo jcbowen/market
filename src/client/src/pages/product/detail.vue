@@ -101,6 +101,7 @@ import { useUserStore } from '@/stores/user'
 import { getProductDetail, getActiveFreeShipping, type FreeShippingActivity } from '@/api/product'
 import { addCartItem } from '@/api/cart'
 import { formatPrice } from '@/utils/format'
+import { ensureCommunity } from '@/utils/community'
 import { goHome, goOrderConfirm, goLogin } from '@/utils/navigate'
 import type { Product, Sku } from '@/api/types'
 
@@ -142,12 +143,18 @@ const selectedValueIds = ref<Record<number, number>>({})
 const quantity = ref(1)
 const showSkuPopup = ref(false)
 
-onLoad((query) => {
+onLoad(async (query) => {
   productId.value = Number(query?.id) || 0
-  if (productId.value) {
-    loadProduct()
-    loadFreeShippingBadge()
+  if (!productId.value) return
+  // 详情接口按社区归属校验（P2 C2）：分享深链冷启动时社区可能尚未就绪，
+  // 先兜底选定当前浏览社区再拉详情，否则详情会直接按参数错误失败
+  try {
+    await ensureCommunity(userStore)
+  } catch {
+    return
   }
+  loadProduct()
+  loadFreeShippingBadge()
 })
 
 /**
@@ -482,7 +489,9 @@ function onBuy() {
   bottom: 0;
   display: flex;
   align-items: center;
-  padding: 16rpx 20rpx;
+  /* 非 tabBar 页：fixed bottom:0 在带 Home Indicator 的设备上会被底部安全区遮挡，
+     加 env(safe-area-inset-bottom) 让操作按钮避开底部安全区（H5/Android 该值为 0 无影响） */
+  padding: 16rpx 20rpx calc(16rpx + env(safe-area-inset-bottom));
   background-color: #ffffff;
   border-top: 1rpx solid #eeeeee;
 }

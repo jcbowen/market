@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -271,11 +272,7 @@ func (s *StockCheckService) GetStockCheck(ctx context.Context, req *product.GetS
 //   - int: 总条数
 //   - error: 错误信息
 func (s *StockCheckService) ListStockChecks(ctx context.Context, req *product.ListStockChecksReq) ([]*model.StockCheck, int, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.StockCheck{})
 	if req.CommunityId > 0 {

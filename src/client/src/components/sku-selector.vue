@@ -73,11 +73,14 @@
  * - 商品含 specs（规格树）时按规格分组逐项选择，组合完整后自动定位 SKU；
  * - 商品无规格树时回退为 SKU 平铺选择（库存为 0 的项置灰不可选）。
  * 商品列表接口通常不含 SKU/规格数据，组件内部按商品 ID 缓存详情兜底加载。
+ * 详情接口按社区归属校验（P2 C2），故必须由调用方传入当前浏览社区，
+ * 漏传会让兜底加载直接失败（弹窗只剩传入的部分字段）。
  *
  * 使用示例：
  *   <sku-selector
  *     v-model:show="showSkuPopup"
  *     :product="currentProduct"
+ *     :community-id="userStore.communityInfo?.id"
  *     :initial-sku-id="12"
  *     confirm-text="加入购物车"
  *     @confirm="onSkuConfirm"
@@ -87,6 +90,7 @@
 import { ref, computed, watch } from 'vue'
 import { getProductDetail } from '@/api/product'
 import { formatPrice } from '@/utils/format'
+import { useUserStore } from '@/stores/user'
 import type { Product, Sku } from '@/api/types'
 
 interface Props {
@@ -94,6 +98,12 @@ interface Props {
   show: boolean
   /** 商品对象，允许仅含 id/name 等部分字段，缺 SKU/规格数据时组件内调详情接口兜底 */
   product: (Partial<Product> & { id: number }) | null
+  /**
+   * 详情兜底加载使用的社区：服务端按社区归属校验（P2 C2），不传即读不到 SKU/规格。
+   * 调用方应显式传商品所属社区（购物车切规格传购物车项的 community_id）；
+   * 未传时回落当前浏览社区，避免漏传导致弹窗只显示半截数据
+   */
+  communityId?: number
   /** 预选 SKU ID（如购物车切换规格时回填当前规格），0 表示不预选 */
   initialSkuId?: number
   /** 初始数量，0 表示使用商品最低购买份数 */
@@ -116,6 +126,11 @@ const emit = defineEmits<{
   /** 点击确认且规格校验通过后触发，product 为组件内部兜底加载后的完整商品对象 */
   (e: 'confirm', payload: { product: Product; sku: Sku; quantity: number }): void
 }>()
+
+const userStore = useUserStore()
+
+/** 详情兜底加载的社区：调用方传入优先，未传回落当前浏览社区 */
+const detailCommunityId = computed(() => props.communityId || userStore.communityInfo?.id)
 
 const emptySku: Sku = {
   id: 0,
@@ -229,7 +244,7 @@ async function init() {
     } else {
       loading.value = true
       try {
-        const res = await getProductDetail(product.id)
+        const res = await getProductDetail(product.id, detailCommunityId.value)
         if (res.data) {
           detailCache.set(product.id, res.data)
           innerProduct.value = res.data

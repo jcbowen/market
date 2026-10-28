@@ -13,10 +13,12 @@ import (
  *
  * 纯函数测试（无外部依赖，CI 可跑）：
  *   - TestBuildCodePayResp  扣款结果归一化状态映射与默认文案
+ *   - TestCodePayConfirmAmount 确认金额取渠道实收、缺省时回退应付额
+ *   - TestNotifyChannelOf  流水渠道归一（付款码 5/6 → 微信/支付宝，线下为 0）
  *
  * 集成测试（直连本地开发库，env 守卫跳过；运行方式同 payment_test.go）：
  *   - TestCreatePaymentCodePayNotReady 渠道未就绪：创建待支付单被拦截，不落支付单
- *   - TestPayByAuthCodeSuccess         扣款成功：支付单置已支付+线下来源，订单同步已支付
+ *   - TestPayByAuthCodeSuccess         扣款成功：支付单置已支付+线下来源，订单同步已支付，落 kind=9 流水
  *   - TestPayByAuthCodeUserPaying      USERPAYING 在途：支付单保持待支付
  *   - TestPayByAuthCodeFailedRetry     扣款失败重试：复用同一支付单，重扫后成功
  *   - TestPayByAuthCodeIdempotent      已支付单重复提交：幂等回 PAID，不再调渠道
@@ -59,6 +61,33 @@ func TestBuildCodePayResp(t *testing.T) {
 	resp = s.buildCodePayResp(p, &codePayResult{State: ChannelStateClosed, Message: "余额不足"})
 	if resp.State != "FAILED" || resp.Message != "余额不足" {
 		t.Errorf("FAILED 原因应透传: %+v", resp)
+	}
+}
+
+// TestCodePayConfirmAmount 确认金额取渠道实收，渠道未回传金额时回退支付单应付额
+// 传应付额等于自己跟自己对账，handlePaySuccess 的分位比对会失去判定能力，故渠道值优先
+func TestCodePayConfirmAmount(t *testing.T) {
+	p := &model.Payment{PaymentNo: "ZF-AMT", Amount: 12.34}
+	if got := codePayConfirmAmount(&codePayResult{State: ChannelStatePaid, Amount: 12.35}, p); got != 12.35 {
+		t.Errorf("渠道实收 12.35 应优先于应付额, got %.2f", got)
+	}
+	if got := codePayConfirmAmount(&codePayResult{State: ChannelStatePaid}, p); got != 12.34 {
+		t.Errorf("渠道未回传金额应回退应付额, got %.2f", got)
+	}
+	// 结果整体缺失（调用方兜底路径）同样回退，不能传 0 让确认被「金额缺失」拒绝
+	if got := codePayConfirmAmount(nil, p); got != 12.34 {
+		t.Errorf("结果为 nil 时应回退应付额, got %.2f", got)
+	}
+}
+
+// TestNotifyChannelOf 流水渠道归一：付款码 5/6 分别落微信/支付宝，线下收款无渠道落 0
+// 直接写 pay_type 会让异常页渠道列出现「-」之外的未知值（5/6/3/4 不在 channel 取值域内）
+func TestNotifyChannelOf(t *testing.T) {
+	cases := map[int32]int32{1: 1, 5: 1, 2: 2, 6: 2, 3: 0, 4: 0}
+	for payType, want := range cases {
+		if got := notifyChannelOf(payType); got != want {
+			t.Errorf("pay_type=%d 渠道 = %d, want %d", payType, got, want)
+		}
 	}
 }
 
@@ -118,7 +147,7 @@ func TestPayByAuthCodeSuccess(t *testing.T) {
 
 	origPay := wechatAuthCodePay
 	wechatAuthCodePay = func(ctx context.Context, s *PaymentService, p *model.Payment, authCode string) (*codePayResult, error) {
-		return &codePayResult{State: ChannelStatePaid, TransactionID: "WX-TX-CODE-001"}, nil
+		return &codePayResult{State: ChannelStatePaid, TransactionID: "WX-TX-CODE-001", Amount: p.Amount}, nil
 	}
 	// 测试环境无支付配置，就绪判定替换为真以放行到渠道扣款桩
 	origReady := wechatPayReady
@@ -145,6 +174,10 @@ func TestPayByAuthCodeSuccess(t *testing.T) {
 	}
 	if p.ConfirmSource != model.ConfirmSourceOffline || p.ConfirmRef != "codepay:9" {
 		t.Errorf("确认来源应为线下并记录收银员, got source=%d ref=%s", p.ConfirmSource, p.ConfirmRef)
+	}
+	// 付款码扣款是同步确认（无异步通知），流水单列 kind=9；记成 kind=1 会污染「回调丢失率」口径
+	if count := countNotifyLogs(t, s, "PAYTEST-CODE-PAID", model.NotifyKindCodePay, model.NotifyResultSuccess); count != 1 {
+		t.Errorf("扣款成功应落一条 kind=9/result=1 流水, got %d", count)
 	}
 	calls := stub.orderCalls()
 	if len(calls) != 1 || calls[0].Id != orderID || calls[0].Status != 2 {

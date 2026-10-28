@@ -309,6 +309,10 @@ func (s *usersSection) Import(ctx context.Context, pkg *SeedPackage, req *Import
 			continue
 		}
 		var exist userModel.User
+		if u.Phone == "" {
+			appendImportResult(items, s.Key(), u.Key, u.Nickname, "failed", "种子缺少手机号（phone 是该段的幂等键）")
+			continue
+		}
 		if err := s.svc.db.GetDb().WithContext(ctx).
 			Where("phone = ?", u.Phone).First(&exist).Error; err == nil {
 			req.Refs.Set(u.Key, exist.ID)
@@ -322,7 +326,7 @@ func (s *usersSection) Import(ctx context.Context, pkg *SeedPackage, req *Import
 		}
 		row := &userModel.User{
 			Openid:      u.Openid,
-			Phone:       u.Phone,
+			Phone:       userModel.NewPhone(u.Phone),
 			Nickname:    u.Nickname,
 			Avatar:      u.Avatar,
 			Gender:      u.Gender,

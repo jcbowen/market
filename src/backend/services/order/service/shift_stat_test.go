@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,17 +36,15 @@ const shiftTestPrefix = "SHIFTTEST-"
 // shiftTestOperatorID 测试操作员 ID（远超真实管理员 ID 区间，清理依据）
 const shiftTestOperatorID = int64(99200001)
 
-// newShiftStatEnv 构建交班统计测试环境：真实 DB（含支付表）+ 独立班次
+// newShiftTestDB 连接交班测试用的本地 MySQL（env 守卫：未设 TEST_MYSQL_PASSWORD 即跳过）
 // 返回值：
-//   - *ShiftService: 被测交班服务
-//   - int64: 新建进行中班次 ID
-//   - func(): 清理函数（删除本组测试数据）
+//   - *mysql.Instance: 已连通的 DB 实例
+//
+// 异常：TEST_MYSQL_PASSWORD 未设置时 t.Skip；连接失败 t.Fatalf
 //
 // 使用示例：
-//
-//	svc, shiftID, cleanup := newShiftStatEnv(t)
-//	defer cleanup()
-func newShiftStatEnv(t *testing.T) (*ShiftService, int64, func()) {
+//   - dbInst := newShiftTestDB(t)
+func newShiftTestDB(t *testing.T) *mysql.Instance {
 	t.Helper()
 	if os.Getenv("TEST_MYSQL_PASSWORD") == "" {
 		t.Skip("TEST_MYSQL_PASSWORD 未设置，跳过交班统计集成测试（需本地 docker 栈）")
@@ -64,6 +63,22 @@ func newShiftStatEnv(t *testing.T) (*ShiftService, int64, func()) {
 	if err != nil {
 		t.Fatalf("连接测试数据库失败: %v", err)
 	}
+	return dbInst
+}
+
+// newShiftStatEnv 构建交班统计测试环境：真实 DB（含支付表）+ 独立班次
+// 返回值：
+//   - *ShiftService: 被测交班服务
+//   - int64: 新建进行中班次 ID
+//   - func(): 清理函数（删除本组测试数据）
+//
+// 使用示例：
+//
+//	svc, shiftID, cleanup := newShiftStatEnv(t)
+//	defer cleanup()
+func newShiftStatEnv(t *testing.T) (*ShiftService, int64, func()) {
+	t.Helper()
+	dbInst := newShiftTestDB(t)
 	// 退款统计跨服务读 payments 表：测试库需与 order 侧模型同时具备该表
 	if err := dbInst.GetDb().AutoMigrate(&model.Order{}, &model.Refund{}, &model.PosShift{}, &paymentmodel.Payment{}); err != nil {
 		t.Fatalf("迁移交班统计测试表失败: %v", err)
@@ -214,4 +229,79 @@ func refundItems(stat *order.PosShiftStatistics) map[int32]float64 {
 		m[item.PayType] += item.Amount
 	}
 	return m
+}
+
+// shiftUniqueOperatorID 进行中班次互斥测试专用操作员 ID（与真实管理员 ID 区间隔离，便于清理）
+const shiftUniqueOperatorID = int64(99200002)
+
+// TestStartShiftActiveFlagUnique 验证「同社区同操作员至多一条进行中班次」由库层复合唯一索引保证
+// 覆盖审查报告 P1-7 的三道防线：业务校验拦重复开工、uq_shift_active 兜住绕过校验的直插、
+// 交班把 active_flag 置 NULL 释放占位；同时验证历史班次（NULL）不受索引约束
+//
+// 运行方式（需本地 docker 栈）：
+//
+//	TEST_MYSQL_PASSWORD=xxx go test ./services/order/service/ -run TestStartShiftActiveFlagUnique -v
+//
+// 参数：
+//   - t: 测试上下文
+//
+// 异常：环境不满足时 t.Skip；断言失败即 t.Fatalf/t.Errorf
+func TestStartShiftActiveFlagUnique(t *testing.T) {
+	dbInst := newShiftTestDB(t)
+	db := dbInst.GetDb()
+	if err := db.AutoMigrate(&model.PosShift{}); err != nil {
+		t.Fatalf("迁移 pos_shifts 失败: %v", err)
+	}
+	cleanup := func() {
+		db.Where("operator_id = ?", shiftUniqueOperatorID).Delete(&model.PosShift{})
+	}
+	cleanup()
+	defer cleanup()
+
+	svc := NewShiftService(dbInst)
+	ctx := context.Background()
+	start := func() (*order.PosShiftInfo, error) {
+		return svc.StartShift(ctx, &order.StartShiftReq{
+			CommunityId: 1, OperatorId: shiftUniqueOperatorID, OperatorName: "班次互斥测试",
+		})
+	}
+
+	if _, err := start(); err != nil {
+		t.Fatalf("首次开工应成功: %v", err)
+	}
+	if _, err := start(); err == nil || !strings.Contains(err.Error(), "已有进行中的班次") {
+		t.Fatalf("重复开工应被业务校验拦下, got err=%v", err)
+	}
+
+	// 绕过业务校验直插第二条进行中班次：必须由库层 uq_shift_active 拒绝
+	active := int8(1)
+	now := time.Now().Format("2006-01-02 15:04:05")
+	err := db.Create(&model.PosShift{
+		CommunityID: 1, OperatorID: shiftUniqueOperatorID, OperatorName: "班次互斥测试",
+		StartTime: now, Status: 1, ActiveFlag: &active, CreatedAt: now, UpdatedAt: now,
+	}).Error
+	if !isDuplicateShiftActiveErr(err) {
+		t.Fatalf("第二条进行中班次应撞 uq_shift_active, got err=%v", err)
+	}
+
+	// 交班后 active_flag 释放，同一操作员可再次开工
+	if _, err := svc.EndShift(ctx, &order.EndShiftReq{
+		CommunityId: 1, OperatorId: shiftUniqueOperatorID, Note: "交班",
+	}); err != nil {
+		t.Fatalf("交班应成功: %v", err)
+	}
+	if _, err := start(); err != nil {
+		t.Fatalf("交班后应能再次开工: %v", err)
+	}
+
+	// 历史班次（active_flag=NULL）允许多条并存，索引不得把已交班记录也互斥掉
+	for i := 0; i < 2; i++ {
+		end := now
+		if err := db.Create(&model.PosShift{
+			CommunityID: 1, OperatorID: shiftUniqueOperatorID, OperatorName: "班次互斥测试",
+			StartTime: now, EndTime: &end, Status: 2, CreatedAt: now, UpdatedAt: now,
+		}).Error; err != nil {
+			t.Fatalf("第%d条已结束班次（active_flag=NULL）不应受唯一索引约束: %v", i+1, err)
+		}
+	}
 }

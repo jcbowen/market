@@ -103,12 +103,14 @@ func (h *OrderHandler) GetFulfillmentStatus(c *gin.Context) {
 	})
 }
 
+// fulfillmentMaxPageSize 工作台单次查单上限，与 order 服务 fulfillment.go 的页长封顶保持一致
+const fulfillmentMaxPageSize = 50
+
 // ListFulfillmentOrdersReq 工作台查单请求
+// 分页不在此结构体里声明：统一走 parsePageParams（与其余列表接口同一套默认值与封顶口径）
 type ListFulfillmentOrdersReq struct {
 	OrderType   int32 `form:"order_type"`   // 1=自提核销 2=送货上门
 	StatusGroup int32 `form:"status_group"` // 0=进行中 5=已完成/已核销
-	Page        int   `form:"page"`
-	PageSize    int   `form:"page_size"`
 }
 
 // ListFulfillmentOrders 工作台查单（送货按指派人过滤；自提本社区全部）
@@ -132,12 +134,19 @@ func (h *OrderHandler) ListFulfillmentOrders(c *gin.Context) {
 		return
 	}
 
+	// 分页统一走 parsePageParams；服务端把 >50 的页长一律回退成 10，
+	// 网关若透传封顶值 100 会出现「请求 100 条只回 10 条」的静默短页，故先收到 50
+	page, pageSize := parsePageParams(c)
+	if pageSize > fulfillmentMaxPageSize {
+		pageSize = fulfillmentMaxPageSize
+	}
+
 	resp, err := h.orderClient.ListFulfillmentOrders(c.Request.Context(), &order.ListFulfillmentOrdersReq{
 		OrderType:      req.OrderType,
 		CommunityId:    communityID,
 		DeliveryUserId: uc.UserID,
 		StatusGroup:    req.StatusGroup,
-		Pagination:     &common.Pagination{Page: int32(req.Page), PageSize: int32(req.PageSize)},
+		Pagination:     &common.Pagination{Page: int32(page), PageSize: int32(pageSize)},
 	})
 	if err != nil {
 		response.GRPCError(c, err)

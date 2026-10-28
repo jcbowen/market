@@ -14,6 +14,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -43,22 +45,9 @@ func NewProductService(db *mysql.Instance) *ProductService {
 //   - int: 总条数
 //   - error: 错误信息
 func (s *ProductService) ListProducts(ctx context.Context, req *product.ListProductsReq) ([]*model.Product, int, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	// 服务层兜底上限：HTTP 网关已按 maxPageSize=100 收敛，但 gRPC 可被内部或直连调用
-	// 传入超大值导致全表拉取，这里独立设限
-	if pageSize > 200 {
-		pageSize = 200
-	}
+	// 传入超大值导致全表拉取，这里独立设限（口径见 pageparam）
 
 	// 列表口径不取富文本正文（大字段，仅商品详情需要）：避免整页正文进内存
 	db := s.db.GetDb().WithContext(ctx).Model(&model.Product{}).Omit("content")
@@ -151,6 +140,9 @@ func (s *ProductService) applyProductFilters(ctx context.Context, db *gorm.DB, c
 		db = db.Where("category_id = ?", categoryId)
 	}
 	if keyword != "" {
+		// 关键词按字面量匹配：不转义时输入一个 % 就把条件变成「匹配全部」，
+		// 精确搜索失效且整表扫描（name 上的前导 % 本就用不到索引）
+		like := likeutil.Contains(keyword)
 		if isDigits(keyword) {
 			sub := s.db.GetDb().WithContext(ctx).Model(&model.Sku{}).
 				Select("product_id").
@@ -158,9 +150,9 @@ func (s *ProductService) applyProductFilters(ctx context.Context, db *gorm.DB, c
 			if communityId > 0 {
 				sub = sub.Where("community_id = ?", communityId)
 			}
-			db = db.Where("name like ? OR id IN (?)", "%"+keyword+"%", sub)
+			db = db.Where("name like ? OR id IN (?)", like, sub)
 		} else {
-			db = db.Where("name like ?", "%"+keyword+"%")
+			db = db.Where("name like ?", like)
 		}
 	}
 	return db
@@ -316,6 +308,10 @@ func (s *ProductService) BuildProductImages(ctx context.Context, productIDs []in
 // 是各交易入口「可售」判定的唯一口径（P1-4 收口，与 GetByBarcode 的 status=1 一致）
 const ProductStatusOnSale = 1
 
+// ProductStatusDeleted 软删除状态：DeleteProduct 只置状态位、不删行，
+// 因此所有按 ID 直查的出口都要显式排除它（见 GetProduct），删除语义才不会只活在列表筛选里
+const ProductStatusDeleted = 2
+
 // EnsureProductSellable 校验商品是否可售：仅上架态（status=1）可售；
 // 下架(0)/删除(2)/定时上架未到点(0)一律拒绝，文案带商品名便于前端直接展示。
 // 供 gRPC 层（GetProduct 的 require_sellable）与服务内批量入口共用，是商品侧「可售」判定的唯一口径；
@@ -334,16 +330,27 @@ func EnsureProductSellable(p *model.Product) error {
 }
 
 // GetProduct 根据 ID 查询商品
+// 软删除（status=2）默认不可取：删除只是置状态位，按 ID 直查若不过滤就会让已删商品
+// 继续对外返回价格、库存与富文本正文（C 端详情与改密式回溯都靠这条口子）
 // 参数：
 //   - ctx: 上下文
 //   - id: 商品 ID
+//   - includeDeleted: 是否放行已删除行（仅管理端详情/编辑回显传 true）
 //
 // 返回值：
 //   - *model.Product: 商品模型
-//   - error: 错误信息
-func (s *ProductService) GetProduct(ctx context.Context, id int64) (*model.Product, error) {
+//   - error: 不存在或已删除（includeDeleted=false 时）返回 NotFound
+//
+// 使用示例：
+//
+//	p, err := svc.GetProduct(ctx, 12, false)
+func (s *ProductService) GetProduct(ctx context.Context, id int64, includeDeleted bool) (*model.Product, error) {
 	var p model.Product
-	err := s.db.GetDb().WithContext(ctx).First(&p, id).Error
+	db := s.db.GetDb().WithContext(ctx)
+	if !includeDeleted {
+		db = db.Where("status <> ?", ProductStatusDeleted)
+	}
+	err := db.First(&p, id).Error
 	if err == gorm.ErrRecordNotFound {
 		return nil, bizerr.New(codes.NotFound, "商品不存在")
 	}
@@ -469,6 +476,58 @@ func (s *ProductService) FindProductsByIDs(ctx context.Context, ids []int64) (ma
 	return byID, nil
 }
 
+// 商品档案写入口径常量（与 products 列定义、后台表单 maxlength 同源）
+const (
+	// productNameMaxRunes products.name 为 varchar(100)，按字符数判定（与 UpdateProductName 同口径）
+	productNameMaxRunes = 100
+	// productContentMaxBytes 富文本详情上限 1MB：content 列是 mediumtext，更大也存得下，
+	// 但不设限会让超长正文（含富文本粘贴带进来的 data URI 图片）撞到 gRPC 默认 4MB 消息上限，
+	// 用户看到的是「系统错误」而不是「内容过大」
+	productContentMaxBytes = 1 << 20
+)
+
+// normalizeProductName 归一化并校验商品名称（创建与更新共用口径）
+// required=true（创建）时空名直接拒绝；required=false（更新）时空串表示「本次不改动」，
+// 但全空白名同样拒绝——否则更新接口会写入一个空名称
+//
+// 参数：
+//   - name: 原始名称
+//   - required: 是否必填（创建口径）
+//
+// 返回值：
+//   - string: 去空白后的名称
+//   - error: 空名或超过 productNameMaxRunes 字时返回 InvalidArgument
+//
+// 使用示例：
+//
+//	name, err := normalizeProductName(req.Name, true)
+func normalizeProductName(name string, required bool) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		if required {
+			return "", bizerr.New(codes.InvalidArgument, "商品名称不能为空")
+		}
+		return "", nil
+	}
+	if utf8.RuneCountInString(trimmed) > productNameMaxRunes {
+		return "", bizerr.New(codes.InvalidArgument, fmt.Sprintf("商品名称不能超过 %d 字", productNameMaxRunes))
+	}
+	return trimmed, nil
+}
+
+// validateProductContent 校验富文本详情体积（在消毒前按原始提交量判定）
+// 参数：
+//   - content: 原始富文本正文
+//
+// 返回值：
+//   - error: 超过 productContentMaxBytes 时返回 InvalidArgument
+func validateProductContent(content string) error {
+	if len(content) > productContentMaxBytes {
+		return bizerr.New(codes.InvalidArgument, fmt.Sprintf("商品详情内容过大（上限 %d MB），请精简正文或改用图片外链", productContentMaxBytes>>20))
+	}
+	return nil
+}
+
 // CreateProduct 创建商品
 // 创建商品主记录的同时，将请求中的图片 URL 按顺序写入 `product_images` 表，
 // 并继续保留 `products.images` JSON 字段作为过渡兼容。
@@ -486,6 +545,13 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 	if len(req.SkuItems) == 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "请填写商品价格与库存")
 	}
+	name, err := normalizeProductName(req.Name, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateProductContent(req.Content); err != nil {
+		return nil, err
+	}
 	if err := ensureCategoryInCommunity(ctx, s.db.GetDb(), req.CategoryId, req.CommunityId); err != nil {
 		return nil, err
 	}
@@ -494,7 +560,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 	p := &model.Product{
 		CommunityID:  req.CommunityId,
 		CategoryID:   req.CategoryId,
-		Name:         req.Name,
+		Name:         name,
 		Description:  req.Description,
 		Content:      SanitizeProductContentHTML(req.Content),
 		CoverImage:   req.CoverImage,
@@ -520,7 +586,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 	// 并把默认值回填进结构体（p.Status 变回 1）。须在 Create 前捕获期望值，
 	// Create 后显式回写，否则定时上架商品被直接创建为上架（同 show_sales 当年之坑）
 	wantScheduled := p.Status == 0
-	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(p).Error; err != nil {
 			return err
 		}
@@ -546,10 +612,19 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 	return p, nil
 }
 
+// productEditableColumns UpdateProduct 归属列白名单（字段级更新，见其事务内注释）
+// 刻意不含派生/并发列：min_price、max_price、min_original_price、stock（SKU 聚合回写）、
+// sales_count（支付与退款调整）、community_id、id、created_at
+var productEditableColumns = []string{
+	"category_id", "name", "description", "content", "cover_image", "images",
+	"unit", "is_multi_spec", "show_sales", "virtual_sales", "min_buy", "status", "sort", "on_sale_at",
+}
+
 // UpdateProduct 更新商品
 // 请求 images 非空时，删除该商品在 `product_images` 表中的全部旧记录并按新顺序重新插入，
 // 同时同步更新 `products.images` JSON 字段；images 为空数组时保留现有图片不变更。
 // 规格树与 SKU 组合由 saveSpecsAndSkus 在同一事务内全量保存（含 diff 软删除）。
+// 主表按 productEditableColumns 白名单做字段级更新（不整行 Save），派生列与销量列由各自的写入方负责。
 //
 // 参数：
 //   - ctx: 上下文
@@ -559,11 +634,18 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 //   - *model.Product: 商品模型
 //   - error: 错误信息
 func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateProductReq) (*model.Product, error) {
-	p, err := s.GetProduct(ctx, req.Id)
+	p, err := s.GetProduct(ctx, req.Id, false)
 	if err != nil {
 		return nil, err
 	}
 	if err := EnsureScope(req.CommunityId, p.CommunityID, "商品"); err != nil {
+		return nil, err
+	}
+	name, err := normalizeProductName(req.Name, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateProductContent(req.Content); err != nil {
 		return nil, err
 	}
 
@@ -573,8 +655,8 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 		}
 		p.CategoryID = req.CategoryId
 	}
-	if req.Name != "" {
-		p.Name = req.Name
+	if name != "" {
+		p.Name = name
 	}
 	if req.Description != "" {
 		p.Description = req.Description
@@ -585,8 +667,9 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	if req.Unit != "" {
 		p.Unit = req.Unit
 	}
-	if req.Sort > 0 {
-		p.Sort = req.Sort
+	if req.Sort != nil {
+		// 三态：不传=不改动，传 0 就是置 0（旧写法 sort>0 才赋值，导致排序永远回不到 0）
+		p.Sort = *req.Sort
 	}
 	if req.Status != 0 {
 		p.Status = req.Status
@@ -601,17 +684,20 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	// 富文本详情：admin 全量提交，消毒后直接覆盖（允许清空）
 	p.Content = SanitizeProductContentHTML(req.Content)
 
-	// 定时上架（编辑页「上架设置」全量提交）：
+	// 定时上架（编辑页「上架设置」显式提交时才变更，三态见 proto UpdateProductReq.on_sale_at）：
+	// 不传 → 维持原预约不变（旧写法把「不传」当空串，任何一次编辑都会顺手清掉预约）；
 	// 非空且为未来时间 → 下架+预约（支持设置/改期）；显式传空串 → 仅清除预约，
-	// 上下架终态由 status 提交值决定（不传时维持原状；预约中商品切「立即上架」由前端显式传 status=1）
-	if req.OnSaleAt != "" {
-		if err := s.validateOnSaleAt(ctx, req.OnSaleAt); err != nil {
-			return nil, err
+	// 上下架终态由 status 提交值决定（预约中商品切「立即上架」由前端显式传 status=1）
+	if req.OnSaleAt != nil {
+		if at := *req.OnSaleAt; at != "" {
+			if err := s.validateOnSaleAt(ctx, at); err != nil {
+				return nil, err
+			}
+			p.Status = 0
+			p.OnSaleAt = &at
+		} else {
+			p.OnSaleAt = nil
 		}
-		p.Status = 0
-		p.OnSaleAt = &req.OnSaleAt
-	} else {
-		p.OnSaleAt = nil
 	}
 
 	// images 为空数组时视为"不变更"，保留商品现有图片，避免编辑接口意外清空图片
@@ -621,7 +707,11 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	}
 
 	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(p).Error; err != nil {
+		// 字段级更新，不整行 Save：p 是事务外读到的快照，整行回写会把读取时点的
+		// sales_count（支付/退款并发累加）、min_price/max_price/stock/min_original_price
+		// （扣减、回补、入库、盘点并发回写）一并覆盖回旧值，形成丢更新。
+		// 只写本请求归属的列，派生列交给 syncProductAggregates（本事务末尾）与库存/销量各自的写入方
+		if err := tx.Model(&model.Product{}).Where("id = ?", p.ID).Select(productEditableColumns).Updates(p).Error; err != nil {
 			return err
 		}
 		if len(req.Images) > 0 {
@@ -732,19 +822,17 @@ func ensureProductInScope(db *gorm.DB, id, communityId int64) error {
 //
 //	err := svc.UpdateProductName(ctx, 123, "新名称", 456)
 func (s *ProductService) UpdateProductName(ctx context.Context, id int64, name string, communityId int64) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return bizerr.New(codes.InvalidArgument, "商品名称不能为空")
-	}
-	if utf8.RuneCountInString(name) > 100 {
-		return bizerr.New(codes.InvalidArgument, "商品名称不能超过 100 字")
+	// 名称口径与创建/更新商品同一函数收口（非空 + ≤100 字），避免三处各写一份
+	normalized, err := normalizeProductName(name, true)
+	if err != nil {
+		return err
 	}
 
 	db := s.db.GetDb().WithContext(ctx)
 	if err := ensureProductInScope(db, id, communityId); err != nil {
 		return err
 	}
-	return db.Model(&model.Product{}).Where("id = ?", id).Update("name", name).Error
+	return db.Model(&model.Product{}).Where("id = ?", id).Update("name", normalized).Error
 }
 
 // AdjustSalesCount 批量调整销量（净成交口径）

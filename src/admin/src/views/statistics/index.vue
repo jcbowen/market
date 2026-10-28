@@ -86,6 +86,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'Statistics' })
 import { computed, onMounted, ref } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useRouter } from 'vue-router'
 import { getOrderStatistics, getProductRankings, getRevenueReport, getSalesStatistics } from '@/api/statistics'
 import type { OrderStatistics, ProductRankingItem, RevenueReportItem } from '@/api/statistics'
@@ -97,7 +98,8 @@ import { formatMoney } from '@/utils/format'
  * - 时间范围：今日/近7日/近30日/本月快捷切换 + 自定义区间
  * - 核心指标：销售额/订单数/客单价/日均销售额（金额统一经 formatMoney，避免浮点尾差直出）
  * - 营收趋势（按日聚合，缺数据日期补零）、订单状态分布、热销 TOP10
- * 统计口径：销售额与营收均只计有效订单（排除待支付 1 / 已取消 6）
+ * 统计口径：销售额与营收只计有效订单（排除待支付 1 / 已取消 6 / 已退款 8）；
+ * 退款中 7 的订单退款尚未成功，仍计入，避免退款一发起就把当日营收整单抹掉
  */
 
 type PresetValue = 'today' | '7d' | '30d' | 'month' | 'custom'
@@ -181,7 +183,7 @@ const summaryCards = computed(() => {
   const [start, end] = currentRange()
   const days = daysBetween(start, end)
   return [
-    { label: '销售额', value: formatMoney(sales.value.pay_amount), prefix: '¥', extra: '仅计有效订单' },
+    { label: '销售额', value: formatMoney(sales.value.pay_amount), prefix: '¥', extra: '不含已退款订单' },
     { label: '订单数', value: String(sales.value.total_orders), prefix: '', extra: '有效订单总数' },
     { label: '客单价', value: formatMoney(sales.value.avg_order_amount), prefix: '¥', extra: '销售额 / 订单数' },
     { label: '日均销售额', value: formatMoney(sales.value.pay_amount / days), prefix: '¥', extra: `共 ${days} 天` },
@@ -302,6 +304,8 @@ async function loadData() {
 }
 
 onMounted(loadData)
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新，避免展示离开前的旧数据
+refreshOnActivated(loadData)
 </script>
 
 <style lang="scss" scoped>

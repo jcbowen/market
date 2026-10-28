@@ -188,7 +188,9 @@ test.describe.serial('支付配置（渠道开关）', () => {
       },
     });
     const body = (await resp.json()) as ApiResponse;
-    expect(body.code, '过期版本提交应被乐观锁拒绝').not.toBe(0);
+    // 10007 数据已被他人修改（payment 侧版本冲突以 gRPC Aborted 承载，网关映射回该码）
+    expect(body.code, `过期版本提交应被乐观锁拒绝，实为 code=${body.code}`).toBe(10007);
+    expect(body.message, '应透传服务端冲突文案').toContain('支付配置已被其他操作更新');
 
     const after = (await (
       await adminApi.get('/api/v1/admin/settings/payment')

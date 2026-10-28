@@ -697,7 +697,7 @@ async function loadDirectItems() {
       orderItems.value = []
       return
     }
-    const res = await getProductDetail(pid)
+    const res = await getProductDetail(pid, effectiveCommunityId.value)
     if (res.data) {
       const sku = res.data.skus.find((s) => s.id === skuId.value) || res.data.skus[0]
       if (sku) {
@@ -792,6 +792,11 @@ async function clearSettledCart() {
  * 统一跳转订单详情，便于用户在待支付状态下重新支付
  */
 async function onSubmit() {
+  // 重入守卫：请求在途时按钮的 loading 态不足以挡死点击（H5 快速连点仍会派发），
+  // 第二次进入会再下一单——购物车虽已清，页面上的 orderItems 仍在
+  if (submitting.value) {
+    return
+  }
   // 渠道兜底：双渠道均关闭时不允许提交（后端 CreateOrder 亦有校验）
   if (!enableSelfPickup.value && !enableDelivery.value) {
     uni.showToast({ title: '当前社区暂未开启取货渠道', icon: 'none' })
@@ -817,6 +822,8 @@ async function onSubmit() {
     return
   }
   submitting.value = true
+  // 订单号在创建成功后才有值：catch 用它区分「下单失败」与「下单成功但支付环节报错」
+  let createdOrderId = 0
   try {
     const res = await createOrder({
       delivery_type: deliveryType.value,
@@ -837,12 +844,13 @@ async function onSubmit() {
       uni.showToast({ title: '下单失败', icon: 'none' })
       return
     }
+    createdOrderId = res.data.id
     // 下单成功后清理购物车与临时地址选择，避免重复下单或沿用上次选择
     await clearSettledCart()
     userStore.setAddress(null)
-    const outcome = await payOrder(res.data.id, selectedChannel.value.channel)
+    const outcome = await payOrder(createdOrderId, selectedChannel.value.channel)
     notifyPayOutcome(outcome, selectedChannel.value.channel)
-    const detailUrl = `/pages/order/detail?id=${res.data.id}`
+    const detailUrl = `/pages/order/detail?id=${createdOrderId}`
     // 已整页跳转第三方收银台：当前文档即将卸载，此刻执行站内路由不生效，
     // 改为等回跳或用户切回标签页后再进订单详情，避免停留在确认页看到已结算商品或重复下单
     if (outcome === 'redirected') {
@@ -857,8 +865,15 @@ async function onSubmit() {
     // redirectTo 替换当前确认页：返回键/滑动返回直接回到进入确认页前的页面，
     // 避免再回到确认页看到已结算商品或重复下单
     uni.redirectTo({ url: detailUrl })
-  } catch {
-    // 下单或支付失败已由 request 统一提示
+  } catch (err) {
+    // 请求层已统一提示错误，这里只补路由：
+    // 订单已创建、支付环节抛错时留在确认页，等于停在「已下单 + 购物车已清」的中间态，
+    // 用户再点一次就是重复下单——与 outcome === 'redirected' 同口径，改跳订单详情，
+    // 在待支付状态下重新发起支付
+    if (createdOrderId) {
+      console.warn('[onSubmit] 支付环节异常，转订单详情', err)
+      uni.redirectTo({ url: `/pages/order/detail?id=${createdOrderId}` })
+    }
   } finally {
     submitting.value = false
   }
@@ -1142,7 +1157,9 @@ async function onSubmit() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16rpx 30rpx;
+  /* 非 tabBar 页：fixed bottom:0 在带 Home Indicator 的设备上会被底部安全区遮挡，
+     加 env(safe-area-inset-bottom) 让操作按钮避开底部安全区（H5/Android 该值为 0 无影响） */
+  padding: 16rpx 30rpx calc(16rpx + env(safe-area-inset-bottom));
   background-color: #ffffff;
   border-top: 1rpx solid #eeeeee;
 }

@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -31,6 +32,10 @@ func NewMarketingService(db *mysql.Instance) *MarketingService {
 }
 
 // ==================== 优惠券 ====================
+
+// couponRecordMaxPageSize 券领取/使用记录单页上限，比通用档位（pageparam.MaxSize）更紧：
+// 每条记录都要回填会员昵称与手机号，页长放大即 N 次关联查询放大
+const couponRecordMaxPageSize = 100
 
 // ListCoupons 查询优惠券列表
 // 参数：
@@ -520,22 +525,13 @@ func (s *MarketingService) ListCouponRecords(ctx context.Context, req *product.L
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	page, pageSize := int32(1), int32(10)
-	if req.Pagination != nil {
-		page = req.Pagination.Page
-		pageSize = req.Pagination.PageSize
-	}
-	if pageSize <= 0 || pageSize > 100 {
-		pageSize = 10
-	}
-	if page <= 0 {
-		page = 1
-	}
+	// 券记录列表沿用 100 的严格页长上限（比通用档位更紧，避免逐行回填用户信息时放大查询）
+	page, pageSize := pageparam.ClampMax(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()), couponRecordMaxPageSize)
 	var list []*model.UserCoupon
 	err := db.Select("user_coupons.*").
 		Order("user_coupons.id desc").
-		Offset(int((page - 1) * pageSize)).
-		Limit(int(pageSize)).
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
 		Find(&list).Error
 	return list, total, err
 }
@@ -1418,10 +1414,11 @@ func ToFlashSaleInfo(fs *model.FlashSale) *product.FlashSaleInfo {
 //   - item: 秒杀商品项模型
 //   - sku: SKU 模型，用于补充商品 ID/编码/规格/原价
 //   - productName: 商品名快照（SKU 表不含名称，由调用方批量取回后传入）
+//   - productImage: 商品封面图完整地址（附件域名拼接在调用方完成，此处只做装配）
 //
 // 返回值：
 //   - *product.FlashSaleItemInfo: proto 秒杀商品项信息
-func ToFlashSaleItemInfo(item *model.FlashSaleItem, sku *model.Sku, productName string) *product.FlashSaleItemInfo {
+func ToFlashSaleItemInfo(item *model.FlashSaleItem, sku *model.Sku, productName, productImage string) *product.FlashSaleItemInfo {
 	if item == nil {
 		return nil
 	}
@@ -1431,6 +1428,7 @@ func ToFlashSaleItemInfo(item *model.FlashSaleItem, sku *model.Sku, productName 
 		FlashPrice:   item.FlashPrice,
 		Stock:        item.Stock,
 		LimitPerUser: item.LimitPerUser,
+		Sold:         item.SoldCount,
 	}
 	if sku != nil {
 		info.ProductId = sku.ProductID
@@ -1439,6 +1437,7 @@ func ToFlashSaleItemInfo(item *model.FlashSaleItem, sku *model.Sku, productName 
 		info.OriginalPrice = sku.Price
 	}
 	info.ProductName = productName
+	info.ProductImage = productImage
 	return info
 }
 

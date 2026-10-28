@@ -88,7 +88,12 @@ func (h *ProductHandler) GetProductByBarcode(c *gin.Context) {
 	response.Success(c, resp)
 }
 
-// GetProduct 商品详情
+// GetProduct 商品详情（C 端公开入口）
+// 社区语境必传：缺省 0 会让服务层的归属校验整体跳过，公开详情就成了
+// 「不带参数就能读任意社区商品价目与富文本正文」的旁路（P2 C2），
+// 因此解析不到社区时直接按参数错误拒绝——与同文件的 GetProductByBarcode 同口径。
+// 本路由挂在公开组、不经 auth 中间件，请求头里的令牌不会被解析成社区语境，
+// 故 C 端一律按「当前浏览社区」显式传参（与加购/下单同一来源 userStore.communityInfo.id）
 // 参数：
 //   - c: gin 上下文
 func (h *ProductHandler) GetProduct(c *gin.Context) {
@@ -99,9 +104,14 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 	}
 
 	communityID, _ := strconv.ParseInt(c.DefaultQuery("community_id", "0"), 10, 64)
+	if communityID <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
 	resp, err := h.productClient.GetProduct(c.Request.Context(), &product.GetProductReq{
 		Id:          id,
 		CommunityId: communityID,
+		PublicView:  true,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -120,7 +130,7 @@ func (h *ProductHandler) ListSkus(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.productClient.ListSkus(c.Request.Context(), &product.ListSkusReq{ProductId: productID})
+	resp, err := h.productClient.ListSkus(c.Request.Context(), &product.ListSkusReq{ProductId: productID, PublicView: true})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -138,7 +148,7 @@ func (h *ProductHandler) GetSkuById(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.productClient.GetSkuById(c.Request.Context(), &product.GetSkuByIdReq{Id: id})
+	resp, err := h.productClient.GetSkuById(c.Request.Context(), &product.GetSkuByIdReq{Id: id, PublicView: true})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
@@ -260,6 +270,9 @@ func (h *ProductHandler) ListFlashSales(c *gin.Context) {
 				"original_price": it.OriginalPrice,
 				"stock":          it.Stock,
 				"limit_per_user": it.LimitPerUser,
+				// 图片与已售为服务端回填的真实档案，接口缺省时由页面按无图占位处理
+				"product_image": it.ProductImage,
+				"sold":          it.Sold,
 			})
 		}
 

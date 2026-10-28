@@ -191,14 +191,14 @@ test.describe.serial('越权与 403', () => {
     const emp = assertOk(
       (await (
         await api.post('/api/v1/admin/admins', {
-          data: { username, password: 'Low@12345', real_name: '低权员工', role_ids: [role.id], community_id: communityId },
+          data: { username, password: 'Low@123456', real_name: '低权员工', role_ids: [role.id], community_id: communityId },
         })
       ).json()) as ApiResponse<{ id: number }>,
       '创建低权员工',
     );
 
     const login = (await (
-      await request.post('/api/v1/admin/auth/login', { data: { username, password: 'Low@12345' } })
+      await request.post('/api/v1/admin/auth/login', { data: { username, password: 'Low@123456' } })
     ).json()) as ApiResponse<{ access_token: string }>;
     expect(login.code).toBe(0);
 

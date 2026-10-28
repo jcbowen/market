@@ -125,6 +125,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StoreSettings' })
 import { ref, onMounted, computed } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useMessage } from 'naive-ui'
 import { getCommunityProfile, updateCommunityProfile } from '@/api/user'
 import type { Community } from '@/api/types'
@@ -303,7 +304,9 @@ async function submit() {
   }
 }
 
+// keep-alive 缓存下切回本页不重新挂载，需在激活时重新拉取门店设置（超管在社区管理改过参数时同步）
 onMounted(loadDetail)
+refreshOnActivated(loadDetail)
 </script>
 
 <style scoped>

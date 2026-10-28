@@ -67,6 +67,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'UserList' })
 import { computed, h, onMounted, reactive, ref } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { NButton, NTag, useDialog, useMessage } from 'naive-ui'
 import { getUserList, createUser, setUserStatus } from '@/api/user'
 import { formatDateTime } from '@/utils/datetime'
@@ -288,7 +289,7 @@ function confirmSetStatus(row: User, status: number) {
   })
 }
 
-onMounted(() => {
-  loadUsers()
-})
+// 会员列表：keep-alive 缓存下切回本页不重新挂载，需在激活时刷新（后台拉黑/新增会员后同步）
+onMounted(loadUsers)
+refreshOnActivated(loadUsers)
 </script>

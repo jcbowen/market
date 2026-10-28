@@ -78,6 +78,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'ProductCategories' })
 import { ref, onMounted } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { NButton, NIcon, NModal, NSpace, NSwitch, NTag, NText, createDiscreteApi } from 'naive-ui'
 import { ReorderTwoOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
@@ -240,6 +241,8 @@ async function remove(row: CategoryRow) {
 }
 
 onMounted(loadData)
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新，避免展示离开前的旧数据
+refreshOnActivated(loadData)
 </script>
 
 <style scoped>

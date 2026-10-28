@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/dberr"
 	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -287,7 +288,12 @@ func (s *RoleService) CreateRole(ctx context.Context, req *user.CreateRoleReq) (
 		Description: req.Description,
 	}
 	if err := s.db.GetDb().WithContext(ctx).Create(r).Error; err != nil {
-		return nil, fmt.Errorf("角色编码在当前范围内已存在")
+		// 只有真正撞 uk_role_community_code 才代表编码重复；其余 DB 错误（连接中断、
+		// 字段超长、触发器报错等）原样上抛，否则一律回「已存在」会把真实故障伪装成业务冲突
+		if dberr.IsDuplicate(err, "uk_role_community_code") {
+			return nil, bizerr.New(codes.AlreadyExists, "角色编码在当前范围内已存在")
+		}
+		return nil, err
 	}
 	s.publishPermissionChanged(ctx, r.CommunityID, "创建角色")
 	return r, nil

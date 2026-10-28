@@ -17,6 +17,7 @@ import (
 	_ "golang.org/x/image/webp" // 注册 WebP 解码器
 	"log"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,8 +30,10 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/likeutil"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -182,20 +185,33 @@ func (s *AttachmentService) GetConfigMasked(ctx context.Context) (*product.Attac
 // SaveConfig 保存附件配置
 // AccessKeySecret 为空串或脱敏掩码时保留原值；保存后更新 updated_at 并立即刷新本实例缓存，
 // 其余实例在进程内缓存过期（attachmentConfigCacheTTL）后自动读到新配置并重建 OSS 客户端
+// 调用方携带读取时的 updated_at 时执行乐观并发校验，版本不一致拒绝整行覆写
 //
 // 参数:
 //   - ctx: 上下文
 //   - cfg: proto 附件配置
 //
 // 返回值:
-//   - error: 保存失败时返回错误
+//   - error: 配置缺失、校验失败、版本冲突或写库失败时返回错误
 func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.AttachmentConfig) error {
-	cached := s.getConfigCached(ctx)
-	if cached == nil {
-		return errors.New("附件配置不存在")
+	// 覆写基于库中当前行而非进程内缓存：缓存允许陈旧降级（读链路可容忍），
+	// 但整份 PUT 的版本比对与被掩码保护沿用原值的 Secret，都必须取当前值
+	var current model.AttachmentConfig
+	if err := s.db.GetDb().WithContext(ctx).First(&current, attachmentConfigID).Error; err != nil {
+		return fmt.Errorf("读取附件配置失败: %w", err)
 	}
-	// 副本改写：缓存指针在多协程间共享，原地改字段会与并发读取构成数据竞争
-	row := *cached
+
+	// 乐观锁：附件设置为单行整份覆盖式保存，后提交者会静默丢掉先提交者的改动
+	// （改写方含后台另一管理员与站点域名联动补写 syncAttachmentVisitDomain）。
+	// 版本号为空表示调用方未参与并发写入（旧版客户端），不校验。
+	// 用 Aborted：网关据此归入业务错误码 10007（数据冲突）并原样透传提示到管理端界面
+	if cfg.UpdatedAt != "" && !sameConfigVersion(cfg.UpdatedAt, current.UpdatedAt) {
+		log.Printf("附件配置保存冲突：调用方版本 %s，当前版本 %s", cfg.UpdatedAt, current.UpdatedAt)
+		return bizerr.New(codes.Aborted, "附件配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
+	}
+
+	// 副本改写：在当前行副本上覆写表单字段，Secret 未重新录入时沿用库中原值
+	row := current
 
 	if err := validateStorageType(cfg.StorageType); err != nil {
 		return err
@@ -203,11 +219,11 @@ func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.Attachm
 	if cfg.StorageType == "oss" {
 		// 切换/保存 OSS 模式时校验必填字段（Secret 允许传掩码表示沿用原值）
 		if cfg.OssAccessKeyId == "" || cfg.OssEndpoint == "" || cfg.OssBucketName == "" {
-			return errors.New("OSS 配置不完整：AccessKeyId、Endpoint、BucketName 为必填项")
+			return bizerr.New(codes.InvalidArgument, "OSS 配置不完整：AccessKeyId、Endpoint、BucketName 为必填项")
 		}
 		if cfg.OssAccessKeySecret == "" || cfg.OssAccessKeySecret == maskedSecret {
 			if row.OssAccessKeySecret == "" {
-				return errors.New("OSS AccessKeySecret 未配置")
+				return bizerr.New(codes.InvalidArgument, "OSS AccessKeySecret 未配置")
 			}
 		}
 	}
@@ -274,14 +290,20 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("文件大小超出限制（最大 %dMB）", maxSize/1024/1024))
 	}
 
-	width, height := decodeImageSize(req.Content)
-	mimeType := resolveImageMime(req.ContentType, ext)
+	mimeType, err := resolveLocalImageMime(req.Content, req.ContentType, ext)
+	if err != nil {
+		return nil, err
+	}
+	width, height, err := decodeImageSize(req.Content, ext)
+	if err != nil {
+		return nil, err
+	}
 	contentMD5 := fileMD5(req.Content)
 
 	// 秒传：内容 MD5 命中已有附件时直接复用，不重复落盘
 	// local 模式记录写入时 md5 立即非空且文件已落盘，天然满足「md5 非空 ⇒ 文件已上传」不变量
 	var hit model.Attachment
-	err := s.db.GetDb().WithContext(ctx).
+	err = s.db.GetDb().WithContext(ctx).
 		Where("md5 = ? AND path <> ''", contentMD5).
 		Order("id DESC").First(&hit).Error
 	if err == nil {
@@ -606,21 +628,14 @@ func (s *AttachmentService) AttachmentConfirm(ctx context.Context, req *product.
 //   - *product.ListAttachmentsResp: 附件列表与分页信息
 //   - error: 查询失败时返回错误
 func (s *AttachmentService) ListAttachments(ctx context.Context, req *product.ListAttachmentsReq) (*product.ListAttachmentsResp, error) {
-	page := int(req.Page)
-	if page <= 0 {
-		page = 1
-	}
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = attachmentSelectorPageSize
-	}
-	keyword := escapeLike(strings.TrimSpace(req.Keyword))
+	page, pageSize := pageparam.ClampWith(int(req.Page), int(req.PageSize), attachmentSelectorPageSize, pageparam.MaxSize)
+	keyword := strings.TrimSpace(req.Keyword)
 
 	buildQuery := func() *gorm.DB {
 		q := s.db.GetDb().WithContext(ctx).Model(&model.Attachment{}).
 			Where("admin_id = ? AND is_display = 1 AND type LIKE 'image/%'", req.AdminId)
 		if keyword != "" {
-			like := "%" + keyword + "%"
+			like := likeutil.Contains(keyword)
 			q = q.Where("name LIKE ? OR path LIKE ?", like, like)
 		}
 		if req.StartTime != "" {
@@ -691,6 +706,30 @@ func toProtoConfigMasked(row *model.AttachmentConfig) *product.AttachmentConfig 
 		MaxSize:              row.MaxSize,
 		UpdatedAt:            row.UpdatedAt,
 	}
+}
+
+// sameConfigVersion 判断两个附件配置版本号是否指向同一时刻
+// 同一行版本号存在两种字符串形态：本服务保存时写入并以空格格式进入进程内缓存（随后回显给前端），
+// 与驱动把 DATETIME 列读进 string 字段时的 RFC3339 格式；直接字符串比对会把同一版本判成冲突，
+// 故先按原始相等判定，再退化为解析成时间后比较（解析口径复用同包 parseTime 的双格式兼容）
+// 参数：
+//   - a: 调用方携带的版本号
+//   - b: 库中当前版本号
+//
+// 返回值：
+//   - bool: 同一版本返回 true；任一侧无法解析且原始值不等时返回 false（按冲突处理，不放行覆盖）
+//
+// 使用示例：
+//   - if cfg.UpdatedAt != "" && !sameConfigVersion(cfg.UpdatedAt, current.UpdatedAt) { /* 拒绝保存 */ }
+func sameConfigVersion(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ta, tb := parseTime(a), parseTime(b)
+	if ta.IsZero() || tb.IsZero() {
+		return false
+	}
+	return ta.Equal(tb)
 }
 
 // validateStorageType 校验存储类型取值
@@ -854,25 +893,11 @@ func normalizeMD5(value string) (string, error) {
 	return normalized, nil
 }
 
-// resolveImageMime 解析图片 MIME 类型
-// content_type 非空时优先使用并校验前缀；为空时由扩展名推导
-//
-// 参数:
-//   - contentType: 请求传入的 MIME 类型
-//   - ext: 文件扩展名（含点，小写）
-//
-// 返回值:
-//   - string: MIME 类型字符串（推导失败时回退 application/octet-stream）
-func resolveImageMime(contentType, ext string) string {
-	mime, err := checkImageMime(contentType, ext)
-	if err != nil || mime == "" {
-		return "application/octet-stream"
-	}
-	return mime
-}
-
-// checkImageMime 校验并返回图片 MIME 类型
+// checkImageMime 校验并返回图片 MIME 类型（仅用于拿不到文件字节的预签名直传路径）
 // content_type 非空时必须以 image/ 开头；为空时由扩展名推导，均失败时返回默认 image/jpeg
+//
+// 本地上传能拿到完整字节，必须改走 resolveLocalImageMime 做文件头嗅探，
+// 否则把脚本改名为 .jpg 也能以图片身份入库
 //
 // 参数:
 //   - contentType: 请求传入的 MIME 类型
@@ -883,44 +908,136 @@ func resolveImageMime(contentType, ext string) string {
 //   - error: content_type 与图片类型不匹配时返回错误
 func checkImageMime(contentType, ext string) (string, error) {
 	if contentType != "" {
-		if !strings.HasPrefix(contentType, "image/") {
+		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
 			return "", errors.New("content_type 与上传类型 image 不匹配")
 		}
 		return contentType, nil
 	}
-
-	// 常见扩展名到 MIME 的映射（标准库 mime.TypeByExtension 对 webp/heic 覆盖不全）
-	extMime := map[string]string{
-		".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-		".bmp": "image/bmp", ".png": "image/png", ".ico": "image/x-icon",
-		".webp": "image/webp", ".heic": "image/heic",
-	}
-	if m, ok := extMime[ext]; ok {
+	if m, ok := imageExtMime[ext]; ok {
 		return m, nil
 	}
 	return "image/jpeg", nil
 }
 
+// imageExtMime 常见扩展名到 MIME 的映射（标准库 mime.TypeByExtension 对 webp/heic 覆盖不全）
+var imageExtMime = map[string]string{
+	".gif": "image/gif", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".bmp": "image/bmp", ".png": "image/png", ".ico": "image/x-icon",
+	".webp": "image/webp", ".heic": "image/heic",
+}
+
+// sniffImageMime 用文件头 magic number 探测真实图片 MIME
+// 走 net/http.DetectContentType（内部只取前 512 字节，无需自行截断）；
+// 非图片或标准库无签名规则的类型（heic 属 ISO-BMFF 容器）返回空串
+//
+// 参数:
+//   - content: 文件完整内容
+//
+// 返回值:
+//   - string: 形如 image/png 的 MIME；探测不出返回空串
+func sniffImageMime(content []byte) string {
+	detected := http.DetectContentType(content)
+	if !strings.HasPrefix(detected, "image/") {
+		return ""
+	}
+	if idx := strings.IndexByte(detected, ';'); idx >= 0 {
+		detected = detected[:idx]
+	}
+	return strings.TrimSpace(detected)
+}
+
+// resolveLocalImageMime 本地上传的 MIME 判定：以前端声明把住入口，以文件头为准落库
+//
+// 旧实现只信 content_type 与扩展名，任意脚本改名为 .jpg 就能进附件目录并以 image/jpeg 记录；
+// 现在要求字节本身是标准库可识别的图片，且嗅探结果与扩展名一致才放行。
+// 以文件头为准（而不是以声明为准）还顺带修掉前端声明成非标准写法（如 image/jpg）时入库类型不可用的问题。
+// heic 是唯一例外：纯 Go 侧没有它的文件头规则，也没有解码器，只能按扩展名放行。
+//
+// 参数:
+//   - content: 文件完整内容
+//   - contentType: 请求传入的 MIME 类型
+//   - ext: 文件扩展名（含点，小写）
+//
+// 返回值:
+//   - string: 与文件内容一致的 MIME 类型
+//   - error: 内容不是图片、或与扩展名不符时返回业务错误
+func resolveLocalImageMime(content []byte, contentType, ext string) (string, error) {
+	if _, err := checkImageMime(contentType, ext); err != nil {
+		return "", err
+	}
+	sniffed := sniffImageMime(content)
+	if sniffed == "" {
+		if ext == ".heic" {
+			return imageExtMime[ext], nil
+		}
+		return "", bizerr.New(codes.InvalidArgument, "文件内容不是可识别的图片")
+	}
+	// 静态资源按扩展名给出 Content-Type，扩展名与真实内容不符会让浏览器拿到错误的类型，
+	// 因此以扩展名推导的 MIME 作为比对基准，落库也用该值
+	expected, ok := imageExtMime[ext]
+	if !ok || expected != sniffed {
+		return "", bizerr.New(codes.InvalidArgument, fmt.Sprintf("文件内容与扩展名不符（实际为 %s）", sniffed))
+	}
+	return expected, nil
+}
+
 // decodeImageSize 探测图片宽高（像素），本地模式上传时由后端从文件内容计算
-// png/jpeg/gif 走标准库，bmp/webp 由 golang.org/x/image 注册解码器，
-// ico 走手写头解析（x/image 未提供）；heic 暂无纯 Go 轻量解码器，探测失败返回 0
+// png/jpeg/gif/bmp/webp 走解码器（bmp/webp 由 golang.org/x/image 注册），ico 走手写头解析；
+// 动图 webp（VP8X 容器）x/image 解不了，改从容器头直接取画布尺寸，仍能得到真实宽高
+//
+// 失败口径：除 heic 外，认得出的格式解不出来说明文件损坏或并非该格式，返回错误让上传失败——
+// 旧实现把失败记成 width/height=0 照样入库，附件列表只能显示占位，前端按尺寸排版时会塌陷
 //
 // 参数:
 //   - content: 图片文件完整内容
+//   - ext: 文件扩展名（含点，小写）
 //
 // 返回值:
-//   - width: 图片宽度（像素），探测失败为 0
-//   - height: 图片高度（像素），探测失败为 0
-func decodeImageSize(content []byte) (width, height int) {
+//   - width: 图片宽度（像素），heic 探测不到时为 0
+//   - height: 图片高度（像素），同上
+//   - error: 内容损坏或无法解析时返回业务错误
+func decodeImageSize(content []byte, ext string) (int, int, error) {
+	// heic 暂无纯 Go 轻量解码器，按「探测不到」放行而不是拒掉手机照片
+	if ext == ".heic" {
+		return 0, 0, nil
+	}
 	if width, height, ok := decodeIcoSize(content); ok {
-		return width, height
+		return width, height, nil
 	}
 	img, _, err := image.Decode(bytes.NewReader(content))
 	if err != nil {
-		return 0, 0
+		if width, height, ok := decodeWebpCanvasSize(content); ok {
+			return width, height, nil
+		}
+		return 0, 0, bizerr.New(codes.InvalidArgument, "图片内容无法解析，文件可能已损坏")
 	}
 	bounds := img.Bounds()
-	return bounds.Dx(), bounds.Dy()
+	return bounds.Dx(), bounds.Dy(), nil
+}
+
+// decodeWebpCanvasSize 从 WebP 容器头读取画布宽高
+// 动图与带元数据的 webp 使用 VP8X chunk（flags 1 字节 + 保留 2 字节 + 宽 3 字节 + 高 3 字节，
+// 均为小端且存的是「实际值 - 1」），x/image/webp 不支持该容器，故绕过解码器直接取头
+//
+// 参数:
+//   - content: 文件内容
+//
+// 返回值:
+//   - width: 画布宽度（像素）
+//   - height: 画布高度（像素）
+//   - ok: 是否为带 VP8X 的合法 WebP 容器
+func decodeWebpCanvasSize(content []byte) (width, height int, ok bool) {
+	// RIFF(4) + size(4) + WEBP(4) + FOURCC(4) + chunkSize(4) + VP8X 载荷 8 字节
+	if len(content) < 30 || string(content[0:4]) != "RIFF" || string(content[8:12]) != "WEBP" {
+		return 0, 0, false
+	}
+	if string(content[12:16]) != "VP8X" {
+		return 0, 0, false
+	}
+	readLE24 := func(b []byte) int { return int(b[0]) | int(b[1])<<8 | int(b[2])<<16 }
+	width = readLE24(content[24:27]) + 1
+	height = readLE24(content[27:30]) + 1
+	return width, height, true
 }
 
 // decodeIcoSize 解析 ICO 文件头首个图标条目的宽高
@@ -968,18 +1085,6 @@ func randomNumeric(length int) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%0*d", length, n), nil
-}
-
-// escapeLike 转义 LIKE 查询中的通配符，避免用户输入的 % 与 _ 扰动匹配范围
-//
-// 参数:
-//   - value: 原始字符串
-//
-// 返回值:
-//   - string: 转义后的字符串（\%、\_、\\）
-func escapeLike(value string) string {
-	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return replacer.Replace(value)
 }
 
 // boolToInt8 布尔值转 tinyint 存储（proto3 bool 默认 false，对应客户端上传不进选择器）

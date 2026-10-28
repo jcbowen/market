@@ -81,6 +81,7 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'SystemStatistics' })
 import { computed, h, onMounted, ref } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { NText } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getProductRankings, getRevenueReport, getSalesStatistics } from '@/api/statistics'
@@ -168,7 +169,7 @@ const summaryCards = computed(() => [
     label: '全平台销售额',
     value: formatMoney(globalSales.value?.pay_amount ?? 0),
     prefix: '¥',
-    extra: '全部社区有效订单',
+    extra: '全部社区，不含已退款订单',
   },
   {
     label: '全平台订单数',
@@ -334,6 +335,8 @@ async function loadData() {
 }
 
 onMounted(loadData)
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新，避免展示离开前的旧数据
+refreshOnActivated(loadData)
 </script>
 
 <style lang="scss" scoped>

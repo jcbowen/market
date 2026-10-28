@@ -164,7 +164,7 @@
           v-model:value="adminForm.password"
           type="password"
           show-password-on="click"
-          placeholder="初始密码（仅新建账号时需要，至少 6 位）"
+          :placeholder="`初始密码（仅新建账号时需要，${PASSWORD_LENGTH_TIP}）`"
         />
         <n-input v-model:value="adminForm.real_name" placeholder="真实姓名" />
         <n-input v-model:value="adminForm.phone" placeholder="手机号" />
@@ -184,6 +184,7 @@ import { createCommunity, updateCommunity, getCommunity, getCommunityAdmins, add
 import { matchRegionPathByNames } from '@/api/region'
 import RegionPicker from '@/components/RegionPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
+import { PASSWORD_LENGTH_TIP, isPasswordTooShort } from '@/constants/security'
 import type { Community, Account } from '@/api/types'
 
 /**
@@ -479,8 +480,8 @@ async function submitAddAdmin() {
     message.warning('请填写用户名')
     return
   }
-  if (adminForm.value.password && adminForm.value.password.length < 6) {
-    message.warning('初始密码长度至少 6 位')
+  if (adminForm.value.password && isPasswordTooShort(adminForm.value.password)) {
+    message.warning(`初始${PASSWORD_LENGTH_TIP}`)
     return
   }
   adminSaving.value = true

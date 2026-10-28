@@ -11,6 +11,8 @@ const (
 	OperationNotAllowed = 10004
 	RateLimit           = 10005
 	DataAlreadyExists   = 10006
+	// DataConflict 提交的数据已被他人改动（整份覆盖式保存的乐观并发校验，如站点设置）
+	DataConflict = 10007
 
 	// ----- 认证模块 -----
 	NotLoginOrTokenExpired      = 11001
@@ -80,6 +82,7 @@ var Message = map[int]string{
 	OperationNotAllowed:         "操作不被允许",
 	RateLimit:                   "请求频率限制",
 	DataAlreadyExists:           "数据已存在",
+	DataConflict:                "数据已被他人修改，请重新载入后再提交",
 	NotLoginOrTokenExpired:      "未登录或 token 已过期",
 	InvalidToken:                "token 无效",
 	InvalidVerifyCode:           "验证码错误",

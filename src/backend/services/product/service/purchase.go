@@ -7,6 +7,8 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/likeutil"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
@@ -216,11 +218,7 @@ func (s *PurchaseService) CancelPurchaseOrder(ctx context.Context, req *product.
 //   - *product.ListPurchaseOrdersResp: 分页列表
 //   - error: 错误信息
 func (s *PurchaseService) ListPurchaseOrders(ctx context.Context, req *product.ListPurchaseOrdersReq) (*product.ListPurchaseOrdersResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 
 	db := s.db.GetDb().WithContext(ctx).Model(&model.PurchaseOrder{})
 	if req.CommunityId > 0 {
@@ -233,7 +231,7 @@ func (s *PurchaseService) ListPurchaseOrders(ctx context.Context, req *product.L
 		db = db.Where("supplier_id = ?", req.SupplierId)
 	}
 	if req.Keyword != "" {
-		db = db.Where("purchase_no LIKE ?", "%"+req.Keyword+"%")
+		db = db.Where("purchase_no LIKE ?", likeutil.Contains(req.Keyword))
 	}
 
 	var total int64

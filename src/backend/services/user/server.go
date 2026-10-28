@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -104,11 +105,7 @@ func (s *server) UpdateMember(ctx stdctx.Context, req *user.UpdateMemberReq) (*u
 
 // ListUsers 获取会员列表（按社区关联过滤，返回过滤语境社区名称）
 func (s *server) ListUsers(ctx stdctx.Context, req *user.ListUsersReq) (*user.ListUsersResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	list, total, communityName, err := s.userService.ListUsers(ctx, req.CommunityId, req.Keyword, req.Status, req.StatusFilter, page, pageSize)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -249,16 +246,9 @@ func (s *server) ListCommunities(ctx stdctx.Context, req *user.ListCommunitiesRe
 	if req != nil && req.Pagination != nil {
 		page, pageSize = int(req.Pagination.Page), int(req.Pagination.PageSize)
 	}
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 10
-	}
-	// 与服务层 ListCommunities 同口径封顶，保证回显的 page_size 与实际返回一致
-	if pageSize > 200 {
-		pageSize = 200
-	}
+	// 与服务层 ListCommunities 同口径封顶（社区表规模有限，社区选择器要一次取全量），
+	// 保证回显的 page_size 与实际返回一致
+	page, pageSize = pageparam.ClampBatch(page, pageSize)
 	list, total, err := s.communityService.ListCommunities(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -288,11 +278,7 @@ func (s *server) GetCommunity(ctx stdctx.Context, req *user.GetCommunityReq) (*u
 
 // ListNearbyCommunities 获取附近社区
 func (s *server) ListNearbyCommunities(ctx stdctx.Context, req *user.ListNearbyCommunitiesReq) (*user.ListCommunitiesResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	list, total, err := s.communityService.ListNearbyCommunities(ctx, req.Longitude, req.Latitude, page, pageSize)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -352,6 +338,28 @@ func (s *server) GetAdminByUsername(ctx stdctx.Context, req *user.GetAdminByUser
 	return service.ToAdminInfo(admin, communityIDs, nil), nil
 }
 
+// VerifyAdminCredential 登录口令校验
+// bcrypt 比对在本服务内完成后返回布尔结论，口令摘要不跨 gRPC 边界下发；
+// 错误口径与 GetAdminByUsername 一致（NotFound=账号不存在，其他=内部故障），网关登录锁定计数依赖该区分
+// 参数：
+//   - ctx: 标准上下文
+//   - req: 用户名 + 明文口令
+//
+// 返回：
+//   - *user.VerifyAdminCredentialResp: 口令是否有效 + 不含摘要的账号信息
+//   - error: 转换后的 gRPC 状态错误
+func (s *server) VerifyAdminCredential(ctx stdctx.Context, req *user.VerifyAdminCredentialReq) (*user.VerifyAdminCredentialResp, error) {
+	admin, valid, err := s.adminService.VerifyAdminCredential(ctx, req.Username, req.Password)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	communityIDs, _ := s.adminService.ListAdminCommunityIDs(ctx, admin.ID)
+	return &user.VerifyAdminCredentialResp{
+		PasswordValid: valid,
+		Admin:         service.ToAdminInfo(admin, communityIDs, nil),
+	}, nil
+}
+
 // GetAdminById 按 ID 查询管理员（refresh 链路校验账号状态：停用/删除即失效）
 func (s *server) GetAdminById(ctx stdctx.Context, req *user.GetAdminByIdReq) (*user.AdminInfo, error) {
 	admin, err := s.adminService.GetAdminById(ctx, req.Id)
@@ -384,11 +392,7 @@ func (s *server) GetAdminContext(ctx stdctx.Context, req *user.GetAdminContextRe
 
 // ListAdmins 获取员工列表（按任职社区语境）
 func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.ListAdminsResp, error) {
-	page, pageSize := 1, 10
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.Clamp(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()))
 	list, assignments, total, err := s.adminService.ListAdmins(ctx, req.CommunityId, req.Keyword, page, pageSize)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)
@@ -441,7 +445,7 @@ func (s *server) ListAdmins(ctx stdctx.Context, req *user.ListAdminsReq) (*user.
 		info := service.ToAdminInfo(a, communityIDs, roles)
 		if m := memberByID[info.UserId]; m != nil {
 			info.UserNickname = m.Nickname
-			info.UserPhone = m.Phone
+			info.UserPhone = m.PhoneValue()
 		}
 		resp.List = append(resp.List, info)
 	}
@@ -618,11 +622,7 @@ func (s *server) ListRegionChildren(ctx stdctx.Context, req *user.ListRegionChil
 
 // ListRegions 管理端分页查询区划列表
 func (s *server) ListRegions(ctx stdctx.Context, req *user.ListRegionsReq) (*user.ListRegionsResp, error) {
-	page, pageSize := 1, 20
-	if req.Pagination != nil {
-		page = int(req.Pagination.Page)
-		pageSize = int(req.Pagination.PageSize)
-	}
+	page, pageSize := pageparam.ClampWith(int(req.Pagination.GetPage()), int(req.Pagination.GetPageSize()), 20, pageparam.MaxSize)
 	list, total, err := s.regionService.ListRegions(ctx, req)
 	if err != nil {
 		return nil, bizerr.ToStatus(err)

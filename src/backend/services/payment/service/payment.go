@@ -210,6 +210,9 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		p.PendingFlag = &req.OrderId
 	}
 
+	// 冲突分支被本地关闭的旧待支付单：事务提交后逐笔去渠道侧关单/撤销
+	var staleClosed []model.Payment
+
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(p).Error; err != nil {
 			if !isDuplicateEntryErr(err) {
@@ -229,14 +232,29 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 				payParams = reused.PayParams
 				return nil
 			}
-			if uerr := tx.Model(&model.Payment{}).
+			// 先取出待关闭的旧单（提交后要拿它们去关渠道），再按 ID 精确关闭，
+			// 避免用条件更新把窗口内新出现的其它待支付单也带走
+			var stale []model.Payment
+			if ferr := tx.
 				Where("order_id = ? AND status = 1 AND payment_no <> ?", req.OrderId, p.PaymentNo).
-				Updates(map[string]interface{}{
-					"status":       model.PaymentStatusClosed,
-					"pending_flag": nil,
-					"updated_at":   now,
-				}).Error; uerr != nil {
-				return uerr
+				Find(&stale).Error; ferr != nil {
+				return ferr
+			}
+			if len(stale) > 0 {
+				ids := make([]int64, 0, len(stale))
+				for i := range stale {
+					ids = append(ids, stale[i].ID)
+				}
+				if uerr := tx.Model(&model.Payment{}).
+					Where("id IN ?", ids).
+					Updates(map[string]interface{}{
+						"status":       model.PaymentStatusClosed,
+						"pending_flag": nil,
+						"updated_at":   now,
+					}).Error; uerr != nil {
+					return uerr
+				}
+				staleClosed = stale
 			}
 			if cerr := tx.Create(p).Error; cerr != nil {
 				return cerr
@@ -245,6 +263,16 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		return nil
 	}); err != nil {
 		return nil, "", err
+	}
+
+	// 冲突分支在本地关掉的旧待支付单，必须同步关渠道侧交易：
+	// 只关本地而渠道仍存活，用户在那条旧 payment_no 上完成付款就成了
+	// 「钱进了、单已关」的挂账，只能人工退款收场。
+	// inspectForClose 已含「渠道已收款则登记挂账待办、未收款才关单、查不到就不猜」的分级语义；
+	// 这里不受 ReconcileEnabled 开关抑制——本地关单是本请求自己做的事，关渠道是它的收尾而非对账副产品。
+	// 失败只留 kind=4 流水，不阻塞下单（下单结果已经确定）
+	for i := range staleClosed {
+		s.inspectForClose(ctx, &staleClosed[i])
 	}
 
 	// 线下收款（货到付款 3 / 收银台现金 4）的订单状态同步放在事务提交之后：

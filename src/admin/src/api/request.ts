@@ -63,6 +63,13 @@ const CODE_INVALID_TOKEN = 11002
  */
 export const CODE_PWD_ENCRYPTED_INVALID = 11010
 
+/**
+ * 数据并发冲突（提交携带的版本号已过期）
+ * 设置类整份覆盖保存（站点/支付/附件）在他人已改过配置时返回该码拒绝写入，
+ * 页面据此重新拉取配置刷新版本号，否则用户按原表单重试会一直撞同一个冲突
+ */
+export const CODE_DATA_CONFLICT = 10007
+
 /** 携带后端业务码的错误对象（业务层据 code 做定向处理，如 11010 自动重试） */
 export interface BizError extends Error {
   code?: number

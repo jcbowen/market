@@ -116,11 +116,10 @@ func (s *PaymentService) SavePayConfig(ctx context.Context, cfg *payment.PayConf
 	// 乐观锁：调用方携带读取时的版本号（updated_at），与库中不一致说明期间已被他人改写，
 	// 拒绝整行覆写（支付配置为单行全量覆盖式保存，后提交者会静默丢掉先提交者的改动）；
 	// 版本号为空表示调用方未参与并发写入（如旧版客户端），不校验。
-	// 用 FailedPrecondition 而非普通错误：网关对 codes.Internal 不透传原始消息，
-	// 该提示需要原样到达管理端界面
+	// 用 Aborted：网关据此归入业务错误码 10007（数据冲突）并原样透传提示到管理端界面
 	if cfg.UpdatedAt != "" && cfg.UpdatedAt != row.UpdatedAt {
 		log.Printf("支付配置保存冲突：调用方版本 %s，当前版本 %s", cfg.UpdatedAt, row.UpdatedAt)
-		return bizerr.New(codes.FailedPrecondition, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
+		return bizerr.New(codes.Aborted, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
 	}
 
 	// 通知地址格式服务端兜底（详见 checkNotifyURL），拒绝后不写入、不触发热更新

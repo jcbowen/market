@@ -15,6 +15,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/eventbus"
+	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
@@ -24,6 +25,13 @@ const (
 	notifyErrorMsgMaxLen = 500
 	notifyRemarkMaxLen   = 255
 	notifyRawBodyMaxLen  = 8192
+)
+
+// 异常流水列表分页档位：默认 20 行、单页最多 100 行。
+// 每行可展开 raw_body（最长 8KB）与 headers，页长放大等于把整页大字段一次性搬进内存
+const (
+	anomalyDefaultPageSize = 20
+	anomalyMaxPageSize     = 100
 )
 
 // wechatNotifyHeaderPrefix 微信通知仅保留这一组请求头：
@@ -190,7 +198,7 @@ func notifyEntryFrom(p *model.Payment, kind, result int32) *model.NotifyLog {
 	if p == nil {
 		return entry
 	}
-	entry.Channel = p.PayType
+	entry.Channel = notifyChannelOf(p.PayType)
 	entry.PaymentNo = p.PaymentNo
 	entry.OrderID = p.OrderID
 	entry.OrderNo = p.OrderNo
@@ -341,17 +349,7 @@ func (s *PaymentService) ListOrderPayments(ctx context.Context, orderID int64) (
 //   - int32: 待处理条数（异常页红标，不随筛选变化，但受社区范围约束）
 //   - error: 查询错误
 func (s *PaymentService) ListPaymentAnomalies(ctx context.Context, req *payment.ListPaymentAnomaliesReq) ([]*payment.PaymentAnomalyInfo, int32, int32, error) {
-	page := req.Page
-	if page <= 0 {
-		page = 1
-	}
-	pageSize := req.PageSize
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	if pageSize > 100 {
-		pageSize = 100
-	}
+	page, pageSize := pageparam.ClampWith(int(req.Page), int(req.PageSize), anomalyDefaultPageSize, anomalyMaxPageSize)
 
 	base := func() *gorm.DB {
 		q := s.db.GetDb().WithContext(ctx).Model(&model.NotifyLog{})

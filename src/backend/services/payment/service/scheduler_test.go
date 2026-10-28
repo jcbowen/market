@@ -325,7 +325,8 @@ func seedSchedPayment(t *testing.T, s *PaymentService, seed schedSeed) *model.Pa
 //   - paymentNo: 支付单号
 //   - orderID: 订单 ID（测试数据清理依据）
 //   - createdAt: 流水创建时刻
-func seedAgedNotifyLog(t *testing.T, s *PaymentService, paymentNo string, orderID int64, createdAt time.Time) {
+//   - handled: 销账位（0 待处理 = 后台待办队列成员，1 已处理 = 可过期清理）
+func seedAgedNotifyLog(t *testing.T, s *PaymentService, paymentNo string, orderID int64, createdAt time.Time, handled int32) {
 	t.Helper()
 	res := s.db.GetDb().Exec(
 		`INSERT INTO payment_notify_logs
@@ -333,7 +334,7 @@ func seedAgedNotifyLog(t *testing.T, s *PaymentService, paymentNo string, orderI
 			 handled, error_msg, created_at, updated_at)
 		 VALUES (?, ?, 1, ?, ?, ?, 1, ?, '测试流水', ?, ?)`,
 		model.NotifyKindCallback, model.NotifyResultVerifyFailed, paymentNo, orderID,
-		fmt.Sprintf("NO%d", orderID), model.NotifyPending,
+		fmt.Sprintf("NO%d", orderID), handled,
 		createdAt.Format(timeLayout), createdAt.Format(timeLayout))
 	if res.Error != nil {
 		t.Fatalf("插入测试流水 %s 失败: %v", paymentNo, res.Error)
@@ -1148,7 +1149,8 @@ func TestSchedulerRetryFailuresAbandonsExhausted(t *testing.T) {
 // 间接钉住（三轮重复失败仍只有 1 条待重试行）；转终态清空占位后允许再次登记，
 // 由 TestSchedulerRetryFailuresAbandonsExhausted 的 pending_slot 断言把关。
 
-// TestWithinReconcileWindow 回查时间窗（纯函数）：微信按配置上限，支付宝受订单超时约束
+// TestWithinReconcileWindow 回查时间窗（纯函数）：在途单微信按配置上限、支付宝受订单超时约束，
+// 已关单改用更宽的回溯窗口（迟到付款在关单后才生效）
 func TestWithinReconcileWindow(t *testing.T) {
 	newCfg := func(orderTimeout int) *config.Config {
 		cfg := &config.Config{}
@@ -1160,32 +1162,44 @@ func TestWithinReconcileWindow(t *testing.T) {
 		cfg     *config.Config
 		payType int32
 		age     time.Duration
+		closed  bool
 		want    bool
 	}{
-		{"微信窗口内", newCfg(1800), 1, 119 * time.Minute, true},
-		{"微信窗口外", newCfg(1800), 1, 121 * time.Minute, false},
-		{"支付宝取订单超时为小", newCfg(1800), 2, 31 * time.Minute, false},
-		{"支付宝窗口内", newCfg(1800), 2, 29 * time.Minute, true},
-		{"支付宝订单超时更长时取配置上限", newCfg(7200), 2, 119 * time.Minute, true},
-		{"现金单无渠道可查也在窗口内", newCfg(1800), 4, 10 * time.Minute, true},
+		{"微信窗口内", newCfg(1800), 1, 119 * time.Minute, false, true},
+		{"微信窗口外", newCfg(1800), 1, 121 * time.Minute, false, false},
+		{"支付宝取订单超时为小", newCfg(1800), 2, 31 * time.Minute, false, false},
+		{"支付宝窗口内", newCfg(1800), 2, 29 * time.Minute, false, true},
+		{"支付宝订单超时更长时取配置上限", newCfg(7200), 2, 119 * time.Minute, false, true},
+		{"现金单无渠道可查也在窗口内", newCfg(1800), 4, 10 * time.Minute, false, true},
+		{"已关单超出在途时效仍按回溯窗口回查", newCfg(1800), 2, 200 * time.Minute, true, true},
+		{"已关单超出回溯窗口不再打扰渠道", newCfg(1800), 1, 1441 * time.Minute, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := &model.Payment{PayType: c.payType, CreatedAt: time.Now().Add(-c.age).Format(timeLayout)}
-			if got := withinReconcileWindow(c.cfg, p); got != c.want {
-				t.Errorf("pay_type=%d age=%v 窗口判定 = %v, want %v", c.payType, c.age, got, c.want)
+			if got := withinReconcileWindow(c.cfg, p, c.closed); got != c.want {
+				t.Errorf("pay_type=%d age=%v closed=%v 窗口判定 = %v, want %v", c.payType, c.age, c.closed, got, c.want)
 			}
 		})
 	}
+	// 已关单以最后一次状态变化（updated_at）为准：老下单在近期被关单，迟到付款仍在回溯范围内
+	staleCreated := &model.Payment{
+		PayType:   1,
+		CreatedAt: time.Now().Add(-48 * time.Hour).Format(timeLayout),
+		UpdatedAt: time.Now().Add(-3 * time.Hour).Format(timeLayout),
+	}
+	if !withinReconcileWindow(newCfg(1800), staleCreated, true) {
+		t.Error("近期关闭的老订单仍须进入挂账回溯")
+	}
 	// 脏数据（时间串解析不了）保守放行，由节流与上限兜底，不能因此永久漏掉对账
 	broken := &model.Payment{PayType: 1, CreatedAt: "not-a-time"}
-	if !withinReconcileWindow(newCfg(1800), broken) {
+	if !withinReconcileWindow(newCfg(1800), broken, false) {
 		t.Error("created_at 无法解析时应保守放行")
 	}
 	// 真实读回形态：DSN 带 parseTime=True 时从库里读到的 created_at 是 RFC3339，
 	// 若只认「2006-01-02 15:04:05」，时间窗会恒判「解析失败→放行」而彻底失效
 	rfc := &model.Payment{PayType: 1, CreatedAt: time.Now().Add(-200 * time.Minute).Format(time.RFC3339)}
-	if withinReconcileWindow(newCfg(1800), rfc) {
+	if withinReconcileWindow(newCfg(1800), rfc, false) {
 		t.Error("RFC3339 形态的 created_at 同样必须受时间窗约束")
 	}
 }
@@ -1254,16 +1268,20 @@ func TestNeedsHandlingMatrix(t *testing.T) {
 }
 
 // TestNotifyEntryFromSnapshot 流水归属快照取自支付单（纯函数）
-// 社区范围漏填会让这条异常只对超管可见，社区管理员永远看不到自己社区的问题
+// 社区范围漏填会让这条异常只对超管可见，社区管理员永远看不到自己社区的问题；
+// channel 另做渠道归一（付款码 5/6 → 微信 1/支付宝 2），异常页的渠道列才有文案
 func TestNotifyEntryFromSnapshot(t *testing.T) {
 	p := &model.Payment{
 		PaymentNo: "ZF-SNAPSHOT", OrderID: 123, OrderNo: "NO123",
-		CommunityID: 9, PayType: 2,
+		CommunityID: 9, PayType: 6,
 	}
 	entry := notifyEntryFrom(p, model.NotifyKindStuck, model.NotifyResultStuck)
 	if entry.PaymentNo != p.PaymentNo || entry.OrderID != p.OrderID ||
-		entry.OrderNo != p.OrderNo || entry.CommunityID != p.CommunityID || entry.Channel != p.PayType {
+		entry.OrderNo != p.OrderNo || entry.CommunityID != p.CommunityID {
 		t.Errorf("流水未继承支付单归属快照: %+v", entry)
+	}
+	if entry.Channel != 2 {
+		t.Errorf("支付宝付款码(6) 的流水渠道应归一为 2, got %d", entry.Channel)
 	}
 
 	// 验签失败等连支付单都解析不出的场景：全部留零值，只进超管全量队列
@@ -1280,9 +1298,11 @@ func TestReconcileConfirmRef(t *testing.T) {
 	}
 }
 
-// TestSchedulerCleanupNotifyLogs 流水按保留天数清理，测试数据不会被误删
-// 前置：先清掉「每日一次」的清理锁（同一进程内多个用例都要跑清理），再写入一条 40 天前的旧流水与一条新流水
-// 断言：旧的被删、新的保留
+// TestSchedulerCleanupNotifyLogs 流水按保留天数清理，且只清已销账的
+// 前置：先清掉「每日一次」的清理锁（同一进程内多个用例都要跑清理），再写入三种流水——
+// 40 天前已销账、40 天前未销账（待办）、当天已销账
+// 断言：只删 40 天前已销账那条；未销账的过期流水必须保留（删掉等于抹掉挂账事实），
+// 保留期内的新流水不动
 func TestSchedulerCleanupNotifyLogs(t *testing.T) {
 	env := newSchedEnv(t)
 	ctx := context.Background()
@@ -1290,16 +1310,22 @@ func TestSchedulerCleanupNotifyLogs(t *testing.T) {
 	// 用例必须显式删除才能再次触发清理；真实运行由当天第一个实例执行一次
 	_ = env.rdb.Del(ctx, fmt.Sprintf("scheduler:payment:notify:cleanup:%s", time.Now().Format("2006-01-02"))).Err()
 
-	oldNo := "ZFTEST-CLEAN-OLD"
+	doneOldNo := "ZFTEST-CLEAN-OLDDONE"
+	pendingOldNo := "ZFTEST-CLEAN-OLDPENDING"
 	newNo := "ZFTEST-CLEAN-NEW"
 	orderID := schedOrderIDBase + 23
-	seedAgedNotifyLog(t, env.s, oldNo, orderID, time.Now().AddDate(0, 0, -40))
-	seedAgedNotifyLog(t, env.s, newNo, orderID, time.Now())
+	seedAgedNotifyLog(t, env.s, doneOldNo, orderID, time.Now().AddDate(0, 0, -40), model.NotifyHandled)
+	seedAgedNotifyLog(t, env.s, pendingOldNo, orderID, time.Now().AddDate(0, 0, -40), model.NotifyPending)
+	seedAgedNotifyLog(t, env.s, newNo, orderID, time.Now(), model.NotifyHandled)
 
-	env.sched.cleanupNotifyLogs(ctx)
-
-	if count := countNotifyLogs(t, env.s, oldNo, model.NotifyKindCallback, 0); count != 0 {
-		t.Errorf("超过 30 天保留期的流水应被清理, got %d 条", count)
+	if got := env.sched.cleanupNotifyLogs(ctx); got != 1 {
+		t.Errorf("清理行数 = %d, want 1（只清过期的已销账流水）", got)
+	}
+	if count := countNotifyLogs(t, env.s, doneOldNo, model.NotifyKindCallback, 0); count != 0 {
+		t.Errorf("超过保留期且已销账的流水应被清理, got %d 条", count)
+	}
+	if count := countNotifyLogs(t, env.s, pendingOldNo, model.NotifyKindCallback, 0); count != 1 {
+		t.Errorf("超过保留期但未销账的待办流水不得清理, got %d 条", count)
 	}
 	if count := countNotifyLogs(t, env.s, newNo, model.NotifyKindCallback, 0); count != 1 {
 		t.Errorf("保留期内流水不得被清理, got %d 条", count)

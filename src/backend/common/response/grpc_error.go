@@ -21,6 +21,9 @@ var grpcCodeMap = map[codes.Code]int{
 	codes.Unauthenticated:    errcode.NotLoginOrTokenExpired,
 	codes.FailedPrecondition: errcode.OperationNotAllowed,
 	codes.ResourceExhausted:  errcode.ProductStockInsufficient,
+	// Aborted 专用于乐观并发冲突（提交携带的版本号已过期），与「操作不被允许」区分开，
+	// 前端可据此单独提示「请重新载入后再提交」
+	codes.Aborted: errcode.DataConflict,
 }
 
 // rpcWrapperPattern 匹配 gRPC 错误字符串中的 "rpc error: code = Xxx desc = " 包装

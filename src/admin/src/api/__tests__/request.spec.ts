@@ -22,6 +22,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
  * 用例之间互不污染
  */
 
+// 慢因取证（2026-10 复位回归守卫 flaky 排查）：request.ts 顶层静态引用 naive-ui（createDiscreteApi），
+// 首个用例的动态 import('@/api/request') 会逼 worker 在计秒内现转+求值整个 naive-ui 模块图（约 44MB），
+// 单跑实测首个用例 >20s（旧版整轮冷缓存时约 1.7s），其余用例因转换缓存已热仅 ~7ms——
+// 与定时器/重试无关（request.ts 无任何 setTimeout），是首转代价，故在此切断 naive-ui：
+// 本文件覆盖的 11001/401 收口路径均不经 tryShowError（错误提示分支），createDiscreteApi 替身零语义影响；
+// axios、js-cookie 保持真实加载（拦截器与 cookie 兜底行为是被测本体）
+vi.mock('naive-ui', () => ({
+  createDiscreteApi: () => ({
+    message: { error: () => undefined, warning: () => undefined, info: () => undefined, success: () => undefined },
+  }),
+}))
+
 /** api/request 的模块形状（用于 resetModules 后的动态导入类型） */
 type RequestModule = typeof import('@/api/request')
 
@@ -83,9 +95,9 @@ beforeEach(() => {
   document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
 })
 
-// 单跑每例约 1.8s（成本在 loadRequestModule 的 vi.resetModules + 重新 import axios），
-// 全量并发时会被 CPU 争用顶到默认 5s 超时而偶发红，故按套件放宽预算
-describe('401 会话收口', { timeout: 20000 }, () => {
+// 原「单跑约 1.8s、整轮被 CPU 争用顶破 5s」的止血 timeout 已随上面对 naive-ui 首转代价的根因修复移除，
+// 全部用例回归默认预算
+describe('401 会话收口', () => {
   it('业务码 11001 触发收口回调并跳转登录页', async () => {
     const mod = await loadRequestModule()
     const onUnauthorized = vi.fn()

@@ -87,10 +87,13 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'AttachmentSetting' })
 import { computed, onMounted, reactive, ref } from 'vue'
+import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { getAttachmentSetting, updateAttachmentSetting } from '@/api/attachment'
 import type { AttachmentSetting } from '@/api/attachment'
+import { CODE_DATA_CONFLICT } from '@/api/request'
+import type { BizError } from '@/api/request'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/datetime'
 
@@ -154,13 +157,22 @@ async function save() {
   try {
     await updateAttachmentSetting({ ...form })
     message.success('附件配置已保存，保存后即时生效，无需重启服务')
-    await load()
+  } catch (err) {
+    // 非冲突错误已由请求拦截器统一提示，直接结束；
+    // 版本冲突仍要重拉配置刷新 updated_at，否则按同一份旧表单重试会一直撞同一个冲突
+    if ((err as BizError).code !== CODE_DATA_CONFLICT) {
+      return
+    }
   } finally {
     saving.value = false
   }
+  await load()
 }
 
+// keep-alive 缓存下切回本页不重新挂载，需重新拉取：
+// 带着旧表单值整份 PUT 会覆盖他人刚改的配置，未保存的本地编辑以最新值为准丢弃
 onMounted(load)
+refreshOnActivated(load)
 
 /**
  * 跳转本地附件迁移面板（携带 scan=1 自动扫描）

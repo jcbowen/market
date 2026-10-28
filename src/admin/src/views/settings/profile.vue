@@ -28,7 +28,7 @@
           <n-input v-model:value="passwordForm.old_password" type="password" placeholder="请输入旧密码" />
         </n-form-item>
         <n-form-item label="新密码">
-          <n-input v-model:value="passwordForm.new_password" type="password" placeholder="请输入新密码，至少 6 位" />
+          <n-input v-model:value="passwordForm.new_password" type="password" :placeholder="`请输入新密码，${PASSWORD_LENGTH_TIP}`" />
         </n-form-item>
         <n-form-item label="确认新密码">
           <n-input v-model:value="passwordForm.confirm_password" type="password" placeholder="请再次输入新密码" />
@@ -49,6 +49,7 @@ import { ref, onMounted, reactive } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { updateAdmin, changeAdminPassword } from '@/api/admin'
+import { PASSWORD_LENGTH_TIP, isPasswordTooShort } from '@/constants/security'
 import type { AdminInfo } from '@/api/types'
 
 /**
@@ -107,8 +108,8 @@ async function savePassword() {
     message.warning('请输入旧密码')
     return
   }
-  if (!passwordForm.new_password || passwordForm.new_password.length < 6) {
-    message.warning('新密码至少 6 位')
+  if (!passwordForm.new_password || isPasswordTooShort(passwordForm.new_password)) {
+    message.warning(`新${PASSWORD_LENGTH_TIP}`)
     return
   }
   if (passwordForm.new_password !== passwordForm.confirm_password) {

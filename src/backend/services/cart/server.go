@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/proto/cart"
@@ -102,7 +103,7 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 	}
 
 	// 规格失效收口：SKU 被后台禁用/移除规格/随商品软删连带禁用（status≠1）后不允许加购。
-	// 与结算侧商品服务的拦截（BatchGetSkus 只放启用 SKU）以及展示侧 invalidReasonOf
+	// 与结算侧商品服务的拦截（BatchGetSkus 只放启用 SKU）以及展示侧 cartItemInvalidReason
 	// 的「规格已失效」同口径，避免加进去结算不了
 	if skuInfo.Status != skuStatusEnabled {
 		return nil, status.Errorf(codes.FailedPrecondition, "规格已失效，暂不可购买")
@@ -110,7 +111,7 @@ func (s *server) AddItem(ctx stdctx.Context, req *cart.AddItemReq) (*cart.CartRe
 
 	// 可售收口（P1-4）：加购即交易入口，非上架态（下架/定时上架未到点）不允许加购。
 	// 判定由商品服务统一执行（require_sellable），此处只声明意图；
-	// 展示侧 invalidReasonOf 的「商品已下架」判定与此同口径
+	// 展示侧 cartItemInvalidReason 的「商品已下架」判定与此同口径
 	productInfo, err := s.productClient.GetProduct(ctx, &product.GetProductReq{
 		Id:              skuInfo.ProductId,
 		CommunityId:     skuInfo.CommunityId,
@@ -295,6 +296,7 @@ func (s *server) getCartItems(ctx stdctx.Context, userID, communityID int64) ([]
 }
 
 // buildCartItems 将购物车模型列表转换为响应项，并从商品服务补齐展示字段
+// 商品档案整批预取（见 loadCartCatalog），逐行只做纯内存装配
 //
 // 参数：
 //   - ctx: 上下文
@@ -304,37 +306,96 @@ func (s *server) getCartItems(ctx stdctx.Context, userID, communityID int64) ([]
 //   - []*cart.CartItem: 购物车响应项列表
 //   - error: 错误信息
 func (s *server) buildCartItems(ctx stdctx.Context, list []*model.Cart) ([]*cart.CartItem, error) {
+	skuIDs := make([]int64, 0, len(list))
+	for _, m := range list {
+		skuIDs = append(skuIDs, m.SkuID)
+	}
+	catalog, err := s.loadCartCatalog(ctx, skuIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]*cart.CartItem, 0, len(list))
 	for _, m := range list {
-		item, err := s.buildCartItem(ctx, m)
-		if err != nil {
-			return nil, err
-		}
-		if item != nil {
-			items = append(items, item)
-		}
+		items = append(items, s.buildCartItem(ctx, m, catalog))
 	}
 	return items, nil
 }
 
-// buildCartItem 将单个购物车模型转换为响应项
-// 失效判定：SKU 不存在 →"商品已失效"；SKU 已禁用/移除 →"规格已失效"；商品不存在 →"商品已失效"；
-// 商品下架 →"商品已下架"；库存为 0 →"商品已售罄"（判定实现见 invalidReasonOf）。
+// cartCatalog 购物车展示所需的商品目录（整批一次预取的结果）
+// key 缺失即代表该 SKU/商品在商品服务已取不到（被删除，或商品与规格的社区归属漂移），
+// 由装配侧按「商品已失效」处理并回退购物车快照
+type cartCatalog struct {
+	skus     map[int64]*product.SkuInfo
+	products map[int64]*product.ProductInfo
+}
+
+// loadCartCatalog 批量预取购物车行涉及的 SKU 与商品档案
+// 一次 BatchGetSkus 加「按规格归属社区分组的 BatchGetProducts」替代逐行 GetSkuById + GetProduct：
+// 原先 N 行购物车要 2N 次 gRPC 往返，且每次 GetProduct 在服务侧还要跑 5 条 SQL
+// （主表/SKU/规格/图集/分类名），行数一多就放大成明显的列表延迟。C 端购物车固定单社区语境，
+// 分组后通常就是 1 次商品批量调用。
+// tolerate_missing=true 取「逐项判定」口径：SKU/商品被删除或社区归属漂移只从结果中剔除、
+// 不整体报错，交由展示侧按失效处理（原单行版对同样场景是 NotFound→失效，
+// 而归属漂移会返回 Internal 让整个购物车打不开）。
+//
+// 参数：
+//   - ctx: 上下文
+//   - skuIDs: 购物车行涉及的 SKU ID（重复值由商品服务去重）
+//
+// 返回值：
+//   - *cartCatalog: 商品目录（空列表时为空目录，不发起 RPC）
+//   - error: 批量查询的系统错误
+func (s *server) loadCartCatalog(ctx stdctx.Context, skuIDs []int64) (*cartCatalog, error) {
+	catalog := &cartCatalog{skus: map[int64]*product.SkuInfo{}, products: map[int64]*product.ProductInfo{}}
+	if len(skuIDs) == 0 {
+		return catalog, nil
+	}
+
+	skuResp, err := s.productClient.BatchGetSkus(ctx, &product.BatchGetSkusReq{Ids: skuIDs, TolerateMissing: true})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "查询 SKU 失败: %v", err)
+	}
+	// 商品档案按规格归属社区分组查询（与单行版 GetProduct 传 skuInfo.CommunityId 同口径）
+	productIDsByCommunity := map[int64][]int64{}
+	for _, sku := range skuResp.List {
+		catalog.skus[sku.Id] = sku
+		productIDsByCommunity[sku.CommunityId] = append(productIDsByCommunity[sku.CommunityId], sku.ProductId)
+	}
+
+	for communityID, productIDs := range productIDsByCommunity {
+		resp, err := s.productClient.BatchGetProducts(ctx, &product.BatchGetProductsReq{
+			Ids:             productIDs,
+			CommunityId:     communityID,
+			TolerateMissing: true,
+		})
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "查询商品失败: %v", err)
+		}
+		for _, info := range resp.List {
+			catalog.products[info.Id] = info
+		}
+	}
+	return catalog, nil
+}
+
+// buildCartItem 用预取的商品目录装配单个购物车响应项（纯内存，不发 RPC）
+// 失效判定：SKU 不存在 →"商品已失效"；商品不存在 →"商品已失效"；SKU 已禁用/移除 →"规格已失效"；
+// 商品下架 →"商品已下架"；库存为 0 →"商品已售罄"（判定实现见 cartItemInvalidReason）。
 // 失效项不再跳过而是返回并携带失效原因，展示信息优先使用实时数据，SKU/商品已删除时回退快照；
 // 失效项 selected 强制置为 false，结算（GetSelectedItems）与合计自动排除。
 //
 // 参数：
-//   - ctx: 上下文
+//   - ctx: 上下文（附件 URL 重拼需要读取附件配置）
 //   - m: 购物车模型
+//   - catalog: 预取的商品目录
 //
 // 返回值：
 //   - *cart.CartItem: 购物车响应项
-//   - error: 错误信息
-func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartItem, error) {
-	skuInfo, productInfo, invalidReason, err := s.invalidReasonOf(ctx, m.SkuID)
-	if err != nil {
-		return nil, err
-	}
+func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart, catalog *cartCatalog) *cart.CartItem {
+	skuInfo := catalog.skus[m.SkuID]
+	productInfo := catalog.products[skuInfo.GetProductId()]
+	invalidReason := cartItemInvalidReason(skuInfo, productInfo)
 
 	// 展示字段：实时数据优先，快照兜底（SKU/商品已删除时实时数据不可得）
 	productName := m.ProductName
@@ -343,24 +404,26 @@ func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartIte
 	price := 0.0
 	minBuy := int32(0)
 	var skuTotal int32
-	if skuInfo.Id != 0 {
+	stock := int32(0)
+	if skuInfo != nil {
 		price = skuInfo.Price
 		specName = skuInfo.SpecName
 		productImage = skuInfo.Image
+		stock = skuInfo.Stock
 	}
-	if productInfo != nil && productInfo.Product != nil && productInfo.Product.Id != 0 {
-		productName = productInfo.Product.Name
+	if productInfo != nil {
+		productName = productInfo.Name
 		if productImage == "" {
-			productImage = productInfo.Product.CoverImage
+			productImage = productInfo.CoverImage
 		}
-		minBuy = productInfo.Product.MinBuy
-		skuTotal = int32(len(productInfo.Skus))
+		minBuy = productInfo.MinBuy
+		skuTotal = productInfo.SkuTotal
 	}
 
 	// 库存紧张提示：低于安全库存或低于购物车数量时展示"仅剩 X 件"（失效项不提示）
 	stockHint := ""
-	if invalidReason == "" && (skuInfo.Stock < skuInfo.SafetyStock || skuInfo.Stock < m.Quantity) {
-		stockHint = fmt.Sprintf("仅剩 %d 件", skuInfo.Stock)
+	if invalidReason == "" && (stock < skuInfo.GetSafetyStock() || stock < m.Quantity) {
+		stockHint = fmt.Sprintf("仅剩 %d 件", stock)
 	}
 
 	return &cart.CartItem{
@@ -373,7 +436,7 @@ func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartIte
 		// 快照存量完整 URL 自动跟随新域名/存储模式，外链原样
 		ProductImage:  s.attachmentLoader.RestoreURL(ctx, productImage),
 		Price:         price,
-		Stock:         skuInfo.Stock,
+		Stock:         stock,
 		Quantity:      m.Quantity,
 		Selected:      m.Selected && invalidReason == "",
 		CommunityId:   m.CommunityID,
@@ -382,59 +445,43 @@ func (s *server) buildCartItem(ctx stdctx.Context, m *model.Cart) (*cart.CartIte
 		Invalid:       invalidReason != "",
 		InvalidReason: invalidReason,
 		StockHint:     stockHint,
-	}, nil
+	}
 }
 
-// invalidReasonOf 判定购物车项的失效原因
-// 判定顺序：SKU 不存在 →"商品已失效"；SKU 已禁用/被移除（status≠1）→"规格已失效"；
-// 商品不存在 →"商品已失效"；商品下架 →"商品已下架"；库存为 0 →"商品已售罄"。
-// SKU/商品的"不存在"类错误（NotFound）同样归入失效而非系统错误；其他查询错误按系统错误返回。
+// cartItemInvalidReason 判定购物车项的失效原因（纯内存，输入为预取到的 SKU 与商品）
+// 判定顺序与逐行 RPC 版一致：SKU 取不到 →"商品已失效"；商品取不到 →"商品已失效"
+// （商品先于规格状态判定，保证「商品已删除」不会被误报成「规格已失效」）；
+// SKU 已禁用/被移除（status≠1）→"规格已失效"；商品下架 →"商品已下架"；库存为 0 →"商品已售罄"。
 // 「规格已失效」与后端拦截同口径（商品服务 BatchGetSkus 只放启用 SKU），
 // 后台禁用某 SKU 后购物车存量行不再显示有效，也不会被选进结算。
 //
 // 参数：
-//   - ctx: 上下文
-//   - skuID: SKU ID
+//   - sku: 预取的 SKU 信息，nil 表示商品服务已取不到
+//   - productInfo: 预取的商品信息，nil 表示商品服务已取不到
 //
 // 返回值：
-//   - *product.SkuInfo: SKU 信息（SKU 已删除时为空对象）
-//   - *product.ProductDetail: 商品详情（商品已删除时为 nil）
 //   - string: 失效原因，空字符串表示未失效
-//   - error: 系统错误信息
-func (s *server) invalidReasonOf(ctx stdctx.Context, skuID int64) (*product.SkuInfo, *product.ProductDetail, string, error) {
-	skuInfo, err := s.productClient.GetSkuById(ctx, &product.GetSkuByIdReq{Id: skuID})
-	if err != nil {
-		if status.Code(err) != codes.NotFound {
-			return nil, nil, "", status.Errorf(codes.Internal, "查询 SKU 失败: %v", err)
-		}
-		// SKU 已删除：按失效处理，展示信息回退快照
-		return &product.SkuInfo{}, nil, "商品已失效", nil
-	}
-
-	productInfo, err := s.productClient.GetProduct(ctx, &product.GetProductReq{Id: skuInfo.ProductId, CommunityId: skuInfo.CommunityId})
-	if err != nil {
-		if status.Code(err) != codes.NotFound {
-			return nil, nil, "", status.Errorf(codes.Internal, "查询商品失败: %v", err)
-		}
-		return skuInfo, nil, "商品已失效", nil
-	}
-
+func cartItemInvalidReason(sku *product.SkuInfo, productInfo *product.ProductInfo) string {
 	switch {
-	case skuInfo.Status != skuStatusEnabled:
-		return skuInfo, productInfo, "规格已失效", nil
-	case productInfo.Product == nil || productInfo.Product.Id == 0:
-		return skuInfo, productInfo, "商品已失效", nil
-	case productInfo.Product.Status != 1:
-		return skuInfo, productInfo, "商品已下架", nil
-	case skuInfo.Stock <= 0:
-		return skuInfo, productInfo, "商品已售罄", nil
+	case sku == nil || productInfo == nil:
+		return "商品已失效"
+	case sku.Status != skuStatusEnabled:
+		return "规格已失效"
+	case productInfo.Status != 1:
+		return "商品已下架"
+	case sku.Stock <= 0:
+		return "商品已售罄"
 	}
-	return skuInfo, productInfo, "", nil
+	return ""
 }
 
-// upsertCartItem 新增或更新购物车记录
+// upsertCartItem 新增或更新购物车记录（单条 upsert）
 // 同一用户同一 SKU 已存在时累加数量并置为选中，否则新建记录；
 // 无论新建还是更新均刷新商品快照，保证快照与最新商品信息一致。
+// 依赖 carts 的 uk_user_sku 唯一索引走 INSERT ... ON DUPLICATE KEY UPDATE：
+// 先查后写的旧实现在并发加购同一 SKU 时两条请求都读到「不存在」，
+// 第二条 Create 直接抛原始 1062 给前端，且 quantity 用「读-改-写」会丢更新；
+// 改由数据库侧累加后两个问题同时消除
 //
 // 参数：
 //   - ctx: 上下文
@@ -446,47 +493,41 @@ func (s *server) invalidReasonOf(ctx stdctx.Context, skuID int64) (*product.SkuI
 //   - snap: 商品快照（名称/规格/图片）
 //
 // 返回值：
-//   - error: 错误信息
+//   - error: 写入失败原因（唯一索引冲突不再作为错误返回）
+//
+// 使用示例：
+//
+//	err := s.upsertCartItem(ctx, userID, communityID, productID, skuID, 2, snap)
 func (s *server) upsertCartItem(ctx stdctx.Context, userID, communityID, productID, skuID int64, quantity int32, snap *cartSnapshot) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
-	var cart model.Cart
-	err := s.db.GetDb().WithContext(ctx).
-		Where("user_id = ? AND sku_id = ?", userID, skuID).
-		First(&cart).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			cart = model.Cart{
-				UserID:       userID,
-				CommunityID:  communityID,
-				ProductID:    productID,
-				SkuID:        skuID,
-				Quantity:     quantity,
-				Selected:     true,
-				CreatedAt:    now,
-				UpdatedAt:    now,
-				ProductName:  snap.ProductName,
-				SpecName:     snap.SpecName,
-				ProductImage: snap.ProductImage,
-			}
-			return s.db.GetDb().WithContext(ctx).Create(&cart).Error
-		}
-		return err
+	row := model.Cart{
+		UserID:       userID,
+		CommunityID:  communityID,
+		ProductID:    productID,
+		SkuID:        skuID,
+		Quantity:     quantity,
+		Selected:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		ProductName:  snap.ProductName,
+		SpecName:     snap.SpecName,
+		ProductImage: snap.ProductImage,
 	}
-
-	cart.Quantity += quantity
-	cart.Selected = true
-	cart.UpdatedAt = now
-	return s.db.GetDb().WithContext(ctx).Model(&model.Cart{}).
-		Where("id = ?", cart.ID).
-		Updates(map[string]interface{}{
-			"quantity":      cart.Quantity,
-			"selected":      true,
-			"updated_at":    now,
-			"product_name":  snap.ProductName,
-			"spec_name":     snap.SpecName,
-			"product_image": snap.ProductImage,
-		}).Error
+	return s.db.GetDb().WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "user_id"}, {Name: "sku_id"}},
+			DoUpdates: clause.Assignments(map[string]any{
+				// 累加在 SQL 里完成：引用的是冲突行的既有值，不是本次待插入值
+				"quantity":      gorm.Expr("quantity + ?", quantity),
+				"selected":      true,
+				"updated_at":    now,
+				"product_name":  snap.ProductName,
+				"spec_name":     snap.SpecName,
+				"product_image": snap.ProductImage,
+			}),
+		}).
+		Create(&row).Error
 }
 
 // updateCartItem 按 user_id + sku_id 更新购物车记录
@@ -535,7 +576,7 @@ func (s *server) updateCartItem(ctx stdctx.Context, userID, skuID int64, quantit
 }
 
 // ClearInvalidItems 清空当前用户全部失效购物车项
-// 失效判定与 GetCart 一致（复用 buildCartItem），删除后返回剩余购物车项
+// 失效判定与 GetCart 一致（同走 getCartItems/buildCartItem），删除后返回剩余购物车项
 //
 // 参数：
 //   - ctx: 上下文

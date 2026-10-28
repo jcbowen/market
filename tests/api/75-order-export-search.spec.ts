@@ -119,11 +119,11 @@ test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
   normalUsername = `auto_exp_${uniquePhone()}`;
   const createBody = (await (
     await admin.api.post('/api/v1/admin/admins', {
-      data: { username: normalUsername, password: 'Exp123456', real_name: 'AUTO-TEST 导出用普通管理员', role_ids: [builtin.id] },
+      data: { username: normalUsername, password: 'Exp1234567', real_name: 'AUTO-TEST 导出用普通管理员', role_ids: [builtin.id] },
     })
   ).json()) as ApiResponse<{ id?: number }>;
   if (createBody.code !== 0) throw new Error(`创建普通管理员失败 code=${createBody.code} message=${createBody.message}`);
-  const normalLogin = await adminLogin(playwright.request, normalUsername, 'Exp123456');
+  const normalLogin = await adminLogin(playwright.request, normalUsername, 'Exp1234567');
   normalApi = await playwright.request.newContext({
     extraHTTPHeaders: { Authorization: `Bearer ${normalLogin.access_token}`, 'X-Community-Id': String(communityId) },
   });
