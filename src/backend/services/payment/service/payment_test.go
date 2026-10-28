@@ -119,11 +119,18 @@ func newPaymentTestEnv(t *testing.T) (*PaymentService, *stubOrderClient, func())
 	if err != nil {
 		t.Fatalf("连接测试数据库失败: %v", err)
 	}
-	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}, &model.NotifyLog{}, &model.SchedulerFailure{}); err != nil {
+	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}, &model.NotifyLog{}, &model.SchedulerFailure{}, &model.PayConfig{}); err != nil {
 		t.Fatalf("迁移支付测试表失败: %v", err)
 	}
 
-	// 直接构造服务实例，不触达 pay_config（微信/支付宝渠道保持未配置状态，便于测渠道失败路径）
+	// 现金/货到付款建单走 cashCreateLockTx 锁 pay_config 固定单行（id=1），测试库必须存在该行；
+	// 渠道字段全部留空，微信/支付宝仍走「未配置」失败路径，与原测试语义一致
+	if err := dbInst.GetDb().Where(model.PayConfig{ID: payConfigID}).
+		FirstOrCreate(&model.PayConfig{ID: payConfigID}).Error; err != nil {
+		t.Fatalf("初始化支付配置行失败: %v", err)
+	}
+
+	// 直接构造服务实例，微信/支付宝渠道保持未配置状态，便于测渠道失败路径
 	s := &PaymentService{db: dbInst, cfg: &config.Config{}}
 
 	stub := &stubOrderClient{orderStatus: make(map[int64]int32)}
