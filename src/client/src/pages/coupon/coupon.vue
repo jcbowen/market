@@ -214,7 +214,9 @@ async function onReceive(id: number) {
 .coupon-page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* 100vh 含 H5 原生导航栏高度，直接用会把底部裁掉一截（需滚动整个页面才能看全），
+     用 --window-top 扣除导航栏：H5 为 44px，小程序端为 0 */
+  height: calc(100vh - var(--window-top, 0px));
   background-color: #f5f5f5;
 }
 

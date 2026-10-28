@@ -102,12 +102,18 @@ function onBuy(item: FlashSale) {
 
 <style scoped>
 .flash-page {
-  min-height: 100vh;
+  /* 高度必须确定：否则 scroll-view 被内容撑开、scroll-y 失效、@scrolltolower 不触发，分页加载失效。
+     100vh 含 H5 原生导航栏高度（小程序端 --window-top 为 0，行为不变），用 --window-top 扣除 */
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--window-top, 0px));
   background-color: #f5f5f5;
 }
 
 .flash-list {
   /* scroll-view 默认 width:100%（content-box），padding 会横向溢出导致页面超宽 */
+  flex: 1;
+  min-height: 0;
   box-sizing: border-box;
   padding: 20rpx;
 }
