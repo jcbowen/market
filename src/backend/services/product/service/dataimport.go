@@ -742,15 +742,6 @@ func (s *DataImportService) couponIDByName(ctx context.Context, communityID int6
 	return row.ID, nil
 }
 
-// seedSkuByCode 按包内 code 索引种子 SKU
-func seedSkuByCode(pkg *SeedPackage) map[string]*SeedSku {
-	m := make(map[string]*SeedSku, len(pkg.Skus))
-	for i := range pkg.Skus {
-		m[pkg.Skus[i].Code] = &pkg.Skus[i]
-	}
-	return m
-}
-
 // seedSkuByKey 按包内 key 索引种子 SKU
 func seedSkuByKey(pkg *SeedPackage) map[string]*SeedSku {
 	m := make(map[string]*SeedSku, len(pkg.Skus))
