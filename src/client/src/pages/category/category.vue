@@ -1070,13 +1070,15 @@ function onSettlement() {
   top: var(--status-bar-height, 0px);
   left: 0;
   right: 0;
-  /* 小程序端：原生 tabBar 由框架从 webview 中排除，fixed bottom:0 即紧贴 tabBar 顶边；
+  /* 小程序/App 端：原生 tabBar 由框架从 webview 中排除，fixed bottom:0 即紧贴 tabBar 顶边；
      若额外让出 100rpx 反而在购物车条与 tabBar 之间留出灰白条（H5 无此问题）。
+     注意必须用 #ifndef H5：此前写 #ifdef MP-WEIXIN 时支付宝端两个分支都被剥掉，
+     fixed 容器无 bottom/height 且子元素全为 absolute，页面整体塌陷为 0 高（白屏无报错）。
      H5 端：tabBar 是页面内 DOM 元素，需让出 100rpx + 安全区避免购物车条被遮。 */
   /* #ifdef H5 */
   bottom: calc(100rpx + env(safe-area-inset-bottom));
   /* #endif */
-  /* #ifdef MP-WEIXIN */
+  /* #ifndef H5 */
   bottom: 0;
   /* #endif */
   /* 高于根层级 uni-tabbar（z-index 998），避免 SKU 弹窗被困在本层叠上下文内被 tabBar 遮挡 */

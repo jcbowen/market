@@ -831,13 +831,14 @@ function settleCommunity(communityId: number, selectedItems: CartItem[]) {
   position: fixed;
   left: 0;
   right: 0;
-  /* 小程序端：原生 tabBar 由框架从 webview 排除，fixed bottom:0 即紧贴 tabBar 顶边；
+  /* 小程序/App 端：原生 tabBar 由框架从 webview 排除，fixed bottom:0 即紧贴 tabBar 顶边；
      若额外让出 100rpx 反而在结算栏与 tabBar 间留出灰白条（H5 无此问题）。
+     注意必须用 #ifndef H5，否则支付宝端 H5/MP-WEIXIN 两个分支都被剥掉，fixed 定位缺 bottom。
      H5 端：tabBar 是页面内 DOM 元素，需让出 100rpx + 安全区避免结算栏被遮。 */
   /* #ifdef H5 */
   bottom: calc(100rpx + env(safe-area-inset-bottom));
   /* #endif */
-  /* #ifdef MP-WEIXIN */
+  /* #ifndef H5 */
   bottom: 0;
   /* #endif */
   display: flex;
