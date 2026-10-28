@@ -159,8 +159,9 @@ func TestAdminCredentialLoginKeepsHashInUserService(t *testing.T) {
 	stub := &stubCredClient{
 		passwordValid: true,
 		admin: &user.AdminInfo{
-			Id:           7,
-			Username:     "boss",
+			Id:       7,
+			Username: "boss",
+			//nolint:staticcheck // AdminInfo.Password 已在 proto 标记 deprecated；此处故意注入 bcrypt 摘要，验证网关白名单响应不下发口令摘要
 			Password:     "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
 			RealName:     "店长",
 			Phone:        "13800138000",
@@ -211,7 +212,7 @@ func TestAdminCredentialLoginFailuresShareErrorCode(t *testing.T) {
 	// 口令错误：账号存在
 	stub := &stubCredClient{
 		passwordValid: false,
-		admin:         &user.AdminInfo{Id: 7, Username: "boss", Password: "$2a$10$fakehash", Status: 1, CommunityIds: []int64{3}},
+		admin:         &user.AdminInfo{Id: 7, Username: "boss", Password: "$2a$10$fakehash", Status: 1, CommunityIds: []int64{3}}, //nolint:staticcheck // 同上：防御性回归，验证网关不把废弃口令摘要字段下发到登录响应
 	}
 	h := newCredTestHandler(stub)
 	_, wrongCode := decodeRespBody(t, doAdminLoginRequest(t, h, "boss", "wrong-password"))
@@ -239,8 +240,9 @@ func TestAdminCredentialListRedactsSensitiveFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	stub := &stubCredClient{listItems: []*user.AdminInfo{
 		{
-			Id:           7,
-			Username:     "boss",
+			Id:       7,
+			Username: "boss",
+			//nolint:staticcheck // AdminInfo.Password 已在 proto 标记 deprecated；此处故意注入 bcrypt 摘要，验证网关白名单响应不下发口令摘要
 			Password:     "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
 			RealName:     "店长",
 			Phone:        "13800138000",

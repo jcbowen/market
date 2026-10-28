@@ -164,16 +164,6 @@ func testSku(communityID int64, status int32) *product.SkuInfo {
 	}
 }
 
-// testProductDetail 构造商品详情
-// 参数：
-//   - status: 商品状态（0 下架/仓库中、1 上架、2 已删除）
-//
-// 返回值：
-//   - *product.ProductDetail: 商品详情
-func testProductDetail(status int32) *product.ProductDetail {
-	return &product.ProductDetail{Product: &product.ProductInfo{Id: 2, Name: "测试商品", Status: status}}
-}
-
 // TestCartAddItemTradeGuards AddItem 的交易入口拦截与传给商品服务的口径
 func TestCartAddItemTradeGuards(t *testing.T) {
 	t.Run("跨社区加购被拒", func(t *testing.T) {
