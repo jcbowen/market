@@ -9,6 +9,9 @@
 //   node start-all.mjs --fast       # 快速模式：后端只编译当前宿主对应的容器平台（x64→linux-amd64、
 //                                   #   arm64→linux-arm64），前端与镜像照常重建，容器代码同步更新
 //   node start-all.mjs --no-cache   # 构建镜像时不使用 Docker 缓存
+//   node start-all.mjs --pull-deps  # 构建后端前先把 go.mod 本地 replace 指向的
+//                                   #   依赖仓库（如 wego）拉取到最新（透传给 build.mjs）；
+//                                   #   与 --no-auto-fix 互斥，--skip-build 时忽略
 //   node start-all.mjs --no-auto-fix # 依赖不全时只提示原因，不自动执行 go mod tidy / npm install
 //
 // 依赖不全的处理由 deps-tools.mjs 统一负责：
@@ -36,17 +39,26 @@ let CLEAN = false;
 let SKIP_BUILD = false;
 let NO_CACHE = false;
 let FAST = false;
+let PULL_DEPS = false;
 let AUTO_FIX = true;
 for (const arg of process.argv.slice(2)) {
   if (arg === '--clean') CLEAN = true;
   else if (arg === '--skip-build') SKIP_BUILD = true;
   else if (arg === '--no-cache') NO_CACHE = true;
   else if (arg === '--fast') FAST = true;
+  else if (arg === '--pull-deps') PULL_DEPS = true;
   else if (arg === '--no-auto-fix') AUTO_FIX = false;
   else {
     console.error(`未知参数: ${arg}`);
     process.exit(1);
   }
+}
+
+// --pull-deps 与 --no-auto-fix 互斥：两者都改动本地文件（拉依赖仓库 / tidy、npm install），
+// 同时传入语义冲突，提前报错（build.mjs 内部还有同口径校验兜底）
+if (PULL_DEPS && !AUTO_FIX) {
+  console.error('错误: --pull-deps 与 --no-auto-fix 互斥（拉取依赖仓库会改动本地代码，无法在只读模式下执行）');
+  process.exit(1);
 }
 
 const ctx = createContext({ rootDir: ROOT_DIR, autoFix: AUTO_FIX });
@@ -232,10 +244,12 @@ if (!SKIP_BUILD) {
   console.log(FAST
     ? '==> 构建后端二进制（快速模式：仅当前宿主对应的容器平台）...'
     : '==> 构建后端二进制（全平台交叉编译）...');
-  // 依赖预检与 go mod tidy 自愈在 build.mjs 内部完成，这里透传开关保持一致
+  // 依赖预检与 go mod tidy 自愈在 build.mjs 内部完成，这里透传开关保持一致；
+  // --pull-deps 同样透传：build.mjs 会在编译前先拉取本地 replace 依赖仓库
   const backendArgs = [
     path.join(ROOT_DIR, 'build.mjs'),
     ...(FAST ? ['--fast'] : []),
+    ...(PULL_DEPS ? ['--pull-deps'] : []),
     ...(AUTO_FIX ? [] : ['--no-auto-fix']),
   ];
   await runWithRepair(ctx, process.execPath, backendArgs, { step: '构建后端二进制', allowRepair: false });
@@ -243,6 +257,7 @@ if (!SKIP_BUILD) {
   console.log('==> 构建 Docker 镜像...');
   await buildComposeImages(ctx, NO_CACHE ? ['--no-cache'] : []);
 } else {
+  if (PULL_DEPS) console.log('==> 已指定 --skip-build，忽略 --pull-deps（拉取依赖仓库属于构建前置步骤）');
   console.log('==> 跳过构建阶段，使用已有镜像/二进制');
 }
 

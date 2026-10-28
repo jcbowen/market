@@ -312,6 +312,29 @@ async function applyRepair(ctx, repair, cwd) {
 }
 
 /**
+ * 解析 go.mod 中 replace 到本地相对目录的模块清单（唯一实现，checkLocalReplaces 与
+ * pull-deps.mjs 共用；只识别单行 `replace 模块 => 相对路径` 写法，与 goTidy 诊断口径一致：
+ * replace 到模块版本（非本地目录）与 replace 块写法不在此处理）。
+ *
+ * @param {string} modFile go.mod 的绝对路径
+ * @param {string} baseDir 解析相对路径的基准目录（后端目录）
+ * @returns {Array<{module: string, raw: string, dir: string}>} module 模块名；raw 为 go.mod 里的原始写法；dir 为解析后的绝对路径
+ * @throws go.mod 不存在时由调用方提前校验，本函数不主动校验
+ * @example collectLocalReplaces(path.join(BACKEND_DIR, 'go.mod'), BACKEND_DIR)
+ *          // [{ module: 'github.com/jcbowen/wego', raw: '../../../wego', dir: 'C:\\...\\mine\\wego' }]
+ */
+export function collectLocalReplaces(modFile, baseDir) {
+  const text = fs.readFileSync(modFile, 'utf8');
+  const entries = [];
+  for (const line of text.split('\n')) {
+    const match = /^\s*replace\s+(\S+)\s*=>\s*(\.{1,2}\/[^\s]+)\s*$/.exec(line);
+    if (!match) continue;
+    entries.push({ module: match[1], raw: match[2], dir: path.resolve(baseDir, match[2]) });
+  }
+  return entries;
+}
+
+/**
  * 解析 go.mod 中 replace 指向的本地目录，缺失时立即终止。
  *
  * 本地 replace 模块（jcbaseGo、wego）只能由使用者准备，脚本无法代劳，
@@ -329,20 +352,217 @@ export function checkLocalReplaces(ctx) {
     process.exit(1);
   }
 
-  const text = fs.readFileSync(modFile, 'utf8');
   const missing = [];
-  for (const line of text.split('\n')) {
-    const match = /^\s*replace\s+\S+\s*=>\s*(\.{1,2}\/[^\s]+)\s*$/.exec(line);
-    if (!match) continue;
-    const target = path.resolve(ctx.backendDir, match[1]);
-    if (fs.existsSync(path.join(target, 'go.mod'))) continue;
-    missing.push(`  · ${match[1].trim()}（期望路径: ${target}）`);
+  for (const dep of collectLocalReplaces(modFile, ctx.backendDir)) {
+    if (fs.existsSync(path.join(dep.dir, 'go.mod'))) continue;
+    missing.push(`  · ${dep.module.trim()}（期望路径: ${dep.dir}）`);
   }
   if (missing.length === 0) return;
 
   console.error('错误: go.mod 的 replace 指向的本地模块目录不存在，请先把这些模块放到期望路径：');
   for (const item of missing) console.error(item);
   process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// 本地 replace 依赖仓库更新（pull-deps.mjs CLI 与 build/start-all 的 --pull-deps 共用）
+// ---------------------------------------------------------------------------
+
+/** 仓库拉取结果的单行状态文案 */
+const PULL_STATUS_TEXT = { updated: '已更新', current: '已是最新', skipped: '跳过', failed: '失败' };
+
+/**
+ * 在指定仓库目录执行 git 命令并收集输出。
+ * 关闭交互式凭证输入（GIT_TERMINAL_PROMPT=0）：任务可能在 IDE 面板里跑，
+ * 一旦弹出账号密码提示就会一直挂住且看不见输入框，不如直接失败并给出原始报错。
+ *
+ * @param {string} dir 仓库目录（绝对路径）
+ * @param {string[]} args git 子命令及参数
+ * @returns {Promise<{ok: boolean, output: string}>} ok 为退出码是否 0；output 为 stdout/stderr 合并文本（已 trim）
+ * @throws 不抛异常，spawn 失败按 ok=false 返回
+ * @example await gitIn('/path/to/wego', ['rev-parse', 'HEAD'])
+ */
+async function gitIn(dir, args) {
+  const result = await runChecked('git', args, {
+    cwd: dir,
+    mode: 'quiet',
+    env: { GIT_TERMINAL_PROMPT: '0' },
+  });
+  return { ok: result.ok, output: result.output.trim() };
+}
+
+/**
+ * 拉取单个依赖仓库的最新代码与 tag。
+ * 不做任何破坏性操作：不 stash、不 reset、不 merge；工作区不干净时直接跳过。
+ * 唯一例外是 fetch --tags --force 会覆盖本地与远端同名的 tag（重打的 tag 以远端为准）。
+ *
+ * @param {{module: string, raw: string, dir: string}} dep 依赖仓库信息（collectLocalReplaces 的元素）
+ * @returns {Promise<{name: string, module: string, raw: string, dir: string,
+ *           status: 'updated'|'current'|'skipped'|'failed', message: string, detail?: string}>}
+ *           name 为用于展示的模块短名；status 供汇总统计；message 为一行结论；detail 为失败时的原始 git 输出
+ * @throws 不抛异常
+ * @example
+ *   const r = await updateLocalRepo({ module: 'github.com/jcbowen/wego', raw: '../../../wego', dir: '...' });
+ *   if (r.status === 'failed') console.error(r.detail);
+ */
+async function updateLocalRepo(dep) {
+  const name = dep.module.split('/').pop();
+
+  if (!fs.existsSync(path.join(dep.dir, '.git'))) {
+    return {
+      name, module: dep.module, raw: dep.raw, dir: dep.dir,
+      status: 'failed',
+      message: `目录不存在或不是 git 仓库（期望路径：${dep.dir}）`,
+    };
+  }
+
+  const branch = await gitIn(dep.dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (!branch.ok) {
+    return { name, module: dep.module, raw: dep.raw, dir: dep.dir, status: 'failed', message: '无法读取当前分支', detail: branch.output };
+  }
+  if (branch.output === 'HEAD') {
+    return { name, module: dep.module, raw: dep.raw, dir: dep.dir, status: 'skipped', message: '处于分离头指针状态，切回分支后重跑' };
+  }
+
+  const upstream = await gitIn(dep.dir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+  if (!upstream.ok) {
+    return {
+      name, module: dep.module, raw: dep.raw, dir: dep.dir,
+      status: 'skipped',
+      message: `分支 ${branch.output} 未设置上游，已跳过（可先执行 git branch --set-upstream-to=origin/${branch.output}）`,
+    };
+  }
+
+  const dirty = await gitIn(dep.dir, ['status', '--porcelain']);
+  if (!dirty.ok) {
+    return { name, module: dep.module, raw: dep.raw, dir: dep.dir, status: 'failed', message: '无法读取工作区状态', detail: dirty.output };
+  }
+  if (dirty.output) {
+    const count = dirty.output.split('\n').filter(Boolean).length;
+    return {
+      name, module: dep.module, raw: dep.raw, dir: dep.dir,
+      status: 'skipped',
+      message: `有 ${count} 处未提交改动，已跳过（提交或暂存后重跑）`,
+    };
+  }
+
+  // 显式拉取远端 tag：git pull 的 auto-follow 只会跟随当前分支历史内的 tag，
+  // 打在其他分支的 tag、被远端重打的 tag 都拉不下来，这里统一补齐并强制覆盖
+  const fetchTags = await gitIn(dep.dir, ['fetch', '--tags', '--force']);
+  if (!fetchTags.ok) {
+    return {
+      name, module: dep.module, raw: dep.raw, dir: dep.dir,
+      status: 'failed',
+      message: 'git fetch --tags --force 失败（远端不可达或网络异常，详见下方输出）',
+      detail: fetchTags.output,
+    };
+  }
+
+  const before = await gitIn(dep.dir, ['rev-parse', 'HEAD']);
+  if (!before.ok) {
+    return { name, module: dep.module, raw: dep.raw, dir: dep.dir, status: 'failed', message: '无法读取 HEAD 提交', detail: before.output };
+  }
+
+  const pull = await gitIn(dep.dir, ['pull', '--ff-only']);
+  if (!pull.ok) {
+    return {
+      name, module: dep.module, raw: dep.raw, dir: dep.dir,
+      status: 'failed',
+      message: `git pull --ff-only 失败（本地与 ${upstream.output} 已分叉或远端被改写，需人工处理）`,
+      detail: pull.output,
+    };
+  }
+
+  const after = await gitIn(dep.dir, ['rev-parse', 'HEAD']);
+  if (!after.ok) {
+    return { name, module: dep.module, raw: dep.raw, dir: dep.dir, status: 'failed', message: '拉取后无法读取 HEAD 提交', detail: after.output };
+  }
+  if (after.output === before.output) {
+    return { name, module: dep.module, raw: dep.raw, dir: dep.dir, status: 'current', message: `${branch.output} 与 ${upstream.output} 一致` };
+  }
+
+  const count = await gitIn(dep.dir, ['rev-list', '--count', `${before.output}..${after.output}`]);
+  const commits = count.ok && count.output ? `，${count.output} 个提交` : '';
+  return {
+    name, module: dep.module, raw: dep.raw, dir: dep.dir,
+    status: 'updated',
+    message: `${branch.output}：${before.output.slice(0, 7)} → ${after.output.slice(0, 7)}${commits}`,
+  };
+}
+
+/**
+ * 读取仓库 HEAD 的 tag、提交摘要与提交时间，用于在结果里展示版本信息。
+ * tag 取离 HEAD 最近的标签；HEAD 已越过该标签时补上落后的提交数，避免把旧 tag 误当成当前版本。
+ *
+ * @param {string} dir 仓库目录（绝对路径）
+ * @returns {Promise<{tag: string, subject: string, time: string}|null>} 非 git 仓库或读取失败返回 null
+ * @throws 不抛异常
+ * @example await describeHead('/path/to/wego')
+ *          // { tag: 'v0.2.0（+2 个提交）', subject: 'chore: ...', time: '2026-10-25 10:00:00 +0800' }
+ */
+export async function describeHead(dir) {
+  if (!fs.existsSync(path.join(dir, '.git'))) return null;
+
+  // 用 NUL 分隔提交摘要与时间：摘要本身可能含空格、冒号等，用普通分隔符会切错
+  const log = await gitIn(dir, ['log', '-1', '--format=%s%x00%ci']);
+  if (!log.ok || !log.output) return null;
+  const [subject, time] = log.output.split('\x00');
+
+  const tag = await gitIn(dir, ['describe', '--tags', '--abbrev=0']);
+  let tagText = '无';
+  if (tag.ok && tag.output) {
+    tagText = tag.output;
+    const ahead = await gitIn(dir, ['rev-list', '--count', `${tag.output}..HEAD`]);
+    if (ahead.ok && ahead.output && ahead.output !== '0') tagText += `（+${ahead.output} 个提交）`;
+  }
+
+  return { tag: tagText, subject, time };
+}
+
+/**
+ * 拉取 go.mod 中 replace 指向的本地依赖仓库最新代码（pull-deps.mjs CLI 与
+ * build.mjs / start-all.mjs 的 --pull-deps 共用入口）。
+ * 逐仓库执行 fetch --tags --force + pull --ff-only，每个仓库打印一行结论（失败附原始输出）；
+ * 不做任何破坏性操作（不 stash/reset/merge），也不因单个仓库失败结束进程——
+ * 是否终止由调用方依据返回的统计结果决定。
+ *
+ * @param {ReturnType<createContext>} ctx 工具上下文（backendDir 用于定位 go.mod）
+ * @param {(result: {name: string, module: string, raw: string, dir: string,
+ *         status: 'updated'|'current'|'skipped'|'failed', message: string, detail?: string}) => void|Promise<void>} [onResult]
+ *        每个仓库处理完（结论已打印）后的回调，支持异步；CLI 用于补充展示版本详情，不传则只打印结论
+ * @returns {Promise<{results: Array<{name: string, module: string, raw: string, dir: string,
+ *           status: 'updated'|'current'|'skipped'|'failed', message: string, detail?: string}>}>}
+ *           results 为逐仓库结论，status 供调用方汇总判定
+ * @throws 不抛异常；go.mod 缺失时结束进程
+ * @example
+ *   const { results } = await pullLocalReplaces(ctx);
+ *   if (results.some((r) => r.status === 'failed')) process.exit(1);
+ */
+export async function pullLocalReplaces(ctx, onResult) {
+  const modFile = path.join(ctx.backendDir, 'go.mod');
+  if (!fs.existsSync(modFile)) {
+    console.error(`错误: 未找到 go.mod（${modFile}）`);
+    process.exit(1);
+  }
+
+  const deps = collectLocalReplaces(modFile, ctx.backendDir);
+  const results = [];
+  if (deps.length === 0) {
+    console.log('go.mod 没有指向本地目录的 replace，无需更新');
+    return { results };
+  }
+
+  console.log(`==> 拉取本地依赖最新代码（${deps.length} 个，各仓库执行 git pull --ff-only）`);
+  for (const dep of deps) {
+    const result = await updateLocalRepo(dep);
+    console.log(`  [${PULL_STATUS_TEXT[result.status]}] ${result.name}（${dep.raw}）：${result.message}`);
+    if (result.detail) {
+      for (const line of result.detail.split('\n')) console.error(`      ${line}`);
+    }
+    if (onResult) await onResult(result);
+    results.push(result);
+  }
+  return { results };
 }
 
 /**

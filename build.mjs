@@ -13,8 +13,11 @@
 //
 // 依赖不全（go.sum 缺行、模块未下载）会在编译前预检并自动 go mod tidy 修复，
 // 指定 --no-auto-fix 时只检查提示、不改动 go.mod / go.sum。
+// 指定 --pull-deps 时编译前先把 go.mod 本地 replace 指向的依赖仓库
+// （如 wego）拉取到最新（git fetch --tags --force + pull --ff-only，
+// 脏工作区等状态跳过不阻断）；与 --no-auto-fix 互斥（两者都会改动本地文件，语义冲突）。
 //
-// 使用方法：node build.mjs [--fast] [--no-auto-fix]
+// 使用方法：node build.mjs [--fast] [--no-auto-fix] [--pull-deps]
 //   --fast  快速模式：只编译当前宿主架构对应的 Linux 平台
 //           （x64 → linux-amd64，arm64 → linux-arm64），供本地改码后
 //           快速重建容器镜像做验证；其余平台跳过，已有产物不受影响
@@ -24,7 +27,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFile, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createContext, parseAutoFix, preflightGoModules, runWithRepair } from './deps-tools.mjs';
+import { createContext, parseAutoFix, preflightGoModules, pullLocalReplaces, runWithRepair } from './deps-tools.mjs';
 
 const ROOT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const BUILD_DIR = path.join(ROOT_DIR, 'bin');
@@ -56,6 +59,14 @@ const ctx = createContext({ rootDir: ROOT_DIR, autoFix: parseAutoFix(process.arg
 // --fast 快速模式开关：本地改码后快速重建容器镜像用，
 // 只编译当前宿主架构对应的 Linux 平台，其余平台跳过
 const FAST = process.argv.slice(2).includes('--fast');
+
+// --pull-deps 开关：编译前先拉取本地 replace 依赖仓库最新代码（默认关闭）；
+// 与 --no-auto-fix 互斥——两者都改动本地文件，同时传入语义冲突，直接报错退出
+const PULL_DEPS = process.argv.slice(2).includes('--pull-deps');
+if (PULL_DEPS && !ctx.autoFix) {
+  console.error('错误: --pull-deps 与 --no-auto-fix 互斥（拉取依赖仓库会改动本地代码，无法在只读模式下执行）');
+  process.exit(1);
+}
 
 // 目标平台列表（OS/ARCH）：每个组合对应 bin/{os}-{arch}/ 一个目录，
 // 覆盖 Linux/macOS/Windows × amd64/arm64，供 CI Release 打包与多架构 Docker 镜像构建取用
@@ -170,6 +181,18 @@ function buildOnePlain(goos, arch, svc) {
 const SERVICE_PARALLEL = Math.max(2, Math.min(4, os.cpus().length));
 
 fs.mkdirSync(path.join(BUILD_DIR, 'static'), { recursive: true });
+
+// --pull-deps：编译前先把本地 replace 依赖仓库拉到最新；本地 replace 代码
+// 直接参与编译，拉取失败的仓库继续编译会用旧代码，因此存在失败项时终止，
+// 由人工按 pull-deps.mjs 的详细输出处理后重跑
+if (PULL_DEPS) {
+  const { results } = await pullLocalReplaces(ctx);
+  if (results.some((r) => r.status === 'failed')) {
+    console.error('错误: 本地依赖仓库拉取存在失败项，为避免用旧代码编译已终止（可先单独运行 node pull-deps.mjs 定位）');
+    process.exit(1);
+  }
+  console.log('');
+}
 
 // 编译前预检 Go 模块依赖（本地 replace 路径、go.mod/go.sum 一致性）
 console.log('==> 预检 Go 模块依赖...');
