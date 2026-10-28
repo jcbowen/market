@@ -7,7 +7,10 @@
 //   2. client C 端 H5
 //   3. backend 后端服务
 //   4. docker 镜像
-//   5. 全部
+//   5. 全部（部署链路 1-4，不含小程序：小程序产物走开发者工具人工上传，
+//      不属于服务器部署包，避免每次全量构建都拖慢部署链路）
+//   6. 微信小程序（build-mp.js 注入 appid 构建，需 --appid 或 src/manifest.local.json）
+//   7. 支付宝小程序（uni build -p mp-alipay，manifest 无 appid、上传时由开发者工具指定）
 //   0. 退出
 //
 // 依赖不全时的检查与自愈同 start-all.mjs（见 deps-tools.mjs），
@@ -37,6 +40,8 @@ let BUILD_ADMIN = false;
 let BUILD_CLIENT = false;
 let BUILD_BACKEND = false;
 let BUILD_DOCKER = false;
+let BUILD_MP_WEIXIN = false;
+let BUILD_MP_ALIPAY = false;
 
 // 前端子项目目录（依赖检查与构建共用）
 const ADMIN_DIR = path.join(ROOT_DIR, 'src', 'admin');
@@ -53,6 +58,21 @@ async function buildClient() {
   console.log('==> 构建 client C 端 H5...');
   await ensureNpmDependencies(ctx, CLIENT_DIR);
   await runWithRepair(ctx, 'npm', ['run', 'build:h5'], { cwd: CLIENT_DIR, step: '构建 client C 端 H5' });
+}
+
+// 微信小程序：走 src/client/scripts/build-mp.js（npm run build:mp-weixin），
+// appid 由 --appid 参数或本机 manifest.local.json 解析，两者皆无时脚本自行报错退出——
+// 这是交付方案的既定约束（仓库不携带卖方 appid 交付），这里不绕过、不代填
+async function buildMpWeixin() {
+  console.log('==> 构建微信小程序...');
+  await ensureNpmDependencies(ctx, CLIENT_DIR);
+  await runWithRepair(ctx, 'npm', ['run', 'build:mp-weixin'], { cwd: CLIENT_DIR, step: '构建微信小程序' });
+}
+
+async function buildMpAlipay() {
+  console.log('==> 构建支付宝小程序...');
+  await ensureNpmDependencies(ctx, CLIENT_DIR);
+  await runWithRepair(ctx, 'npm', ['run', 'build:mp-alipay'], { cwd: CLIENT_DIR, step: '构建支付宝小程序' });
 }
 
 async function buildBackend() {
@@ -137,14 +157,16 @@ console.log('  1) admin 管理端');
 console.log('  2) client C 端 H5');
 console.log('  3) backend 后端服务');
 console.log('  4) Docker 镜像');
-console.log('  5) 全部');
+console.log('  5) 全部（部署链路，不含小程序）');
+console.log('  6) 微信小程序（需 --appid 或 src/manifest.local.json）');
+console.log('  7) 支付宝小程序');
 console.log('  0) 退出');
 console.log('');
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 while (true) {
-  const choice = (await rl.question('请输入选项 [0-5]: ')).trim();
+  const choice = (await rl.question('请输入选项 [0-7]: ')).trim();
   if (choice === '1') BUILD_ADMIN = true;
   else if (choice === '2') BUILD_CLIENT = true;
   else if (choice === '3') BUILD_BACKEND = true;
@@ -152,7 +174,9 @@ while (true) {
   else if (choice === '5') {
     BUILD_ADMIN = BUILD_CLIENT = BUILD_BACKEND = BUILD_DOCKER = true;
     break;
-  } else if (choice === '0') {
+  } else if (choice === '6') BUILD_MP_WEIXIN = true;
+  else if (choice === '7') BUILD_MP_ALIPAY = true;
+  else if (choice === '0') {
     console.log('已退出');
     rl.close();
     process.exit(0);
@@ -174,6 +198,16 @@ if (BUILD_ADMIN) await buildAdmin();
 if (BUILD_CLIENT) await buildClient();
 if (BUILD_BACKEND) await buildBackend();
 if (BUILD_DOCKER) await buildDocker();
+if (BUILD_MP_WEIXIN) await buildMpWeixin();
+if (BUILD_MP_ALIPAY) await buildMpAlipay();
+
+// 小程序产物不进 bin/release（服务器部署包），提示导入开发者工具上传
+if (BUILD_MP_WEIXIN || BUILD_MP_ALIPAY) {
+  console.log('');
+  console.log('小程序产物目录（用微信/支付宝开发者工具导入后上传，不参与服务器部署）：');
+  if (BUILD_MP_WEIXIN) console.log(`  · 微信小程序: ${path.join(CLIENT_DIR, 'dist', 'build', 'mp-weixin')}`);
+  if (BUILD_MP_ALIPAY) console.log(`  · 支付宝小程序: ${path.join(CLIENT_DIR, 'dist', 'build', 'mp-alipay')}`);
+}
 
 // 执行打包
 if (/^[Yy]$/.test(doPackage)) packageRelease();
