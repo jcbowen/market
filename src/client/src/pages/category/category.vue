@@ -595,7 +595,12 @@ let scrollTimer: number | null = null
 function onRightScroll(e: any) {
   if (isClickScrolling) return
   const scrollTop = e?.detail?.scrollTop ?? 0
+  // 仅 H5 回写 scroll-top 驱动程序化滚动（保证重复点击同一分类可滚回分区顶部）；
+  // 小程序端禁止回写：:scroll-top 在滚动中被 setData 回写会与手势抢滚动位置，
+  // 导致下滑回弹、无法继续滑动。小程序端程序化滚动由 scroll-into-view 承担。
+  // #ifdef H5
   rightScrollTop.value = scrollTop
+  // #endif
   // 列表滚动时联动吸顶标题层：滚离顶部即显示当前分类名，回到顶部隐藏
   showStickyTitle.value = scrollTop > 0
   // 同步高亮左侧分类（与吸顶标题一致）：用内容内 section 偏移 + 实时 scrollTop 计算，跨端稳定，
