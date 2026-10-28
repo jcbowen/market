@@ -61,9 +61,15 @@ bin/payment-service
 bin/market-admin
 # 运行时挂载目录（compose bind mount 用宿主路径，与镜像构建无关）
 bin/data/
+# 附件物理目录（local_dir 默认 uploads）：测试服实测已积累 GB 级附件
+bin/uploads/
+# 旧布局目录：改名 uploads 前的残留，本机仍可能保留，一并排除
 bin/attachment/
 bin/logs/
 bin/runtime/
+# 本机配置覆盖与打包产物（build-select.mjs 交互生成的服务器部署包）
+bin/config.local.yaml
+bin/release/
 
 # 忽略文档与计划文件
 *.md

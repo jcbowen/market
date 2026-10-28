@@ -207,8 +207,41 @@ func TestGetClientIP(t *testing.T) {
 // 后续验签解密分支依赖真实商户证书，本机无法离线构造 wego 客户端，不在覆盖范围
 func TestParseWechatCallbackNotConfigured(t *testing.T) {
 	s := &PaymentService{}
-	_, err := parseWechatCallback(s, []byte(`{"id":"fake"}`), http.Header{})
+	_, err := parseWechatCallback(s, context.Background(), []byte(`{"id":"fake"}`), http.Header{})
 	if err == nil || !strings.Contains(err.Error(), "未配置") {
 		t.Fatalf("期望「微信支付未配置或配置不完整」，实际: %v", err)
+	}
+}
+
+// TestVerifyWechatCallbackIdentity 回调归属校验：商户号/AppID/币种不匹配必须拒绝
+// 背景：验签通过只证明报文由微信发出，不证明交易属于本商户（证书/APIv3 密钥复用或泄露时）
+func TestVerifyWechatCallbackIdentity(t *testing.T) {
+	mk := func(mch, app, currency string) *wechatTransactionNotification {
+		n := &wechatTransactionNotification{MchID: mch, AppID: app}
+		n.Amount.Currency = currency
+		return n
+	}
+	cases := []struct {
+		name    string
+		n       *wechatTransactionNotification
+		wantErr bool
+	}{
+		{"全部匹配", mk("1600000001", "wxapp", "CNY"), false},
+		{"商户号不匹配", mk("1600000002", "wxapp", "CNY"), true},
+		{"AppID 不匹配", mk("1600000001", "otherapp", "CNY"), true},
+		{"外币单拒绝", mk("1600000001", "wxapp", "USD"), true},
+		{"币种缺省放行（旧通知不带该字段）", mk("1600000001", "wxapp", ""), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyWechatCallbackIdentity(tc.n, "1600000001", "wxapp")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+	// 未配置微信支付时不比对商户号/AppID，但币种口径与配置无关，外币仍拒
+	if err := verifyWechatCallbackIdentity(mk("x", "y", "USD"), "", ""); err == nil {
+		t.Fatal("外币单在空配置下仍应拒绝")
 	}
 }

@@ -485,6 +485,76 @@ func (h *OrderHandler) PreviewFreeShipping(c *gin.Context) {
 	})
 }
 
+// PreviewCouponEligibilityReq 券可用性试算请求
+type PreviewCouponEligibilityReq struct {
+	Items []struct {
+		SkuID    int64 `json:"sku_id" binding:"required"`
+		Quantity int32 `json:"quantity" binding:"required,min=1"`
+	} `json:"items" binding:"required,min=1"`
+	// 待试算的券 ID（用户券对应的 coupons.id）；空表示没有可用券，直接返回空表
+	CouponIDs []int64 `json:"coupon_ids"`
+	// 试算社区：跨社区结算时前端按结算社区传入；不传时按用户实时归属社区（与免配送费试算同口径）
+	CommunityID int64 `json:"community_id"`
+}
+
+// PreviewCouponEligibility 券可用性试算（C 端确认页：券是否可用、范围内金额与预计抵扣）
+// 门槛按券适用范围计算（与下单校验同一口径），前端据此置灰不可用券并展示差额
+// 参数：
+//   - c: gin 上下文
+func (h *OrderHandler) PreviewCouponEligibility(c *gin.Context) {
+	var req PreviewCouponEligibilityReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	uc := appcontext.GetUserContext(c)
+
+	communityID := req.CommunityID
+	if communityID <= 0 {
+		// 与免配送费试算同一口径：不信任 token 里的社区快照与客户端可伪造的 X-Community-Id
+		userResp, err := h.userClient.GetUserById(c.Request.Context(), &user.GetUserByIdReq{Id: uc.UserID})
+		if err != nil {
+			response.GRPCError(c, err)
+			return
+		}
+		if userResp == nil || userResp.CommunityId <= 0 {
+			response.Error(c, errcode.ParamError, "缺少社区信息")
+			return
+		}
+		communityID = userResp.CommunityId
+	}
+
+	items := make([]*order.PreviewFreeShippingItem, 0, len(req.Items))
+	for _, item := range req.Items {
+		items = append(items, &order.PreviewFreeShippingItem{
+			SkuId:    item.SkuID,
+			Quantity: item.Quantity,
+		})
+	}
+	resp, err := h.orderClient.PreviewCouponEligibility(c.Request.Context(), &order.PreviewCouponEligibilityReq{
+		CommunityId: communityID,
+		UserId:      uc.UserID,
+		Items:       items,
+		CouponIds:   req.CouponIDs,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	list := make([]gin.H, 0, len(resp.List))
+	for _, item := range resp.List {
+		list = append(list, gin.H{
+			"coupon_id":       item.CouponId,
+			"available":       item.Available,
+			"reason":          item.Reason,
+			"eligible_amount": item.EligibleAmount,
+			"threshold":       item.Threshold,
+			"discount_amount": item.DiscountAmount,
+		})
+	}
+	response.SuccessWithList(c, list)
+}
+
 // GetOrder 获取订单详情
 // 参数：
 //   - c: gin 上下文

@@ -249,16 +249,15 @@ for svc in $SERVICES_LIST; do
   fi
 done
 
-# 回填真实口令到各副本：框架回写发生在环境变量覆盖之前（文件恒为空占位），
-# 而 docker exec 场景拿不到容器运行时环境变量，market-admin 依赖副本连接
-# 数据库——将 db/redis 口令回填（0600，随宿主机 runtime 目录持久化）；
-# 口令已回填时 sed 不命中，幂等
-DB_ESC=$(sed_escape "$MYSQL_ROOT_PASSWORD")
-REDIS_ESC=$(sed_escape "$REDIS_PASSWORD")
+# 密钥回填（仅 JWT）：框架回写发生在环境变量覆盖之前（文件恒为空占位）。
+# db/redis 口令不再回写——业务进程经 start_service 继承 entrypoint export 的
+# MYSQL_PASSWORD / REDIS_PASSWORD；docker exec 场景下进程继承容器 Config.Env
+# （部署示例已把 MYSQL_PASSWORD / REDIS_PASSWORD 一并注入），明文口令不再落到
+# 宿主机 runtime 目录的配置副本里。JWT 是密钥且 entrypoint 会自动生成
+# （不在 Config.Env 里），docker exec 启动的 market-admin 过 EnsureSecureJWT
+# 校验时必须能读到它；写入副本与 $RUNTIME_DIR/jwt_secret 同值，不新增暴露面。
 JWT_ESC=$(sed_escape "$JWT_SECRET")
 for f in "$RUNTIME_DIR"/config.*.yaml; do
-  sed -i "/^db:/,/^redis:/ s/password: \"\"/password: \"$DB_ESC\"/" "$f"
-  sed -i "/^redis:/,/^project:/ s/password: \"\"/password: \"$REDIS_ESC\"/" "$f"
   sed -i "/^jwt:/,/^log:/ s/secret: \"\"/secret: \"$JWT_ESC\"/" "$f"
   chmod 600 "$f" 2>/dev/null || true
 done
@@ -316,13 +315,15 @@ if [ "$FIRST_BOOT" = "1" ]; then
 fi
 
 # 每次启动都验证 TCP root 登录：业务进程与 market-admin 均经 TCP 连接；
-# 数据目录已初始化但口令与 MYSQL_ROOT_PASSWORD 不一致时给出明确指引
-if ! mysql --protocol=TCP -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" -e 'SELECT 1' >/dev/null 2>&1; then
+# 数据目录已初始化但口令与 MYSQL_ROOT_PASSWORD 不一致时给出明确指引。
+# 口令经 MYSQL_PWD 传入（与 start-all.mjs 同口径）：`-p<口令>` 会出现在进程
+# 参数列表里，同机其他用户 ps 即可看到明文。
+if ! MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h127.0.0.1 -uroot -e 'SELECT 1' >/dev/null 2>&1; then
   log "错误: MySQL root 口令与 MYSQL_ROOT_PASSWORD 不匹配（数据目录已存在旧口令）"
   log "      处理方式: 改回原 MYSQL_ROOT_PASSWORD 启动后修改口令，或清空数据目录重新初始化（数据将丢失，请先备份）"
   exit 1
 fi
-mysql --protocol=TCP -h127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" \
+MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=TCP -h127.0.0.1 -uroot \
   -e "CREATE DATABASE IF NOT EXISTS $MYSQL_DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" >/dev/null 2>&1
 
 # ---------- 业务进程（按 gRPC 依赖顺序） ----------

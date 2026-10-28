@@ -227,6 +227,8 @@ const statusTip = computed(() => {
   if (isPickup.value) {
     const map: Record<number, string> = {
       2: '商家备货中，备好后请到自提点取货',
+      // 自提单存在「已支付 → 备货中(3) → 待自提(4)」中间态，缺 3 会让备货期间提示空白
+      3: '商家备货中，备好后请到自提点取货',
       4: '商品已备好，请到自提点取货',
       5: '订单已完成',
     }
@@ -256,9 +258,14 @@ const remainingText = computed(() => {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 })
 
+/** 首进时 onLoad 已加载，onShow 紧随其后不应重复请求 */
+let skipNextShow = false
+
 onLoad((query) => {
   orderId.value = Number(query?.id) || 0
   if (orderId.value) {
+    // 首进页面 onLoad 先于 onShow，这里请求后让紧随其后的 onShow 跳过重复拉取
+    skipNextShow = true
     loadOrder()
   }
 })
@@ -273,9 +280,12 @@ onHide(() => {
 
 // 页面重新可见时重新加载并重启倒计时（隐藏期间计时已暂停，需校准）
 onShow(() => {
-  if (orderId.value) {
-    loadOrder()
+  if (!orderId.value) return
+  if (skipNextShow) {
+    skipNextShow = false
+    return
   }
+  loadOrder()
 })
 
 /** 启动待支付倒计时（页面隐藏时暂停，返回时由 loadOrder/ onShow 校准） */

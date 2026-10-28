@@ -147,17 +147,22 @@ const columns: DataTableColumns<Coupon> = [
   },
 ]
 
+// 请求序号守卫：快速翻页/切换筛选时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const res = await getCouponList({ page: pagination.value.page, page_size: pagination.value.pageSize })
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
   } finally {
-    // 请求异常时也必须关闭 loading，避免页面永久转圈
-    loading.value = false
+    // 请求异常时也必须关闭 loading，避免页面永久转圈；过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -180,12 +185,13 @@ function unpublish(row: Coupon) {
     positiveText: '确认下架',
     negativeText: '取消',
     onPositiveClick: async () => {
-      const res = await updateCoupon(row.id, { publish_status: 2 } as Partial<Coupon>)
-      if (res.data.code === 0) {
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已下架
+      try {
+        await updateCoupon(row.id, { publish_status: 2 } as Partial<Coupon>)
         message.success('已下架')
         loadData()
-      } else {
-        message.error(res.data.message || '下架失败')
+      } catch {
+        return false
       }
     },
   })
@@ -255,12 +261,13 @@ function remove(row: Coupon) {
     positiveText: '确认删除',
     negativeText: '取消',
     onPositiveClick: async () => {
-      const res = await deleteCoupon(row.id)
-      if (res.data.code === 0) {
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已删除
+      try {
+        await deleteCoupon(row.id)
         message.success('已删除')
         loadData()
-      } else {
-        message.error(res.data.message || '删除失败')
+      } catch {
+        return false
       }
     },
   })

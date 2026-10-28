@@ -48,6 +48,10 @@
           </n-descriptions-item>
           <n-descriptions-item label="订单金额">￥{{ formatAmount(detail.total_amount) }}</n-descriptions-item>
           <n-descriptions-item label="优惠金额">-￥{{ formatAmount(detail.discount_amount) }}</n-descriptions-item>
+          <!-- 手动优惠（收银台整单改价/抹零）不计入 discount_amount，单独成行才能对上实付 -->
+          <n-descriptions-item v-if="(detail.manual_discount ?? 0) > 0" label="手动优惠">
+            -￥{{ formatAmount(detail.manual_discount ?? 0) }}
+          </n-descriptions-item>
           <n-descriptions-item label="运费">￥{{ formatAmount(detail.delivery_fee) }}</n-descriptions-item>
           <n-descriptions-item label="实付金额">
             <span class="amount-strong">￥{{ formatAmount(detail.pay_amount) }}</span>

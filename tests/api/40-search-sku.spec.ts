@@ -27,6 +27,8 @@ interface SkuItem {
 }
 
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
+/** 管理端测试语境社区（C 端详情按社区归属校验，community_id 缺失即参数错误） */
+let communityId = 0;
 let productId = 0;
 let skuId = 0;
 let categoryId = 0;
@@ -36,6 +38,7 @@ const SEARCH_KEY = `sk${uniqueSuffix()}`;
 test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright);
   adminApi = admin.api;
+  communityId = admin.communityId;
 
   // 自建分类与商品（名称含唯一关键词），上架后取 SKU
   const cat = (await (
@@ -146,7 +149,8 @@ test.describe.serial('SKU 与商品详情', () => {
 
   test('7. 商品详情包含 SKU 信息', async () => {
     // ProductDetail 结构：{ product: {...}, skus: [...], specs: [...] }
-    const resp = await adminApi.get(`/api/v1/products/${productId}`);
+    // C 端详情按社区归属校验，必须带 community_id（该路由在公开组，令牌不产生语境）
+    const resp = await adminApi.get(`/api/v1/products/${productId}`, { params: { community_id: communityId } });
     const body = (await resp.json()) as ApiResponse<{ product?: { id: number }; skus?: SkuItem[] }>;
     expect(body.code, `商品详情失败: ${body.message}`).toBe(0);
     const detail = body.data as { product?: { id: number }; skus?: SkuItem[] };

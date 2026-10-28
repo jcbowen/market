@@ -528,6 +528,14 @@ router.beforeEach(async (to) => {
     return home ? { path: home } : { path: '/403', query: { from: to.fullPath } }
   }
 
+  // ready：superOnly 页面仅超管可入（数据导入等不在系统空间内的超管应用）。
+  // 后端接口另有 IsSuperAdmin 闸门，这里补直连 URL 的一道，避免非超管进到页面后
+  // 每个接口都 403、页面停在半残状态
+  if (to.meta.superOnly && !authStore.isSuperAdmin) {
+    const home = resolveHomePath(authStore)
+    return home ? { path: home } : { path: '/403', query: { from: to.fullPath } }
+  }
+
   // ready：权限判定；无权限时保留登录态跳转无权限提示页
   const permission = to.meta.permission as string | undefined
   if (permission && !authStore.hasPermission(permission)) {

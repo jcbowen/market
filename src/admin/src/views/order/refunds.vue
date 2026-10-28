@@ -458,7 +458,11 @@ const lastLoadedAt = ref(0)
 /**
  * 加载售后单分页数据
  */
+// 请求序号守卫：快速翻页/切换状态时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const res = await getRefundList({
@@ -466,6 +470,7 @@ async function loadData() {
       page_size: pagination.value.pageSize,
       status: status.value || undefined,
     })
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
@@ -473,9 +478,12 @@ async function loadData() {
   } catch {
     // 错误提示由请求拦截器统一弹出
   } finally {
-    loading.value = false
-    // 通知「有新数据」提示条：屏幕上的列表已重新拉取，陈旧计数作废
-    lastLoadedAt.value = Date.now()
+    // 过期批次不得掐掉新一轮的 loading，也不得刷新「有新数据」时间点
+    if (seq === loadSeq) {
+      loading.value = false
+      // 通知「有新数据」提示条：屏幕上的列表已重新拉取，陈旧计数作废
+      lastLoadedAt.value = Date.now()
+    }
   }
 }
 

@@ -341,6 +341,13 @@ func (s *ProductService) saveSkus(
 		defaultSkuID = id
 	}
 
+	// 固定加锁顺序：下面的循环按「提交顺序」逐行 FOR UPDATE，而库存侧（lockSkus）按 id 升序加锁，
+	// 多规格保存与并发扣减/回补各持对方等待的行锁即可形成 AB-BA 死锁。
+	// 先按 id 升序把本次要更新的 SKU 一次性锁住，循环内的 FOR UPDATE 只用于取最新快照
+	if err := lockSubmittedSkus(tx, p.ID, skuItems, defaultSkuID); err != nil {
+		return nil, err
+	}
+
 	for i, item := range skuItems {
 		if item.Price <= 0 {
 			return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("第 %d 个 SKU 的价格必须大于 0", i+1))
@@ -488,6 +495,53 @@ func (s *ProductService) saveSkus(
 		keepSkuIDs = append(keepSkuIDs, skuID)
 	}
 	return keepSkuIDs, nil
+}
+
+// lockSubmittedSkus 按 id 升序一次性锁定本次提交中「已存在」的 SKU 行，只为固定加锁顺序
+// 只加锁不取快照：saveSkus 循环内仍逐行 FOR UPDATE 读最新值，
+// 同一 ID 被重复提交时，第二条读到的就是第一条写入后的库存（批次增减量才不会算错）
+//
+// 参数：
+//   - tx: GORM 事务对象
+//   - productID: 商品 ID（只锁本商品名下的行）
+//   - skuItems: 本次提交的 SKU 项
+//   - defaultSkuID: 单规格场景已存在的默认 SKU ID（前端未回传 ID 时复用，取 ID 口径与循环内一致）
+//
+// 返回值：
+//   - error: 加锁查询失败
+//
+// 使用示例：
+//
+//	if err := lockSubmittedSkus(tx, p.ID, skuItems, defaultSkuID); err != nil {
+//		return nil, err
+//	}
+func lockSubmittedSkus(tx *gorm.DB, productID int64, skuItems []*product.SkuItemReq, defaultSkuID int64) error {
+	seen := make(map[int64]struct{}, len(skuItems))
+	ids := make([]int64, 0, len(skuItems))
+	for _, item := range skuItems {
+		id := item.Id
+		if id == 0 && defaultSkuID > 0 {
+			id = defaultSkuID
+		}
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	var locked []int64
+	return tx.Model(&model.Sku{}).
+		Clauses(lockClause()).
+		Where("product_id = ? AND id IN ?", productID, ids).
+		Order("id").
+		Pluck("id", &locked).Error
 }
 
 // batchUnitCost 批次单位成本取值：表单未填成本（<=0）时回落既有成本，

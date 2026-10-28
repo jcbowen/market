@@ -201,6 +201,8 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 // UpdateUserCommunity 切换会员当前社区
 // 除改写 users.community_id，同步补写 user_communities 关联：后台的社区语境校验
 // （指派配送、拉黑、会员详情）按关联表判定归属，只改主表会让会员在后台「不存在」
+// 两写必须在同一事务：主表已切、关联未补的中间态会让会员在新社区的后台语境里查无此人，
+// 又已按新社区下单/收货，等于把一个可用的会员从管理视野里抹掉
 // 参数：
 //   - ctx: 上下文
 //   - userID: 用户 ID
@@ -212,13 +214,14 @@ func (s *UserService) UpdateUserCommunity(ctx context.Context, userID, community
 	if userID <= 0 || communityID <= 0 {
 		return fmt.Errorf("参数错误")
 	}
-	if err := s.db.GetDb().WithContext(ctx).
-		Model(&model.User{}).
-		Where("id = ?", userID).
-		Update("community_id", communityID).Error; err != nil {
-		return err
-	}
-	return s.MarkUserCommunity(ctx, userID, communityID, "user_select")
+	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.User{}).
+			Where("id = ?", userID).
+			Update("community_id", communityID).Error; err != nil {
+			return err
+		}
+		return markUserCommunity(tx, userID, communityID, "user_select")
+	})
 }
 
 // UpdateUserProfile 更新用户资料
@@ -450,6 +453,21 @@ func (s *UserService) MarkUserCommunity(ctx context.Context, userID, communityID
 	if userID <= 0 || communityID <= 0 {
 		return fmt.Errorf("参数错误")
 	}
+	return markUserCommunity(s.db.GetDb().WithContext(ctx), userID, communityID, source)
+}
+
+// markUserCommunity 在给定 GORM 句柄上幂等写入会员-社区关联行
+// 独立出来是为了让「主表 + 关联表」必须同事务的调用方（UpdateUserCommunity）复用同一份写入口径
+//
+// 参数：
+//   - tx: GORM 句柄（事务或普通连接均可，已由调用方绑定上下文）
+//   - userID: 用户 ID
+//   - communityID: 社区 ID
+//   - source: 关联来源
+//
+// 返回：
+//   - error: 错误信息（唯一索引冲突视为已存在，返回 nil）
+func markUserCommunity(tx *gorm.DB, userID, communityID int64, source string) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 	row := &model.UserCommunity{
 		UserID:      userID,
@@ -458,7 +476,7 @@ func (s *UserService) MarkUserCommunity(ctx context.Context, userID, communityID
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	err := s.db.GetDb().WithContext(ctx).
+	err := tx.
 		Where("user_id = ? AND community_id = ?", userID, communityID).
 		FirstOrCreate(row).Error
 	if err != nil {

@@ -35,6 +35,13 @@ import (
  * main Gateway 主入口
  * 统一入口：JWT 鉴权、路由分组、静态资源、gRPC 转发
  */
+
+// 接口 IP 洪水兜底的缺省阈值：配置缺项或被写成非正数时回落此值（见 registerRoutes）
+const (
+	defaultApiRateQPS   = 100.0
+	defaultApiRateBurst = 150.0
+)
+
 func main() {
 	cfg := loadConfig()
 
@@ -77,7 +84,11 @@ func main() {
 	r.Use(gwMiddleware.SecurityHeadersMiddleware())
 	r.Use(gwMiddleware.BlockTraceMiddleware())
 	r.Use(gwMiddleware.RealIPMiddleware())
-	r.Use(gwMiddleware.RateLimitMiddleware(100, 150))
+	// 限流不在这里挂：见 registerRoutes 里的 apiLimiter——只作用于 /api/v1 两个分组。
+	// 曾挂在全局，一次 H5 首屏要拉几十张商品图 + 若干 hash chunk，与接口共用同一个 IP 令牌桶，
+	// chunk 请求被判 429 后 uni-h5 直接显示「连接服务器超时，点击屏幕重试」，
+	// 用户看到的是假故障（2026-10-29 浏览器实测复现）。静态资源由 nginx/CDN 承接，
+	// 网关侧不参与令牌桶；接口洪水兜底仍在。
 
 	r.Use(baseMw.SetGPC(r))
 	r.Use(staticCacheMiddleware())
@@ -223,7 +234,22 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	// 行政区划：级联选择器懒加载、IP 定位反查区划、后台管理（列表/检查更新/差异覆盖）
 	regionHandler := handler.NewRegionHandler(clients.UserClient, resolveBinPath(cfg.GeoIP.DBPath))
 
+	// 接口洪水兜底（按客户端 IP）：阈值可配（security.api_rate_qps / api_rate_burst，
+	// 环境变量 RATE_LIMIT_API_QPS / RATE_LIMIT_API_BURST），生产用缺省 100 r/s、突发容量 150。
+	// 两个分组共用同一个实例（同一个桶），否则后台与 C 端各有一份额度，
+	// 单 IP 实际可打到 200 r/s；分组内再按敏感面收紧（见 cAuthLimiter / adminAuthLimiter）
+	apiRate, apiBurst := cfg.Security.ApiRateQPS, cfg.Security.ApiRateBurst
+	if apiRate <= 0 {
+		apiRate = defaultApiRateQPS
+	}
+	if apiBurst <= 0 {
+		apiBurst = defaultApiRateBurst
+	}
+	apiLimiter := gwMiddleware.RateLimitMiddleware(apiRate, apiBurst)
+	log.Printf("接口 IP 限流：%.0f r/s、突发容量 %.0f（本地测试栈可按需上调 RATE_LIMIT_API_QPS）", apiRate, apiBurst)
+
 	apiV1 := r.Group("/api/v1")
+	apiV1.Use(apiLimiter)
 	{
 		// 公开接口
 		public := apiV1.Group("")
@@ -247,7 +273,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			public.GET("/regions/children", regionHandler.ListChildren)
 			public.GET("/regions/locate", regionHandler.Locate)
 
-			// 认证入口独立收紧限流（D1）：全局 IP 桶（100 r/s）对「批量试探登录」形同不设防。
+			// 认证入口独立收紧限流（D1）：接口 IP 桶（100 r/s）对「批量试探登录」形同不设防。
 			// 缺口的真实防线在按账号的失败锁定（后台登录）与按 IP 的独立桶（C 端登录）：
 			// C 端小区/NAT 出口共用 IP，额度给到能容纳真实并发登录的量级，仍远低于全局限流
 			cAuthLimiter := gwMiddleware.RateLimitMiddleware(10, 30)
@@ -295,6 +321,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.GET("/orders/status-counts", orderHandler.GetUserOrderStatusCounts)
 			authUser.GET("/orders/frequent-products", orderHandler.ListFrequentProducts)
 			authUser.POST("/orders/free-shipping/preview", orderHandler.PreviewFreeShipping)
+			authUser.POST("/orders/coupon-eligibility/preview", orderHandler.PreviewCouponEligibility)
 			authUser.GET("/orders/:id", orderHandler.GetOrder)
 			authUser.PUT("/orders/:id/cancel", orderHandler.CancelOrder)
 			authUser.DELETE("/orders/:id", orderHandler.DeleteOrder)
@@ -328,6 +355,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	// 多社区模型：权限随当前社区变化，注入实时权限上下文解析器（user 服务）
 	gwMiddleware.SetPermissionResolver(clients.UserClient)
 	admin := r.Group("/api/v1/admin")
+	// 后台分组挂在 r 上而非 apiV1 之下，Gin 的 group.Use 不会跨树继承，须显式共用同一个桶
+	admin.Use(apiLimiter)
 	{
 		// 后台登录独立收紧（D1）：突发 50、持续 5 r/s，仅作洪水兜底；
 		// 猜密码的真正防线是 login_guard 的按账号失败锁定（计数存 Redis、跨 IP 有效），

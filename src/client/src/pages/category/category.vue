@@ -115,7 +115,7 @@
     <!-- 搜索结果：小程序端搜索独立成页，页内搜索仅 H5/App 使用 -->
     <!-- #ifndef MP-WEIXIN -->
     <view v-else class="search-result">
-      <scroll-view class="search-result-list" scroll-y>
+      <scroll-view class="search-result-list" scroll-y :lower-threshold="80" @scrolltolower="loadMoreSearch">
         <view v-if="searchLoading" class="empty-tip">搜索中...</view>
         <view v-else-if="!searchResults.length" class="empty-tip">未找到相关商品</view>
         <view
@@ -136,6 +136,8 @@
             </view>
           </view>
         </view>
+        <view v-if="searchResults.length && searchLoadingMore" class="empty-tip">加载中...</view>
+        <view v-else-if="searchResults.length && !searchHasMore" class="empty-tip">没有更多了</view>
         <view style="height: 140rpx" />
       </scroll-view>
     </view>
@@ -313,6 +315,12 @@ const showStickyTitle = ref(false)
 const keyword = ref('')
 const searchResults = ref<Product[]>([])
 const searchLoading = ref(false)
+/** 搜索分页：已加载页码 / 是否还有下一页 / 是否正在加载下一页 */
+const searchPage = ref(1)
+const searchHasMore = ref(false)
+const searchLoadingMore = ref(false)
+/** 搜索请求序号：关键词频繁变化时只认最后一次搜索的分页状态 */
+let searchSeq = 0
 const SEARCH_PAGE_SIZE = 20
 const searchInputRef: Ref<HTMLInputElement | null> = ref(null)
 
@@ -699,6 +707,11 @@ function startSearch() {
   isSearching.value = true
   keyword.value = ''
   searchResults.value = []
+  // 进入搜索前作废在途搜索（含触底加载），分页从第一页重新开始
+  searchSeq++
+  searchPage.value = 1
+  searchHasMore.value = false
+  searchLoadingMore.value = false
   nextTick(() => {
     // #ifdef H5
     setTimeout(() => {
@@ -717,6 +730,11 @@ function cancelSearch() {
   isSearching.value = false
   keyword.value = ''
   searchResults.value = []
+  // 退出搜索即重置分页游标，下次搜索从第一页开始
+  searchSeq++
+  searchPage.value = 1
+  searchHasMore.value = false
+  searchLoadingMore.value = false
 }
 
 /**
@@ -741,15 +759,21 @@ function onSearchConfirm() {
 }
 
 /**
- * 按关键词搜索商品
+ * 按关键词搜索商品（首页，重置分页）
+ * 结果数小于服务端 total 时允许触底加载下一页
  */
 async function doSearch() {
   const word = keyword.value.trim()
   if (!word) {
     searchResults.value = []
+    searchHasMore.value = false
     return
   }
+  const seq = ++searchSeq
   searchLoading.value = true
+  searchPage.value = 1
+  searchHasMore.value = false
+  searchLoadingMore.value = false
   try {
     const res = await searchProducts({
       keyword: word,
@@ -757,11 +781,47 @@ async function doSearch() {
       page_size: SEARCH_PAGE_SIZE,
       community_id: userStore.communityInfo?.id,
     })
-    searchResults.value = res.data?.list || []
+    // 关键词已变化：丢弃过期响应，避免旧结果覆盖新搜索
+    if (seq !== searchSeq) return
+    const list = res.data?.list || []
+    searchResults.value = list
+    searchHasMore.value = list.length < (res.data?.total ?? list.length)
   } catch {
+    if (seq !== searchSeq) return
     searchResults.value = []
   } finally {
-    searchLoading.value = false
+    if (seq === searchSeq) searchLoading.value = false
+  }
+}
+
+/**
+ * 搜索列表触底：加载下一页并追加（去重后拼接）
+ * 失败保留已加载结果，再次触底可重试
+ */
+async function loadMoreSearch() {
+  if (searchLoading.value || searchLoadingMore.value || !searchHasMore.value) return
+  const word = keyword.value.trim()
+  if (!word) return
+  const seq = searchSeq
+  const nextPage = searchPage.value + 1
+  searchLoadingMore.value = true
+  try {
+    const res = await searchProducts({
+      keyword: word,
+      page: nextPage,
+      page_size: SEARCH_PAGE_SIZE,
+      community_id: userStore.communityInfo?.id,
+    })
+    if (seq !== searchSeq) return
+    const list = res.data?.list || []
+    const seen = new Set(searchResults.value.map((item) => item.id))
+    searchResults.value = [...searchResults.value, ...list.filter((item) => !seen.has(item.id))]
+    searchPage.value = nextPage
+    searchHasMore.value = list.length > 0 && searchResults.value.length < (res.data?.total ?? 0)
+  } catch {
+    // 请求层已统一提示，保留现有结果
+  } finally {
+    if (seq === searchSeq) searchLoadingMore.value = false
   }
 }
 
@@ -962,37 +1022,50 @@ function closeCartPopup() {
 
 /**
  * 购物车弹窗中修改商品数量
+ * 服务端写操作必须 await：不等待就重拉汇总会先拿到写前数量；
+ * 失败时由请求拦截器统一提示，汇总仍刷新以回到服务端真实状态
  * @param item 购物车项
  * @param quantity 新数量
  */
-function onPopupQuantityChange(item: CartItem, quantity: number) {
+async function onPopupQuantityChange(item: CartItem, quantity: number) {
   const communityId = userStore.communityInfo?.id
-  if (userStore.isLogin) {
+  try {
     // 服务端购物车：数量为 0 时删除，否则更新
-    if (quantity <= 0) {
-      removeCartItem(item.id)
+    if (userStore.isLogin) {
+      if (quantity <= 0) {
+        await removeCartItem(item.id)
+      } else {
+        await updateCartItem(item.id, { quantity })
+      }
     } else {
-      updateCartItem(item.id, { quantity })
+      // 本地购物车
+      updateLocalCartItem(item.sku_id, quantity, communityId)
     }
-  } else {
-    // 本地购物车
-    updateLocalCartItem(item.sku_id, quantity, communityId)
+  } catch {
+    // 请求拦截器已统一提示
+  } finally {
+    await loadCartSummary()
   }
-  loadCartSummary()
 }
 
 /**
  * 删除购物车弹窗中的商品
+ * 同 onPopupQuantityChange：先 await 写操作再重拉汇总，避免读到删除前的旧列表
  * @param item 购物车项
  */
-function onPopupRemove(item: CartItem) {
+async function onPopupRemove(item: CartItem) {
   const communityId = userStore.communityInfo?.id
-  if (userStore.isLogin) {
-    removeCartItem(item.id)
-  } else {
-    removeLocalCartItem(item.sku_id, communityId)
+  try {
+    if (userStore.isLogin) {
+      await removeCartItem(item.id)
+    } else {
+      removeLocalCartItem(item.sku_id, communityId)
+    }
+  } catch {
+    // 请求拦截器已统一提示
+  } finally {
+    await loadCartSummary()
   }
-  loadCartSummary()
   if (!cartTotalCount.value) {
     showCartPopup.value = false
   }

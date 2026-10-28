@@ -21,6 +21,8 @@ import { autoName, uniquePhone } from '../helpers/data';
  *     pay-cash 现金收款（后端关遗留待支付支付单后建现金单）；
  *     pay-code-session 重建付款码会话（同渠道同金额复用，out_trade_no 不变）；
  *   - C 端单（source=1）与非待支付单不允许收银台代收。
+ * 渠道缺省口径：环境未配置第三方付款码凭据时，用例 3/4 不 skip，
+ *   改测同段代码的降级契约（只下发现金 + 建单前精确拒绝 + 完结单继续收款被拒）。
  * 数据惯例：直接收款单留档不删除；班次 beforeAll/afterAll 兜底关闭，避免与 14/44/69/77 互踩。
  * 运行前置：本 spec 会开启/交回全局唯一班次，必须串行运行（playwright.config 已全局 workers=1，
  *   本 spec 再叠加 describe.serial 保证用例内班次语境不被自身并发打断）。
@@ -41,6 +43,11 @@ interface PosOrderResult {
   pickup_code?: string;
   paid: boolean;
   payment_no?: string;
+}
+
+interface PayMethod {
+  pay_type: number;
+  label: string;
 }
 
 interface OrderDetailInfo {
@@ -72,6 +79,33 @@ async function createDirectPayOrder(payType: number, amount: number): Promise<Ap
       data: { user_id: 0, pay_type: payType, delivery_type: 3, manual_amount: amount, remark: autoName('78 直接收款') },
     })
   ).json()) as ApiResponse<PosOrderResult>;
+}
+
+/**
+ * 读取收银台可用支付方式（付款码占位值的数据源）
+ * - 函数名: listPosPayMethods
+ * - 参数: 无
+ * - 返回: Promise<PayMethod[]>，现金恒在，付款码选项按渠道配置动态下发
+ * - 异常: 查询业务失败时经 assertOk 抛出
+ * - 使用示例: const methods = await listPosPayMethods();
+ */
+async function listPosPayMethods(): Promise<PayMethod[]> {
+  return assertOk<{ list: PayMethod[] }>(
+    (await (await adminApi.get('/api/v1/admin/pos/pay-methods')).json()) as ApiResponse<{ list: PayMethod[] }>,
+    '支付方式查询',
+  ).list;
+}
+
+/**
+ * 从支付方式列表取付款码占位 pay_type（5=微信/双渠道，6=仅支付宝）
+ * - 函数名: codePayTypeOf
+ * - 参数: methods — listPosPayMethods 结果
+ * - 返回: number，环境未配置任何付款码渠道时返回 0
+ * - 异常: 无
+ * - 使用示例: const payType = codePayTypeOf(await listPosPayMethods());
+ */
+function codePayTypeOf(methods: PayMethod[]): number {
+  return methods.find((m) => m.pay_type === 5 || m.pay_type === 6)?.pay_type ?? 0;
 }
 
 /**
@@ -184,12 +218,18 @@ test.describe.serial('收银台直接收款', () => {
 
   test('3. 付款码待支付直接收款单可改现金：pay-cash 后订单完结且支付方式为现金', async () => {
     // 付款码渠道按环境配置可用性选择占位值：优先 5（微信/双渠道），仅支付宝就绪时用 6
-    const methods = assertOk<{ list: Array<{ pay_type: number; label: string }> }>(
-      (await (await adminApi.get('/api/v1/admin/pos/pay-methods')).json()) as ApiResponse<{ list: Array<{ pay_type: number; label: string }> }>,
-      '支付方式查询',
-    );
-    const codePayType = methods.list.find((m) => m.pay_type === 5 || m.pay_type === 6)?.pay_type ?? 0;
-    test.skip(codePayType === 0, '环境未配置任何付款码渠道，跳过付款码链路用例');
+    const methods = await listPosPayMethods();
+    const codePayType = codePayTypeOf(methods);
+    if (codePayType === 0) {
+      // 环境无第三方付款码凭据（本地测试服常态）：不 skip，改测同一段代码的降级契约——
+      // 支付方式只下发「现金」，付款码下单在渠道前置校验处被精确拒绝（P1-8：校验先于建单，不留孤儿待支付单）。
+      // 若跳过，渠道配置读取写反（例如恒判可用）也会显示绿
+      expect(methods.map((m) => m.pay_type), '付款码渠道未就绪时收银台应只保留现金').toEqual([4]);
+      const rejected = await createDirectPayOrder(5, 6.6);
+      expect(rejected.code, '付款码渠道未就绪应拒绝下单').toBe(OPERATION_NOT_ALLOWED);
+      expect(rejected.message).toContain('请使用现金收款');
+      return;
+    }
 
     const pending = await createDirectPayOrder(codePayType, 6.6);
     expect(pending.code, `付款码直接收款下单失败: ${pending.message}`).toBe(0);
@@ -210,12 +250,24 @@ test.describe.serial('收银台直接收款', () => {
   });
 
   test('4. pay-code-session：待支付单复用同一支付单号，已支付单拒绝', async () => {
-    const methods = assertOk<{ list: Array<{ pay_type: number; label: string }> }>(
-      (await (await adminApi.get('/api/v1/admin/pos/pay-methods')).json()) as ApiResponse<{ list: Array<{ pay_type: number; label: string }> }>,
-      '支付方式查询',
-    );
-    const codePayType = methods.list.find((m) => m.pay_type === 5 || m.pay_type === 6)?.pay_type ?? 0;
-    test.skip(codePayType === 0, '环境未配置任何付款码渠道，跳过付款码链路用例');
+    const codePayType = codePayTypeOf(await listPosPayMethods());
+    if (codePayType === 0) {
+      // 无第三方付款码凭据：待支付单造不出来，改覆盖本用例另一半小时态守卫——
+      // 现金单完结后「重建会话」「继续收现金」都必须被收银台待支付口径（source=2 + status=1）拒绝
+      const cash = await createDirectPayOrder(4, 3.3);
+      expect(cash.code, `现金单创建失败: ${cash.message}`).toBe(0);
+
+      const s = (await (
+        await adminApi.post(`/api/v1/admin/pos/orders/${cash.data!.id}/pay-code-session`)
+      ).json()) as ApiResponse;
+      expect(s.code, '已收款单不得重建付款码会话').toBe(OPERATION_NOT_ALLOWED);
+
+      const cash2 = (await (
+        await adminApi.post(`/api/v1/admin/pos/orders/${cash.data!.id}/pay-cash`)
+      ).json()) as ApiResponse;
+      expect(cash2.code, '已完结单不得再次现金收款').toBe(OPERATION_NOT_ALLOWED);
+      return;
+    }
 
     const pending = await createDirectPayOrder(codePayType, 3.3);
     expect(pending.code, `下单失败: ${pending.message}`).toBe(0);

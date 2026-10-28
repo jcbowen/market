@@ -10,17 +10,22 @@
 #   本文件   —— 多容器形态：单服务独立升级/重启、资源隔离、DB 独立运维。
 #
 # 使用步骤：
-#   1. 在项目根目录 .env 配置（compose 自动读取）：
-#        MARKET_APP_IMAGE=<registry>/market-app:v1.0.3   # 可选，默认 GHCR latest；生产务必锁精确 tag（tag 与 git tag 同名，latest 会被覆盖、无法回滚），详见 docs/需求文档/10-部署方案/03-生产环境部署.md
-#        MYSQL_ROOT_PASSWORD=<强口令>
+#   1. 在项目根目录 .env 配置（compose 自动读取，缺项直接报错拒绝启动）：
+#        MARKET_APP_IMAGE=<registry>/market-app:v1.0.3   # 必填且锁精确 tag（tag 与 git tag 同名；latest 会被覆盖、无法回滚），详见 docs/需求文档/10-部署方案/03-生产环境部署.md
+#        MYSQL_ROOT_PASSWORD=<强口令>                     # 仅运维用（建号/调试），业务服务不再用它连库
+#        MYSQL_APP_USER=market                           # 业务数据库账号（db-grant 任务建号并授权 market 库）
+#        MYSQL_APP_PASSWORD=<强口令>
 #        REDIS_PASSWORD=<强口令>
 #        JWT_SECRET=<至少 32 位随机串（默认占位值是公开值，服务会拒绝启动）>
+#        APP_ENV=production                              # 必填：生产标志（JWT 闸门/HTTPS 兜底/弱口令种子拒绝导入）
 #   2. 首次启动：docker compose -f docker-compose.prod.yml up -d
-#      （admin-init 任务自动初始化超管账号，凭据输出到其容器日志：
+#      （db-grant 任务先建号授权；admin-init 任务自动初始化超管账号，凭据输出到其容器日志：
 #        docker compose -f docker-compose.prod.yml logs admin-init）
 #   3. Linux 宿主需预先授权挂载写目录（容器以 UID 10001 运行）：
-#        mkdir -p data/logs/{user-service,product-service,order-service,cart-service,payment-service,gateway} data/uploads data/gateway-runtime data/geoip
-#        chown -R 10001:10001 data/logs data/uploads data/gateway-runtime data/geoip
+#        mkdir -p data/logs/{user-service,product-service,order-service,cart-service,payment-service,gateway} data/uploads data/gateway-runtime data/geoip data/ssl
+#        chown -R 10001:10001 data/logs data/uploads data/gateway-runtime data/geoip data/ssl
+#      data/ssl 存放登录密码加密 RSA 私钥（首次启动自动生成）：不持久化则每次重建换密钥对，
+#      多实例部署还会各持一对、互相解不开对方加密的密码
 #
 # 配置定制（可选）：默认各容器从镜像内置模板 config.docker.yaml 自播种（db/redis
 # host 指向本文件的 mysql/redis 服务名，口令经环境变量注入，无需手改配置）。
@@ -70,20 +75,47 @@ services:
       timeout: 5s
       retries: 5
 
+  # 业务数据库账号建号/改密（幂等，每次启动都跑；业务服务等它成功后再起）
+  # 不用 mysql 镜像的 MYSQL_USER 初始化口径是有意为之：那套只在空数据目录首启生效，
+  # 存量卷（升级/已有测试库）不会执行，服务会因账号不存在而连库失败。
+  # 权限限定 market 库（含 AutoMigrate 所需 DDL），与运维用的 root 分离。
+  db-grant:
+    image: mysql:8.0
+    container_name: market-db-grant
+    restart: "no"
+    environment:
+      TZ: Asia/Shanghai
+      # 口令走 MYSQL_PWD（不落 ps 参数）；APP_ 前缀避免与 mysql 镜像自身识别的
+      # MYSQL_USER/MYSQL_PASSWORD（首启建号）语义混淆
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_ROOT_PASSWORD}
+      APP_DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      APP_DB_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        mysql -h mysql -u root -e "CREATE USER IF NOT EXISTS '$$APP_DB_USER'@'%' IDENTIFIED BY '$$APP_DB_PASSWORD'; ALTER USER '$$APP_DB_USER'@'%' IDENTIFIED BY '$$APP_DB_PASSWORD'; GRANT ALL PRIVILEGES ON market.* TO '$$APP_DB_USER'@'%'; FLUSH PRIVILEGES;"
+        echo "[db-grant] 业务账号 $$APP_DB_USER 已就绪（权限限定 market 库）"
+
   # ===== 业务服务 =====
   # 7 个容器共用同一个 market-app 镜像，SERVICE_NAME 选择进程；镜像内置
   # HEALTHCHECK 探测 APP_PORT，依赖方一律 service_healthy 后再启动。
   # 每个服务的配置副本由入口脚本从镜像内置模板自播种（框架回写只落容器私有
   # 文件，多容器无回写竞态）；service_name 亦由入口脚本按进程覆写
   user-service:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
+    image: ${MARKET_APP_IMAGE:?请在项目根目录 .env 中配置 MARKET_APP_IMAGE（精确 tag，如 ghcr.io/jcbowen/market-app:v1.0.3）}
     container_name: market-user
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: user-service
       APP_PORT: 50051
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # 业务账号连库（由 db-grant 建号并授权 market 库），不再直连 root 口令
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
@@ -91,6 +123,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       # 需要定制配置时取消注释（见文件头「配置定制」）：
       # - ./data/config.yaml:/app/config.yaml:ro
@@ -100,14 +134,15 @@ services:
       options: { max-size: "10m", max-file: "3" }
 
   product-service:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
+    image: ${MARKET_APP_IMAGE:?请在项目根目录 .env 中配置 MARKET_APP_IMAGE（精确 tag，如 ghcr.io/jcbowen/market-app:v1.0.3）}
     container_name: market-product
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: product-service
       APP_PORT: 50052
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
@@ -115,6 +150,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       # 附件共享目录：product 落盘与 gateway /uploads 静态服务共用同一宿主目录
       - ./data/uploads:/app/uploads
@@ -123,14 +160,15 @@ services:
     logging: *default_logging
 
   order-service:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
+    image: ${MARKET_APP_IMAGE:?请在项目根目录 .env 中配置 MARKET_APP_IMAGE（精确 tag，如 ghcr.io/jcbowen/market-app:v1.0.3）}
     container_name: market-order
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: order-service
       APP_PORT: 50053
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
       # debugger 进程级日志（与 gateway 共享 debug_logs 表，供订单调度器等异步进程记录摘要）：
@@ -141,20 +179,23 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./data/logs/order-service:/app/logs
       # - ./data/config.yaml:/app/config.yaml:ro
     logging: *default_logging
 
   cart-service:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
+    image: ${MARKET_APP_IMAGE:?请在项目根目录 .env 中配置 MARKET_APP_IMAGE（精确 tag，如 ghcr.io/jcbowen/market-app:v1.0.3）}
     container_name: market-cart
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: cart-service
       APP_PORT: 50054
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
@@ -162,20 +203,24 @@ services:
         condition: service_healthy
       product-service:
         condition: service_healthy
+      # cart 也连 MySQL（购物车行落地库），建号任务须先完成
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./data/logs/cart-service:/app/logs
       # - ./data/config.yaml:/app/config.yaml:ro
     logging: *default_logging
 
   payment-service:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
+    image: ${MARKET_APP_IMAGE:?请在项目根目录 .env 中配置 MARKET_APP_IMAGE（精确 tag，如 ghcr.io/jcbowen/market-app:v1.0.3）}
     container_name: market-payment
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: payment-service
       APP_PORT: 50055
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
       # debugger 进程级日志（与 gateway 共享 debug_logs 表，供对账调度器等异步进程记录摘要）
@@ -185,20 +230,23 @@ services:
         condition: service_healthy
       order-service:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./data/logs/payment-service:/app/logs
       # - ./data/config.yaml:/app/config.yaml:ro
     logging: *default_logging
 
   gateway:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
+    image: ${MARKET_APP_IMAGE:?请在项目根目录 .env 中配置 MARKET_APP_IMAGE（精确 tag，如 ghcr.io/jcbowen/market-app:v1.0.3）}
     container_name: market-gateway
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: gateway
       APP_PORT: 18080
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
       # 可信反向代理网段（逗号分隔的 CIDR 或单个 IP），前置 nginx/CDN 时必填，
@@ -213,8 +261,9 @@ services:
       # debugger 临时排查开关与白名单（留空 = 不覆盖配置文件；两行都给才生效）
       DEBUGGER_ENABLED: ${DEBUGGER_ENABLED:-}
       DEBUGGER_ALLOWED_IPS: ${DEBUGGER_ALLOWED_IPS:-}
-      # 运行环境标识：生产填 production（EnsureSecureJWT fail-fast），留空 = 非生产
-      APP_ENV: ${APP_ENV:-}
+      # 运行环境标识：生产必填 production（EnsureSecureJWT fail-fast / 密码接口 HTTPS 兜底 /
+      # 弱口令演示种子拒绝导入都以此为准）
+      APP_ENV: ${APP_ENV:?生产部署必须在项目根目录 .env 中显式设置 APP_ENV=production}
       # 生产 HTTPS 兜底开关（密码类接口拒绝非 HTTPS 请求 11011）：留空 = 开启（默认）；
       # 前置链路暂无法保证 HTTPS 回源时可临时设 false 关闭（此时密码与 token 明文过网，
       # 链路修复后应删除本项恢复兜底）
@@ -237,6 +286,8 @@ services:
         condition: service_healthy
       payment-service:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     ports:
       - "18080:18080"
     volumes:
@@ -246,6 +297,9 @@ services:
       - ./data/uploads:/app/uploads
       # IP 定位数据库：gateway 容器缺失时后台自动下载（geoip-download），优雅降级
       - ./data/geoip:/app/data/geoip
+      # 登录密码加密 RSA 私钥（安全敏感）：首次启动自动生成并落盘，容器重建 key_id 不变；
+      # 多实例时须挂同一宿主目录共享同一密钥对，否则各持一对、互相解不开对方加密的密码
+      - ./data/ssl:/app/data/ssl
       - ./data/logs/gateway:/app/logs
       # - ./data/config.yaml:/app/config.yaml:ro
     logging: *default_logging
@@ -257,15 +311,16 @@ services:
   # 移除，或保留待重跑（重复执行无副作用）。
   # 交互式管理终端：docker exec -it market-gateway ./market-admin
   admin-init:
-    image: ${MARKET_APP_IMAGE:-ghcr.io/jcbowen/market-app:latest}
+    image: ${MARKET_APP_IMAGE:?请在项目根目录 .env 中配置 MARKET_APP_IMAGE（精确 tag，如 ghcr.io/jcbowen/market-app:v1.0.3）}
     container_name: market-admin-init
     restart: "no"
     command: ["init", "--timeout", "300"]
     environment:
       TZ: Asia/Shanghai
       SERVICE_NAME: market-admin
-      APP_ENV: ${APP_ENV:-}
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      APP_ENV: ${APP_ENV:?生产部署必须在项目根目录 .env 中显式设置 APP_ENV=production}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
@@ -273,6 +328,8 @@ services:
         condition: service_healthy
       product-service:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     healthcheck:
       disable: true
     logging: *default_logging

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -87,7 +88,8 @@ func (s *AdminService) GetAdminByUsername(ctx context.Context, username string) 
 // 返回：
 //   - *model.Admin: 账号；口令错误时也返回，调用方需据此区分「禁用」与「密码错误」
 //   - bool: 口令是否正确
-//   - error: 账号不存在为 NotFound；其他错误原样返回（调用方不得计入登录失败锁定）
+//   - error: 账号不存在为 NotFound；摘要无法解析为 Internal（不得折成密码错误）；
+//     数据库等其他错误原样返回（调用方不得计入登录失败锁定）
 //
 // 使用示例：
 //
@@ -97,7 +99,17 @@ func (s *AdminService) VerifyAdminCredential(ctx context.Context, username, pass
 	if err != nil {
 		return nil, false, err
 	}
-	return a, CheckPassword(password, a.Password) == nil, nil
+	switch cmpErr := CheckPassword(password, a.Password); {
+	case cmpErr == nil:
+		return a, true, nil
+	case errors.Is(cmpErr, bcrypt.ErrMismatchedHashAndPassword):
+		return a, false, nil
+	default:
+		// 摘要本身损坏/版本非法不是「密码错」：折成密码错误既无从暴露账号数据已坏，
+		// 又会让本人每次输对都被计一次失败，最终把正常管理员锁在门外
+		log.Printf("[ERROR] 管理员口令摘要无法解析，账号数据可能已损坏 admin_id=%d username=%s: %v", a.ID, a.Username, cmpErr)
+		return nil, false, bizerr.New(codes.Internal, "口令校验失败，请联系管理员")
+	}
 }
 
 // GetAdminById 按 ID 查询管理员

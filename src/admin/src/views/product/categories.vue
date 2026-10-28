@@ -108,16 +108,21 @@ const form = ref<{ name: string }>({ name: '' })
 /**
  * 加载分类列表（管理端接口含禁用分类，禁用行灰显可再启用）
  */
+// 请求序号守卫：并发刷新时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const res = await getCategoryList()
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data ?? []
     }
   } finally {
-    // 请求异常时也必须关闭 loading，避免页面永久转圈
-    loading.value = false
+    // 请求异常时也必须关闭 loading，避免页面永久转圈；过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -231,10 +236,13 @@ async function remove(row: CategoryRow) {
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
-      const res = await deleteCategory(row.id)
-      if (res.data.code === 0) {
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已删除
+      try {
+        await deleteCategory(row.id)
         message.success('分类已删除')
         loadData()
+      } catch {
+        return false
       }
     },
   })

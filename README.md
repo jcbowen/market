@@ -83,7 +83,7 @@ services:
 2. 启动并观察初始化日志（首启含 MySQL 初始化与自动迁移，初始超管密码输出在日志中）：
 
 ```bash
-mkdir -p data/{mysql,redis,attachment,runtime,logs}
+mkdir -p data/{mysql,redis,uploads,runtime,logs}
 docker compose up -d && docker logs -f market
 ```
 
@@ -115,7 +115,7 @@ done
 
 要点：
 
-- 表结构全部由各服务启动时 **GORM AutoMigrate** 创建，无手写建表 SQL；演示数据不再走 SQL 直插，改由 `market-admin init` 导入内嵌数据包（`src/backend/services/product/service/seeddata/full-demo.json`），**仅非 production 环境且空库时执行**；包内含弱口令演示账号，生产环境务必用 `MARKET_ADMIN_PASSWORD` 指定真实口令。
+- 表结构全部由各服务启动时 **GORM AutoMigrate** 创建，无手写建表 SQL；演示数据不再走 SQL 直插，改由 `market-admin init` 导入内嵌数据包（`src/backend/services/product/service/seeddata/full-demo.json`），**仅非 production 环境、显式设置 `MARKET_ALLOW_DEMO_SEED=1` 且空库时执行**；包内含弱口令演示账号（admin/admin123、13800138000），生产环境务必用 `MARKET_ADMIN_PASSWORD` 指定真实口令。
 - MySQL/Redis 口令与 `JWT_SECRET` 经项目根目录 `.env` 注入（`.env` 不入 git）；生产环境检测到默认 JWT 密钥会拒绝启动。
 - 后端依赖 `jcbaseGo`/`wego` 本地 replace（与仓库平级放置）；CI 场景用 `go mod edit -dropreplace` 后走公共 proxy，详见部署文档。
 

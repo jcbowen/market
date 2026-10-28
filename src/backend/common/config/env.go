@@ -101,6 +101,12 @@ func ApplyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("TRUSTED_PLATFORM"); v != "" {
 		cfg.Security.TrustedPlatform = strings.TrimSpace(v)
 	}
+	// RATE_LIMIT_API_QPS / RATE_LIMIT_API_BURST 接口 IP 洪水兜底阈值（速率/突发容量）。
+	// 生产用缺省 100/150；本机整套接口测试从同一 IP 打出峰值 116~133 r/s 会贴着阈值撞出
+	// 随机 429，故本地 docker 栈上调（见 docker-compose.yml gateway 段）。
+	// 非正数视为误配 fail-fast：置 0 会把接口全部拦死，比限流过严更糟
+	applyPositiveFloatEnvOverride("RATE_LIMIT_API_QPS", &cfg.Security.ApiRateQPS)
+	applyPositiveFloatEnvOverride("RATE_LIMIT_API_BURST", &cfg.Security.ApiRateBurst)
 	// PASSWORD_RSA_PRIVATE_KEY 登录密码传输加密的 RSA 私钥内联 PEM（多实例部署共享同一密钥）。
 	// 环境变量不便写多行 PEM：\n 字面转义会在此还原为真实换行（docker-compose .env 常规做法）；
 	// 设值时清空文件路径配置——维持「ENV 覆盖配置文件」语义，避免 docker 模板写死的
@@ -173,6 +179,32 @@ func applyNumericEnvOverride(key string, target *string, minVal, maxVal int) {
 		log.Fatalf("配置错误: %v，拒绝启动", err)
 	}
 	*target = strconv.Itoa(n)
+}
+
+// applyPositiveFloatEnvOverride 读取正数型环境变量并覆盖目标字段（原地修改）
+// 用于限流阈值这类「零值等于关停防线」的浮点配置：空串 = 未设置（保持配置/默认值），
+// 非空必须是正浮点数，非数字或非正数 fail-fast 终止启动（沿用 applyNumericEnvOverride 口径，
+// 本函数无 error 返回口，调用方两条启动路径均在此后按 log.Fatalf 处理）
+//
+// 参数：
+//   - key:    环境变量名（RATE_LIMIT_API_QPS/RATE_LIMIT_API_BURST）
+//   - target: 待覆盖的浮点配置字段指针
+//
+// 异常：值非空且非正浮点时 log.Fatalf 终止进程（正常值与空串不触发）
+//
+// 使用示例：
+//
+//	applyPositiveFloatEnvOverride("RATE_LIMIT_API_QPS", &cfg.Security.ApiRateQPS)
+func applyPositiveFloatEnvOverride(key string, target *float64) {
+	v := os.Getenv(key)
+	if v == "" {
+		return
+	}
+	n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || n <= 0 {
+		log.Fatalf("配置错误: 环境变量 %s=%q 须为正数（留空表示沿用默认值），拒绝启动", key, v)
+	}
+	*target = n
 }
 
 // splitCSVList 解析逗号分隔列表（去空白、丢空项），供可信代理网段与调试白名单共用

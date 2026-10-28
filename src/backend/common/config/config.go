@@ -78,6 +78,16 @@ type Config struct {
 		// （ENV 内联，设值会清空本项）> 本项 > PasswordRSAPrivateKey（配置内联）
 		// > 均空时纯自动生成（内存，重启更换）
 		PasswordRSAKeyFile string `json:"password_rsa_key_file" yaml:"password_rsa_key_file"`
+		// ApiRateQPS/ApiRateBurst 接口洪水兜底阈值（按客户端 IP 的令牌桶，速率/突发容量），
+		// 作用于 /api/v1 与 /api/v1/admin 两个分组，超限回 HTTP 429 + 业务码 10005 + Retry-After: 1。
+		// 缺省 100/150 面向真实人机流量（单个用户峰值不过几十 r/s，正常用户撞不到）。
+		// 需要上调的场景：① 大量用户经同一 NAT/办公出口聚合（整层楼共用一个客户端 IP）；
+		// ② 本机跑整套接口测试——用例从同一 IP 串行打出，实测峰值 116~133 r/s 贴着缺省阈值，
+		// 会在随机某条用例上撞出 429（2026-10-29 取证：api/49 现金支付被「请求频率限制」打红），
+		// 本地 docker 栈已在 compose 里上调，生产保持缺省。
+		// 设 0 或留空回落缺省值（配置加载按 CheckAndSetDefault 语义，零值即默认，不存在「配成 0」）
+		ApiRateQPS   float64 `json:"api_rate_qps" yaml:"api_rate_qps" default:"100"`
+		ApiRateBurst float64 `json:"api_rate_burst" yaml:"api_rate_burst" default:"150"`
 	} `json:"security" yaml:"security"`
 	SMS struct {
 		Provider     string `json:"provider" yaml:"provider" default:"aliyun"`

@@ -242,6 +242,11 @@ async function requestWechatPayment(params: WechatJsapiParams): Promise<PayOutco
 export function notifyPayOutcome(outcome: PayOutcome, channel?: PaymentChannel['channel']): boolean {
   switch (outcome) {
     case 'success':
+      // 货到付款：此时只是下单成功、尚未收款，提示「支付成功」会让用户误以为已付款
+      if (channel === 'cash') {
+        uni.showToast({ title: '下单成功，请当面付款', icon: 'none' })
+        return true
+      }
       uni.showToast({ title: '支付成功', icon: 'success' })
       return true
     case 'redirected':

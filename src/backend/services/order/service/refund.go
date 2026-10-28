@@ -253,9 +253,8 @@ func (s *RefundService) ApplyRefund(ctx context.Context, req *order.ApplyRefundR
 				return err
 			}
 		}
-		o.Status = 7
-		o.UpdatedAt = now
-		if err := tx.Save(&o).Error; err != nil {
+		// 走状态机单轨：已完成(5)订单的售后由 orderTransitions 显式放行，这里不再整行 Save 绕过校验
+		if err := transitionOrderStatusTx(tx, &o, 7, now); err != nil {
 			return err
 		}
 		refund.OrderNo = o.OrderNo
@@ -372,9 +371,8 @@ func (s *RefundService) AdminCreateRefund(ctx context.Context, req *order.AdminC
 				return err
 			}
 		}
-		o.Status = 7
-		o.UpdatedAt = now
-		if err := tx.Save(&o).Error; err != nil {
+		// 走状态机单轨：已完成(5)订单的售后由 orderTransitions 显式放行，这里不再整行 Save 绕过校验
+		if err := transitionOrderStatusTx(tx, &o, 7, now); err != nil {
 			return err
 		}
 		refund.OrderNo = o.OrderNo

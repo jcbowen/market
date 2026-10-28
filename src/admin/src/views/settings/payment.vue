@@ -395,6 +395,8 @@ import { useDialog, useMessage } from 'naive-ui'
 import type { UploadCustomRequestOptions } from 'naive-ui'
 import { getPaymentSetting, updatePaymentSetting, uploadPaymentCert, getClientChannels } from '@/api/admin'
 import type { PaymentSetting, PaymentSuggestedURLs, ClientChannel } from '@/api/admin'
+import { CODE_DATA_CONFLICT } from '@/api/request'
+import type { BizError } from '@/api/request'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -796,21 +798,39 @@ function buildPayload(): PaymentSetting {
 
 /**
  * 提交支付配置并同步服务端状态
- * 无论成功失败都重新拉取配置：成功是为了刷新 updated_at 版本号（服务端每次保存都会推进），
- * 失败是回滚本地改动到服务端真实状态（错误提示由请求层统一弹出）
+ * 成功后重新拉取，只为刷新 updated_at 版本号（服务端每次保存都会推进）；
+ * 失败只在版本冲突时重拉（不刷新版本号会一直撞同一个冲突），其余错误保留用户输入——
+ * 校验类失败改一处即可重提，整表回滚等于把没填错的字段也一并清空
  * @returns 是否保存成功
  */
 async function submitPaymentSetting(): Promise<boolean> {
   paymentSaving.value = true
   try {
     await updatePaymentSetting(buildPayload())
-    await fetchPaymentSetting()
-    return true
-  } catch {
-    await fetchPaymentSetting()
-    return false
-  } finally {
+  } catch (err) {
     paymentSaving.value = false
+    // 非冲突错误的提示由请求层统一弹出，表单必须保留用户输入；
+    // 版本冲突才重拉刷新 updated_at 版本号，否则按同一份旧表单重试会一直撞同一个冲突
+    if ((err as BizError).code === CODE_DATA_CONFLICT) {
+      message.warning('支付配置已被他人更新，已刷新为最新配置，请重新填写后再保存')
+      await refreshSetting()
+    }
+    return false
+  }
+  // 保存成功后刷新版本号与就绪状态；重拉失败不改变本次结论（refreshSetting 内部已吞掉异常）
+  await refreshSetting()
+  paymentSaving.value = false
+  return true
+}
+
+/**
+ * 重新拉取支付配置，失败静默（请求层已提示，调用方此时已有明确结论）
+ */
+async function refreshSetting() {
+  try {
+    await fetchPaymentSetting()
+  } catch {
+    // 忽略：刷新失败不改变本次保存的结论
   }
 }
 

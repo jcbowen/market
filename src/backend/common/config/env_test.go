@@ -246,6 +246,32 @@ func TestApplyEnvOverridesTrustedProxiesStillWorks(t *testing.T) {
 	}
 }
 
+// TestApplyEnvOverridesApiRateLimit 接口 IP 洪水兜底阈值的环境变量覆盖：
+// 空串保持原值（compose 用 ${VAR:-} 注入空串属常态），正数覆盖，
+// 非正数/非数字应当 fail-fast（此处只验证前两种，Fatal 路径会把测试进程打死无法断言）
+func TestApplyEnvOverridesApiRateLimit(t *testing.T) {
+	cfg := &Config{}
+	cfg.Security.ApiRateQPS = 100
+	cfg.Security.ApiRateBurst = 150
+
+	t.Setenv("RATE_LIMIT_API_QPS", "")
+	t.Setenv("RATE_LIMIT_API_BURST", "")
+	ApplyEnvOverrides(cfg)
+	if cfg.Security.ApiRateQPS != 100 || cfg.Security.ApiRateBurst != 150 {
+		t.Errorf("空环境变量不应覆盖：实际 qps=%v burst=%v", cfg.Security.ApiRateQPS, cfg.Security.ApiRateBurst)
+	}
+
+	t.Setenv("RATE_LIMIT_API_QPS", "2000")
+	t.Setenv("RATE_LIMIT_API_BURST", "3000.5")
+	ApplyEnvOverrides(cfg)
+	if cfg.Security.ApiRateQPS != 2000 {
+		t.Errorf("RATE_LIMIT_API_QPS=2000 应覆盖为 2000，实际 %v", cfg.Security.ApiRateQPS)
+	}
+	if cfg.Security.ApiRateBurst != 3000.5 {
+		t.Errorf("RATE_LIMIT_API_BURST=3000.5 应覆盖为 3000.5，实际 %v", cfg.Security.ApiRateBurst)
+	}
+}
+
 // TestSplitCSVList 逗号列表解析：去空白、丢空项，全空白返回空切片
 func TestSplitCSVList(t *testing.T) {
 	got := splitCSVList(" a , b ")

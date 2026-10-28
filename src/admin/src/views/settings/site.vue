@@ -216,16 +216,20 @@ async function save() {
     if (res.data?.data?.attachment_domain_synced) {
       message.info('附件「自定义访问域名」此前未配置，已自动沿用本次保存的部署域名，可到附件配置页调整', { duration: 6000 })
     }
-    await load()
   } catch (err) {
-    // 其余错误提示由请求拦截器统一弹出；版本冲突须立即重拉配置刷新版本号，
+    // 其余错误提示由请求拦截器统一弹出，表单保留用户输入；版本冲突须立即重拉配置刷新版本号，
     // 否则按同一份旧表单重试会一直撞同一个冲突
-    if ((err as BizError).code === CODE_DATA_CONFLICT) {
-      await load()
+    if ((err as BizError).code !== CODE_DATA_CONFLICT) {
+      return
     }
+    // 重拉会把表单换成服务端最新值，未保存的编辑随之丢弃：必须说明原因，不做静默替换
+    message.warning('站点配置已被他人更新，已刷新为最新配置，请重新填写后再保存')
   } finally {
     saving.value = false
   }
+  // 保存成功后刷新版本号（派生结果同步）、冲突后丢弃旧表单；
+  // 重拉失败不影响本次结论（都已提示），不能让 Promise 落成未处理拒绝
+  await load().catch(() => undefined)
 }
 
 // keep-alive 缓存下切回本页不重新挂载，需重新拉取：

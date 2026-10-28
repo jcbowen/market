@@ -106,10 +106,13 @@ function onSubmit() {
     positiveText: '确认提交',
     negativeText: '再想想',
     onPositiveClick: async () => {
-      const res = await submitPurchaseOrder(id)
-      if (res.data.code === 0) {
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已提交
+      try {
+        await submitPurchaseOrder(id)
         message.success('已提交')
         loadDetail()
+      } catch {
+        return false
       }
     },
   })
@@ -122,10 +125,13 @@ function onCancel() {
     positiveText: '确认取消',
     negativeText: '再想想',
     onPositiveClick: async () => {
-      const res = await cancelPurchaseOrder(id)
-      if (res.data.code === 0) {
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已取消
+      try {
+        await cancelPurchaseOrder(id)
         message.success('已取消')
         loadDetail()
+      } catch {
+        return false
       }
     },
   })

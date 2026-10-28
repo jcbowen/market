@@ -101,7 +101,7 @@ func EnsureTradeAccess(scope int64, p *model.Product, sku *model.Sku, requireSel
 
 // RedactPublicProductDetail 公开出口（C 端商品详情）脱敏
 // 无条件抹掉 SKU 上的经营字段（见 RedactPublicSku）；
-// 商品非上架态（下架/仓库中/定时上架未到点/已删除）时再抹掉价格与富文本正文：
+// 商品非上架态（下架/仓库中/定时上架未到点/已删除）时再抹掉价格、销量、上架排期与富文本正文：
 // C 端列表按 status=1 过滤，详情若继续透传价目就成了绕过列表口径取价目的旁路
 // （含定时上架商品提前泄露活动价）。页面仍拿得到名称与图片，据此提示「已下架」
 //
@@ -130,6 +130,12 @@ func RedactPublicProductDetail(detail *product.ProductDetail) {
 	detail.Product.OriginalPrice = 0
 	detail.Product.Stock = 0
 	detail.Product.Content = ""
+	// 销量与上架排期同属只在售期有意义的数据：真实销量按支付累加，
+	// 下架/定时上架期间继续下发等于把经营数据（含刷量配置）摊给任意访问者，
+	// 预约时间也提前泄露活动排期
+	detail.Product.SalesCount = 0
+	detail.Product.VirtualSales = 0
+	detail.Product.OnSaleAt = ""
 }
 
 // RedactPublicSku 抹掉 SKU 视图上的经营字段
@@ -157,6 +163,34 @@ func RedactPublicSku(sku *product.SkuInfo, hideTrade bool) {
 	sku.Price = 0
 	sku.OriginalPrice = 0
 	sku.Stock = 0
+}
+
+// PublicSkuHideTrade 判定公开 SKU 出口是否要隐藏成交价与库存（依据商品当前上架态）
+// GET /skus?product_id= 与 GET /skus/:id 挂在公开路由组、不经 auth，任何访问者都能按 ID 遍历；
+// 这两个出口此前一律按「在售」放行价格与库存，等于绕过列表（status=1 过滤）与详情
+// （RedactPublicProductDetail）的口径读出下架/定时上架商品的价目与库存。
+// 取不到商品（不存在/已删除）与非上架态一律隐藏：判定失败即隐藏，不按放行处理
+//
+// 参数：
+//   - ctx: 上下文
+//   - productID: SKU 所属商品 ID
+//
+// 返回值：
+//   - bool: true 表示按 RedactPublicSku 的 hideTrade 口径隐藏
+//
+// 使用示例：
+//
+//	hideTrade := s.productService.PublicSkuHideTrade(ctx, sku.ProductID)
+//	service.RedactPublicSku(info, hideTrade)
+func (s *ProductService) PublicSkuHideTrade(ctx context.Context, productID int64) bool {
+	if productID <= 0 {
+		return true
+	}
+	p, err := s.GetProduct(ctx, productID, false)
+	if err != nil {
+		return true
+	}
+	return p.Status != ProductStatusOnSale
 }
 
 // productIDOf 取商品 ID 供告警定位（nil 安全，批量入口可能只加载 SKU 一侧）

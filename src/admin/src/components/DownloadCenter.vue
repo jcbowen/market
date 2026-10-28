@@ -441,10 +441,16 @@ function onDelete(t: ExportTask) {
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
-      await deleteOrderExportTask(t.id)
-      message.success('已删除')
-      await loadTasks()
-      await refreshBadge()
+      // 删除失败时弹窗保持打开（异常提示由请求拦截器统一弹出），避免误以为已删除
+      try {
+        await deleteOrderExportTask(t.id)
+        message.success('已删除')
+        await loadTasks()
+        await refreshBadge()
+      } catch {
+        // 返回 false 阻止 naive-ui 关闭弹窗；错误提示由请求拦截器统一弹出
+        return false
+      }
     },
   })
 }

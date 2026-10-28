@@ -19,6 +19,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
+	"gorm.io/gorm"
 )
 
 // AttachmentMigrateService 承接附件迁移相关方法（挂载在 AttachmentService 上，共用配置缓存与 DB）
@@ -47,7 +48,7 @@ func (s *AttachmentService) ScanAttachmentMigrate(ctx context.Context) (*product
 	// 扫描不要求当前为 OSS 模式，但要求 OSS 凭证已配置完整（迁移目标可用）
 	cfg := s.getConfigCached(ctx)
 	if cfg == nil {
-		return nil, errors.New("附件配置不存在")
+		return nil, bizerr.New(codes.InvalidArgument, "附件配置不存在")
 	}
 	if _, err := buildOSSConfig(cfg); err != nil {
 		return nil, err
@@ -401,7 +402,11 @@ func (s *AttachmentService) DeleteAttachmentLocalVerified(ctx context.Context) (
 func (s *AttachmentService) getMigrateItem(ctx context.Context, id int64) (*model.AttachmentMigrateItem, error) {
 	var item model.AttachmentMigrateItem
 	if err := s.db.GetDb().WithContext(ctx).First(&item, "id = ?", id).Error; err != nil {
-		return nil, errors.New("迁移条目不存在")
+		// 与 AttachmentConfirm 同口径：只有记录不存在才是业务错误，DB 故障原样上抛
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bizerr.New(codes.NotFound, "迁移条目不存在")
+		}
+		return nil, fmt.Errorf("查询迁移条目失败: %w", err)
 	}
 	return &item, nil
 }
@@ -533,7 +538,7 @@ func (s *AttachmentService) countMigrateOverview(ctx context.Context, missing in
 func (s *AttachmentService) migrateOSSClient(ctx context.Context) (*remote.OSSClient, *model.AttachmentConfig, error) {
 	cfg := s.getConfigCached(ctx)
 	if cfg == nil {
-		return nil, nil, errors.New("附件配置不存在")
+		return nil, nil, bizerr.New(codes.InvalidArgument, "附件配置不存在")
 	}
 	ossCfg, err := buildOSSConfig(cfg)
 	if err != nil {

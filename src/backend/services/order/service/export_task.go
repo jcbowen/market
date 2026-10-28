@@ -536,13 +536,18 @@ func (s *ExportTaskService) GetExportTaskFile(ctx context.Context, req *order.Ge
 
 // DeleteExportTask 删除导出任务（仅超管）：文件与记录一并删除
 // 文件删除失败不阻断记录删除（避免孤儿记录卡住操作），孤儿文件由过期清理兜底
+// 权限在服务层独立判定：网关虽已拦非超管，但内网直调 gRPC 绕得过网关
 // 参数：
 //   - ctx: 上下文
 //   - id: 任务 ID
+//   - superAdmin: 调用者是否超级管理员
 //
 // 返回值：
-//   - error: 任务不存在或删除失败
-func (s *ExportTaskService) DeleteExportTask(ctx context.Context, id int64) error {
+//   - error: 越权、任务不存在或删除失败
+func (s *ExportTaskService) DeleteExportTask(ctx context.Context, id int64, superAdmin bool) error {
+	if !superAdmin {
+		return bizerr.New(codes.PermissionDenied, "仅超级管理员可删除导出任务")
+	}
 	var task model.ExportTask
 	if err := s.db.GetDb().WithContext(ctx).First(&task, id).Error; err != nil {
 		return bizerr.New(codes.NotFound, "导出任务不存在")

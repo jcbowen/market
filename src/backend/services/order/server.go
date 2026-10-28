@@ -232,6 +232,15 @@ func (s *server) PreviewFreeShipping(ctx stdctx.Context, req *order.PreviewFreeS
 	return s.orderService.PreviewFreeShipping(ctx, req)
 }
 
+// PreviewCouponEligibility 券可用性试算（C 端确认页展示券是否可用与预计抵扣）
+func (s *server) PreviewCouponEligibility(ctx stdctx.Context, req *order.PreviewCouponEligibilityReq) (*order.PreviewCouponEligibilityResp, error) {
+	resp, err := s.orderService.PreviewCouponEligibility(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
+}
+
 // VerifyPickup 自提订单核销
 func (s *server) VerifyPickup(ctx stdctx.Context, req *order.VerifyPickupReq) (*order.VerifyPickupResp, error) {
 	resp, err := s.orderService.VerifyPickup(ctx, req)
@@ -403,7 +412,7 @@ func (s *server) GetExportTaskFile(ctx stdctx.Context, req *order.GetExportTaskF
 
 // DeleteExportTask 删除导出任务（仅超管，文件一并删除）
 func (s *server) DeleteExportTask(ctx stdctx.Context, req *order.DeleteExportTaskReq) (*common.CommonResponse, error) {
-	if err := s.exportTaskService.DeleteExportTask(ctx, req.Id); err != nil {
+	if err := s.exportTaskService.DeleteExportTask(ctx, req.Id, req.GetSuperAdmin()); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil

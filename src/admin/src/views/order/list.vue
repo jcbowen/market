@@ -144,8 +144,8 @@
       <!-- 批量操作条 -->
       <n-space v-if="selectedRows.length > 0" align="center">
         <span>已选 {{ selectedRows.length }} 单</span>
-        <n-button size="small" type="primary" @click="openBatchShip">批量发货</n-button>
-        <n-button size="small" type="success" @click="batchComplete">批量完成</n-button>
+        <n-button v-if="canUpdateOrder" size="small" type="primary" @click="openBatchShip">批量发货</n-button>
+        <n-button v-if="canUpdateOrder" size="small" type="success" @click="batchComplete">批量完成</n-button>
       </n-space>
 
       <n-data-table
@@ -289,6 +289,7 @@ import { createOrderExportTask, completeOrder, getOrderList, verifyPickup, assig
 import { getFulfillers } from '@/api/user'
 import { getProductList } from '@/api/product'
 import { getOrderStatistics, type OrderStatistics } from '@/api/statistics'
+import { useAuthStore } from '@/stores/auth'
 import NewDataAlert from '@/components/NewDataAlert.vue'
 import OrderDetailModal from './detail.vue'
 import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
@@ -323,6 +324,12 @@ import {
 const dialog = useDialog()
 const message = useMessage()
 const route = useRoute()
+
+// 按钮级权限：页面本身只要求 order:view；改状态（发货/指派/完成/核销/取消/恢复）走 order:update，
+// 发起退款走 refund:update（与网关各接口同码）。此前所有按钮对只读账号可见，点了必然报无权限
+const authStore = useAuthStore()
+const canUpdateOrder = computed(() => authStore.hasPermission('order:update'))
+const canRefund = computed(() => authStore.hasPermission('refund:update'))
 
 const statusFilter = ref(0)
 const list = ref<Order[]>([])
@@ -742,7 +749,8 @@ const columns: DataTableColumns<Order> = [
           { default: () => '详情' },
         ),
       ]
-      if (row.status === ORDER_STATUS.PAID || row.status === ORDER_STATUS.STOCKING) {
+      // 状态流转类入口统一按 order:update 收窄（详情只读，始终可见）
+      if (canUpdateOrder.value && (row.status === ORDER_STATUS.PAID || row.status === ORDER_STATUS.STOCKING)) {
         if (row.delivery_type === DELIVERY_TYPE.DELIVERY) {
           buttons.push(
             h(
@@ -779,7 +787,7 @@ const columns: DataTableColumns<Order> = [
           )
         }
       }
-      if (row.status === ORDER_STATUS.SHIPPING) {
+      if (canUpdateOrder.value && row.status === ORDER_STATUS.SHIPPING) {
         buttons.push(
           h(
             NButton,
@@ -789,7 +797,7 @@ const columns: DataTableColumns<Order> = [
         )
       }
       // 可退状态口径统一由 canAdminRefund 判定（已支付/备货中/配送中，以及到店单的已完成），与后端一致
-      if (canAdminRefund(row)) {
+      if (canRefund.value && canAdminRefund(row)) {
         buttons.push(
           h(
             NButton,
@@ -799,7 +807,7 @@ const columns: DataTableColumns<Order> = [
         )
       }
       // 取消订单：待支付恒可取消；货到付款单未发货（已支付/备货中）也可直接取消（与后端口径一致）
-      if (canCancelOrder(row)) {
+      if (canUpdateOrder.value && canCancelOrder(row)) {
         buttons.push(
           h(
             NButton,
@@ -809,7 +817,7 @@ const columns: DataTableColumns<Order> = [
         )
       }
       // 恢复被用户删除的订单：客服场景（用户误删后请求找回），只改可见性不动资金与状态
-      if (row.user_deleted === 1) {
+      if (canUpdateOrder.value && row.user_deleted === 1) {
         buttons.push(
           h(
             NButton,
@@ -1128,9 +1136,14 @@ function confirmRestore(row: Order) {
     positiveText: '确认恢复',
     negativeText: '取消',
     onPositiveClick: async () => {
-      await restoreOrder(row.id)
-      message.success('订单已恢复')
-      loadData()
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已恢复
+      try {
+        await restoreOrder(row.id)
+        message.success('订单已恢复')
+        loadData()
+      } catch {
+        return false
+      }
     },
   })
 }
@@ -1179,22 +1192,32 @@ const lastLoadedAt = ref(0)
 /**
  * 加载订单分页数据；失败时清空列表并展示错误态
  */
+// 请求序号守卫：快速切换筛选/翻页时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   loadError.value = false
   try {
     const res = await getOrderList(buildQuery())
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
   } catch {
+    // 过期批次的失败同样不能清空屏幕上的新数据
+    if (seq !== loadSeq) return
     loadError.value = true
     list.value = []
   } finally {
-    loading.value = false
-    // 通知「有新数据」提示条：屏幕上的列表已重新拉取，陈旧计数作废
-    lastLoadedAt.value = Date.now()
+    // 过期批次不得掐掉新一轮的 loading，也不得刷新「有新数据」时间点
+    if (seq === loadSeq) {
+      loading.value = false
+      // 通知「有新数据」提示条：屏幕上的列表已重新拉取，陈旧计数作废
+      lastLoadedAt.value = Date.now()
+    }
   }
 }
 

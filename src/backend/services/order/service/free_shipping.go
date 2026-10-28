@@ -180,30 +180,10 @@ func (s *OrderService) PreviewFreeShipping(ctx context.Context, req *order.Previ
 	if len(req.Items) == 0 {
 		return nil, bizerr.New(codes.InvalidArgument, "商品清单不能为空")
 	}
-	skuIDs := make([]int64, 0, len(req.Items))
-	for _, item := range req.Items {
-		skuIDs = append(skuIDs, item.SkuId)
-	}
-	skuByID, productByID, err := s.loadOrderItemCatalog(ctx, skuIDs, req.CommunityId)
+	// 商品档案/取价口径与券可用性试算共用同一实现（coupon_preview.go buildItemScopes）
+	items, err := s.buildItemScopes(ctx, req.Items, req.CommunityId)
 	if err != nil {
 		return nil, err
-	}
-	flashPriceByID := s.loadFlashSalePrices(ctx, req.CommunityId)
-
-	items := make([]itemScope, 0, len(req.Items))
-	for _, item := range req.Items {
-		skuInfo := skuByID[item.SkuId]
-		productInfo := productByID[skuInfo.ProductId]
-		// 价格口径与 CreateOrder 一致：优先使用生效的秒杀价
-		price := skuInfo.Price
-		if flashPrice := flashPriceByID[item.SkuId]; flashPrice > 0 {
-			price = flashPrice
-		}
-		items = append(items, itemScope{
-			productID:  skuInfo.ProductId,
-			categoryID: productInfo.CategoryId,
-			totalPrice: price * float64(item.Quantity),
-		})
 	}
 
 	// 基础配送费取社区配置值

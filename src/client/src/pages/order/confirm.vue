@@ -210,9 +210,10 @@ import { useCartStore } from '@/stores/cart'
 import { getAddressList, getCommunityById } from '@/api/user'
 import { getCart, removeCartItem } from '@/api/cart'
 import { getFullReductions, getProductDetail, getSkuById } from '@/api/product'
-import { createOrder, previewFreeShipping, type FreeShippingPreview } from '@/api/order'
+import { createOrder, previewCouponEligibility, previewFreeShipping, type CouponEligibilityPreview, type FreeShippingPreview } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
+import { ensureCommunity } from '@/utils/community'
 import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, onReturnToSite, payOrder } from '@/utils/pay'
 import { goAddressList, goLogin } from '@/utils/navigate'
@@ -413,14 +414,38 @@ const couponOptions = ref<CouponOption[]>([])
 /** 用户是否手动操作过券选择：操作后不再自动改选 */
 let couponTouched = false
 
+/**
+ * 券可用性试算结果索引（按 coupons.id）
+ * 门槛与抵扣基数按「券范围内商品金额」计算（与下单 applyCoupon 同一口径）：
+ * 按全车金额判定会把含不适用商品的券误判为可用，提交时才被服务端打回
+ */
+const couponEligibility = ref<Record<number, CouponEligibilityPreview>>({})
+/** 试算请求序号：商品清单/券列表快速变化时只认最后一次响应 */
+let eligibilitySeq = 0
+
 const couponText = computed(() => {
   if (!selectedCoupon.value) return '暂不使用'
   return couponTitle(selectedCoupon.value)
 })
 
 /**
- * 按当前商品总额构建券选项可用性：
+ * 单券预计抵扣：优先用服务端试算值（按券适用范围），
+ * 试算结果未返回时按全车金额本地估算
+ * @param coupon 用户优惠券，可为 null
+ * @returns 抵扣金额
+ */
+function couponDiscountOf(coupon: UserCoupon | null): number {
+  if (!coupon) return 0
+  const verdict = couponEligibility.value[coupon.coupon_id]
+  if (verdict?.available) return verdict.discount_amount
+  return calcCouponDiscount(totalAmount.value, coupon)
+}
+
+/**
+ * 按当前商品总额与试算结果构建券选项可用性：
  * 过期券与未达门槛券均展示但置灰，并给出原因文案
+ * @param list 用户优惠券列表
+ * @returns 券选项列表
  */
 function buildCouponOptions(list: UserCoupon[]): CouponOption[] {
   const total = totalAmount.value
@@ -428,6 +453,19 @@ function buildCouponOptions(list: UserCoupon[]): CouponOption[] {
     if (isCouponExpired(coupon)) {
       return { coupon, available: false, reason: '已过期' }
     }
+    const verdict = couponEligibility.value[coupon.coupon_id]
+    if (verdict) {
+      if (!verdict.available) {
+        const lack = Math.max(verdict.threshold - verdict.eligible_amount, 0)
+        return {
+          coupon,
+          available: false,
+          reason: verdict.reason || `满${formatPrice(verdict.threshold)}可用，还差 ${formatPrice(lack)}`,
+        }
+      }
+      return { coupon, available: true, reason: '' }
+    }
+    // 试算结果未返回时按全车金额兜底（口径只会更宽松，最终以下单服务端校验为准）
     if (total < coupon.threshold) {
       const lack = formatPrice(coupon.threshold - total)
       return { coupon, available: false, reason: `满${formatPrice(coupon.threshold)}可用，还差 ${lack}` }
@@ -438,15 +476,45 @@ function buildCouponOptions(list: UserCoupon[]): CouponOption[] {
 
 /**
  * 加载用户全部未使用券并构建弹窗选项
- * 进入页面即调用一次，供默认选中最优券使用
+ * 进入页面即调用一次，供默认选中最优券使用；随后异步做券可用性试算
  */
 async function loadCouponOptions() {
   try {
     const res = await getUserCoupons({ status: 1, page_size: 100 })
     couponOptions.value = buildCouponOptions(res.data?.list || [])
     autoSelectCoupon()
+    void loadCouponEligibility()
   } catch {
     couponOptions.value = []
+  }
+}
+
+/**
+ * 券可用性试算：按当前商品清单向服务端逐券求可用性与抵扣
+ * 门槛按券适用范围计算，结果回填后重建选项并重选最优券
+ */
+async function loadCouponEligibility() {
+  const coupons = couponOptions.value.filter((o) => !isCouponExpired(o.coupon))
+  if (!orderItems.value.length || !coupons.length) {
+    couponEligibility.value = {}
+    return
+  }
+  const seq = ++eligibilitySeq
+  try {
+    const res = await previewCouponEligibility(
+      orderItems.value.map((it) => ({ sku_id: it.sku_id, quantity: it.quantity })),
+      coupons.map((o) => o.coupon.coupon_id),
+      effectiveCommunityId.value || undefined,
+    )
+    if (seq !== eligibilitySeq) return
+    const map: Record<number, CouponEligibilityPreview> = {}
+    for (const item of res.data || []) map[item.coupon_id] = item
+    couponEligibility.value = map
+    couponOptions.value = buildCouponOptions(couponOptions.value.map((o) => o.coupon))
+    autoSelectCoupon()
+  } catch {
+    // 试算失败退回按全车金额判定（原行为），提交时仍由服务端按适用范围把关
+    if (seq === eligibilitySeq) couponEligibility.value = {}
   }
 }
 
@@ -469,7 +537,7 @@ function autoSelectCoupon() {
   let bestDiscount = 0
   for (const option of couponOptions.value) {
     if (!option.available) continue
-    const discount = calcCouponDiscount(totalAmount.value, option.coupon)
+    const discount = couponDiscountOf(option.coupon)
     if (discount > bestDiscount) {
       bestDiscount = discount
       best = option.coupon
@@ -483,6 +551,8 @@ watch(totalAmount, () => {
   if (!couponOptions.value.length) return
   couponOptions.value = buildCouponOptions(couponOptions.value.map((o) => o.coupon))
   autoSelectCoupon()
+  // 商品组成变化会改变券适用范围金额，需重新试算（序号守卫丢弃过期响应）
+  void loadCouponEligibility()
 })
 
 /**
@@ -513,9 +583,10 @@ const fullReductionText = computed(() => {
   return `- ${formatPrice(fullReductionDiscount.value)}`
 })
 
-// 券抵扣按类型计算，与后端 calculateDiscount 逐行一致（utils/coupon.ts 有注释锚定）
+// 券抵扣：优先取服务端按券适用范围的试算值，未试算时按类型本地计算
+// （本地口径与后端 calculateDiscount 逐行一致，utils/coupon.ts 有注释锚定）
 const couponDiscount = computed(() => {
-  return calcCouponDiscount(totalAmount.value, selectedCoupon.value)
+  return couponDiscountOf(selectedCoupon.value)
 })
 
 /**
@@ -696,6 +767,11 @@ async function loadDirectItems() {
     if (!pid) {
       orderItems.value = []
       return
+    }
+    // 冷启动深链直达本页时本地还没有社区上下文，而商品详情按社区归属校验、community_id<=0 直接拒绝；
+    // 与详情页同一口径先确保社区就绪，否则直购永远拉不到商品
+    if (!effectiveCommunityId.value) {
+      await ensureCommunity(userStore)
     }
     const res = await getProductDetail(pid, effectiveCommunityId.value)
     if (res.data) {

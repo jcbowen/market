@@ -931,8 +931,13 @@ function onDeleteHeld(h: PosHeldOrder) {
     positiveText: '确认删除',
     negativeText: '取消',
     onPositiveClick: async () => {
-      await deletePosHeldOrder(h.id)
-      void refreshHeld()
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已删除
+      try {
+        await deletePosHeldOrder(h.id)
+        void refreshHeld()
+      } catch {
+        return false
+      }
     },
   })
 }

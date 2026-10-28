@@ -11,6 +11,9 @@ import { newAdminContext, adminLogin, clientLogin, pickSku, ensureStock, asList,
  *       POS 现金收款（支付成功收口）后同社区连接收到 order.paid 事件、
  *       POS 现金单代客退款后收到 order.refund（completed）事件、
  *       异社区连接不接收该社区事件
+ * 环境要求：支付异常事件那条用例走 redis-cli 直发事件总线，需进程能拿到 REDIS_PASSWORD
+ *       （环境变量优先，回退读项目根 .env）；拿不到时按「凭据不可得」诚实 skip，
+ *       不记成产品链路缺陷
  * 链路：POS 现金到店单（pay_type=4, delivery_type=3）→ payment 创建即成功 →
  *       order UpdateOrderStatus 置 2（同事务 2→5 终态）→ Redis 发布 → gateway WS 推送；
  *       代客退款（现金）→ completeRefundSuccess 统一收尾 → market:order:refund 发布 → WS 推送
@@ -38,29 +41,53 @@ const skipNoWs = !wsSupported ? '运行环境无内置 WebSocket 客户端（需
 
 /** 环境是否有可用的 docker+redis-cli（支付异常事件直发用；探测失败自动降级 skip） */
 let redisAvailable = false;
-/** Redis 认证口令（compose 从项目根 .env 注入，redis-cli -a 需要） */
-let redisPassword = '';
+/** redis-cli 探测不可用的原因（写进 skip 文案，别让人去猜是不是产品链路坏了） */
+let redisProbeError = '';
+/**
+ * Redis 认证口令：优先取进程环境变量（compose/CI 已注入 REDIS_PASSWORD 时无需读文件），
+ * 回退读项目根 .env——沙箱或受限终端里读不到 .env 属凭据不可得，不是产品链路坏了
+ */
+let redisPassword = process.env.REDIS_PASSWORD?.trim() ?? '';
+if (!redisPassword) {
+  try {
+    redisPassword =
+      readFileSync(resolve(process.cwd(), '../.env'), 'utf-8')
+        .split('\n')
+        .find((line) => line.startsWith('REDIS_PASSWORD='))
+        ?.slice('REDIS_PASSWORD='.length)
+        .trim() ?? '';
+  } catch {
+    redisPassword = '';
+  }
+}
 try {
-  redisPassword = readFileSync(resolve(process.cwd(), '../.env'), 'utf-8')
-    .split('\n')
-    .find((line) => line.startsWith('REDIS_PASSWORD='))
-    ?.slice('REDIS_PASSWORD='.length)
-    .trim() ?? '';
-  execFileSync('docker', ['exec', 'market-redis', 'redis-cli', '-a', redisPassword, 'PING'], {
+  // 必须看回复内容而不是退出码：redis-cli 拿到 NOAUTH 这类错误回复时退出码仍是 0，
+  // 只看退出码会把「口令没注入」误判成「环境可用」，随后的 PUBLISH 石沉大海，
+  // 用例就红成「网关转发链路坏了」（2026-10-29 实测踩中）
+  const pong = execFileSync('docker', ['exec', 'market-redis', 'redis-cli', '-a', redisPassword, 'PING'], {
     timeout: 5000,
     stdio: 'pipe',
-  });
-  redisAvailable = true;
-} catch {
+  })
+    .toString()
+    .trim();
+  redisAvailable = pong === 'PONG';
+  if (!redisAvailable) redisProbeError = `PING 回复「${pong}」非 PONG（REDIS_PASSWORD 未注入）`;
+} catch (e) {
   redisAvailable = false;
+  redisProbeError = `PING 执行失败：${(e as Error).message}`;
 }
 
 /** 向事件总线发布一条支付异常事件（docker exec redis-cli 直发，验证 gateway 转发链路） */
 function publishPaymentAnomaly(payload: string): void {
-  execFileSync('docker', ['exec', 'market-redis', 'redis-cli', '-a', redisPassword, 'PUBLISH', 'market:payment:anomaly', payload], {
+  const out = execFileSync('docker', ['exec', 'market-redis', 'redis-cli', '-a', redisPassword, 'PUBLISH', 'market:payment:anomaly', payload], {
     timeout: 10000,
     stdio: 'pipe',
-  });
+  })
+    .toString()
+    .trim();
+  // 正常回复是订阅者数量（整数）；不是整数说明这条事件根本没进总线，
+  // 直接抛错定位到环境，而不是让下面的断言等 10 秒超时、误报成转发链路缺陷
+  if (!/^\d+$/.test(out)) throw new Error(`PUBLISH 未进入事件总线，回复「${out}」`);
 }
 
 /**
@@ -321,7 +348,7 @@ test.describe.serial('后台 WS 新订单语音通知', () => {
       amount: 66.6,
       event_time: new Date().toISOString().slice(0, 19).replace('T', ' '),
     });
-    test.skip(!redisAvailable, '环境无 docker/redis-cli，跳过事件总线直发验证');
+    test.skip(!redisAvailable, `环境无可用 redis-cli 直发通道（${redisProbeError || 'docker 不可用'}），跳过事件总线直发验证`);
 
     const session = new WsSession(buildWsUrl(adminToken, communityId));
     try {

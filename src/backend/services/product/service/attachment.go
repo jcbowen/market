@@ -177,7 +177,7 @@ func (s *AttachmentService) getConfigCached(ctx context.Context) *model.Attachme
 func (s *AttachmentService) GetConfigMasked(ctx context.Context) (*product.AttachmentConfig, error) {
 	row := s.getConfigCached(ctx)
 	if row == nil {
-		return nil, errors.New("附件配置不存在")
+		return nil, bizerr.New(codes.NotFound, "附件配置不存在")
 	}
 	return toProtoConfigMasked(row), nil
 }
@@ -268,15 +268,15 @@ func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.Attachm
 func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.UploadImageLocalReq) (*product.AttachmentInfo, error) {
 	cfg := s.getConfigCached(ctx)
 	if cfg == nil {
-		return nil, errors.New("附件配置不存在")
+		return nil, bizerr.New(codes.InvalidArgument, "附件配置不存在")
 	}
 	if cfg.StorageType != "local" {
-		return nil, errors.New("当前存储模式不是本地附件，请使用预签名直传")
+		return nil, bizerr.New(codes.InvalidArgument, "当前存储模式不是本地附件，请使用预签名直传")
 	}
 
 	ext := strings.ToLower(filepath.Ext(req.Filename))
 	if ext == "" || !imageAllowedExts[ext] {
-		return nil, errors.New("不支持的图片格式")
+		return nil, bizerr.New(codes.InvalidArgument, "不支持的图片格式")
 	}
 
 	maxSize := cfg.MaxSize
@@ -284,7 +284,7 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 		maxSize = defaultImageMaxSize
 	}
 	if len(req.Content) == 0 {
-		return nil, errors.New("文件内容为空")
+		return nil, bizerr.New(codes.InvalidArgument, "文件内容为空")
 	}
 	if int64(len(req.Content)) > maxSize {
 		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("文件大小超出限制（最大 %dMB）", maxSize/1024/1024))
@@ -379,10 +379,10 @@ func (s *AttachmentService) UploadImageLocal(ctx context.Context, req *product.U
 func (s *AttachmentService) AttachmentPresign(ctx context.Context, req *product.AttachmentPresignReq) (*product.AttachmentPresignResp, error) {
 	cfg := s.getConfigCached(ctx)
 	if cfg == nil {
-		return nil, errors.New("附件配置不存在")
+		return nil, bizerr.New(codes.InvalidArgument, "附件配置不存在")
 	}
 	if cfg.StorageType != "oss" {
-		return nil, errors.New("当前存储模式不是远程附件，请使用本地上传接口")
+		return nil, bizerr.New(codes.InvalidArgument, "当前存储模式不是远程附件，请使用本地上传接口")
 	}
 	ossCfg, err := buildOSSConfig(cfg)
 	if err != nil {
@@ -390,11 +390,11 @@ func (s *AttachmentService) AttachmentPresign(ctx context.Context, req *product.
 	}
 
 	if req.Filename == "" {
-		return nil, errors.New("文件名不能为空")
+		return nil, bizerr.New(codes.InvalidArgument, "文件名不能为空")
 	}
 	ext := strings.ToLower(filepath.Ext(req.Filename))
 	if ext == "" || !imageAllowedExts[ext] {
-		return nil, errors.New("不支持的图片格式")
+		return nil, bizerr.New(codes.InvalidArgument, "不支持的图片格式")
 	}
 
 	maxSize := cfg.MaxSize
@@ -402,7 +402,7 @@ func (s *AttachmentService) AttachmentPresign(ctx context.Context, req *product.
 		maxSize = defaultImageMaxSize
 	}
 	if req.Size > maxSize {
-		return nil, fmt.Errorf("文件大小超出限制（最大 %dMB）", maxSize/1024/1024)
+		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("文件大小超出限制（最大 %dMB）", maxSize/1024/1024))
 	}
 
 	fileMD5Value, err := normalizeMD5(req.Md5)
@@ -562,10 +562,14 @@ func (s *AttachmentService) AttachmentConfirm(ctx context.Context, req *product.
 
 	var rec model.Attachment
 	if err = s.db.GetDb().WithContext(ctx).First(&rec, "id = ?", req.AttachId).Error; err != nil {
-		return nil, errors.New("附件不存在或无权操作")
+		// 只有「记录不存在」才是业务口径；连接/SQL 故障不能伪装成「不存在」，否则运维无从发现
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bizerr.New(codes.NotFound, "附件不存在或无权操作")
+		}
+		return nil, fmt.Errorf("查询附件记录失败: %w", err)
 	}
 	if rec.AdminID != req.AdminId {
-		return nil, errors.New("附件不存在或无权操作")
+		return nil, bizerr.New(codes.NotFound, "附件不存在或无权操作")
 	}
 
 	// 未上报的字段回退到库里已有的值，避免 0 覆盖真实数据
@@ -758,7 +762,7 @@ func validateStorageType(storageType string) error {
 //   - error: 配置不完整时返回错误
 func buildOSSConfig(cfg *model.AttachmentConfig) (*remote.OSSConfig, error) {
 	if cfg.OssAccessKeyId == "" || cfg.OssAccessKeySecret == "" || cfg.OssEndpoint == "" || cfg.OssBucketName == "" {
-		return nil, errors.New("OSS 配置不完整，请先在后台完善附件配置")
+		return nil, bizerr.New(codes.InvalidArgument, "OSS 配置不完整，请先在后台完善附件配置")
 	}
 	return &remote.OSSConfig{
 		AccessKeyId:     cfg.OssAccessKeyId,
@@ -887,7 +891,7 @@ func normalizeMD5(value string) (string, error) {
 	for i := 0; i < len(normalized); i++ {
 		c := normalized[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", errors.New("MD5必须为十六进制字符串")
+			return "", bizerr.New(codes.InvalidArgument, "MD5必须为十六进制字符串")
 		}
 	}
 	return normalized, nil
@@ -909,7 +913,7 @@ func normalizeMD5(value string) (string, error) {
 func checkImageMime(contentType, ext string) (string, error) {
 	if contentType != "" {
 		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-			return "", errors.New("content_type 与上传类型 image 不匹配")
+			return "", bizerr.New(codes.InvalidArgument, "content_type 与上传类型 image 不匹配")
 		}
 		return contentType, nil
 	}

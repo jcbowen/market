@@ -15,7 +15,9 @@ import { autoName, uniquePhone } from '../helpers/data';
  * 覆盖：满减活动下单抵扣；秒杀活动价下单（服务端自动取生效秒杀价）；
  *       包邮试算（参与商品命中 / 排除商品不计门槛）；配送单满额免配送费
  * 说明：自建两个商品（A 参与 / B 被排除+秒杀）保证金额与范围可控；
- *       环境可能存在其他生效活动，仅在建活动被确认选中时做精确断言
+ *       环境可能存在其他生效活动，仅在建活动被确认选中时做精确断言；
+ *       造数与前置产物缺失一律显式失败（expect 断言），不再条件型 skip——
+ *       配送单数量按门店「起送金额」折算，避免撞门槛后跳过
  */
 
 const PRICE_A = 3.9; // 商品 A 单价（参与包邮）
@@ -113,6 +115,8 @@ let skuIdA = 0;
 let productIdB = 0;
 let skuIdB = 0;
 let addressId = 0;
+/** 本社区配送起送金额（配送单数量按它折算，避免撞上门槛再 skip） */
+let minOrderAmount = 0;
 
 test.beforeAll(async ({ playwright }) => {
   const buyer = await newClientUser(playwright);
@@ -121,46 +125,48 @@ test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright, undefined, undefined, communityId);
   adminApi = admin.api;
 
+  // 造数失败不吞异常置零后 skip：那会让链路坏了也报绿，正确表现是整轮红
+  const catBody = assertOk(
+    (await (await adminApi.post('/api/v1/admin/categories', { data: { name: autoName('营销测试分类') } })).json()) as ApiResponse<{ id: number }>,
+    '创建分类',
+  );
+  categoryId = catBody.id;
+
+  // 商品 A：参与包邮，正常价
+  productIdA = await createProduct(adminApi, '营销商品A', PRICE_A);
+  skuIdA = await getSkuId(adminApi, productIdA);
+  // 商品 B：秒杀 + 被包邮排除
+  productIdB = await createProduct(adminApi, '营销商品B', PRICE_B);
+  skuIdB = await getSkuId(adminApi, productIdB);
+
+  // 配送单受社区起送金额约束，按实测门槛折算数量，不再靠「撞上限就 skip」
+  minOrderAmount = assertOk(
+    (await (await adminApi.get('/api/v1/admin/community/profile')).json()) as ApiResponse<{ min_order_amount: number }>,
+    '读取门店设置',
+  ).min_order_amount;
+
+  // C 端收货地址（配送单用）
+  const buyerApi = await newAuthedRequest(playwright, buyerToken);
   try {
-    const catBody = assertOk(
-      (await (await adminApi.post('/api/v1/admin/categories', { data: { name: autoName('营销测试分类') } })).json()) as ApiResponse<{ id: number }>,
-      '创建分类',
+    const addr = assertOk(
+      (await (
+        await buyerApi.post('/api/v1/user/addresses', {
+          data: {
+            contact_name: 'AUTO-TEST 收货人',
+            contact_phone: '13800000001',
+            province: '广东省',
+            city: '深圳市',
+            district: '南山区',
+            detail: `科技园 ${Date.now()} 号`,
+            is_default: true,
+          },
+        })
+      ).json()) as ApiResponse<{ id: number }>,
+      '创建收货地址',
     );
-    categoryId = catBody.id;
-
-    // 商品 A：参与包邮，正常价
-    productIdA = await createProduct(adminApi, '营销商品A', PRICE_A);
-    skuIdA = await getSkuId(adminApi, productIdA);
-    // 商品 B：秒杀 + 被包邮排除
-    productIdB = await createProduct(adminApi, '营销商品B', PRICE_B);
-    skuIdB = await getSkuId(adminApi, productIdB);
-
-    // C 端收货地址（配送单用）
-    const buyerApi = await newAuthedRequest(playwright, buyerToken);
-    try {
-      const addr = assertOk(
-        (await (
-          await buyerApi.post('/api/v1/user/addresses', {
-            data: {
-              contact_name: 'AUTO-TEST 收货人',
-              contact_phone: '13800000001',
-              province: '广东省',
-              city: '深圳市',
-              district: '南山区',
-              detail: `科技园 ${Date.now()} 号`,
-              is_default: true,
-            },
-          })
-        ).json()) as ApiResponse<{ id: number }>,
-        '创建收货地址',
-      );
-      addressId = addr.id;
-    } finally {
-      await buyerApi.dispose();
-    }
-  } catch (e) {
-    console.warn(`[19] 造数失败，用例将跳过：${e instanceof Error ? e.message : e}`);
-    productIdA = 0;
+    addressId = addr.id;
+  } finally {
+    await buyerApi.dispose();
   }
 });
 
@@ -253,7 +259,7 @@ async function createOrder(
 
 test.describe.serial('满减活动生效', () => {
   test('1. 管理端建满减活动（满 5 减 1）', async () => {
-    test.skip(!productIdA, '环境造数失败');
+    expect(productIdA, '前置造数应已建出商品 A（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const body = assertOk(
       (await (
         await adminApi.post('/api/v1/admin/full-reductions', {
@@ -272,7 +278,7 @@ test.describe.serial('满减活动生效', () => {
   });
 
   test('2. 达门槛订单满减生效（7.8 ≥ 5 抵 1 元）', async ({ playwright }) => {
-    test.skip(!productIdA, '环境造数失败');
+    expect(productIdA, '前置造数应已建出商品 A（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const orderId = await createOrder(buyerApi, { skuId: skuIdA, quantity: 2 });
@@ -290,7 +296,7 @@ test.describe.serial('满减活动生效', () => {
   });
 
   test('3. 未达门槛订单本活动不贡献（3.9 < 5）', async ({ playwright }) => {
-    test.skip(!productIdA, '环境造数失败');
+    expect(productIdA, '前置造数应已建出商品 A（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const orderId = await createOrder(buyerApi, { skuId: skuIdA, quantity: 1 });
@@ -309,7 +315,7 @@ test.describe.serial('满减活动生效', () => {
 
 test.describe.serial('秒杀活动生效', () => {
   test('4. 管理端建秒杀活动（B 商品秒杀价 1.5）', async () => {
-    test.skip(!productIdB, '环境造数失败');
+    expect(productIdB, '前置造数应已建出商品 B（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const body = assertOk(
       (await (
         await adminApi.post('/api/v1/admin/flash-sales', {
@@ -327,7 +333,7 @@ test.describe.serial('秒杀活动生效', () => {
   });
 
   test('5. C 端秒杀列表可见该活动', async ({ playwright }) => {
-    test.skip(!productIdB, '环境造数失败');
+    expect(productIdB, '前置造数应已建出商品 B（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const body = assertOk(
@@ -355,7 +361,7 @@ test.describe.serial('秒杀活动生效', () => {
   });
 
   test('6. 秒杀价下单：止血开关期间按正常价计算', async ({ playwright }) => {
-    test.skip(!productIdB, '环境造数失败');
+    expect(productIdB, '前置造数应已建出商品 B（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const orderId = await createOrder(buyerApi, { skuId: skuIdB, quantity: 2 });
@@ -379,7 +385,7 @@ test.describe.serial('满额包邮生效', () => {
   const ACTIVITY_NAME_KEY = '满额包邮';
 
   test('7. 管理端建包邮活动（门槛 0.01，排除 B 商品）', async () => {
-    test.skip(!productIdB, '环境造数失败');
+    expect(productIdB, '前置造数应已建出商品 B（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const body = assertOk(
       (await (
         await adminApi.post('/api/v1/admin/free-shippings', {
@@ -399,7 +405,8 @@ test.describe.serial('满额包邮生效', () => {
   });
 
   test('8. 试算：参与商品 A 达标 → 免配送费', async ({ playwright }) => {
-    test.skip(!productIdA || !activityId, '前置未就绪');
+    expect(productIdA, '前置造数应已建出商品 A（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
+    expect(activityId, '前置用例应已建出包邮活动（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const body = assertOk(
@@ -425,7 +432,8 @@ test.describe.serial('满额包邮生效', () => {
   });
 
   test('9. 试算：被排除商品 B 不计入门槛', async ({ playwright }) => {
-    test.skip(!productIdB || !activityId, '前置未就绪');
+    expect(productIdB, '前置造数应已建出商品 B（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
+    expect(activityId, '前置用例应已建出包邮活动（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
       const body = assertOk(
@@ -449,24 +457,24 @@ test.describe.serial('满额包邮生效', () => {
   });
 
   test('10. 配送单参与商品达标 → 免配送费', async ({ playwright }) => {
-    test.skip(!productIdA || !addressId, '环境造数失败或缺收货地址');
+    expect(productIdA, '前置造数应已建出商品 A（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
+    expect(addressId, '前置造数应已建出收货地址（失败即红，不再 skip 掩盖）').toBeGreaterThan(0);
     const buyerApi = await newAuthedRequest(playwright, buyerToken);
     try {
-      let orderId = 0;
-      try {
-        orderId = await createOrder(buyerApi, { skuId: skuIdA, quantity: 2, deliveryType: 2, addressId });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : '';
-        test.skip(msg.includes('起送'), `社区起送金额限制：${msg}`);
-        return;
-      }
+      // 配送单受社区起送金额约束：数量按实测门槛折算（+1 件留余量，避开金额恰好卡在门槛边界的
+      // 浮点比较），不再「撞上门槛就 skip」——旧写法的 skip 让门槛变化或起送逻辑坏掉都不报警
+      const qty = Math.max(3, Math.ceil((minOrderAmount + 0.01) / PRICE_A) + 1);
+      const orderId = await createOrder(buyerApi, { skuId: skuIdA, quantity: qty, deliveryType: 2, addressId });
       const detail = assertOk(
         (await (await buyerApi.get(`/api/v1/orders/${orderId}`)).json()) as ApiResponse<OrderDetail>,
         '订单详情',
       );
+      expect(detail.total_amount, `下单金额 ${detail.total_amount} 应达起送金额 ${minOrderAmount}`).toBeGreaterThanOrEqual(
+        minOrderAmount,
+      );
       expect(detail.delivery_type).toBe(2);
       // A 商品参与包邮且金额达标 → 配送费为 0（即使环境无活动，社区未配运费时也为 0）
-      expect(detail.delivery_fee).toBe(0);
+      expect(detail.delivery_fee, '参与商品达标应免配送费').toBe(0);
       expect(detail.pay_amount).toBeCloseTo(detail.total_amount - detail.discount_amount, 2);
     } finally {
       await buyerApi.dispose();

@@ -18,6 +18,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/debuglog"
 	"github.com/jcbowen/market/src/backend/common/errcode"
+	"github.com/jcbowen/market/src/backend/common/paynotify"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -712,12 +713,14 @@ func alipayNotifyFields(params map[string]string) map[string]interface{} {
 	return fields
 }
 
-// alipayNotifyEvidence 组装失败回调的取证字段：全量通知参数（含 sign）+ 报文元信息
+// alipayNotifyEvidence 组装失败回调的取证字段：通知参数（sign 原文 + 买家标识脱敏）+ 报文元信息
 // 与成功摘要刻意不同：验签类故障只有拿到原文和签名值才可能复盘——
 // 待验签串由「除 sign/sign_type 外的全部参数按 key 升序拼接」生成，少一个字段就判不出
 // 到底是支付宝没发（如证书序列号缺失）还是我们解析丢了。
 // 落 sign 原文不构成新的伪造面：签名把 out_trade_no、total_amount 一并签死，
 // 改动任一字段即验不过，重放真实通知也只会命中同一笔已支付单的幂等分支。
+// buyer_logon_id/buyer_user_id/buyer_open_id 属个人标识且与验签无关，统一走
+// paynotify.MaskAlipayParams 脱敏，与 payment_notify_logs.raw_body 口径一致。
 // 参数：
 //   - params: url 解析后的通知参数，解析失败时传 nil（此时只有报文元信息可记）
 //   - contentType: 请求 Content-Type（支付宝部分通知不带标准 form 头，是排查线索）
@@ -727,8 +730,9 @@ func alipayNotifyFields(params map[string]string) map[string]interface{} {
 // 返回值：
 //   - map[string]interface{}: 取证字段，通知参数平铺为顶层键
 func alipayNotifyEvidence(params map[string]string, contentType string, bodyLen int, parseErr string) map[string]interface{} {
-	fields := make(map[string]interface{}, len(params)+4)
-	for key, value := range params {
+	masked := paynotify.MaskAlipayParams(params)
+	fields := make(map[string]interface{}, len(masked)+4)
+	for key, value := range masked {
 		fields[key] = value
 	}
 	fields["content_type"] = contentType

@@ -263,11 +263,8 @@ test.describe.serial('商品列表批量上下架与行内改名', () => {
   });
 
   test('5. 状态 Tab 联动：下架商品从「出售中」消失、在「仓库中」可见', async ({ page }) => {
-    // fixme：状态 Tab 当前在页面上完全不渲染（看不到 4 个标签，也无法点选切换），
-    // 根因是 list.vue 用了 NTabs 不存在的 `tabs` 属性传参（naive-ui 2.43.2 tabsProps 无此 prop，
-    // 实际渲染为 tab 文本为空的空壳），需改回 <n-tab-pane> 子节点写法后本用例方可生效。
-    // 缺陷取证见本轮验收记录；产品代码修复未获本轮授权，故标记 fixme 而非删除断言。
-    test.fixme(true, '商品列表状态 Tab 因 :tabs 误用未渲染，待前端修复');
+    // 本用例是 list.vue 状态 Tab 回归判据：曾因 `:tabs="statusTabs"` 误传 NTabs 不存在的 prop
+    // 而整条 Tab 渲染成空壳（看不到任何标签、状态筛选入口消失），2026-10-29 改回 <n-tab-pane> 子节点写法后转绿
     await page.locator('.n-tabs-tab').filter({ hasText: '出售中' }).click();
     await expect(rowOf(page, idA)).toHaveCount(0);
     await expect(rowOf(page, idB)).toHaveCount(0);

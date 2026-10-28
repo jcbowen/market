@@ -10,7 +10,8 @@ import { autoName, uniqueSuffix } from '../helpers/data';
  *   - HTML 品牌注入：/b/ 与 /s/ 入口的 <title>、meta 取自站点设置，后台入口带 noindex、C 端入口带 og 标签
  *   - 服务端兜底：部署域名缺协议/带路径、站点名超长、logo 非法外链整行拒绝且不落库
  *   - 部署域名唯一来源：三条支付回调地址一律按生效域名派生；支付配置页提交伪造 notify_url 被忽略
- *   - 仅超管可写：具备 settings:update 权限的社区管理员写入返回 11005（读仍开放）
+ *   - 仅超管可读写：settings:* 是系统级权限点，不进社区权限上限，社区角色勾了也会在解析时被剥离，
+ *     非超管读与写一律 11005
  * 环境说明：用例把 base_url 设为独立测试域名，期间附件外链与支付回调地址随之派生；
  *           afterAll 无条件恢复原值，并把支付回调地址退回按请求域名派生的本机口径，不把测试域名留在库里；
  *           站点域名保存的联动补写会把空的附件「访问域名」写成测试域名（图片出库地址前缀随之改变，
@@ -203,7 +204,10 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(saved.footer_html, '备案号链接应保留').toContain('https://beian.miit.gov.cn/');
     expect(saved.footer_html).toContain('京ICP备');
     expect(saved.version, `版本号应在 ${before} 基础上递增`).toBeGreaterThan(before);
-    expect(saved.updated_at, '更新时间应刷新').not.toBe(original?.updated_at);
+    // updated_at 精度到秒：用例 1 的读取与本次保存常落在同一秒内，旧断言要求「与快照不相等」
+    // 会偶发失败（flaky 源在此，非产品缺陷）。时间戳只断言不回退，保存推进的确定性依据是 version
+    expect(new Date(saved.updated_at).getTime(), '更新时间不得早于保存前快照')
+      .toBeGreaterThanOrEqual(new Date(original!.updated_at).getTime());
   });
 
   test('3. 页脚富文本消毒：脚本/事件属性/危险链接被清洗后落库', async () => {
@@ -333,7 +337,12 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(saved.alipay?.return_url, '支付宝回跳地址不得被前端改写').toBe(`${eff}${ALIPAY_RETURN_PATH}`);
   });
 
-  test('9. 非超管即便有 settings:update 权限也不得写入站点设置', async ({ playwright }) => {
+  // 站点设置是平台级配置：读写都要求 settings:* 系统级权限点，而系统级码不进社区权限上限
+  // （《04-业务需求/05-权限与数据隔离》），社区语境下 GetAdminContext 取交集后必然被剥离，
+  // 因此即便给社区角色显式勾上 settings:view/update，非超管读与写都应当被拒。
+  // 旧口径断言「有 settings:view 即可读」把「角色表里配了」当成「解析后还有」，与设计的
+  // 系统级收窄相悖，属用例写错而非产品缺陷。
+  test('9. 非超管即便被勾了 settings:* 权限点也不得读写站点设置', async ({ playwright }) => {
     const role = assertOk(
       (await (
         await adminApi.post('/api/v1/admin/roles', {
@@ -369,7 +378,7 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     });
     try {
       const read = (await (await empCtx.get('/api/v1/admin/settings/site')).json()) as ApiResponse;
-      expect(read.code, '有 settings:view 即可读品牌配置').toBe(0);
+      expect(read.code, '系统级权限点不进社区权限上限，非超管读站点设置必须被拒').toBe(11005);
 
       const nameBefore = (await readSite()).site_name;
       const write = (await (

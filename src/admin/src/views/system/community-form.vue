@@ -512,9 +512,14 @@ function confirmRemoveAdmin(row: Account) {
     positiveText: '确定',
     negativeText: '取消',
     onPositiveClick: async () => {
-      await removeCommunityAdmin(Number(route.params.id), row.id)
-      message.success('已卸任')
-      loadAdmins()
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已卸任
+      try {
+        await removeCommunityAdmin(Number(route.params.id), row.id)
+        message.success('已卸任')
+        loadAdmins()
+      } catch {
+        return false
+      }
     },
   })
 }

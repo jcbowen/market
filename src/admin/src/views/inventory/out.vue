@@ -4,7 +4,7 @@
       <n-select v-model:value="outType" :options="typeOptions" placeholder="出库类型" clearable style="width: 140px" />
       <n-date-picker v-model:value="dateRange" type="daterange" clearable />
       <n-button type="primary" :loading="loading" @click="loadData">查询</n-button>
-      <n-button type="primary" @click="router.push('/stock/out/create')">新建出库单</n-button>
+      <n-button v-if="canCreate" type="primary" @click="router.push('/stock/out/create')">新建出库单</n-button>
     </n-space>
     <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" remote @update:page="onPageChange" />
   </n-card>
@@ -13,19 +13,23 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockOut' })
-import { h, ref, onActivated } from 'vue'
+import { h, ref, onActivated, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getStockOutOrderList } from '@/api/inventory'
 import type { StockOutOrder } from '@/api/types'
 import { formatDateTime } from '@/utils/datetime'
+import { useAuthStore } from '@/stores/auth'
 
 /**
  * 出库管理页面
  * 出库单列表（报损/领用/调整），销售出库由订单系统自动完成不在此列
  */
 const router = useRouter()
+// 按钮级权限：页面只要求 inventory:view，建单入口按 inventory:create 收窄（与网关同码）
+const authStore = useAuthStore()
+const canCreate = computed(() => authStore.hasPermission('inventory:create'))
 const outType = ref<number | null>(null)
 const dateRange = ref<[number, number] | null>(null)
 const list = ref<StockOutOrder[]>([])
@@ -73,7 +77,11 @@ function formatDate(timestamp: number | null) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+// 请求序号守卫：快速翻页/切换筛选时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const params: Record<string, unknown> = {
@@ -86,12 +94,14 @@ async function loadData() {
       params.end_date = formatDate(dateRange.value[1])
     }
     const res = await getStockOutOrderList(params as never)
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
   } finally {
-    loading.value = false
+    // 过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
   }
 }
 

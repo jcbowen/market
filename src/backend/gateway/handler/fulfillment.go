@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"strconv"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 
@@ -113,6 +114,36 @@ type ListFulfillmentOrdersReq struct {
 	StatusGroup int32 `form:"status_group"` // 0=进行中 5=已完成/已核销
 }
 
+// fulfillmentStatusText 工作台状态文案（履约视角，不复用 C 端买家文案）
+// 买家口径把 status=4 的配送单说成「待收货」，履约人员看自己是「正在配送」，语义相反；
+// 自提单同理是「待核销」而不是「待自提」。
+// 参数：
+//   - status: 订单状态
+//   - orderType: 单据类型（1=自提核销 2=送货）
+//
+// 返回值：
+//   - string: 展示文案
+func fulfillmentStatusText(status, orderType int32) string {
+	switch status {
+	case 2, 3:
+		if orderType == 1 {
+			return "待核销"
+		}
+		return "待配送"
+	case 4:
+		if orderType == 1 {
+			return "待核销"
+		}
+		return "配送中"
+	case 5:
+		if orderType == 1 {
+			return "已核销"
+		}
+		return "已送达"
+	}
+	return ""
+}
+
 // ListFulfillmentOrders 工作台查单（送货按指派人过滤；自提本社区全部）
 //
 // 接口: GET /api/v1/fulfillment/orders
@@ -152,7 +183,64 @@ func (h *OrderHandler) ListFulfillmentOrders(c *gin.Context) {
 		response.GRPCError(c, err)
 		return
 	}
-	response.Success(c, resp)
+
+	// 不能直接把 proto 回给前端：OrderInfo 没有 items（只有 item_count），也没有 status_text，
+	// 而工作台卡片要列商品名与状态，模板取 order.items.slice() 会当场抛错、整页画不出任何卡片
+	// （2026-10-29 浏览器实测发现）。与 C 端订单列表同口径，并行补明细。
+	// GetOrder 传 UserId=0 跳过买家归属校验：本接口已按「当前社区 + 履约身份 + 送货指派人」三重过滤，
+	// 出现在这里的单本就归该履约人员处理
+	detailCtx := c.Request.Context()
+	itemLists := make([][]gin.H, len(resp.List))
+	var wg sync.WaitGroup
+	for i, o := range resp.List {
+		wg.Add(1)
+		go func(idx int64, orderID int64) {
+			defer wg.Done()
+			detail, err := h.orderClient.GetOrder(detailCtx, &order.GetOrderReq{Id: orderID})
+			if err != nil {
+				// 明细缺失只让该单少列商品，不应整页失败（订单本体字段已在列表里）
+				log.Printf("履约工作台拉取订单明细失败（order=%d）: %v", orderID, err)
+				return
+			}
+			items := make([]gin.H, 0, len(detail.GetItems()))
+			for _, it := range detail.GetItems() {
+				items = append(items, gin.H{
+					"sku_id":       it.SkuId,
+					"product_name": it.ProductName,
+					"spec_name":    it.SpecName,
+					"quantity":     it.Quantity,
+				})
+			}
+			itemLists[idx] = items
+		}(int64(i), o.Id)
+	}
+	wg.Wait()
+
+	list := make([]gin.H, 0, len(resp.List))
+	for i, o := range resp.List {
+		items := itemLists[i]
+		if items == nil {
+			items = make([]gin.H, 0)
+		}
+		// 不回 pickup_code：取货码由顾客在详情页出示，回给履约端等于给了可截图冒领的凭据
+		list = append(list, gin.H{
+			"id":                    o.Id,
+			"order_no":              o.OrderNo,
+			"status":                o.Status,
+			"status_text":           fulfillmentStatusText(o.Status, req.OrderType),
+			"delivery_type":         o.DeliveryType,
+			"contact_name":          o.ContactName,
+			"contact_phone":         o.ContactPhone,
+			"contact_address":       o.ContactAddress,
+			"pay_amount":            o.PayAmount,
+			"delivery_user_id":      o.DeliveryUserId,
+			"delivery_user_name":    o.DeliveryUserName,
+			"delivery_proof_images": o.DeliveryProofImages,
+			"created_at":            o.CreatedAt,
+			"items":                 items,
+		})
+	}
+	response.SuccessWithPage(c, list, int(resp.GetPagination().GetTotal()), page, pageSize)
 }
 
 // FulfillmentOrderActionReq 工作台订单操作请求（核销码）

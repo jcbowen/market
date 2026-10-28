@@ -1,12 +1,27 @@
 import { test, expect } from '@playwright/test';
-import { clientLogin, newAuthedRequest, pickSku, type ApiResponse, type PageData } from '../helpers/api';
+import {
+  clientLogin,
+  createFulfillerStaff,
+  ensureStock,
+  newAdminContext,
+  newAuthedRequest,
+  pickSku,
+  removeFulfillerStaff,
+  type ApiResponse,
+  type ClientLoginInfo,
+  type SkuRef,
+} from '../helpers/api';
 import { uniquePhone } from '../helpers/data';
 import type { Playwright } from '@playwright/test';
 
 /**
  * 模块 06：支付单查询 + 履约工作台
  * 覆盖：支付单详情与归属校验、支付渠道列表、微信回调签名拒绝、
- *       履约状态、自提核销、开始/完成配送（依赖履约人员账号，非履约则跳过）
+ *       履约身份（是/否两向）、自提核销（错误码拒绝、正确码核销、重复核销拒绝）
+ * 说明：履约人员 = 本社区任职且绑定会员的员工（判定见 services/user/service/user.go CheckFulfiller），
+ *       身份一律本轮造数（createFulfillerStaff），不再探测环境预置账号后按条件 skip——
+ *       旧口径下探测读的是「data 是否非空」而非 data.is_fulfiller，恒判为真，
+ *       正向核销必撞 11005「非本社区履约人员」，两条用例双双跳过属假绿。
  */
 
 interface OrderInfo {
@@ -17,20 +32,77 @@ interface OrderInfo {
   pickup_code?: string;
 }
 
+/** 买家（本轮不绑履约身份，用作「非履约人员」反向口径） */
 let api: Awaited<ReturnType<typeof newAuthedRequest>>;
-let userId: number;
+/** 履约人员（C 端会员 + 绑定它的员工账号） */
+let fulfillerApi: Awaited<ReturnType<typeof newAuthedRequest>>;
+let adminApi: Awaited<ReturnType<typeof newAuthedRequest>>;
 let communityId = 0;
+let adminCommunityId = 0;
+/** 绑定履约会员的员工账号 ID（afterAll 解绑，不给库里留履约身份） */
+let staffId = 0;
+let sku: SkuRef;
+
+/**
+ * 新建 C 端会员并返回社区语境已绑定的登录信息
+ * - 函数名: newClientUser
+ * - 参数: request — Playwright 请求上下文
+ * - 返回: Promise<ClientLoginInfo>（user.community_id > 0，access_token 的 JWT 已含该社区）
+ * - 异常: 登录失败或环境无可用社区时由 clientLogin 抛 Error
+ * 说明: clientLogin 首登才自动绑社区，登录时签发的 JWT 不含 community_id，
+ * 依赖社区语境的接口（下单）会报参数错误，故同号登两次。
+ */
+async function newClientUser(request: Playwright['request']): Promise<ClientLoginInfo> {
+  const phone = uniquePhone();
+  await clientLogin(request, phone);
+  return clientLogin(request, phone);
+}
 
 test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
-  const info = await clientLogin(playwright.request, uniquePhone());
-  userId = info.user.id;
-  communityId = info.user.community_id;
-  api = await newAuthedRequest(playwright, info.access_token);
+  const buyer = await newClientUser(playwright.request);
+  communityId = buyer.user.community_id;
+  api = await newAuthedRequest(playwright, buyer.access_token);
+
+  const fulfiller = await newClientUser(playwright.request);
+  // 买家与履约人员必须同社区：核销在归属层按「订单社区 == 操作者社区」二次收口
+  expect(fulfiller.user.community_id, '本轮两个会员应落在同一社区').toBe(communityId);
+  fulfillerApi = await newAuthedRequest(playwright, fulfiller.access_token);
+
+  // 造数失败不 try/catch 置空后 skip：那会让链路坏了也报绿
+  const admin = await newAdminContext(playwright, undefined, undefined, communityId);
+  adminApi = admin.api;
+  adminCommunityId = admin.communityId;
+  sku = await pickSku(adminApi, undefined, communityId);
+  await ensureStock(adminApi, sku.id, 100);
+  staffId = await createFulfillerStaff(adminApi, adminCommunityId, fulfiller.user.id);
 });
 
 test.afterAll(async () => {
+  if (adminApi && staffId) {
+    const warns = await removeFulfillerStaff(adminApi, staffId);
+    for (const w of warns) console.log(`[履约] ${w}`);
+  }
   await api?.dispose();
+  await fulfillerApi?.dispose();
+  await adminApi?.dispose();
 });
+
+/**
+ * 创建自提订单（不支付）
+ * - 函数名: createPickupOrder
+ * - 参数: skuId — SKU ID；quantity — 数量（同用户连续下单时错开 5s 防重复指纹）
+ * - 返回: Promise<OrderInfo>
+ * - 异常: 下单失败时抛出 Error
+ */
+async function createPickupOrder(skuId: number, quantity = 1): Promise<OrderInfo> {
+  const body = (await (
+    await api.post('/api/v1/orders', {
+      data: { delivery_type: 1, address_id: 0, items: [{ sku_id: skuId, quantity }] },
+    })
+  ).json()) as ApiResponse<OrderInfo>;
+  if (body.code !== 0) throw new Error(`下单失败 ${body.message}`);
+  return body.data as OrderInfo;
+}
 
 /**
  * 创建自提订单并 cash 支付（进入待提货状态）
@@ -89,30 +161,29 @@ test.describe('支付单查询与回调安全', () => {
     }
   });
 
-  test('支付单详情仅本人订单可查（归属校验）', async () => {
-    let sku;
-    try {
-      sku = await pickSku(api, undefined, communityId);
-    } catch {
-      test.skip(true, '环境无可用 SKU');
-      return;
-    }
-    const order = await createPaidPickupOrder(sku.id);
-    const payResp = await api.post('/api/v1/payments', { data: { order_id: order.id, channel: 'cash' } });
-    const payBody = (await payResp.json()) as ApiResponse<{ id?: number; payment_no?: string }>;
-    if (payBody.code !== 0 || !payBody.data?.id) {
-      test.skip(true, '重复支付被拒或无支付单 ID，跳过详情断言');
-      return;
-    }
-    const detail = (await (await api.get(`/api/v1/payments/${payBody.data.id}`)).json()) as ApiResponse;
-    expect(detail.code).toBe(0);
+  test('支付单详情仅本人订单可查（归属校验）', async ({ playwright }) => {
+    // 待支付单建一次支付即可读详情；旧写法先 cash 支付再重复建单，第二次必被
+    // 「订单当前状态不可支付」拒绝，用例落进 skip 分支——那不是环境限制，是用例造数错了。
+    // 路径参数是订单 ID（handler 按 GetOrderReq{Id,UserId} 校验归属，见 C 端 getPayment(orderId)）
+    const order = await createPickupOrder(sku.id);
+    const payBody = (await (
+      await api.post('/api/v1/payments', { data: { order_id: order.id, channel: 'cash' } })
+    ).json()) as ApiResponse<{ payment_no?: string; amount?: number }>;
+    expect(payBody.code, `创建支付单应成功: ${payBody.message}`).toBe(0);
+    expect(payBody.data?.payment_no ?? '', '应返回支付单号').not.toBe('');
+
+    const detail = (await (await api.get(`/api/v1/payments/${order.id}`)).json()) as ApiResponse<{
+      payment_no?: string;
+    }>;
+    expect(detail.code, '本人可查自己订单的支付单').toBe(0);
+    expect(detail.data?.payment_no, '详情应回显同一支付单号').toBe(payBody.data?.payment_no);
 
     // 他人不可查
-    const other = await clientLogin(playwright.request, uniquePhone());
-    const otherApi = await newAuthedRequest(playwright, other.accessToken);
+    const other = await newClientUser(playwright.request);
+    const otherApi = await newAuthedRequest(playwright, other.access_token);
     try {
-      const stranger = (await (await otherApi.get(`/api/v1/payments/${payBody.data.id}`)).json()) as ApiResponse;
-      expect(stranger.code).not.toBe(0);
+      const stranger = (await (await otherApi.get(`/api/v1/payments/${order.id}`)).json()) as ApiResponse;
+      expect(stranger.code, '他人订单的支付单不得可读').not.toBe(0);
     } finally {
       await otherApi.dispose();
     }
@@ -120,13 +191,6 @@ test.describe('支付单查询与回调安全', () => {
 
   test('支付状态免登录查询（凭不可枚举支付单号）', async ({ request }) => {
     // 场景：支付宝回跳结果页在系统浏览器打开（无登录态），凭支付单号轮询公开接口
-    let sku;
-    try {
-      sku = await pickSku(api, undefined, communityId);
-    } catch {
-      test.skip(true, '环境无可用 SKU');
-      return;
-    }
     // quantity=2 错开同用户重复下单指纹（上一用例已用 quantity=1 下过单）
     const orderResp = await api.post('/api/v1/orders', {
       data: { delivery_type: 1, address_id: 0, items: [{ sku_id: sku.id, quantity: 2 }] },
@@ -155,7 +219,7 @@ test.describe('支付单查询与回调安全', () => {
     expect(pubBody.data?.order_id).toBe(orderId);
 
     // 伪造单号被拒
-    const fake = await request.get('/api/v1/payments/status?no=ZFnot-exist');
+    const fake = await request.get(`/api/v1/payments/status?no=ZFnot-exist`);
     const fakeBody = (await fake.json()) as ApiResponse;
     expect(fakeBody.code, '不存在的支付单号应被拒绝').not.toBe(0);
 
@@ -179,82 +243,64 @@ test.describe('支付单查询与回调安全', () => {
 });
 
 test.describe.serial('履约工作台', () => {
-  let isFulfiller = false;
+  test('履约身份两向：绑定会员的员工为真，未绑定的买家为假', async () => {
+    const fBody = (await (await fulfillerApi.get('/api/v1/user/fulfillment-status')).json()) as ApiResponse<{
+      is_fulfiller: boolean;
+      community_id: number;
+    }>;
+    expect(fBody.code).toBe(0);
+    expect(fBody.data?.is_fulfiller, '已绑定会员的本社区员工应是履约人员').toBe(true);
 
-  test('履约身份探测', async () => {
-    const resp = await api.get('/api/v1/user/fulfillment-status');
-    const body = (await resp.json()) as ApiResponse<{ is_fulfiller?: boolean } | null>;
-    isFulfiller = body.code === 0 && Boolean(body.data);
-    if (!isFulfiller) {
-      console.log('[履约] 当前测试账号不是履约人员，核销/配送用例将跳过');
-    }
+    const bBody = (await (await api.get('/api/v1/user/fulfillment-status')).json()) as ApiResponse<{
+      is_fulfiller: boolean;
+    }>;
+    expect(bBody.code).toBe(0);
+    expect(bBody.data?.is_fulfiller, '未绑定会员的普通买家不是履约人员').toBe(false);
   });
 
   test('非履约人员访问工作台被拒绝', async () => {
-    if (isFulfiller) test.skip(true, '当前账号是履约人员，反向用例不适用');
     const resp = await api.get('/api/v1/fulfillment/orders');
     const body = (await resp.json()) as ApiResponse;
-    expect(body.code).not.toBe(0);
+    // 11005=无权限（网关 checkFulfiller 对本社区无履约身份者直接拒绝）
+    expect(body.code, '非履约人员必须被拒').toBe(11005);
   });
 
   test('自提单核销：取货码错误被拒绝', async () => {
     test.setTimeout(60_000);
-    if (!isFulfiller) test.skip(true, '需要履约人员身份');
-    let sku;
-    try {
-      sku = await pickSku(api, undefined, communityId);
-    } catch {
-      test.skip(true, '环境无有库存 SKU');
-      return;
-    }
-    const order = await createPaidPickupOrder(sku.id, 2);
+    const order = await createPaidPickupOrder(sku.id, 3);
     const detail = await getOrder(order.id);
-    const wrongCode = '00000000';
-    if (detail.pickup_code === wrongCode) test.skip(true, '取货码恰好为 00000000，跳过');
+    // 取货码是 8 位随机串：从候选里取一个「必然不等于真实码」的值，
+    // 替掉旧写法里「恰好撞上 00000000 就 skip」的条件分支
+    const wrongCode = ['00000000', '11111111', '22222222'].find((c) => c !== detail.pickup_code)!;
 
-    const resp = await api.post(`/api/v1/fulfillment/orders/${order.id}/verify-pickup`, {
-      data: { pickup_code: wrongCode },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    // 11005=非本社区履约人员（预置履约身份与测试用户社区不一致时无法核销）
-    if (body.code === 11005) {
-      console.log('[履约] 测试用户履约身份与订单社区不一致，核销用例跳过');
-      test.skip(true, '履约身份社区不匹配');
-      return;
-    }
-    expect(body.code, '错误取货码必须被拒绝').not.toBe(0);
+    const body = (await (
+      await fulfillerApi.post(`/api/v1/fulfillment/orders/${order.id}/verify-pickup`, {
+        data: { pickup_code: wrongCode },
+      })
+    ).json()) as ApiResponse;
+    // 10004=操作不被允许（服务层 errPickupCodeMismatch：FailedPrecondition）
+    expect(body.code, '错误取货码必须被拒绝').toBe(10004);
+    expect((await getOrder(order.id)).status, '核销失败后订单仍停在待提货').not.toBe(5);
   });
 
   test('自提单核销：正确取货码核销成功且不可重复核销', async () => {
-    if (!isFulfiller) test.skip(true, '需要履约人员身份');
-    let sku;
-    try {
-      sku = await pickSku(api, undefined, communityId);
-    } catch {
-      test.skip(true, '环境无有库存 SKU');
-      return;
-    }
-    const order = await createPaidPickupOrder(sku.id, 3);
+    test.setTimeout(60_000);
+    const order = await createPaidPickupOrder(sku.id, 4);
     const detail = await getOrder(order.id);
-    const code = detail.pickup_code;
-    if (!code) {
-      test.skip(true, '订单详情未返回取货码，需人工确认字段');
-      return;
-    }
+    const code = detail.pickup_code ?? '';
+    // 字段缺失属产品契约破坏，必须红而不是 skip
+    expect(code, '自提单详情应下发取货码').not.toBe('');
+
     const ok = (await (
-      await api.post(`/api/v1/fulfillment/orders/${order.id}/verify-pickup`, { data: { pickup_code: code } })
+      await fulfillerApi.post(`/api/v1/fulfillment/orders/${order.id}/verify-pickup`, { data: { pickup_code: code } })
     ).json()) as ApiResponse;
-    if (ok.code === 11005) {
-      console.log('[履约] 测试用户履约身份与订单社区不一致，核销用例跳过');
-      test.skip(true, '履约身份社区不匹配');
-      return;
-    }
     expect(ok.code, `核销失败 ${ok.message}`).toBe(0);
+    expect((await getOrder(order.id)).status, '核销后订单置为已完成').toBe(5);
 
     const again = (await (
-      await api.post(`/api/v1/fulfillment/orders/${order.id}/verify-pickup`, { data: { pickup_code: code } })
+      await fulfillerApi.post(`/api/v1/fulfillment/orders/${order.id}/verify-pickup`, { data: { pickup_code: code } })
     ).json()) as ApiResponse;
-    expect(again.code, '重复核销必须被拒绝').not.toBe(0);
+    expect(again.code, '重复核销必须被拒绝').toBe(10004);
   });
 });
 

@@ -17,12 +17,15 @@ const defaultRPCTimeout = 15 * time.Second
 // longRPCTimeouts 按 gRPC 全方法名覆写超时：批量导入/附件迁移是「分钟内」的正常耗时，
 // 不能用缺省值截断；其余方法不在此表内，一律走 defaultRPCTimeout
 // 键取生成代码里的 FullMethodName 常量，避免手写字符串与方法改名后静默失效
+// DeleteAttachmentLocalVerified 也在表内：它单次最多同步删 migrateScanLimit（2 万）个本地文件，
+// 被缺省 deadline 截断会停在「文件已删、状态未回写」的中间态
 var longRPCTimeouts = map[string]time.Duration{
-	product.ProductService_PreviewDataImport_FullMethodName:     2 * time.Minute,
-	product.ProductService_ImportDataPackage_FullMethodName:     10 * time.Minute,
-	product.ProductService_ScanAttachmentMigrate_FullMethodName: 5 * time.Minute,
-	product.ProductService_MigrateAttachmentItem_FullMethodName: 2 * time.Minute,
-	product.ProductService_ListAttachmentMigrate_FullMethodName: 2 * time.Minute,
+	product.ProductService_PreviewDataImport_FullMethodName:             2 * time.Minute,
+	product.ProductService_ImportDataPackage_FullMethodName:             10 * time.Minute,
+	product.ProductService_ScanAttachmentMigrate_FullMethodName:         5 * time.Minute,
+	product.ProductService_MigrateAttachmentItem_FullMethodName:         2 * time.Minute,
+	product.ProductService_ListAttachmentMigrate_FullMethodName:         2 * time.Minute,
+	product.ProductService_DeleteAttachmentLocalVerified_FullMethodName: 5 * time.Minute,
 }
 
 // defaultDeadlineUnaryInterceptor 为没有截止时间的调用补上缺省 deadline

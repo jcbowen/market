@@ -45,6 +45,7 @@ const (
 	OrderService_GetUserFrequentProducts_FullMethodName  = "/order.OrderService/GetUserFrequentProducts"
 	OrderService_GetUserOrderStatusCounts_FullMethodName = "/order.OrderService/GetUserOrderStatusCounts"
 	OrderService_PreviewFreeShipping_FullMethodName      = "/order.OrderService/PreviewFreeShipping"
+	OrderService_PreviewCouponEligibility_FullMethodName = "/order.OrderService/PreviewCouponEligibility"
 	OrderService_CreatePosHeldOrder_FullMethodName       = "/order.OrderService/CreatePosHeldOrder"
 	OrderService_ListPosHeldOrders_FullMethodName        = "/order.OrderService/ListPosHeldOrders"
 	OrderService_DeletePosHeldOrder_FullMethodName       = "/order.OrderService/DeletePosHeldOrder"
@@ -111,6 +112,8 @@ type OrderServiceClient interface {
 	GetUserOrderStatusCounts(ctx context.Context, in *GetUserOrderStatusCountsReq, opts ...grpc.CallOption) (*GetUserOrderStatusCountsResp, error)
 	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
 	PreviewFreeShipping(ctx context.Context, in *PreviewFreeShippingReq, opts ...grpc.CallOption) (*PreviewFreeShippingResp, error)
+	// 券可用性试算：按券适用范围计算门槛与抵扣（C 端确认页，避免前端按全车金额误判后提交被打回）
+	PreviewCouponEligibility(ctx context.Context, in *PreviewCouponEligibilityReq, opts ...grpc.CallOption) (*PreviewCouponEligibilityResp, error)
 	// 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
 	CreatePosHeldOrder(ctx context.Context, in *CreatePosHeldOrderReq, opts ...grpc.CallOption) (*PosHeldOrderInfo, error)
 	ListPosHeldOrders(ctx context.Context, in *ListPosHeldOrdersReq, opts ...grpc.CallOption) (*ListPosHeldOrdersResp, error)
@@ -407,6 +410,16 @@ func (c *orderServiceClient) PreviewFreeShipping(ctx context.Context, in *Previe
 	return out, nil
 }
 
+func (c *orderServiceClient) PreviewCouponEligibility(ctx context.Context, in *PreviewCouponEligibilityReq, opts ...grpc.CallOption) (*PreviewCouponEligibilityResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PreviewCouponEligibilityResp)
+	err := c.cc.Invoke(ctx, OrderService_PreviewCouponEligibility_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orderServiceClient) CreatePosHeldOrder(ctx context.Context, in *CreatePosHeldOrderReq, opts ...grpc.CallOption) (*PosHeldOrderInfo, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PosHeldOrderInfo)
@@ -633,6 +646,8 @@ type OrderServiceServer interface {
 	GetUserOrderStatusCounts(context.Context, *GetUserOrderStatusCountsReq) (*GetUserOrderStatusCountsResp, error)
 	// 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
 	PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error)
+	// 券可用性试算：按券适用范围计算门槛与抵扣（C 端确认页，避免前端按全车金额误判后提交被打回）
+	PreviewCouponEligibility(context.Context, *PreviewCouponEligibilityReq) (*PreviewCouponEligibilityResp, error)
 	// 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
 	CreatePosHeldOrder(context.Context, *CreatePosHeldOrderReq) (*PosHeldOrderInfo, error)
 	ListPosHeldOrders(context.Context, *ListPosHeldOrdersReq) (*ListPosHeldOrdersResp, error)
@@ -753,6 +768,9 @@ func (UnimplementedOrderServiceServer) GetUserOrderStatusCounts(context.Context,
 }
 func (UnimplementedOrderServiceServer) PreviewFreeShipping(context.Context, *PreviewFreeShippingReq) (*PreviewFreeShippingResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewFreeShipping not implemented")
+}
+func (UnimplementedOrderServiceServer) PreviewCouponEligibility(context.Context, *PreviewCouponEligibilityReq) (*PreviewCouponEligibilityResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewCouponEligibility not implemented")
 }
 func (UnimplementedOrderServiceServer) CreatePosHeldOrder(context.Context, *CreatePosHeldOrderReq) (*PosHeldOrderInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreatePosHeldOrder not implemented")
@@ -1279,6 +1297,24 @@ func _OrderService_PreviewFreeShipping_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_PreviewCouponEligibility_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PreviewCouponEligibilityReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).PreviewCouponEligibility(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_PreviewCouponEligibility_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).PreviewCouponEligibility(ctx, req.(*PreviewCouponEligibilityReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrderService_CreatePosHeldOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreatePosHeldOrderReq)
 	if err := dec(in); err != nil {
@@ -1709,6 +1745,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PreviewFreeShipping",
 			Handler:    _OrderService_PreviewFreeShipping_Handler,
+		},
+		{
+			MethodName: "PreviewCouponEligibility",
+			Handler:    _OrderService_PreviewCouponEligibility_Handler,
 		},
 		{
 			MethodName: "CreatePosHeldOrder",

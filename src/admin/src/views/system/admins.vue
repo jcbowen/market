@@ -204,17 +204,22 @@ async function searchMembers(query: string) {
   }
 }
 
+// 请求序号守卫：快速翻页/搜索时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const res = await getAdminList({ page: pagination.value.page, page_size: pagination.value.pageSize, keyword: keyword.value })
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
   } finally {
-    // 请求异常时也必须关闭 loading，避免页面永久转圈
-    loading.value = false
+    // 请求异常时也必须关闭 loading，避免页面永久转圈；过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -313,10 +318,13 @@ function remove(row: AdminInfo) {
     positiveText: '移除',
     negativeText: '取消',
     onPositiveClick: async () => {
-      const res = await deleteAdmin(row.id)
-      if (res.data.code === 0) {
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已移除
+      try {
+        await deleteAdmin(row.id)
         message.success('已移除')
         loadData()
+      } catch {
+        return false
       }
     },
   })

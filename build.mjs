@@ -217,17 +217,25 @@ for (const [goos, arch] of TARGET_PLATFORMS) {
   // 其余服务有限并发；失败项收集后走 runWithRepair 串行重试（可自动 go mod tidy）
   const rest = SERVICES.filter((svc) => svc !== 'gateway');
   const failed = [];
+  let firstError = null;
   await runLimited(
     SERVICE_PARALLEL,
     rest.map((svc) => async () => {
       try {
         await buildOnePlain(goos, arch, svc);
-      } catch {
+      } catch (err) {
+        // 保留首个失败的原始错误文本：并发阶段的错误此前被丢弃，重试若再失败
+        // 只能看到重试侧的输出，编译错误原文（go build stderr）无从查起
+        if (!firstError) firstError = { svc, err };
         failed.push(svc);
       }
     }),
   );
   for (const svc of failed) {
+    if (firstError && firstError.svc === svc) {
+      console.error(`    并发阶段首个失败（${svc}）原文：`);
+      console.error(String(firstError.err?.stderr || firstError.err?.message || firstError.err));
+    }
     console.log(`    重试（含依赖修复）: ${svc} ...`);
     await buildOne(goos, arch, svc);
   }

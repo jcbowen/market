@@ -51,6 +51,8 @@ service OrderService {
   rpc GetUserOrderStatusCounts(GetUserOrderStatusCountsReq) returns (GetUserOrderStatusCountsResp);
   // 免配送费试算：按商品清单计算当前社区免配送费活动命中情况（C 端确认页展示）
   rpc PreviewFreeShipping(PreviewFreeShippingReq) returns (PreviewFreeShippingResp);
+  // 券可用性试算：按券适用范围计算门槛与抵扣（C 端确认页，避免前端按全车金额误判后提交被打回）
+  rpc PreviewCouponEligibility(PreviewCouponEligibilityReq) returns (PreviewCouponEligibilityResp);
   // 收银台挂单：暂存/列表/删除（草稿不生成正式订单、不占库存，决策点⑥）
   rpc CreatePosHeldOrder(CreatePosHeldOrderReq) returns (PosHeldOrderInfo);
   rpc ListPosHeldOrders(ListPosHeldOrdersReq) returns (ListPosHeldOrdersResp);
@@ -169,6 +171,9 @@ message GetExportTaskFileResp {
 
 message DeleteExportTaskReq {
   int64 id = 1;
+  // 操作者身份：服务层独立校验「仅超管」，不依赖网关闸门（网关漏配或内网直调同样拦得住）
+  int64 admin_id = 2;
+  bool super_admin = 3;
 }
 
 message CountUndownloadedReq {
@@ -241,6 +246,33 @@ message PreviewFreeShippingResp {
   repeated string excluded_names = 6;
   // 基础配送费（社区配置值；free_shipping=true 时订单实际配送费为 0）
   double delivery_fee = 7;
+}
+
+// --- 券可用性试算（C 端确认页） ---
+message PreviewCouponEligibilityReq {
+  int64 community_id = 1;
+  int64 user_id = 2;
+  repeated PreviewFreeShippingItem items = 3;
+  // 待试算的券 ID（用户券对应的 coupons.id，非 user_coupons.id）
+  repeated int64 coupon_ids = 4;
+}
+
+message CouponEligibility {
+  int64 coupon_id = 1;
+  // 是否可用（门槛按券范围内商品金额判定，与下单校验同一口径）
+  bool available = 2;
+  // 硬阻断原因（券已失效/使用条件变更）；门槛差额由前端按 threshold 与 eligible_amount 组文案
+  string reason = 3;
+  // 券范围内商品金额（门槛与优惠基数）
+  double eligible_amount = 4;
+  // 门槛（用户券发放时的快照值，与下单校验一致）
+  double threshold = 5;
+  // 预计抵扣金额（不可用时为 0）
+  double discount_amount = 6;
+}
+
+message PreviewCouponEligibilityResp {
+  repeated CouponEligibility list = 1;
 }
 
 message GetOrderReq {

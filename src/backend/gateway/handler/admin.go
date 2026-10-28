@@ -2629,7 +2629,11 @@ func (h *AdminHandler) DeleteOrderExportTask(c *gin.Context) {
 		response.Error(c, errcode.ParamError, "任务 ID 无效")
 		return
 	}
-	if _, err := h.orderClient.DeleteExportTask(c.Request.Context(), &order.DeleteExportTaskReq{Id: id}); err != nil {
+	if _, err := h.orderClient.DeleteExportTask(c.Request.Context(), &order.DeleteExportTaskReq{
+		Id:         id,
+		AdminId:    appcontext.GetUserContext(c).UserID,
+		SuperAdmin: gwMiddleware.IsSuperAdmin(c),
+	}); err != nil {
 		response.GRPCError(c, err)
 		return
 	}
@@ -5246,7 +5250,10 @@ func (h *AdminHandler) communityBusinessRefs(c *gin.Context, id int64) string {
 	}
 	orders, err := h.orderClient.ListOrders(c.Request.Context(), &order.ListOrdersReq{
 		CommunityId: id,
-		Pagination:  one,
+		// 删除守卫必须看全量：C 端软删只影响会员自己的列表，
+		// 漏掉这一项会让「订单全被会员删过」的社区判定为无引用，删掉后留下孤儿订单
+		IncludeUserDeleted: true,
+		Pagination:         one,
 	})
 	if err != nil {
 		return "订单数据查询失败，未能确认该社区是否仍有订单，请稍后重试"

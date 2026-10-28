@@ -8,7 +8,8 @@ import { uniquePhone } from '../helpers/data';
  *       → cash（货到付款口径）创建即成功并同步订单已支付 → 已支付订单再次发起支付被拦截
  *       →（条件）待支付单重复发起同渠道支付复用同一支付单号（需环境配置微信渠道）
  * 说明：复用逻辑仅适用于微信/支付宝等第三方渠道（payment.go findReusablePendingPayment），
- *       现金/货到付款创建即成功无待支付态；环境无微信配置时复用用例自动 skip
+ *       现金/货到付款创建即成功无待支付态；环境无微信配置时复用用例按凭据依赖白名单 skip
+ *       （scripts/check-test-integrity.mjs CREDENTIAL_GATED_CASES），部署环境配好渠道后应移出白名单实测
  */
 
 interface Channel {
@@ -132,7 +133,10 @@ test.describe.serial('支付单幂等', () => {
   });
 
   test('（条件）待支付单重复发起同渠道支付复用同一支付单号', async () => {
-    test.skip(!wechatAvailable, '环境未配置微信渠道，复用逻辑无法实测');
+    // 复用逻辑（findReusablePendingPayment）只在第三方渠道创建待支付支付单时生效，
+    // 本地测试服无微信/支付宝凭据造不出该态：按脚本白名单登记为凭据依赖跳过
+    // （负向分支「未配置渠道发起支付被拒」已由上方用例覆盖，见 check-test-integrity.mjs CREDENTIAL_GATED_CASES）
+    test.skip(!wechatAvailable, '需第三方渠道凭据：环境未下发微信渠道，复用分支无法实测');
     const fresh = await createPickupOrder(skuId, 4);
     const first = (await (await api.post('/api/v1/payments', { data: { order_id: fresh.id, channel: 'wechat' } })).json()) as ApiResponse<PaymentResp>;
     expect(first.code, `首次微信支付失败: ${first.message}`).toBe(0);

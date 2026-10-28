@@ -221,7 +221,11 @@ function onSearch() {
 /**
  * 加载会员列表
  */
+// 请求序号守卫：快速翻页/搜索时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadUsers() {
+  const seq = ++loadSeq
   userLoading.value = true
   try {
     const res = await getUserList({
@@ -230,10 +234,12 @@ async function loadUsers() {
       keyword: userKeyword.value,
       status_filter: statusFilter.value,
     })
+    if (seq !== loadSeq) return
     users.value = res.data.data.list
     userPageCount.value = Math.ceil(res.data.data.total / pageSize) || 1
   } finally {
-    userLoading.value = false
+    // 过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) userLoading.value = false
   }
 }
 
@@ -282,9 +288,15 @@ function confirmSetStatus(row: User, status: number) {
     positiveText: '确定',
     negativeText: '取消',
     onPositiveClick: async () => {
-      await setUserStatus(row.id, status)
-      message.success(`${action}成功`)
-      loadUsers()
+      // 失败时不提示成功、不刷新列表（异常提示由请求拦截器统一弹出）
+      try {
+        await setUserStatus(row.id, status)
+        message.success(`${action}成功`)
+        loadUsers()
+      } catch {
+        // 返回 false 阻止 naive-ui 关闭弹窗；错误提示由请求拦截器统一弹出
+        return false
+      }
     },
   })
 }

@@ -160,12 +160,18 @@ export const useUserStore = defineStore('user', () => {
 
   /**
    * 从服务端拉取最新用户信息
+   * 失败时由请求拦截器统一提示，并保留本地缓存（不抛出）：
+   * 页面多在 onShow 里直接调用，未捕获的 rejection 会成为全局未处理错误
    */
   async function fetchUserInfo() {
     if (!isLogin.value) return
-    const res = await getUserInfo()
-    if (res.data) {
-      setUserInfo(res.data)
+    try {
+      const res = await getUserInfo()
+      if (res.data) {
+        setUserInfo(res.data)
+      }
+    } catch {
+      // 错误提示由请求拦截器统一弹出，本地用户信息维持原值
     }
   }
 

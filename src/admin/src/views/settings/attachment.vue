@@ -158,15 +158,18 @@ async function save() {
     await updateAttachmentSetting({ ...form })
     message.success('附件配置已保存，保存后即时生效，无需重启服务')
   } catch (err) {
-    // 非冲突错误已由请求拦截器统一提示，直接结束；
+    // 非冲突错误已由请求拦截器统一提示，表单保留用户输入；
     // 版本冲突仍要重拉配置刷新 updated_at，否则按同一份旧表单重试会一直撞同一个冲突
     if ((err as BizError).code !== CODE_DATA_CONFLICT) {
       return
     }
+    // 重拉会把表单换成服务端最新值，未保存的编辑随之丢弃：必须说明原因，不做静默替换
+    message.warning('配置已被他人更新，已刷新为最新配置，请重新填写后再保存')
   } finally {
     saving.value = false
   }
-  await load()
+  // 重拉失败只影响版本号展示，本次结论（成功/冲突）都已提示，不能让 Promise 落成未处理拒绝
+  await load().catch(() => undefined)
 }
 
 // keep-alive 缓存下切回本页不重新挂载，需重新拉取：

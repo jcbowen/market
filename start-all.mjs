@@ -322,11 +322,12 @@ await runWithRepair(ctx, 'docker', [
   'exec', 'market-gateway', './market-admin', 'init', '--timeout', '300',
 ], { cwd: ROOT_DIR, step: '初始化超管与演示种子' });
 
-// 等待 Gateway 健康
+// 等待 Gateway 健康（端口取配置文件，与下方成功提示同源，改端口后不会假超时）
 console.log('==> 等待 Gateway 就绪...');
+const gatewayPort = loadGatewayPort();
 for (let i = 1; i <= 60; i++) {
   try {
-    const res = await fetch('http://localhost:18080/health');
+    const res = await fetch(`http://localhost:${gatewayPort}/health`);
     if (res.status === 200) {
       console.log('    Gateway 已就绪');
       break;
@@ -334,7 +335,7 @@ for (let i = 1; i <= 60; i++) {
   } catch { /* 未就绪，继续等待 */ }
   await sleep(1000);
   if (i === 60) {
-    console.error('错误: Gateway 启动超时');
+    console.error(`错误: Gateway 启动超时（探测 http://localhost:${gatewayPort}/health）`);
     process.exit(1);
   }
 }
@@ -342,7 +343,6 @@ for (let i = 1; i <= 60; i++) {
 console.log('');
 console.log('==============================================');
 console.log('项目启动成功！');
-const gatewayPort = loadGatewayPort();
 console.log(`  管理后台: http://localhost:${gatewayPort}/b/`);
 console.log(`  C 端 H5:  http://localhost:${gatewayPort}/s/`);
 console.log(`  健康检查: http://localhost:${gatewayPort}/health`);

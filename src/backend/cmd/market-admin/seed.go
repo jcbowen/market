@@ -7,7 +7,8 @@ package main
 //   2. 社区域段：商品目录 / Banner / 营销 / 满免邮 / 用户券与购物车 / 演示样本
 //     （逐社区导入，条目按 community_key 只落自身归属社区）
 // 口径与原 SQL 导入一致：仅 communities 表为空时执行，已有业务数据一律跳过；
-// APP_ENV=production 一律拒绝（演示数据含弱口令账号）。
+// APP_ENV=production 一律拒绝（演示数据含弱口令账号）；非生产环境还须显式设置
+// MARKET_ALLOW_DEMO_SEED=1 才导入，避免漏配 APP_ENV 的对外环境静默灌入弱口令账号。
 
 import (
 	"context"
@@ -32,11 +33,26 @@ func seedDemoPackage(inst *mysql.Instance, timeoutSec int) {
 		fmt.Println("==> [market-admin] APP_ENV=production，跳过演示种子导入")
 		return
 	}
+	// 非生产的二次确认：漏配 APP_ENV（如对外环境忘设 production）时，此前会静默灌入
+	// 演示数据——其中 admin/admin123、13800138000 是随 git 公开的弱口令。改为必须显式
+	// 设置 MARKET_ALLOW_DEMO_SEED=1 才导入（本地开发 compose 已内置），否则跳过并告警。
+	if v := strings.TrimSpace(os.Getenv("MARKET_ALLOW_DEMO_SEED")); v != "1" && !strings.EqualFold(v, "true") {
+		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+		fmt.Printf("!! [market-admin] 未设置 MARKET_ALLOW_DEMO_SEED=1，跳过演示种子导入（APP_ENV=%q）\n", os.Getenv("APP_ENV"))
+		fmt.Println("!!   演示数据含公开弱口令账号（admin/admin123、13800138000），对外可达环境严禁导入；")
+		fmt.Println("!!   仅本地开发/演示需要时显式设置 MARKET_ALLOW_DEMO_SEED=1（或改用 APP_ENV=production 明确上线）")
+		fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+		return
+	}
 	// 显式关闭开关（如长期演示环境已改密、不希望每次 init 重复校验时）
 	if v := strings.TrimSpace(os.Getenv("MARKET_SKIP_DEMO_SEED")); v == "1" || strings.EqualFold(v, "true") {
 		fmt.Println("==> [market-admin] MARKET_SKIP_DEMO_SEED 已设置，跳过演示种子导入")
 		return
 	}
+	// 确认开关齐备后仍重复告警：演示账号一旦落库即可登录后台/C 端
+	fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+	fmt.Printf("!! [market-admin] 正在导入演示种子（APP_ENV=%q，含公开弱口令账号），导入后请立即改密\n", os.Getenv("APP_ENV"))
+	fmt.Println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
 	db := inst.GetDb()
 	// 等待三个服务的表迁移完成（admin 表由 runInit 主流程等待，这里补齐其余表）

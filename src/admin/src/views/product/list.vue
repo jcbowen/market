@@ -1,15 +1,19 @@
 <template>
   <n-card title="商品列表">
     <n-space vertical>
-      <!-- 状态 Tab：带统计计数，口径与列表筛选一致，随关键词/分类联动 -->
-      <n-tabs v-model:value="statusFilter" type="line" :tabs="statusTabs" @update:value="onSearch" />
+      <!-- 状态 Tab：带统计计数，口径与列表筛选一致，随关键词/分类联动
+           必须用 <n-tab-pane> 子节点传标签：NTabs 没有 `tabs` 这个 prop，
+           :tabs 会被当成未知属性、整条 Tab 渲染成无文字的空壳（状态筛选入口直接消失） -->
+      <n-tabs v-model:value="statusFilter" type="line" @update:value="onSearch">
+        <n-tab-pane v-for="tab in statusTabs" :key="tab.name" :name="tab.name" :tab="tab.label" />
+      </n-tabs>
       <n-space align="center">
         <n-input v-model:value="keyword" placeholder="商品名称" clearable @keyup.enter="onSearch" @clear="onSearch" />
         <n-select v-model:value="categoryId" :options="categoryOptions" placeholder="商品分类" clearable style="width: 160px" @update:value="onSearch" />
         <n-button type="primary" @click="onSearch">查询</n-button>
-        <n-button @click="router.push('/products/create')">新增商品</n-button>
+        <n-button v-if="canCreate" @click="router.push('/products/create')">新增商品</n-button>
         <!-- 批量上下架：选中后按选中项状态动态显示可用操作 -->
-        <template v-if="checkedRowKeys.length > 0">
+        <template v-if="canUpdate && checkedRowKeys.length > 0">
           <n-button v-if="showBatchOn" size="small" type="success" @click="batchToggle(1)">批量上架</n-button>
           <n-button v-if="showBatchOff" size="small" type="warning" @click="batchToggle(0)">批量下架</n-button>
         </template>
@@ -37,12 +41,14 @@
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'ProductList' })
 import { ref, onMounted, onActivated, h, reactive, computed } from 'vue'
+import type { VNode } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { formatAmount } from '@/utils/format'
 import { NButton, NInput, NSpace, NTag, NTooltip, createDiscreteApi } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getProductList, getCategoryList, updateProductStatus, deleteProduct, updateProductName, batchUpdateProductStatus, getProductStatusStats } from '@/api/product'
 import type { Product, Category } from '@/api/types'
+import { useAuthStore } from '@/stores/auth'
 import PromoModal from './components/PromoModal.vue'
 
 /**
@@ -60,6 +66,13 @@ const categoryOptions = ref<Array<{ label: string; value: number }>>([])
 const list = ref<Product[]>([])
 const loading = ref(false)
 const pagination = ref({ page: 1, pageSize: 20, itemCount: 0 })
+
+// 按钮级权限：页面本身只要求 product:view，写操作按权限码收窄（与会员列表 canManage 同口径）；
+// 后端各接口另有同码闸门，这里只负责不把必然 403 的入口摆给用户
+const authStore = useAuthStore()
+const canCreate = computed(() => authStore.hasPermission('product:create'))
+const canUpdate = computed(() => authStore.hasPermission('product:update'))
+const canDelete = computed(() => authStore.hasPermission('product:delete'))
 
 // 状态 Tab 筛选：值与后端 status_filter 口径一致
 // （0 全部 1 出售中 2 已售罄 3 仓库中 4 库存紧张；low_stock 为出售中的子集维度）
@@ -198,12 +211,14 @@ const columns: DataTableColumns<Product> = [
           ],
         })
       }
-      // 展示态：名称 + 多规格标签 + 改名入口
+      // 展示态：名称 + 多规格标签 + 改名入口（改名走 product:update）
       return h(NSpace, { wrap: false, size: 6, align: 'center' }, {
         default: () => [
           h('span', null, row.name),
           row.is_multi_spec ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => '多规格' }) : null,
-          h(NButton, { size: 'tiny', quaternary: true, type: 'primary', onClick: () => startRename(row) }, { default: () => '改名' }),
+          canUpdate.value
+            ? h(NButton, { size: 'tiny', quaternary: true, type: 'primary', onClick: () => startRename(row) }, { default: () => '改名' })
+            : null,
         ],
       })
     },
@@ -239,14 +254,19 @@ const columns: DataTableColumns<Product> = [
     key: 'actions',
     width: 260,
     render(row) {
-      return h(NSpace, null, {
-        default: () => [
+      // 编辑/上下架走 product:update，删除走 product:delete，推广只读保留
+      const actions: VNode[] = []
+      if (canUpdate.value) {
+        actions.push(
           h(NButton, { size: 'small', onClick: () => router.push(`/products/detail/${row.id}`) }, { default: () => '编辑' }),
           h(NButton, { size: 'small', onClick: () => toggleStatus(row) }, { default: () => (row.status === 1 ? '下架' : '上架') }),
-          h(NButton, { size: 'small', type: 'primary', ghost: true, onClick: () => openPromo(row) }, { default: () => '推广' }),
-          h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' }),
-        ],
-      })
+        )
+      }
+      actions.push(h(NButton, { size: 'small', type: 'primary', ghost: true, onClick: () => openPromo(row) }, { default: () => '推广' }))
+      if (canDelete.value) {
+        actions.push(h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' }))
+      }
+      return h(NSpace, null, { default: () => actions })
     },
   },
 ]
@@ -289,7 +309,11 @@ async function loadCategories() {
   }
 }
 
+// 请求序号守卫：快速切换 Tab/分类/翻页时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const res = await getProductList({
@@ -299,6 +323,7 @@ async function loadData() {
       category_id: categoryId.value || undefined,
       status_filter: Number(statusFilter.value) || undefined,
     })
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
@@ -306,10 +331,10 @@ async function loadData() {
     // 统计与列表同条件刷新（数据变更/筛选变化共用此入口）
     await loadStats()
   } finally {
-    // 请求异常时也必须关闭 loading，避免页面永久转圈
-    loading.value = false
+    // 请求异常时也必须关闭 loading，避免页面永久转圈；过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
     // 数据已变化，清空跨请求残留的多选，避免批量操作命中不可见行
-    checkedRowKeys.value = []
+    if (seq === loadSeq) checkedRowKeys.value = []
   }
 }
 

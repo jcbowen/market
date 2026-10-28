@@ -97,6 +97,40 @@ func readError(err error, name string) error {
 	return bizerr.ToStatus(err)
 }
 
+// writeError 写接口错误归一：业务错误按原状态码与文案透出，记录不存在转 NotFound，
+// 其余（DB、文件系统、OSS 等内部故障）只记日志、对外回通用文案。
+// 旧实现把一切失败都包成 InvalidArgument 并附 err.Error()，SQLSTATE、容器内路径等
+// 内部细节会原样出现在后台弹窗里；反过来说，真正的参数校验错误又被混在同一出口里，
+// 无法区分「用户填错」与「服务坏了」。
+//
+// 参数：
+//   - err: 服务层返回的错误
+//   - action: 动作描述，仅用于日志定位（如「上传图片」）
+//
+// 返回值：
+//   - error: gRPC 状态错误（业务码 / NotFound / Internal）
+//
+// 使用示例：
+//
+//	info, err := s.attachmentService.UploadImageLocal(ctx, req)
+//	if err != nil {
+//		return nil, writeError(err, "上传图片")
+//	}
+func writeError(err error, action string) error {
+	var be *bizerr.Error
+	if errors.As(err, &be) {
+		return status.Error(be.Code(), be.Error())
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return status.Error(codes.NotFound, "记录不存在")
+	}
+	if _, ok := status.FromError(err); ok {
+		return err
+	}
+	log.Printf("[ERROR] %s失败: %v", action, err)
+	return status.Error(codes.Internal, "系统繁忙，请稍后重试")
+}
+
 // ListCategories 获取分类列表（includeDisabled=true 时含禁用分类，管理端分类管理页使用）
 func (s *server) ListCategories(ctx stdctx.Context, req *product.ListCategoriesReq) (*product.ListCategoriesResp, error) {
 	list, err := s.categoryService.ListCategories(ctx, req.CommunityId, req.GetIncludeDisabled())
@@ -399,13 +433,14 @@ func (s *server) ListSkus(ctx stdctx.Context, req *product.ListSkusReq) (*produc
 		return nil, bizerr.ToStatus(err)
 	}
 	resp := &product.ListSkusResp{List: make([]*product.SkuInfo, 0, len(list))}
+	// 公开出口按商品上架态决定价目是否可见：能按 product_id 列出 SKU 并不等于该商品在售
+	hideTrade := req.GetPublicView() && s.productService.PublicSkuHideTrade(ctx, req.ProductId)
 	for _, sku := range list {
 		info := service.ToSkuInfo(sku)
 		// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
 		info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
 		if req.GetPublicView() {
-			// 公开出口只抹经营字段：能列出该商品就说明它在售，价格本就要展示
-			service.RedactPublicSku(info, false)
+			service.RedactPublicSku(info, hideTrade)
 		}
 		resp.List = append(resp.List, info)
 	}
@@ -479,8 +514,8 @@ func (s *server) GetSkuById(ctx stdctx.Context, req *product.GetSkuByIdReq) (*pr
 	// 出库统一拼接完整访问 URL（SKU 规格图片相对路径）
 	info.Image = s.attachmentService.ToMediaURL(ctx, sku.Image)
 	if req.GetPublicView() {
-		// 本出口只拿到 SKU、不掌握商品上下架状态，价格脱敏由详情出口统一收口
-		service.RedactPublicSku(info, false)
+		// 公开出口按所属商品的上架态决定价目是否可见（下架/定时上架商品不得经此读出价格与库存）
+		service.RedactPublicSku(info, s.productService.PublicSkuHideTrade(ctx, sku.ProductID))
 	}
 	return info, nil
 }
@@ -1290,7 +1325,7 @@ func (s *server) DeleteBanner(ctx stdctx.Context, req *product.DeleteBannerReq) 
 func (s *server) GetAttachmentConfig(ctx stdctx.Context, req *common.Empty) (*product.AttachmentConfig, error) {
 	cfg, err := s.attachmentService.GetConfigMasked(ctx)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, writeError(err, "读取附件配置")
 	}
 	return cfg, nil
 }
@@ -1309,7 +1344,7 @@ func (s *server) SaveAttachmentConfig(ctx stdctx.Context, req *product.Attachmen
 func (s *server) UploadImageLocal(ctx stdctx.Context, req *product.UploadImageLocalReq) (*product.AttachmentInfo, error) {
 	info, err := s.attachmentService.UploadImageLocal(ctx, req)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, writeError(err, "上传图片")
 	}
 	return info, nil
 }
@@ -1318,7 +1353,7 @@ func (s *server) UploadImageLocal(ctx stdctx.Context, req *product.UploadImageLo
 func (s *server) AttachmentPresign(ctx stdctx.Context, req *product.AttachmentPresignReq) (*product.AttachmentPresignResp, error) {
 	resp, err := s.attachmentService.AttachmentPresign(ctx, req)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, writeError(err, "签发上传地址")
 	}
 	return resp, nil
 }
@@ -1327,7 +1362,7 @@ func (s *server) AttachmentPresign(ctx stdctx.Context, req *product.AttachmentPr
 func (s *server) AttachmentConfirm(ctx stdctx.Context, req *product.AttachmentConfirmReq) (*product.AttachmentInfo, error) {
 	info, err := s.attachmentService.AttachmentConfirm(ctx, req)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, writeError(err, "确认上传")
 	}
 	return info, nil
 }
@@ -1336,7 +1371,7 @@ func (s *server) AttachmentConfirm(ctx stdctx.Context, req *product.AttachmentCo
 func (s *server) ListAttachments(ctx stdctx.Context, req *product.ListAttachmentsReq) (*product.ListAttachmentsResp, error) {
 	resp, err := s.attachmentService.ListAttachments(ctx, req)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, writeError(err, "查询附件列表")
 	}
 	return resp, nil
 }
@@ -1345,7 +1380,7 @@ func (s *server) ListAttachments(ctx stdctx.Context, req *product.ListAttachment
 func (s *server) ScanAttachmentMigrate(ctx stdctx.Context, _ *common.Empty) (*product.AttachmentMigrateOverview, error) {
 	overview, err := s.attachmentService.ScanAttachmentMigrate(ctx)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, writeError(err, "扫描附件迁移清单")
 	}
 	return overview, nil
 }
@@ -1354,7 +1389,7 @@ func (s *server) ScanAttachmentMigrate(ctx stdctx.Context, _ *common.Empty) (*pr
 func (s *server) ListAttachmentMigrate(ctx stdctx.Context, req *product.AttachmentMigrateListReq) (*product.AttachmentMigrateListResp, error) {
 	resp, err := s.attachmentService.ListAttachmentMigrateItems(ctx, req)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, writeError(err, "查询附件迁移清单")
 	}
 	return resp, nil
 }
@@ -1363,7 +1398,7 @@ func (s *server) ListAttachmentMigrate(ctx stdctx.Context, req *product.Attachme
 func (s *server) MigrateAttachmentItem(ctx stdctx.Context, req *product.AttachmentMigrateItemReq) (*product.AttachmentMigrateItemInfo, error) {
 	info, err := s.attachmentService.MigrateAttachmentItem(ctx, req.Id)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, writeError(err, "迁移附件")
 	}
 	return info, nil
 }
@@ -1372,7 +1407,7 @@ func (s *server) MigrateAttachmentItem(ctx stdctx.Context, req *product.Attachme
 func (s *server) VerifyAttachmentItem(ctx stdctx.Context, req *product.AttachmentMigrateItemReq) (*product.AttachmentMigrateItemInfo, error) {
 	info, err := s.attachmentService.VerifyAttachmentItem(ctx, req.Id)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, writeError(err, "验证附件")
 	}
 	return info, nil
 }
@@ -1381,7 +1416,7 @@ func (s *server) VerifyAttachmentItem(ctx stdctx.Context, req *product.Attachmen
 func (s *server) DeleteAttachmentLocal(ctx stdctx.Context, req *product.AttachmentMigrateItemReq) (*product.AttachmentMigrateItemInfo, error) {
 	info, err := s.attachmentService.DeleteAttachmentLocal(ctx, req.Id)
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, writeError(err, "删除本地附件")
 	}
 	return info, nil
 }
@@ -1390,7 +1425,7 @@ func (s *server) DeleteAttachmentLocal(ctx stdctx.Context, req *product.Attachme
 func (s *server) DeleteAttachmentLocalVerified(ctx stdctx.Context, _ *common.Empty) (*product.AttachmentMigrateDeleteBatchResp, error) {
 	deleted, err := s.attachmentService.DeleteAttachmentLocalVerified(ctx)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, writeError(err, "批量删除本地附件")
 	}
 	return &product.AttachmentMigrateDeleteBatchResp{Deleted: deleted}, nil
 }

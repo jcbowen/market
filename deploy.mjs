@@ -2,7 +2,7 @@
 // 社区商超生产发布构建脚本
 // 1. 检查并补齐前端依赖（缺失或损坏时自动 npm install）
 // 2. 构建前端（管理端 + C 端 H5）
-// 3. 构建后端二进制（Linux arm64 交叉编译）
+// 3. 构建后端二进制（全平台：Linux/macOS/Windows × amd64/arm64）
 // 4. 构建 Docker 镜像（最终镜像仅包含编译产物，不含源码）
 //
 // 依赖不全时由 deps-tools.mjs 判定原因并自动补齐（npm install / go mod tidy / 镜像 pull）后重试，
@@ -46,12 +46,11 @@ for (const arg of process.argv.slice(2)) {
 const ctx = createContext({ rootDir: ROOT_DIR, autoFix: AUTO_FIX });
 
 // 同步等待 1 秒（仅用于 Docker 守护进程的就绪轮询）
+// 用 Atomics.wait 阻塞而非外部命令：Windows 的 `timeout /t 1` 在 stdin 被重定向时
+// 立即返回（下面正是 stdio:'ignore'），120 秒启动预算会变成空转；`sleep` 则依赖
+// GNU coreutils，Windows 原生环境未必存在。Atomics.wait 是跨平台且不消耗 CPU 的同步等待
 function sleepSync() {
-  if (process.platform === 'win32') {
-    spawnSync('timeout', ['/t', '1', '/nobreak'], { shell: true, stdio: 'ignore' });
-  } else {
-    spawnSync('sleep', ['1']);
-  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
 }
 
 // Docker 守护进程检测与自动启动（同步版）
@@ -119,7 +118,7 @@ console.log('==> 构建 C 端 H5...');
 await ensureNpmDependencies(ctx, CLIENT_DIR);
 await runWithRepair(ctx, 'npm', ['run', 'build:h5'], { cwd: CLIENT_DIR, step: '构建 C 端 H5' });
 
-console.log('==> 构建后端二进制（Linux arm64 交叉编译）...');
+console.log('==> 构建后端二进制（全平台交叉编译）...');
 // 依赖预检与 go mod tidy 自愈在 build.mjs 内部完成，这里透传开关保持一致
 await runWithRepair(
   ctx,

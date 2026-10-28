@@ -299,7 +299,7 @@ var communityHardReferences = []struct {
 }
 
 // DeleteCommunity 删除社区（先做引用守卫，再在同一事务内硬删）
-// 阻塞条件：仍有会员归属、收货地址、管理员任职或社区角色挂在本社区；
+// 阻塞条件：仍有会员归属、收货地址、管理员任职或社区角色挂在本社区（内置社区管理员角色除外，随社区一并硬删）；
 // 非阻塞的浏览态引用（users.community_id 记录的是「当前所在社区」）在删除时归零，
 // 由 C 端重新选择社区，避免留下悬空 ID
 // 参数：
@@ -317,6 +317,13 @@ func (s *CommunityService) DeleteCommunity(ctx context.Context, id int64) error 
 		return bizerr.New(codes.InvalidArgument, "缺少社区 ID")
 	}
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 内置社区管理员角色是随社区创建自动补齐的（CreateCommunity → EnsureCommunityAdminRole），
+		// 若计入引用守卫，等于每个社区都自带一条「删不掉的引用」，社区一旦建成就永远无法删除。
+		// 这里与社区同事务硬删该内置角色；人工创建的自定义角色仍计入守卫，由操作者先清理
+		if err := tx.Where("community_id = ? AND code = ?", id, model.RoleCodeCommunityAdmin).
+			Delete(&model.Role{}).Error; err != nil {
+			return err
+		}
 		for _, ref := range communityHardReferences {
 			var n int64
 			if err := tx.Model(ref.model).Where("community_id = ?", id).Count(&n).Error; err != nil {

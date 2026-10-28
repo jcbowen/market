@@ -179,6 +179,11 @@ test.describe.serial('配送协同全链路', () => {
       expect(body.code, `工作台查单失败: ${body.message}`).toBe(0);
       const found = asList<FulfillmentOrder>(body.data).find((o) => isTargetOrder(o, orderId));
       expect(found, '工作台未见被指派订单').toBeTruthy();
+      // 卡片渲染契约：C 端履约卡片模板直接取 order.items.slice() 与 status_text，
+      // 接口只回 proto 的 OrderInfo（无这两个字段）时整页一张单都画不出来（2026-10-29 浏览器实测抓到）
+      expect(Array.isArray(found!.items), '工作台条目必须带 items 数组，否则前端卡片渲染即崩').toBe(true);
+      expect((found!.items as unknown[]).length, '本单有商品，items 不应为空').toBeGreaterThan(0);
+      expect(found!.status_text, '工作台条目必须带履约视角状态文案').toBeTruthy();
       fulfillOrderId = found!.id;
     } finally {
       await fApi.dispose();

@@ -216,17 +216,61 @@ func (s *PaymentService) wechatRefund(ctx context.Context, p *model.Payment, ref
 	return nil
 }
 
+// wechatVerifyTimeout 回调验签/解密的整体时限
+// 验签在平台证书首次下载（或缓存失效）时会发起 HTTP 请求，不能用无截止的 Background，
+// 否则证书地址不可达时回调处理协程会被无限期挂住
+const wechatVerifyTimeout = 10 * time.Second
+
+// wechatTransactionNotification 支付成功通知资源中与本系统资金判定相关的字段
+// 其余字段（payer、goods_detail 等）不参与入账，不落结构体
+type wechatTransactionNotification struct {
+	OutTradeNo    string `json:"out_trade_no"`
+	TransactionID string `json:"transaction_id"`
+	AppID         string `json:"appid"`
+	MchID         string `json:"mchid"`
+	Amount        struct {
+		Total    int    `json:"total"`
+		Currency string `json:"currency"`
+	} `json:"amount"`
+}
+
+// verifyWechatCallbackIdentity 校验通知归属：商户号、AppID 必须与当前配置一致，币种必须为 CNY
+// 验签通过只证明「报文由微信发出」，不证明「这笔交易属于本商户」：平台证书/APIv3 密钥
+// 曾在多商户间复用、或密钥泄露被代入他人通知时，不核对就会按别人的交易入账。
+// 配置项为空表示本实例未启用对应校验（未配置微信支付时也不会走到这里）。
+//
+// 参数：
+//   - n: 解密后的通知资源
+//   - wantMchID: 本商户号（配置值）
+//   - wantAppID: 本 AppID（配置值）
+//
+// 返回值：
+//   - error: 归属或币种不符时返回错误
+func verifyWechatCallbackIdentity(n *wechatTransactionNotification, wantMchID, wantAppID string) error {
+	if wantMchID != "" && n.MchID != wantMchID {
+		return fmt.Errorf("微信支付回调商户号不匹配: 回调=%s 配置=%s", n.MchID, wantMchID)
+	}
+	if wantAppID != "" && n.AppID != wantAppID {
+		return fmt.Errorf("微信支付回调 AppID 不匹配: 回调=%s 配置=%s", n.AppID, wantAppID)
+	}
+	if n.Amount.Currency != "" && n.Amount.Currency != "CNY" {
+		return fmt.Errorf("微信支付回调币种不支持: %s", n.Amount.Currency)
+	}
+	return nil
+}
+
 // parseWechatCallback 解析微信支付回调报文
 // 使用 wego 验证通知签名并解密资源，然后提取支付单号与微信订单号
 // 参数：
 //   - s: 支付服务实例，用于获取 wego 客户端
+//   - ctx: 调用方上下文（回调处理链路），内部再套验签时限
 //   - body: 回调请求体
 //   - headers: 回调请求头
 //
 // 返回值：
 //   - *payCallbackParams: 解析后的通用参数
 //   - error: 错误信息
-func parseWechatCallback(s *PaymentService, body []byte, headers http.Header) (*payCallbackParams, error) {
+func parseWechatCallback(s *PaymentService, ctx context.Context, body []byte, headers http.Header) (*payCallbackParams, error) {
 	client := s.getWechatPayClient()
 	if client == nil {
 		return nil, fmt.Errorf("微信支付未配置或配置不完整")
@@ -235,7 +279,9 @@ func parseWechatCallback(s *PaymentService, body []byte, headers http.Header) (*
 		return nil, fmt.Errorf("回调体为空")
 	}
 
-	notification, plainBytes, err := client.VerifyNotification(context.Background(), headers, body)
+	verifyCtx, cancel := context.WithTimeout(ctx, wechatVerifyTimeout)
+	defer cancel()
+	notification, plainBytes, err := client.VerifyNotification(verifyCtx, headers, body)
 	if err != nil {
 		return nil, fmt.Errorf("微信支付回调验签解密失败: %w", err)
 	}
@@ -249,19 +295,17 @@ func parseWechatCallback(s *PaymentService, body []byte, headers http.Header) (*
 		return nil, fmt.Errorf("%w: %s", errNotSuccessNotification, notification.EventType)
 	}
 
-	var result struct {
-		OutTradeNo    string `json:"out_trade_no"`
-		TransactionID string `json:"transaction_id"`
-		Amount        struct {
-			Total int `json:"total"`
-		} `json:"amount"`
-	}
+	var result wechatTransactionNotification
 	if err := json.Unmarshal(plainBytes, &result); err != nil {
 		return nil, fmt.Errorf("微信支付回调报文解析失败: %w", err)
 	}
 
 	if result.OutTradeNo == "" || result.TransactionID == "" {
 		return nil, fmt.Errorf("微信支付回调参数缺失")
+	}
+	wechatCfg := s.getWechatPayConfig()
+	if err := verifyWechatCallbackIdentity(&result, wechatCfg.MchID, wechatCfg.AppID); err != nil {
+		return nil, err
 	}
 
 	return &payCallbackParams{

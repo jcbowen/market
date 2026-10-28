@@ -938,12 +938,15 @@ function onRepayByCash() {
     positiveText: '确认收款',
     negativeText: '取消',
     onPositiveClick: async () => {
-      const res = await payPosOrderCash(order.id)
-      if (res.data.code === 0) {
+      // 失败时保持弹窗打开（错误提示由请求拦截器统一弹出），避免误以为已收款
+      try {
+        await payPosOrderCash(order.id)
         message.success(`订单 ${order.order_no} 现金收款成功`)
         showRepay.value = false
         showDetail.value = false
         void loadOrders()
+      } catch {
+        return false
       }
     },
   })

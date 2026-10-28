@@ -57,6 +57,31 @@ test.describe.serial('管理端认证', () => {
     const body = (await resp.json()) as ApiResponse;
     expect(body.code).toBe(0);
   });
+
+  // C5 登出真正吊销 access 的实测：旧口径下 access 不带 jti、鉴权链不查吊销，
+  // 登出只是前端表演，令牌在 TTL（默认 7200s）内仍可全功能访问。
+  test('登出后旧 access 立即失效（jti 黑名单）', async ({ request }) => {
+    const info = await adminLogin(request);
+    const headers = { Authorization: `Bearer ${info.access_token}` };
+
+    // 基线：同一枚令牌登出前可用，排除「本来就被拒」造成的假绿
+    const before = (await (await request.get('/api/v1/admin/auth/info', { headers })).json()) as ApiResponse;
+    expect(before.code, '登出前应可正常访问').toBe(0);
+
+    const logout = (await (await request.post('/api/v1/admin/auth/logout', { headers })).json()) as ApiResponse;
+    expect(logout.code, '登出应成功').toBe(0);
+
+    // 吊销生效：11002 token 无效（middleware/auth.go 的吊销分支）
+    const after = (await (await request.get('/api/v1/admin/auth/info', { headers })).json()) as ApiResponse;
+    expect(after.code, '登出后旧 access 必须被拒').toBe(11002);
+
+    // 吊销是按 jti 而非按账号：重新登录拿到的新令牌立即可用
+    const relogin = await adminLogin(request);
+    const fresh = (await (
+      await request.get('/api/v1/admin/auth/info', { headers: { Authorization: `Bearer ${relogin.access_token}` } })
+    ).json()) as ApiResponse;
+    expect(fresh.code, '重新登录的新 access 不应被误伤').toBe(0);
+  });
 });
 
 test.describe.serial('角色管理', () => {

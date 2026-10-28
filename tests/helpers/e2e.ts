@@ -9,8 +9,36 @@ const ADMIN_PASS = process.env.TEST_ADMIN_PASS ?? 'admin123';
 export const CLIENT_PHONE = '13800138000';
 
 /**
+ * 后台用例的演示社区（种子包预置，商品/订单/收银班次数据都挂在它下面）
+ * 可用 TEST_DEMO_COMMUNITY 覆盖，但覆盖值必须是有种子数据的社区，
+ * 否则依赖列表非空的后台用例会成片红
+ */
+const DEMO_COMMUNITY = process.env.TEST_DEMO_COMMUNITY ?? '盘龙金茂悦';
+
+/**
+ * 在社区选择页选定演示社区并等待进入后台
+ * 为什么不能点第一张卡片：/api/v1/admin/my/communities 走 IncludeDisabled=true，
+ * 服务端按 id desc 排（见 user/service/community.go），而接口用例每轮都会新建
+ * AUTO-TEST 社区——「第一张」会随轮次漂到最新的空社区，订单/商品全为 0，
+ * 依赖列表非空的后台用例就会成片红（2026-10-29 e2e 09/10 即栽在此）。
+ * - 函数名: pickDemoCommunity
+ * - 参数: page — 已停在 select-community 的页面
+ * - 返回: Promise<void>，成功时已离开选择页
+ * - 异常: 演示社区卡片 10s 内不可见（种子缺失）或切换后未离开选择页时抛出
+ * - 使用示例: await pickDemoCommunity(page);
+ */
+async function pickDemoCommunity(page: Page): Promise<void> {
+  const card = page.locator('.community-card').filter({ hasText: DEMO_COMMUNITY }).first();
+  await card.waitFor({ state: 'visible', timeout: 10_000 });
+  await card.click();
+  // 等待离开选择页（跳到 #/dashboard 或其他目标页）
+  await page.waitForURL((url) => !url.href.includes('select-community'), { timeout: 15_000 });
+  await page.waitForTimeout(1000); // 等待后台布局渲染
+}
+
+/**
  * 管理端登录助手（含社区选择）
- * 流程：/b/login 填表登录 → 落在 select-community 页点第一个社区卡片 → 等待进入后台
+ * 流程：/b/login 填表登录 → 落在 select-community 页选定演示社区 → 等待进入后台
  * 已知行为：选社区后 URL 形如 /b/login#/dashboard
  * - 函数名: adminLogin
  * - 参数: page — Playwright 页面对象
@@ -30,18 +58,13 @@ export async function adminLogin(page: Page): Promise<void> {
   if (page.url().includes('select-community')) {
     // 社区卡片真实 class 为 community-card（见 views/select-community/index.vue），
     // 不可用 [class*=card] 模糊匹配——会命中外层 .n-card.select-card 容器导致点击无效
-    const card = page.locator('.community-card').first();
-    await card.waitFor({ state: 'visible', timeout: 10_000 });
-    await card.click();
-    // 等待离开选择页（跳到 #/dashboard 或其他目标页）
-    await page.waitForURL((url) => !url.href.includes('select-community'), { timeout: 15_000 });
-    await page.waitForTimeout(1000); // 等待后台布局渲染
+    await pickDemoCommunity(page);
   }
 }
 
 /**
  * 收银台登录助手（POS 独立应用，/pos 前缀 hash 路由）
- * 流程：/b/#/pos/login 填表登录 → 多社区账号先落 select-community 点第一个社区卡片
+ * 流程：/b/#/pos/login 填表登录 → 多社区账号先落 select-community 选定演示社区
  *       （选后整页 reload 回 redirect 目标）→ 进入收银工作台
  * 已知行为：
  * - 不可用 URL 正则判定登录后终态：select-community 的 redirect 查询串形如
@@ -66,7 +89,7 @@ export async function posLogin(page: Page): Promise<void> {
   await landing.waitFor({ state: 'visible', timeout: 20_000 });
 
   if (await page.locator('.community-card').first().isVisible()) {
-    await page.locator('.community-card').first().click();
+    await pickDemoCommunity(page);
   }
   // 无论是否经过社区选择，最终都应到达收银台（班次状态异步加载中，tabs 可能闪现）
   await expect(page.locator('.start-shift-guide, .cashier-tabs').first()).toBeVisible({ timeout: 20_000 });

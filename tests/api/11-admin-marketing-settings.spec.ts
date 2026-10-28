@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
-import { newAdminContext, type ApiResponse, type PageData } from '../helpers/api';
+import { newAdminContext, asList, type ApiResponse, type PageData } from '../helpers/api';
 import { autoName } from '../helpers/data';
 import type { Playwright } from '@playwright/test';
 
 /**
  * 模块 11：管理端营销与设置
  * 覆盖：优惠券/秒杀/满减/包邮/banner 管理、支付/退款/附件设置读取、
- *       员工与用户列表、应用偏好。营销活动创建依赖业务时间窗，以列表+读配置为主，
- *       创建类用例失败时降级为 skip 并记录原因（避免环境配置差异造成误报）。
+ *       员工与用户列表、应用偏好。营销活动创建类用例按接口实际契约造数并显式断言
+ *       （旧口径「失败即 skip」会把用例自身的字段写错伪装成环境问题，属假绿）。
  */
 
 let api: Awaited<ReturnType<typeof newAdminContext>['api']>;
@@ -58,30 +58,48 @@ test.describe('营销管理', () => {
     expect(body.code).toBe(0);
   });
 
-  test('创建满减活动（未来时间窗）成功', async () => {
+  // 契约口径（gateway/handler/admin.go 的 CreateFullReductionReq）：门槛字段是 `threshold`，
+  // 且**没有** `status`（服务层恒置 1）与 `full_amount`。旧用例发的是 `full_amount`，
+  // 必填的 threshold 缺失 → 参数错误 → 用例把「自己的字段写错」当成环境差异 skip 掉，属假绿。
+  test('创建满减活动（未来时间窗）成功并可回读', async () => {
     const start = new Date(Date.now() + 3600_000).toISOString().slice(0, 19).replace('T', ' ');
     const end = new Date(Date.now() + 2 * 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+    const name = autoName('满减');
     const resp = await api.post('/api/v1/admin/full-reductions', {
-      data: {
-        name: autoName('满减'),
-        full_amount: 100,
-        reduce_amount: 10,
-        start_time: start,
-        end_time: end,
-        status: 1,
-      },
+      data: { name, threshold: 100, reduce_amount: 10, start_time: start, end_time: end },
     });
-    const body = (await resp.json()) as ApiResponse<{ id?: number }>;
-    if (body.code !== 0) {
-      console.log(`[满减] 创建被拒 code=${body.code} message=${body.message}（字段要求不同则跳过）`);
-      test.skip(true, '创建参数与接口要求不一致，需按实际字段调整');
-      return;
+    const body = (await resp.json()) as ApiResponse<{ id?: number; threshold?: number; reduce_amount?: number; status?: number }>;
+    expect(body.code, `创建满减应成功，实际 ${body.code} ${body.message}`).toBe(0);
+    const id = body.data?.id ?? 0;
+    expect(id, '应返回新建活动 ID').toBeGreaterThan(0);
+    // 服务层直接回模型：门槛/减免与提交一致，status 由服务端置 1（不由请求决定）
+    expect(body.data?.threshold, '门槛应回显提交值').toBe(100);
+    expect(body.data?.reduce_amount, '减免金额应回显提交值').toBe(10);
+    expect(body.data?.status, '新建活动默认启用').toBe(1);
+
+    try {
+      // 回读：管理端列表按 id desc，新建项应在首页内可见
+      const list = (await (await api.get('/api/v1/admin/full-reductions')).json()) as ApiResponse<
+        { id: number; name: string; threshold: number }[]
+      >;
+      expect(list.code).toBe(0);
+      const row = asList(list.data).find((r) => r.id === id);
+      expect(row, '列表应能查到新建活动').toBeDefined();
+      expect(row?.name, '列表名称应与创建一致').toBe(name);
+    } finally {
+      // 清理：置 status=0 停用，避免残留活动影响后续轮次的满减试算
+      await api.put(`/api/v1/admin/full-reductions/${id}`, { data: { status: 0 } });
     }
-    expect(body.data?.id).toBeGreaterThan(0);
-    // 清理
-    if (body.data?.id) {
-      await api.put(`/api/v1/admin/full-reductions/${body.data.id}`, { data: { status: 0 } });
-    }
+  });
+
+  // 反向口径：threshold 是必填且 >0，缺失或为 0 必须被参数校验挡下（旧用例只测正向、
+  // 且把失败当环境差异跳过，等于这条契约从未被验证过）
+  test('创建满减缺少门槛被拒绝', async () => {
+    const resp = await api.post('/api/v1/admin/full-reductions', {
+      data: { name: autoName('满减'), reduce_amount: 10 },
+    });
+    const body = (await resp.json()) as ApiResponse;
+    expect(body.code, '缺少 threshold 必须被拒绝').not.toBe(0);
   });
 });
 

@@ -81,17 +81,22 @@ const columns: DataTableColumns<FreeShipping> = [
   },
 ]
 
+// 请求序号守卫：快速翻页时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const res = await getFreeShippingList({ page: pagination.value.page, page_size: pagination.value.pageSize })
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
   } finally {
-    // 请求异常时也必须关闭 loading，避免页面永久转圈
-    loading.value = false
+    // 请求异常时也必须关闭 loading，避免页面永久转圈；过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
   }
 }
 

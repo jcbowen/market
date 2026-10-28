@@ -6,6 +6,9 @@ services:
   # 与 docs/需求文档/10-部署方案 中 all-in-one 的 --restart unless-stopped 口径一致
   # 微服务容器以非 root（UID 10001）运行：Linux 部署时宿主写目录需执行
   # chown -R 10001:10001 bin/runtime bin/uploads（Docker Desktop 无需处理）
+  # 业务服务以独立业务账号连库（MYSQL_APP_USER，权限限定 market 库），与运维用
+  # root 分离；账号由 db-grant 任务在每次启动时幂等建号/改密，故同时适配
+  # 全新数据卷与已有测试库（mysql 镜像的 MYSQL_USER 只在空库首启生效，不可依赖）
   mysql:
     image: mysql:8.0
     container_name: market-mysql
@@ -45,6 +48,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # 业务数据库账号建号/改密（幂等，每次启动都跑；业务服务等它成功后再起）
+  # 权限限定 market 库（含 AutoMigrate 所需 DDL）；口令走 MYSQL_PWD（不落 ps 参数），
+  # APP_ 前缀避免与 mysql 镜像自身识别的 MYSQL_USER/MYSQL_PASSWORD（首启建号）混淆
+  db-grant:
+    image: mysql:8.0
+    container_name: market-db-grant
+    restart: "no"
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_ROOT_PASSWORD}
+      APP_DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      APP_DB_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        mysql -h mysql -u root -e "CREATE USER IF NOT EXISTS '$$APP_DB_USER'@'%' IDENTIFIED BY '$$APP_DB_PASSWORD'; ALTER USER '$$APP_DB_USER'@'%' IDENTIFIED BY '$$APP_DB_PASSWORD'; GRANT ALL PRIVILEGES ON market.* TO '$$APP_DB_USER'@'%'; FLUSH PRIVILEGES;"
+        echo "[db-grant] 业务账号 $$APP_DB_USER 已就绪（权限限定 market 库）"
+
   # ===== 微服务 =====
   # 每个微服务容器内置 gRPC 端口 TCP 健康检查（见 Dockerfile HEALTHCHECK），
   # 下游依赖一律 service_healthy：上游容器等下游真正可服务后再启动
@@ -62,7 +87,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
@@ -70,6 +96,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
     command: >
@@ -87,7 +115,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
@@ -95,6 +124,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
       # 本地附件共享目录：product 落盘与 gateway /uploads 静态服务共用同一宿主目录，
@@ -115,7 +146,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
       # debugger 进程级日志（与 gateway 共享 debug_logs 表，供订单调度器等异步进程记录摘要）：
@@ -130,6 +162,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
       # 本地附件共享目录：order 导出 CSV 落盘与 gateway 下载流式下发共用同一宿主目录，
@@ -151,7 +185,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
     depends_on:
@@ -159,6 +194,9 @@ services:
         condition: service_healthy
       product-service:
         condition: service_healthy
+      # cart 也连 MySQL（购物车行落地库），建号任务须先完成
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
     command: >
@@ -176,7 +214,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
       # debugger 进程级日志（与 gateway 共享 debug_logs 表，供对账调度器等异步进程记录摘要）：
@@ -191,6 +230,8 @@ services:
         condition: service_healthy
       order-service:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     volumes:
       - ./bin/config.docker.yaml:/app/config.yaml:ro
     command: >
@@ -207,8 +248,13 @@ services:
       # docker exec ./market-admin init（start-all 调用）继承此变量定位运行时配置；
       # gateway 主进程 command 内的内联 CONFIG_FILE 与之同值，互不冲突
       CONFIG_FILE: /app/runtime/config.yaml
+      # 演示种子二次确认（仅本地开发 compose 设置）：market-admin init 在非 production
+      # 环境还须看到 MARKET_ALLOW_DEMO_SEED=1 才导入含 admin/admin123 弱口令的演示数据，
+      # 防止漏配 APP_ENV 的对外环境静默灌入；生产 compose 不设此项
+      MARKET_ALLOW_DEMO_SEED: "1"
       # 敏感凭据经环境变量注入，服务启动时覆盖配置文件中的空占位（common/config.ApplyEnvOverrides）
-      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_APP_USER:?请在项目根目录 .env 中配置 MYSQL_APP_USER（业务数据库账号）}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在项目根目录 .env 中配置 MYSQL_APP_PASSWORD（业务数据库口令，避免引号/反斜杠）}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?请在项目根目录 .env 中配置 JWT_SECRET（至少 32 位随机串；默认占位值是公开值，服务会拒绝启动）}
       # 可信反向代理网段（逗号分隔的 CIDR 或单个 IP），仅 gateway 需要（ClientIP/限流只在网关侧）。
@@ -237,6 +283,13 @@ services:
       # 保证 HTTPS 回源时可临时设 false 关闭兜底——此时若回源仍是 HTTP，登录密码与 token 明文
       # 过网，链路修复（DCDN 跟随回源生效）后应删除本项恢复兜底
       REQUIRE_HTTPS: ${REQUIRE_HTTPS:-}
+      # 接口 IP 洪水兜底阈值（仅 gateway 读取；缺省 100 r/s、突发容量 150，生产不改）：
+      # 整套接口用例从同一客户端 IP 串行打出，实测峰值 116~133 r/s 贴着缺省阈值跑，
+      # 会在随机某条用例上撞出 429（2026-10-29：api/49 现金支付被「请求频率限制」打红，
+      # serial 组因此整组续跑）。本地栈放开到 2000/3000 只影响洪水兜底灵敏度，
+      # 认证入口与按用户的收紧桶（10/30、5/50、下单 0.08/5）不受本项影响、保持生产口径
+      RATE_LIMIT_API_QPS: ${RATE_LIMIT_API_QPS:-2000}
+      RATE_LIMIT_API_BURST: ${RATE_LIMIT_API_BURST:-3000}
       # 后台版本检查源（gateway/handler/update.go 直读环境变量，不经配置文件）：
       # 留空走内置默认（jcbowen/market + 官方 Docker Hub API），设 off/none/disable 关闭对应源；
       # DOCKERHUB_API_BASE 国内网络不通时可指向 Registry 镜像代理基地址
@@ -254,6 +307,8 @@ services:
         condition: service_healthy
       payment-service:
         condition: service_healthy
+      db-grant:
+        condition: service_completed_successfully
     ports:
       - "18080:18080"
     volumes:
@@ -277,9 +332,11 @@ services:
     # runtime/config.yaml 为 bind mount：Windows Docker Desktop 9p 会把上次会话遗留的
     # 宿主文件映射为 0755 root:root，appuser(10001) 不可覆写（框架每次启动都会回写配置，
     # 权限不足会直接启动失败）。目录本身 0777 可写，故启动前检测：不可写则删除后从模板重建。
+    # 重建会丢弃后台「站点设置/支付设置」等写回该文件的运行态配置，因此先打显著告警再重建——
+    # 告警出现即说明宿主权限/归属不对（Linux 宿主执行 chown -R 10001:10001 bin/runtime 可根治）。
     # Linux 宿主已 chown 10001:10001，-w 恒为真，不影响生产。
     command: >
-      sh -c "[ -w /app/runtime/config.yaml ] || rm -f /app/runtime/config.yaml; [ -f /app/runtime/config.yaml ] || cp -f /app/config.yaml /app/runtime/config.yaml; CONFIG_FILE=/app/runtime/config.yaml ./gateway"
+      sh -c "[ -w /app/runtime/config.yaml ] || { echo '[WARN] /app/runtime/config.yaml 不可写：已丢弃并按模板重建，本次丢失运行态配置（站点/支付设置等）；Linux 宿主请执行 chown -R 10001:10001 bin/runtime' >&2; rm -f /app/runtime/config.yaml; }; [ -f /app/runtime/config.yaml ] || cp -f /app/config.yaml /app/runtime/config.yaml; CONFIG_FILE=/app/runtime/config.yaml ./gateway"
 
 volumes:
   mysql_data:

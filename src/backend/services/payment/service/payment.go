@@ -21,6 +21,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
+	"github.com/jcbowen/market/src/backend/common/dberr"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
@@ -98,12 +99,28 @@ func (s *PaymentService) reloadPayConfig() {
 	s.applyPayConfig(&row)
 }
 
-// cashCreateLocks 现金/货到付款建单的订单级分段锁。
-// 现金单「创建即已支付」，不走待支付占位键（pending_flag 仅随 status=1 落库），
-// 库级唯一索引保护不到它；「GetPayment 查重 → 创建 → 提交」在并发双击下非原子，
-// 同订单可落两笔已支付现金流水（交班营业额双计）。进程内按 orderID 取模串行化收口：
-// 单容器 all-in-one 部署即完备；如未来多实例，需升级为库级串行手段（如订单行 SELECT FOR UPDATE）
-var cashCreateLocks [64]sync.Mutex
+// cashCreateLockTx 现金/货到付款建单的库级串行点：锁支付配置单行
+// 现金单「创建即已支付」，不置 pending_flag（唯一索引只保护待支付态），
+// 「查重 → 插入」在并发双击下非原子，同订单可落两笔已支付现金流水（交班营业额双计）。
+// 旧实现用进程内分段锁，只在单容器部署下成立；改为锁 pay_config 固定单行后，
+// 多实例同样串行。代价是现金/货到付款建单全局串行（事务内无远程调用，收银量级可忽略）。
+// 调用方必须在同一事务内紧接着复查「已存在成功支付单」，锁才有意义。
+// 参数：
+//   - tx: 建单事务
+//
+// 返回值：
+//   - error: 支付配置行缺失或加锁失败
+func cashCreateLockTx(tx *gorm.DB) error {
+	var cfg model.PayConfig
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id").First(&cfg, payConfigID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return bizerr.New(codes.FailedPrecondition, "支付配置缺失，请先在后台完成支付配置")
+		}
+		return err
+	}
+	return nil
+}
 
 // CreatePayment 创建支付单并生成第三方支付调起参数
 // 现金(4)/货到付款(3)无需第三方调起参数，创建成功后直接同步订单状态为已支付
@@ -112,7 +129,7 @@ var cashCreateLocks [64]sync.Mutex
 // 付款码支付(5/6)只创建待支付单（无调起参数、不动订单状态），扣款由收银员扫顾客付款码后
 // 通过 PayByAuthCode 完成（两步化，见 codepay.go），渠道不支持 0 元扣款
 // 幂等策略：订单已有支付成功记录时拒绝创建；已有同方式同金额的待支付单时直接复用该记录；
-// 现金/货到付款在订单级分段锁内执行整个「查重→创建」过程，封堵并发双击的双流水
+// 现金/货到付款在库级串行点（cashCreateLockTx）内重新查重后再插入，封堵并发双击的双流水
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建支付请求
@@ -129,12 +146,6 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	case 1, 2, 3, 4, 5, 6:
 	default:
 		return nil, "", bizerr.New(codes.InvalidArgument, "不支持的支付方式")
-	}
-	// 现金/货到付款：锁持有到本函数返回（创建事务已提交），并发第二单在锁内查重即被拒
-	if req.PayType == 3 || req.PayType == 4 {
-		mu := &cashCreateLocks[uint64(req.OrderId)%uint64(len(cashCreateLocks))]
-		mu.Lock()
-		defer mu.Unlock()
 	}
 	// 付款码支付依赖渠道真实扣款，渠道不受理 0 元交易；全额优惠单收银台应改用现金方式
 	if (req.PayType == 5 || req.PayType == 6) && req.Amount <= 0 {
@@ -214,6 +225,22 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	var staleClosed []model.Payment
 
 	if err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 现金/货到付款创建即成功、不置 pending_flag，唯一索引保护不到它：
+		// 先取库级串行点再复查成功支付，跨实例封堵并发双击写入两笔已支付流水
+		if p.Status == model.PaymentStatusSuccess {
+			if lerr := cashCreateLockTx(tx); lerr != nil {
+				return lerr
+			}
+			var paid int64
+			if cerr := tx.Model(&model.Payment{}).
+				Where("order_id = ? AND status = ?", p.OrderID, model.PaymentStatusSuccess).
+				Count(&paid).Error; cerr != nil {
+				return cerr
+			}
+			if paid > 0 {
+				return bizerr.New(codes.AlreadyExists, "订单已支付，请勿重复支付")
+			}
+		}
 		if err := tx.Create(p).Error; err != nil {
 			if !isDuplicateEntryErr(err) {
 				return err
@@ -399,7 +426,12 @@ func (s *PaymentService) GetPaymentStatusByNo(ctx context.Context, paymentNo str
 	}
 	var p model.Payment
 	if err := s.db.GetDb().WithContext(ctx).Where("payment_no = ?", paymentNo).First(&p).Error; err != nil {
-		return nil, bizerr.New(codes.NotFound, "支付单不存在")
+		// 只有记录不存在才是「支付单不存在」；DB 故障原样抛出，别让轮询端把服务异常
+		// 显示成「单号无效」而放弃重试
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bizerr.New(codes.NotFound, "支付单不存在")
+		}
+		return nil, err
 	}
 	return &p, nil
 }
@@ -542,7 +574,7 @@ func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.
 	for k, v := range req.Headers {
 		headers.Set(k, v)
 	}
-	params, err := parseWechatCallback(s, req.Body, headers)
+	params, err := parseWechatCallback(s, ctx, req.Body, headers)
 	if err != nil {
 		// 微信通知全文加密，验签/解密失败时连支付单号都解析不出，归属只能留空（community_id=0），
 		// 这类流水因此只出现在超管的全量队列
@@ -1459,9 +1491,9 @@ func generatePaymentNo() string {
 
 // isDuplicateEntryErr 判断错误是否为唯一索引冲突（MySQL 1062 Duplicate entry）
 // 供待支付占位键 uni_payments_pending_flag（列级 unique tag 生成，历史名为 uk_payments_order_pending）
-// 的并发竞态兜底使用；
-// 不校验索引名：GORM 返回的错误里索引名形态随驱动版本变化，按 1062 泛匹配即可，
-// 调用方随后按业务逻辑（复用/关闭重建）自证语义
+// 的并发竞态兜底使用；调用方随后按业务逻辑（复用/关闭重建）自证语义。
+// 判定走 common/dberr 的错误号精确匹配：旧实现用 strings.Contains(err, "1062")，
+// 驱动把 SQL 参数原文带进错误文本时（如金额 1062.00）会把普通报错误判成唯一键冲突。
 //
 // 参数：
 //   - err: 数据库错误
@@ -1469,10 +1501,7 @@ func generatePaymentNo() string {
 // 返回值：
 //   - bool: 唯一键冲突返回 true
 func isDuplicateEntryErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "Duplicate entry") || strings.Contains(err.Error(), "1062")
+	return dberr.IsDuplicate(err)
 }
 
 // _ 占位，避免 common 未使用告警

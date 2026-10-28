@@ -281,7 +281,16 @@ function rankPercent(salesCount: number): number {
 
 // --- 数据加载 ---
 
+// 请求序号守卫：四个全平台指标 + 社区排行各自独立 ref，快速切换日期时旧响应可能
+// 晚于新响应返回并乱序覆盖，呈现混合区间数据；序号过期即整批丢弃
+let loadSeq = 0
+
+// 社区排行的请求并发上限：社区数最多 200，全并发会同时打满浏览器连接池与后端连接，
+// 分片后单批最多 8 个在途请求，总耗时只多出少量排队时间
+const COMMUNITY_FETCH_CONCURRENCY = 8
+
 async function loadData() {
+  const seq = ++loadSeq
   const [start, end] = currentRange()
 
   const [globalRes, communityListRes, trendRes, rankRes] = await Promise.allSettled([
@@ -290,6 +299,7 @@ async function loadData() {
     getRevenueReport({ start_date: start, end_date: end, group_by: 'day', scope: 'all' }),
     getProductRankings({ start_date: start, end_date: end, limit: 10, scope: 'all' }),
   ])
+  if (seq !== loadSeq) return
 
   if (globalRes.status === 'fulfilled' && globalRes.value.data.code === 0) {
     globalSales.value = globalRes.value.data.data
@@ -308,29 +318,34 @@ async function loadData() {
     hotProducts.value = rankRes.value.data.data || []
   }
 
-  // 社区排行：逐社区查询销售统计（口径与单社区统计页完全一致）
+  // 社区排行：逐社区查询销售统计（口径与单社区统计页完全一致），按并发上限分片
   communityLoading.value = true
   try {
-    const results = await Promise.allSettled(
-      communities.map((c) => getSalesStatistics({ start_date: start, end_date: end, community_id: c.id })),
-    )
     const rows: CommunityRow[] = []
-    results.forEach((r, idx) => {
-      if (r.status === 'fulfilled' && r.value.data.code === 0) {
-        const s = r.value.data.data
-        rows.push({
-          id: communities[idx].id,
-          name: communities[idx].name,
-          pay_amount: s.pay_amount,
-          total_orders: s.total_orders,
-          avg_order_amount: s.avg_order_amount,
-        })
-      }
-    })
+    for (let i = 0; i < communities.length; i += COMMUNITY_FETCH_CONCURRENCY) {
+      const batch = communities.slice(i, i + COMMUNITY_FETCH_CONCURRENCY)
+      const results = await Promise.allSettled(
+        batch.map((c) => getSalesStatistics({ start_date: start, end_date: end, community_id: c.id })),
+      )
+      if (seq !== loadSeq) return
+      results.forEach((r, idx) => {
+        if (r.status === 'fulfilled' && r.value.data.code === 0) {
+          const s = r.value.data.data
+          rows.push({
+            id: batch[idx].id,
+            name: batch[idx].name,
+            pay_amount: s.pay_amount,
+            total_orders: s.total_orders,
+            avg_order_amount: s.avg_order_amount,
+          })
+        }
+      })
+    }
     rows.sort((a, b) => b.pay_amount - a.pay_amount)
     communityRows.value = rows
   } finally {
-    communityLoading.value = false
+    // 过期批次的收尾不得清掉新一轮的加载态
+    if (seq === loadSeq) communityLoading.value = false
   }
 }
 

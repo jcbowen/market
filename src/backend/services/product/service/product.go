@@ -655,6 +655,13 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 		}
 		p.CategoryID = req.CategoryId
 	}
+	// description/cover_image/unit/min_buy/status 沿用「空值=不改动」，与上面 content/sort 的三态口径刻意不同：
+	//   - description：后台表单恒提交空串（简介不在商品编辑页维护），改成无条件覆盖等于每次保存都清空简介；
+	//   - unit：必填且非空，没有「清空单位」的入口；
+	//   - min_buy：表单最小值 1，0 只表示「未填」，归 0 无入口也无意义（起购数量下限即 1）；
+	//   - status：上下架走专用接口 PUT /admin/products/:id/status；编辑接口只在「预约中切立即上架」
+	//     这一种场景显式提交 status=1，其余场景不传，避免编辑下架商品时被顺手上架。
+	// 需要真正支持「清空」的字段（如封面图）应先给前端加清空语义，再按 sort 的方式改指针三态。
 	if name != "" {
 		p.Name = name
 	}

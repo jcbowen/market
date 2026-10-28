@@ -16,6 +16,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/common/pageparam"
+	"github.com/jcbowen/market/src/backend/common/paynotify"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
@@ -250,18 +251,19 @@ func maskWechatNotifyHeaders(headers http.Header) string {
 	return marshalOrEmpty(masked)
 }
 
-// alipayNotifyRawBody 序列化支付宝通知参数为流水原文（含 sign，不做掩码）
+// alipayNotifyRawBody 序列化支付宝通知参数为流水原文
 // 保留签名值是因为 raw_body 的唯一用途就是复盘「渠道发了什么、我们为什么拒」，
 // 而验签类故障必须拿到 sign 才能离线复算待验签串；掩码 sign 没有隐私收益
 // （签名把 out_trade_no/total_amount 一并签死，脱离原文即失效，也无法反推私钥），
-// 只会把这类故障变成永久无法定位。买家账号等字段本就原文入库，口径保持一致。
+// 只会把这类故障变成永久无法定位。买家身份字段（buyer_logon_id/buyer_user_id/
+// buyer_open_id）与资金核对无关，统一走 paynotify 脱敏，与网关取证口径一致。
 // 参数：
 //   - params: 回调 form 参数
 //
 // 返回值：
 //   - string: JSON 字符串（超长由 marshalOrEmpty 截断）
 func alipayNotifyRawBody(params map[string]string) string {
-	return marshalOrEmpty(params)
+	return marshalOrEmpty(paynotify.MaskAlipayParams(params))
 }
 
 // maskSecret 保留前 6 位便于比对「是否同一个值」，其余替换为定长掩码

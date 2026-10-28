@@ -232,7 +232,10 @@ test.describe.serial('散客订单补绑会员', () => {
       '支付方式查询',
     );
     const codePayType = methods.list.find((m) => m.pay_type === 5 || m.pay_type === 6)?.pay_type ?? 0;
-    test.skip(codePayType === 0, '环境未配置任何付款码渠道，无法造待支付单');
+    // 散客待支付单只有「付款码两步化第一步」这一条路（现金单创建即完结、C 端单必带会员），
+    // 因此本用例必须有真实第三方渠道凭据；本地测试服仅现金渠道，按脚本白名单登记为凭据依赖跳过
+    // （见 scripts/check-test-integrity.mjs 的 CREDENTIAL_GATED_CASES）
+    test.skip(codePayType === 0, '需第三方付款码渠道凭据：环境仅有现金渠道，造不出散客待支付单');
 
     const pending = assertOk<PosOrderResult>(
       (await (

@@ -203,7 +203,11 @@ async function loadCoupons() {
   }
 }
 
+// 请求序号守卫：快速切换筛选时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const params: Parameters<typeof getCouponRecords>[0] = {
@@ -214,12 +218,14 @@ async function loadData() {
     if (filterStatus.value) params.status = filterStatus.value
     if (filterSource.value) params.source = filterSource.value
     const res = await getCouponRecords(params)
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list || []
       pagination.value.itemCount = res.data.data.total || 0
     }
   } finally {
-    loading.value = false
+    // 过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
   }
 }
 

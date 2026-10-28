@@ -263,7 +263,11 @@ func TestExportTaskLifecycle(t *testing.T) {
 		if _, err := os.Stat(full); err != nil {
 			t.Fatalf("生成文件应存在: %v", err)
 		}
-		if err := exportSvc.DeleteExportTask(ctx, id); err != nil {
+		// 服务层自带超管闸：绕过网关直调 gRPC 也拦得住
+		if err := exportSvc.DeleteExportTask(ctx, id, false); err == nil {
+			t.Fatal("非超管删除应被拒绝")
+		}
+		if err := exportSvc.DeleteExportTask(ctx, id, true); err != nil {
 			t.Fatalf("删除导出任务失败: %v", err)
 		}
 		if _, err := os.Stat(full); !os.IsNotExist(err) {

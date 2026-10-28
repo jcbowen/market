@@ -301,6 +301,10 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		}
 	}
 
+	// 明细累加是多次浮点加法的叠加，19.99×3 之类的组合会出现 59.97000000000001，
+	// 统一在汇入口收敛到 2 位小数（与 refund.go 的金额口径一致），起送门槛与文案不再被误差影响
+	totalAmount = round2(totalAmount)
+
 	// 配送订单需计算配送费并校验起送金额（按商品总额校验，优惠不影响起送门槛）
 	// 社区信息已在方法开头统一获取（communityInfo），此处不再重复调用
 	var deliveryFee float64
@@ -335,13 +339,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, req *order.CreateOrderRe
 		}
 	}
 
-	payAmount := totalAmount + deliveryFee - fullReductionAmount - discountAmount
+	payAmount := round2(totalAmount + deliveryFee - fullReductionAmount - discountAmount)
 	// 手动优惠（收银台抹零/整单改价折算）：与券/满减叠加，但不可为负、不可超原应付（实付≥0 兜底）
 	if req.ManualDiscount > 0 {
 		if req.ManualDiscount > payAmount {
 			return nil, bizerr.New(codes.InvalidArgument, "手动优惠金额不能超过应付金额")
 		}
-		payAmount -= req.ManualDiscount
+		payAmount = round2(payAmount - req.ManualDiscount)
 	}
 	if payAmount < 0 {
 		payAmount = 0
@@ -1366,8 +1370,10 @@ func recordSchedulerFailure(ctx context.Context, db *mysql.Instance, orderID int
 }
 
 // closePendingPayments 关闭订单的待支付支付单（订单取消后的收尾动作）
-// 尽力而为：调用失败仅记日志，不阻断取消流程（迟到回调由 handlePaySuccess 终态兜底拦住，
-// 支付单状态不一致可由下次取消或人工处理）
+// 走 runPostCommitEffect 加固：调用方 ctx 已可能因客户端断连被取消，收尾必须脱离该信号，
+// 并在有限次重试后打 [CRITICAL] 留出补做线索；失败不阻断取消流程（迟到回调由
+// handlePaySuccess 的终态兜底拦住，支付单状态不一致可由对账调度器或人工处理）。
+// ClosePayments 幂等（没有待支付单直接返回成功），重试安全。
 // 参数：
 //   - ctx: 上下文
 //   - orderID: 订单 ID
@@ -1375,9 +1381,11 @@ func closePendingPayments(ctx context.Context, orderID int64) {
 	if grpcclient.PaymentClient == nil {
 		return
 	}
-	if _, err := grpcclient.PaymentClient.ClosePayments(ctx, &payment.ClosePaymentsReq{OrderId: orderID}); err != nil {
-		log.Printf("[order] 关闭订单 %d 待支付支付单失败: %v", orderID, err)
-	}
+	_ = runPostCommitEffect(ctx, "关闭待支付支付单", fmt.Sprintf("order_id=%d", orderID),
+		func(c context.Context) error {
+			_, err := grpcclient.PaymentClient.ClosePayments(c, &payment.ClosePaymentsReq{OrderId: orderID})
+			return err
+		})
 }
 
 // orderTransitions 订单状态合法流转表
@@ -1387,12 +1395,12 @@ func closePendingPayments(ctx context.Context, orderID int64) {
 // 100 为调度器「超时取消处理中」抢占态（见 scheduler.go）：支付回调二阶段/调度器补同步
 // 与抢占并发时订单处于 100，需允许 100→2 补同步，否则已收款订单会卡在处理中态反复重试
 var orderTransitions = map[int32][]int32{
-	2: {1, 100},  // 待支付/取消处理中 -> 已支付（支付成功，含调度器反查补同步）
-	3: {2},       // 已支付 -> 备货中
-	4: {2, 3},    // 已支付/备货中 -> 配送中（发货）
-	5: {2, 4},    // 已支付(自提)/配送中 -> 已完成（确认收货）
-	7: {2, 3, 4}, // 已支付/备货中/配送中 -> 退款中
-	8: {7},       // 退款中 -> 已退款
+	2: {1, 100},     // 待支付/取消处理中 -> 已支付（支付成功，含调度器反查补同步）
+	3: {2},          // 已支付 -> 备货中
+	4: {2, 3},       // 已支付/备货中 -> 配送中（发货）
+	5: {2, 4},       // 已支付(自提)/配送中 -> 已完成（确认收货）
+	7: {2, 3, 4, 5}, // 已支付/备货中/配送中/已完成 -> 退款中（已完成的售后窗口见 ApplyRefund）
+	8: {7},          // 退款中 -> 已退款
 }
 
 // isTransitionAllowed 校验订单状态流转是否合法
@@ -1413,6 +1421,39 @@ func isTransitionAllowed(from, to int32) bool {
 		}
 	}
 	return false
+}
+
+// transitionOrderStatusTx 事务内按状态机校验并落库订单状态
+// 退款发起（C 端申请 / 后台代客）等不走 UpdateOrderStatus 的旁路统一走这里，
+// 避免「校验一套、写库另一套」后两处口径漂移。
+// 调用方必须已在同一事务内 FOR UPDATE 锁住订单行；只更新 status/updated_at 两列，
+// 不用整行 Save，防止把读取时点的其它列写回。
+//
+// 参数：
+//   - tx: 已锁住订单行的事务
+//   - o: 订单模型（读取时的状态作为流转起点，成功后同步内存值）
+//   - to: 目标状态
+//   - now: 更新时间，格式 2006-01-02 15:04:05
+//
+// 返回值：
+//   - error: 流转不合法返回 FailedPrecondition；写库失败原样返回
+//
+// 使用示例：
+//
+//	if err := transitionOrderStatusTx(tx, &o, 7, now); err != nil {
+//	    return err
+//	}
+func transitionOrderStatusTx(tx *gorm.DB, o *model.Order, to int32, now string) error {
+	if !isTransitionAllowed(o.Status, to) {
+		return bizerr.New(codes.FailedPrecondition, "订单状态不允许该操作")
+	}
+	if err := tx.Model(&model.Order{}).Where("id = ?", o.ID).
+		Updates(map[string]interface{}{"status": to, "updated_at": now}).Error; err != nil {
+		return err
+	}
+	o.Status = to
+	o.UpdatedAt = now
+	return nil
 }
 
 // UpdateOrderStatus 更新订单状态
@@ -2005,6 +2046,16 @@ func (s *OrderService) GetOrderStatistics(ctx context.Context, req *order.GetOrd
 			resp.Cancelled += int32(c.Count)
 		case 7:
 			resp.Refunding = int32(c.Count)
+		// 调度器抢占态（100-103）不占业务状态值域，统计时必须按「来源状态」归桶，
+		// 否则这些行只进 TotalOrders、不进任何桶，状态之和会小于总单数：
+		// 100 超时取消处理中（原 1 待支付）、101 自动完成处理中（原 4 配送中）、
+		// 102/103 自提单自动完成处理中（原 2 已支付 / 3 备货中）
+		case 100:
+			resp.PendingPay += int32(c.Count)
+		case 101:
+			resp.PendingReceive += int32(c.Count)
+		case 102, 103:
+			resp.PendingShip += int32(c.Count)
 		}
 		resp.TotalOrders += int32(c.Count)
 	}
@@ -2166,12 +2217,13 @@ func (s *OrderService) GetUserFrequentProducts(ctx context.Context, req *order.G
 
 	// 附带每个商品该用户最常买的 SKU（按累计数量取 Top1，供一键加购）
 	// 窗口函数一次查出全部商品的 Top1 SKU（MySQL 8.0+），替代逐商品循环查询，避免 N+1
+	// 过滤条件必须与上方 baseQuery 逐项一致（用户/状态/软删/社区），
+	// 否则「常买商品」列表里没有的订单可能反过来决定 Top1 SKU，一键加购会加错规格
 	type skuTopRow struct {
 		ProductId int64
 		SkuId     int64
 	}
-	var skuRows []skuTopRow
-	err := s.db.GetDb().WithContext(ctx).Raw(`
+	skuSQL := `
 SELECT product_id, sku_id FROM (
     SELECT order_items.product_id AS product_id, order_items.sku_id AS sku_id,
            ROW_NUMBER() OVER (
@@ -2180,10 +2232,23 @@ SELECT product_id, sku_id FROM (
            ) AS rn
     FROM order_items
     JOIN orders ON orders.id = order_items.order_id
-    WHERE orders.user_id = ? AND orders.status IN ?
+    WHERE orders.user_id = ? AND orders.status IN ?`
+	skuArgs := []interface{}{req.UserId, validStatuses}
+	if !req.IncludeUserDeleted {
+		skuSQL += " AND orders.user_deleted = ?"
+		skuArgs = append(skuArgs, int32(0))
+	}
+	if req.CommunityId > 0 {
+		skuSQL += " AND orders.community_id = ?"
+		skuArgs = append(skuArgs, req.CommunityId)
+	}
+	skuSQL += `
     GROUP BY order_items.product_id, order_items.sku_id
 ) ranked
-WHERE rn = 1`, req.UserId, validStatuses).Scan(&skuRows).Error
+WHERE rn = 1`
+
+	var skuRows []skuTopRow
+	err := s.db.GetDb().WithContext(ctx).Raw(skuSQL, skuArgs...).Scan(&skuRows).Error
 	if err != nil {
 		// SKU 仅为附属信息（一键加购用），查询失败不阻断列表返回，仅记日志
 		log.Printf("[order] 查询用户 %d 常买商品 SKU 失败（sku_id 置 0）: %v", req.UserId, err)

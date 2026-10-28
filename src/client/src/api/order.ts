@@ -218,6 +218,41 @@ export function previewFreeShipping(
   return post<FreeShippingPreview>('/orders/free-shipping/preview', { items, community_id: communityId })
 }
 
+/** 券可用性试算结果（逐券） */
+export interface CouponEligibilityPreview {
+  /** 券 ID（coupons.id） */
+  coupon_id: number
+  /** 是否可用（门槛按券适用范围计算，与下单校验同一口径） */
+  available: boolean
+  /** 硬阻断原因（券失效/条件变更）；门槛差额由页面按 threshold 与 eligible_amount 组文案 */
+  reason: string
+  /** 券范围内商品金额 */
+  eligible_amount: number
+  /** 门槛（用户券发放时的快照值） */
+  threshold: number
+  /** 预计抵扣金额（不可用时为 0） */
+  discount_amount: number
+}
+
+/**
+ * 券可用性试算（订单确认页展示券是否可用与预计抵扣）
+ * 门槛按券适用范围计算，避免按全车金额误判为可用、提交时才被打回
+ * @param items 结算商品（sku_id + quantity）
+ * @param couponIds 待试算的券 ID（用户券对应的 coupons.id）
+ * @param communityId 试算社区（跨社区结算时传结算社区，不传按用户当前社区）
+ */
+export function previewCouponEligibility(
+  items: { sku_id: number; quantity: number }[],
+  couponIds: number[],
+  communityId?: number,
+) {
+  return post<CouponEligibilityPreview[]>('/orders/coupon-eligibility/preview', {
+    items,
+    coupon_ids: couponIds,
+    community_id: communityId,
+  })
+}
+
 /** 再来一单时未能加入购物车的商品项 */
 export interface ReorderSkippedItem {
   product_name: string

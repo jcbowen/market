@@ -239,6 +239,40 @@ for (const p of platforms) {
   }
 }
 
+// 前端产物新鲜度：bin/static/admin、bin/static/h5 早于对应前端源码目录最新文件时，
+// 说明改了前端但没重跑构建——镜像会静默打包旧页面（此前只检查目录是否存在）。
+// 判据与后端一致（比较 mtime）：构建产物随每次 build 重新写入，源码改动必然更新其 mtime。
+function newestFileMtime(dir) {
+  let newest = 0;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name === 'node_modules' || e.name === 'dist' || e.name === 'unpackage') continue;
+      newest = Math.max(newest, newestFileMtime(full));
+    } else {
+      newest = Math.max(newest, fs.statSync(full).mtimeMs);
+    }
+  }
+  return newest;
+}
+const FRONTEND_CHECKS = [
+  { out: path.join(ROOT_DIR, 'bin', 'static', 'admin'), src: path.join(ROOT_DIR, 'src', 'admin', 'src'), build: 'cd src/admin && npm run build' },
+  { out: path.join(ROOT_DIR, 'bin', 'static', 'h5'), src: path.join(ROOT_DIR, 'src', 'client', 'src'), build: 'cd src/client && npm run build:h5' },
+];
+for (const c of FRONTEND_CHECKS) {
+  const outName = path.relative(ROOT_DIR, c.out);
+  const newestOut = newestFileMtime(c.out);
+  if (newestOut === 0) {
+    console.error(`错误: ${outName} 为空，请先执行前端构建（${c.build}）`);
+    process.exit(1);
+  }
+  const newestFront = newestFileMtime(c.src);
+  if (newestOut < newestFront) {
+    console.error(`错误: ${outName} 早于前端源码（改了页面但未重新构建），请先执行 ${c.build}`);
+    process.exit(1);
+  }
+}
+
 if (!tag) tag = appMode ? 'market-app:dev' : 'market:dev';
 
 // ---------- buildx 构建 ----------

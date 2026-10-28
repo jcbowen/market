@@ -284,6 +284,34 @@ function silentRefresh(): Promise<boolean> {
 }
 
 /**
+ * 全局 loading 引用计数
+ * uni.showLoading/hideLoading 是单例：并发请求时先返回的那个 hideLoading
+ * 会把仍在进行的请求的 loading 关掉（界面看起来「已加载完」但数据还没到）。
+ * 计数归零才真正隐藏，保证 loading 覆盖整批并发请求
+ */
+let loadingRefCount = 0
+
+/**
+ * 显示全局 loading（首个请求触发，后续请求仅计数）
+ */
+function showGlobalLoading() {
+  loadingRefCount++
+  if (loadingRefCount === 1) {
+    uni.showLoading({ title: '加载中', mask: true })
+  }
+}
+
+/**
+ * 隐藏全局 loading（计数归零才真正隐藏）
+ */
+function hideGlobalLoading() {
+  loadingRefCount = Math.max(0, loadingRefCount - 1)
+  if (loadingRefCount === 0) {
+    uni.hideLoading()
+  }
+}
+
+/**
  * 单次请求：发送 HTTP 请求并返回 Promise，不做静默续期与重放
  * 401（HTTP 状态码或业务码）时 reject UnauthorizedError，由 request 层处理
  * @param options 请求配置
@@ -319,7 +347,7 @@ function requestOnce<T = unknown>(
 
   // #ifndef H5
   if (!hideLoading) {
-    uni.showLoading({ title: '加载中', mask: true })
+    showGlobalLoading()
   }
   // #endif
 
@@ -356,7 +384,7 @@ function requestOnce<T = unknown>(
       complete: () => {
         // #ifndef H5
         if (!hideLoading) {
-          uni.hideLoading()
+          hideGlobalLoading()
         }
         // #endif
       },

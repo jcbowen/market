@@ -165,8 +165,21 @@ const emptyProduct: Product = {
   min_buy: 1,
 }
 
-/** 商品详情缓存：商品 ID -> 详情（含 skus/specs），避免重复请求 */
-const detailCache = new Map<number, Product>()
+/**
+ * 商品详情缓存：`社区 ID:商品 ID` -> 详情（含 skus/specs），避免重复请求
+ * 键必须带社区：详情按社区归属查询，同一商品在不同社区语境下取到的规格/价格并不相同，
+ * 只按商品 ID 键控会让切换社区后的选择弹层复用上一个社区的数据
+ */
+const detailCache = new Map<string, Product>()
+
+/**
+ * 拼接详情缓存键
+ * @param productId 商品 ID
+ * @param communityId 详情查询使用的社区 ID（未就绪时按 0 归入同一档）
+ */
+function detailCacheKey(productId: number, communityId?: number) {
+  return `${communityId || 0}:${productId}`
+}
 
 const innerProduct = ref<Product>({ ...emptyProduct })
 const selectedSku = ref<Sku>({ ...emptySku })
@@ -238,7 +251,8 @@ async function init() {
   quantity.value = props.initialQuantity || product.min_buy || innerProduct.value.min_buy || 1
 
   if (!innerProduct.value.skus.length) {
-    const cached = detailCache.get(product.id)
+    const cacheKey = detailCacheKey(product.id, detailCommunityId.value)
+    const cached = detailCache.get(cacheKey)
     if (cached) {
       innerProduct.value = cached
     } else {
@@ -246,7 +260,7 @@ async function init() {
       try {
         const res = await getProductDetail(product.id, detailCommunityId.value)
         if (res.data) {
-          detailCache.set(product.id, res.data)
+          detailCache.set(cacheKey, res.data)
           innerProduct.value = res.data
         }
       } catch {

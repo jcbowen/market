@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/security"
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -101,6 +103,11 @@ func AlipayConfigStatus(cfg *model.PayConfig) (bool, string) {
 	return true, ""
 }
 
+// alipayHTTPTimeout 支付宝 API 请求（V3 下单/查询/退款等）的整体时限
+// SDK 的 GenericExecuteApi 默认使用 http.DefaultClient（无超时），对端不响应时会永久占用
+// gRPC 处理协程，最终拖垮支付服务实例；V3 接口正常在数百毫秒内返回，15 秒足以覆盖长尾
+const alipayHTTPTimeout = 15 * time.Second
+
 // buildAlipayExecutor 根据支付宝配置构建通用执行器（V2 pageExecute 与 V3 API 共享）
 // 按加签方式分流：
 //   - 公钥模式：AppID + 应用私钥 + 支付宝公钥；
@@ -140,6 +147,9 @@ func buildAlipayExecutor(cfg config.AlipayConfig) *alipaysdk.GenericExecuteApi {
 		log.Printf("构建支付宝执行器失败: %v", err)
 		return nil
 	}
+	// SDK 默认复用 http.DefaultClient（全局无超时），这里注入独立客户端，
+	// 保证单次调用有明确上限且不影响进程内其他 HTTP 调用
+	executor.SetHttpClient(&http.Client{Timeout: alipayHTTPTimeout})
 	return executor
 }
 

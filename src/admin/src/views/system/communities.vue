@@ -84,7 +84,11 @@ function handleFilterChange() {
   loadData()
 }
 
+// 请求序号守卫：快速翻页/切换状态时旧响应可能后到并覆盖新结果（与 UserPicker 同范式）
+let loadSeq = 0
+
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const res = await getCommunityList({
@@ -92,12 +96,14 @@ async function loadData() {
       page_size: pagination.value.pageSize,
       status: statusFilter.value,
     })
+    if (seq !== loadSeq) return
     if (res.data.code === 0) {
       list.value = res.data.data.list
       pagination.value.itemCount = res.data.data.total
     }
   } finally {
-    loading.value = false
+    // 过期批次不得掐掉新一轮的 loading
+    if (seq === loadSeq) loading.value = false
   }
 }
 
