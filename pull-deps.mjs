@@ -7,7 +7,8 @@
 //   或在 VS Code 中运行任务「pull-deps（拉取本地依赖最新代码）」
 //
 // 依赖清单不写死：直接解析 src/backend/go.mod 中 replace 指向本地目录的条目，
-// 以后新增本地 replace 无需改本脚本。逐个仓库执行 git pull --ff-only：
+// 以后新增本地 replace 无需改本脚本。逐个仓库先执行 git fetch --tags --force
+// 补齐远端 tag，再执行 git pull --ff-only：
 //   - 目录缺失 / 不是 git 仓库 → 记为失败（项目必然构建不过）
 //   - 分离头指针 / 当前分支无上游 / 工作区有未提交改动 → 跳过并说明原因
 //   - 本地与远端已分叉 → pull --ff-only 失败，保留现场，不自动 merge / stash
@@ -65,8 +66,9 @@ async function git(cwd, args) {
 }
 
 /**
- * 拉取单个依赖仓库的最新代码。
+ * 拉取单个依赖仓库的最新代码与 tag。
  * 不做任何破坏性操作：不 stash、不 reset、不 merge；工作区不干净时直接跳过。
+ * 唯一例外是 fetch --tags --force 会覆盖本地与远端同名的 tag（重打的 tag 以远端为准）。
  *
  * @param {{module: string, raw: string, dir: string}} dep 依赖仓库信息（collectLocalReplaces 的元素）
  * @returns {Promise<{name: string, status: 'updated'|'current'|'skipped'|'failed', message: string, detail?: string}>}
@@ -110,6 +112,18 @@ async function updateRepo(dep) {
       name,
       status: 'skipped',
       message: `有 ${count} 处未提交改动，已跳过（提交或暂存后重跑）`,
+    };
+  }
+
+  // 显式拉取远端 tag：git pull 的 auto-follow 只会跟随当前分支历史内的 tag，
+  // 打在其他分支的 tag、被远端重打的 tag 都拉不下来，这里统一补齐并强制覆盖
+  const fetchTags = await git(dep.dir, ['fetch', '--tags', '--force']);
+  if (!fetchTags.ok) {
+    return {
+      name,
+      status: 'failed',
+      message: 'git fetch --tags --force 失败（远端不可达或网络异常，详见下方输出）',
+      detail: fetchTags.output,
     };
   }
 
