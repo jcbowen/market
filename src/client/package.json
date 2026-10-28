@@ -4,11 +4,11 @@
   "description": "社区商超用户端",
   "scripts": {
     "dev:mp-weixin": "node scripts/build-mp.js --dev",
-    "dev:mp-alipay": "node scripts/gen-tab-bar-paths.js && uni -p mp-alipay",
+    "dev:mp-alipay": "node scripts/build-mp.js --platform mp-alipay --dev",
     "dev:h5": "node scripts/gen-tab-bar-paths.js && uni",
     "dev:app": "node scripts/gen-tab-bar-paths.js && uni -p app",
     "build:mp-weixin": "node scripts/build-mp.js",
-    "build:mp-alipay": "node scripts/gen-tab-bar-paths.js && uni build -p mp-alipay",
+    "build:mp-alipay": "node scripts/build-mp.js --platform mp-alipay",
     "build:h5": "node scripts/gen-tab-bar-paths.js && uni build && node scripts/build-h5.js",
     "build:app": "node scripts/gen-tab-bar-paths.js && uni build -p app",
     "type-check": "vue-tsc --noEmit -p tsconfig.json"

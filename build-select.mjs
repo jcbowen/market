@@ -10,7 +10,7 @@
 //   5. 全部（部署链路 1-4，不含小程序：小程序产物走开发者工具人工上传，
 //      不属于服务器部署包，避免每次全量构建都拖慢部署链路）
 //   6. 微信小程序（build-mp.js 注入 appid 构建，需 --appid 或 src/manifest.local.json）
-//   7. 支付宝小程序（uni build -p mp-alipay，manifest 无 appid、上传时由开发者工具指定）
+//   7. 支付宝小程序（与微信同走 build-mp.js 注入 appid，需 --appid 或 src/manifest.local.json 的 mp-alipay 节）
 //   0. 退出
 //
 // 依赖不全时的检查与自愈同 start-all.mjs（见 deps-tools.mjs），
@@ -60,8 +60,8 @@ async function buildClient() {
   await runWithRepair(ctx, 'npm', ['run', 'build:h5'], { cwd: CLIENT_DIR, step: '构建 client C 端 H5' });
 }
 
-// 微信小程序：走 src/client/scripts/build-mp.js（npm run build:mp-weixin），
-// appid 由 --appid 参数或本机 manifest.local.json 解析，两者皆无时脚本自行报错退出——
+// 微信/支付宝小程序：均走 src/client/scripts/build-mp.js（npm run build:mp-*），
+// appid 由 --appid 参数或本机 manifest.local.json 对应平台节解析，两者皆无时脚本自行报错退出——
 // 这是交付方案的既定约束（仓库不携带卖方 appid 交付），这里不绕过、不代填
 async function buildMpWeixin() {
   console.log('==> 构建微信小程序...');
@@ -159,7 +159,7 @@ console.log('  3) backend 后端服务');
 console.log('  4) Docker 镜像');
 console.log('  5) 全部（部署链路，不含小程序）');
 console.log('  6) 微信小程序（需 --appid 或 src/manifest.local.json）');
-console.log('  7) 支付宝小程序');
+console.log('  7) 支付宝小程序（同 6，appid 取 mp-alipay 节）');
 console.log('  0) 退出');
 console.log('');
 
