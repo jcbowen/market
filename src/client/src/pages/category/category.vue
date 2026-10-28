@@ -9,6 +9,7 @@
       </view>
       <view class="search-bar">
         <u-icon name="search" size="16" color="#999999" />
+        <!-- #ifndef MP-WEIXIN -->
         <input
           v-show="isSearching"
           ref="searchInputRef"
@@ -21,12 +22,15 @@
           @confirm="onSearchConfirm"
           @blur="onSearchBlur"
         />
+        <!-- #endif -->
         <!-- #ifdef MP-WEIXIN || APP-PLUS -->
         <view class="scan-btn" @click.stop="onScanCode">
           <u-icon name="scan" size="20" color="#333333" />
         </view>
         <!-- #endif -->
+        <!-- #ifndef MP-WEIXIN -->
         <text v-show="isSearching" class="search-cancel" @click="cancelSearch">取消</text>
+        <!-- #endif -->
         <view v-show="!isSearching" class="search-text" @click="startSearch">搜索商品</view>
       </view>
     </view>
@@ -108,7 +112,8 @@
       <view v-show="showStickyTitle" class="sticky-title">{{ activeCategoryName }}</view>
     </view>
 
-    <!-- 搜索结果 -->
+    <!-- 搜索结果：小程序端搜索独立成页，页内搜索仅 H5/App 使用 -->
+    <!-- #ifndef MP-WEIXIN -->
     <view v-else class="search-result">
       <scroll-view class="search-result-list" scroll-y>
         <view v-if="searchLoading" class="empty-tip">搜索中...</view>
@@ -134,6 +139,7 @@
         <view style="height: 140rpx" />
       </scroll-view>
     </view>
+    <!-- #endif -->
 
     <!-- 底部购物车栏 -->
     <view class="cart-bar">
@@ -680,10 +686,16 @@ async function loadCartSummary() {
 }
 
 /**
- * 进入搜索模式
+ * 进入搜索
+ * 小程序端：搜索框为纯入口，直接跳转独立搜索页（无页内搜索态/动效）；
+ * H5/App 端：维持原页内搜索
  * H5 下通过 nextTick + DOM 查询聚焦原生 input，部分浏览器需用户手动点击
  */
 function startSearch() {
+  // #ifdef MP-WEIXIN
+  uni.navigateTo({ url: '/pages/search/search' })
+  // #endif
+  // #ifndef MP-WEIXIN
   isSearching.value = true
   keyword.value = ''
   searchResults.value = []
@@ -695,6 +707,7 @@ function startSearch() {
     }, 50)
     // #endif
   })
+  // #endif
 }
 
 /**
@@ -770,14 +783,13 @@ function onScanCode() {
  * 处理扫码结果：
  * 纯数字条码（6-20 位）走条码精确查询——命中单规格直接加购，多规格弹规格选择窗；
  * 未命中回落为关键词搜索（请求层已提示"未找到该条码对应的商品"）；
- * 非条码内容（如二维码文本）直接当关键词搜索
+ * 非条码内容（如二维码文本）直接当关键词搜索。
+ * 小程序端关键词搜索统一跳独立搜索页；H5/App 维持页内搜索
  * @param code 扫码内容
  */
 async function handleScanResult(code: string) {
   if (!/^\d{6,20}$/.test(code)) {
-    isSearching.value = true
-    keyword.value = code
-    doSearch()
+    goSearchWithKeyword(code)
     return
   }
   try {
@@ -793,10 +805,24 @@ async function handleScanResult(code: string) {
       uni.showToast({ title: '该商品暂无库存', icon: 'none' })
     }
   } catch {
-    // 未命中：请求层已统一提示，回填关键词保留扫码上下文供手动搜索
-    isSearching.value = true
-    keyword.value = code
+    // 未命中：请求层已统一提示，携带关键词进搜索页/回填页内搜索保留扫码上下文
+    goSearchWithKeyword(code)
   }
+}
+
+/**
+ * 按关键词进入搜索：小程序端跳独立搜索页，H5/App 回填页内搜索
+ * @param word 关键词
+ */
+function goSearchWithKeyword(word: string) {
+  // #ifdef MP-WEIXIN
+  uni.navigateTo({ url: `/pages/search/search?keyword=${encodeURIComponent(word)}` })
+  // #endif
+  // #ifndef MP-WEIXIN
+  isSearching.value = true
+  keyword.value = word
+  doSearch()
+  // #endif
 }
 
 /**
