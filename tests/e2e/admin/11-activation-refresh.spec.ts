@@ -1,5 +1,7 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Playwright } from '@playwright/test';
 import { adminLogin } from '../../helpers/e2e';
+import { newAdminContext } from '../../helpers/api';
+import { autoName } from '../../helpers/data';
 
 /**
  * 管理端 E2E 11：keep-alive 页「切回即刷新」与统计页并发上限（2026-10-28 全栈审查 P1-12 配套）
@@ -83,6 +85,51 @@ async function waitForIdle(page: Page, track: RequestTrack, timeoutMs = 30_000):
 }
 
 test.describe.serial('统计与设置页激活刷新', () => {
+  /**
+   * 用例 1 的判据是「逐社区拉数 > 并发上限 8」，依赖测试库社区数充足。
+   * 库基线社区数不受本套件控制（api 套件清理后仅剩种子社区，实测可低至 5），
+   * 直接断言会在数据不足时整组红掉并把后两条真回归挡在 serial 门外——
+   * 故 beforeAll 自造 10 个空社区保证下限，afterAll 逆序清理。
+   */
+  let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'] | undefined;
+  const seededCommunityIds: number[] = [];
+  const SEED_COMMUNITIES = 10;
+
+  test.beforeAll(async ({ playwright }: { playwright: Playwright }) => {
+    const ctx = await newAdminContext(playwright);
+    adminApi = ctx.api;
+    for (let i = 0; i < SEED_COMMUNITIES; i++) {
+      const resp = await adminApi.post('/api/v1/admin/communities', {
+        data: {
+          name: autoName('统计分片社区'),
+          address: '自动化测试地址',
+          longitude: 114.3,
+          latitude: 30.5,
+          contact_phone: '13900001111',
+          pickup_address: '测试自提点',
+          delivery_fee: 3,
+          min_order_amount: 20,
+          status: 1,
+        },
+      });
+      const body = (await resp.json()) as { code: number; data?: { id?: number }; message?: string };
+      if (body.code === 0 && body.data?.id) seededCommunityIds.push(body.data.id);
+    }
+    // 造数失败不静默：社区不足时用例 1 的判据又会变回环境依赖，宁可显式红
+    expect(
+      seededCommunityIds.length,
+      '统计分片用例前置造社区失败，无法保证「> 并发上限」判据与库基线解耦',
+    ).toBe(SEED_COMMUNITIES);
+  });
+
+  test.afterAll(async () => {
+    // 逆序清理；删除失败不抛（避免把红刷成清理噪音），残留由 AUTO-TEST 前缀约定统一识别
+    for (const id of [...seededCommunityIds].reverse()) {
+      await adminApi?.delete(`/api/v1/admin/communities/${id}`).catch(() => undefined);
+    }
+    await adminApi?.dispose();
+  });
+
   test('全平台统计页逐社区拉数按并发上限分片', async ({ page }) => {
     await adminLogin(page);
     // 只统计逐社区那一批：平台聚合请求（scope=all）与它同一段代码发出，会干扰峰值判定

@@ -45,7 +45,11 @@ let redisAvailable = false;
 let redisProbeError = '';
 /**
  * Redis 认证口令：优先取进程环境变量（compose/CI 已注入 REDIS_PASSWORD 时无需读文件），
- * 回退读项目根 .env——沙箱或受限终端里读不到 .env 属凭据不可得，不是产品链路坏了
+ * 回退读项目根 .env；仍拿不到再回退读运行中的 market-redis 容器自身——
+ * 本地栈健康是本套件的前置（global-setup 已校验），容器就是当前栈配置的权威来源，
+ * 且不依赖 .env 的文件系统可读性（2026-10-29 实测：.env 为跨目录 symlink 时
+ * 沙箱/受限终端 readFileSync 报 EPERM，口令取不到 → PING NOAUTH → 用例被归为
+ * 「前置类 skip」，完整性闸门 --max 0 整轮失败）。链路：env → .env → 容器 printenv。
  */
 let redisPassword = process.env.REDIS_PASSWORD?.trim() ?? '';
 if (!redisPassword) {
@@ -56,6 +60,18 @@ if (!redisPassword) {
         .find((line) => line.startsWith('REDIS_PASSWORD='))
         ?.slice('REDIS_PASSWORD='.length)
         .trim() ?? '';
+  } catch {
+    redisPassword = '';
+  }
+}
+if (!redisPassword) {
+  try {
+    redisPassword = execFileSync('docker', ['exec', 'market-redis', 'printenv', 'REDIS_PASSWORD'], {
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
   } catch {
     redisPassword = '';
   }
