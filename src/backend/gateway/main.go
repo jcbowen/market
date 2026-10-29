@@ -84,6 +84,9 @@ func main() {
 	r.Use(gwMiddleware.SecurityHeadersMiddleware())
 	r.Use(gwMiddleware.BlockTraceMiddleware())
 	r.Use(gwMiddleware.RealIPMiddleware())
+	// 请求基址注入：随 gRPC 出站拦截器透传给各服务，未配置显式域名时附件 URL
+	// 按当前访问域名兜底拼完整地址（仅响应层，不入库，见 common/attachmenturl）
+	r.Use(gwMiddleware.RequestBaseMiddleware())
 	// 限流不在这里挂：见 registerRoutes 里的 apiLimiter——只作用于 /api/v1 两个分组。
 	// 曾挂在全局，一次 H5 首屏要拉几十张商品图 + 若干 hash chunk，与接口共用同一个 IP 令牌桶，
 	// chunk 请求被判 429 后 uni-h5 直接显示「连接服务器超时，点击屏幕重试」，
@@ -92,9 +95,10 @@ func main() {
 
 	r.Use(baseMw.SetGPC(r))
 	r.Use(staticCacheMiddleware())
-	// 附件访问域名（visit_domain）不做运行期补写：为空时附件 URL 长期按站内绝对路径
-	// /uploads/<path> 降级（随访问域名解析，任何入口开箱即用），仅站点设置/环境变量
-	// 等显式配置才联动写库（见 site.go syncAttachmentVisitDomain）
+	// 附件访问域名（visit_domain）不做运行期补写：为空时附件 URL 优先按网关透传的
+	// 当前访问域名兜底拼完整地址（小程序/APP 端无法解析相对路径），基址不可用时降级
+	// 站内绝对路径 /uploads/<path>；仅站点设置/环境变量等显式配置才联动写库
+	// （见 site.go syncAttachmentVisitDomain）
 
 	// 后台 WebSocket 推送（新订单语音通知）：hub 管理在线连接，
 	// 订阅器接收 order 服务的支付成功事件按社区转发；订阅失败不阻断启动（自动重试）

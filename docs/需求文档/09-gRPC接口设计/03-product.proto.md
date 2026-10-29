@@ -1643,7 +1643,7 @@ message DeleteBannerReq {
 // 注意：oss_access_key_secret 写入时为空或掩码值表示保留原值，读取时服务端已脱敏
 message AttachmentConfig {
   string storage_type = 1;             // 存储类型：local / oss（预留 cos）
-  string visit_domain = 2;             // 自定义访问域名，选填；local 未配置时按 /uploads/ 站内路径兜底、随访问域名解析（仅站点域名/SITE_BASE_URL 等显式配置联动写入，请求现推域名不入库）、OSS 用 bucket 域名
+  string visit_domain = 2;             // 自定义访问域名，选填；local 未配置时按网关透传的当前访问域名兜底拼完整地址（metadata x-request-base，基址不可用再降级 /uploads/ 站内路径）、随访问域名解析（仅站点域名/SITE_BASE_URL 等显式配置联动写入，请求现推域名不入库）、OSS 用 bucket 域名
   string oss_access_key_id = 3;        // 阿里云 AccessKey ID
   string oss_access_key_secret = 4;    // 阿里云 AccessKey Secret（读取时脱敏）
   string oss_endpoint = 5;             // OSS Endpoint，如 oss-cn-shanghai.aliyuncs.com

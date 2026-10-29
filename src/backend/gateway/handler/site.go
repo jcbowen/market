@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"log"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -63,7 +64,7 @@ func platformBaseURL(c *gin.Context) string {
 }
 
 // requestBaseURL 按当前请求推导部署域名基址
-// 优先取反向代理透传的 X-Forwarded-Proto，兼容 HTTPS 部署场景
+// 实现下沉 gateway/middleware.RequestBaseURL（与请求基址中间件共用同一份口径）
 //
 // 参数：
 //   - c: gin 上下文
@@ -71,14 +72,7 @@ func platformBaseURL(c *gin.Context) string {
 // 返回值：
 //   - string: 形如 https://host 的基址
 func requestBaseURL(c *gin.Context) string {
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	}
-	return scheme + "://" + c.Request.Host
+	return gwMiddleware.RequestBaseURL(c)
 }
 
 // GetSiteSetting 获取站点设置
@@ -183,21 +177,52 @@ func (h *AdminHandler) UpdateSiteSetting(c *gin.Context) {
 	response.Success(c, gin.H{"success": true, "version": cfg.Version, "attachment_domain_synced": attachmentSynced})
 }
 
+// absoluteURL 站内路径补全为绝对地址
+// 与 gateway 主包 html_inject.go 的 absoluteURL 同口径（跨包且 main 不可被 import，
+// 各自维护一份）；完整 URL（http/https）原样，相对路径补 base 前缀
+//
+// 参数：
+//   - raw: 原始地址（完整 URL、站内绝对/相对路径，可为空）
+//   - base: 域名基址（scheme://host）
+//
+// 返回值：
+//   - string: 绝对地址，raw 为空时返回空串
+func absoluteURL(raw, base string) string {
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || base == "" {
+		return raw
+	}
+	if !strings.HasPrefix(raw, "/") {
+		raw = "/" + raw
+	}
+	return base + raw
+}
+
 // GetPublicSiteInfo 获取公开站点信息
 // 免登录接口：登录页与 C 端首屏需要展示品牌，只回非敏感字段
+// 兜底口径：均未显式配置部署域名时，base_url 与站内图片地址按当前访问域名
+// 现推拼完整 URL（仅响应层，不入库）；小程序/APP 端 image 组件无法解析相对路径
 // 接口: GET /api/v1/site-info
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) GetPublicSiteInfo(c *gin.Context) {
 	snap := brand.Get(c.Request.Context())
+	// 快照来自后台刷新（无请求上下文），未配置域名时站内图片是 /uploads/... 相对路径，
+	// 出口统一按当前访问域名补全；已是完整 URL（显式配置/OSS/外链）原样保留
+	base := snap.BaseURL
+	if base == "" {
+		base = requestBaseURL(c)
+	}
 	response.Success(c, gin.H{
 		"site_name":       snap.SiteName,
-		"logo_url":        snap.LogoURL,
-		"favicon_url":     snap.FaviconURL,
+		"logo_url":        absoluteURL(snap.LogoURL, base),
+		"favicon_url":     absoluteURL(snap.FaviconURL, base),
 		"footer_html":     snap.FooterHTML,
 		"seo_description": snap.SEODescription,
 		"seo_keywords":    snap.SEOKeywords,
-		"base_url":        snap.BaseURL,
+		"base_url":        base,
 		"version":         snap.Version,
 	})
 }

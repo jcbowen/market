@@ -1151,8 +1151,10 @@ func commonAttachmentConfig(cfg *model.AttachmentConfig) *attachmenturl.Config {
 //  1. 外链 URL（http/https/协议相对）与未知 / 开头绝对路径原样返回
 //  2. 其余形态（相对路径、/<local_dir>/ 与 <local_dir>/ 前缀路径，含 /<local_dir>/seed 演示素材）
 //     归一为相对路径后拼接：<域名>/<local_dir>/<path>（local）或 <域名>/<path>（oss）
-//  3. local 模式 visit_domain 未配置（未做显式配置的常态）→ 拼站内相对路径 /<local_dir>/<path>，
-//     随访问域名解析，按节流周期记提示日志（见 attachmenturl.remindFallback）
+//  3. local 模式 visit_domain 未配置（未做显式配置的常态）→ 优先按网关透传的
+//     请求基址（gRPC metadata，见 common/rpcmeta）拼完整 URL；基址不可用时拼站内
+//     相对路径 /<local_dir>/<path>，随访问域名解析，按节流周期记提示日志
+//     （见 attachmenturl.remindFallback）
 //
 // 参数:
 //   - ctx: 上下文
@@ -1169,7 +1171,7 @@ func (s *AttachmentService) ToMediaURL(ctx context.Context, src string) string {
 	}
 	conv := attachmenturl.NewConverter(pub)
 	if conv == nil {
-		return attachmenturl.FallbackURLIn(dir, src)
+		return attachmenturl.FallbackURLInCtx(ctx, dir, src)
 	}
 	return conv.ToMedia(rel)
 }
@@ -1198,7 +1200,7 @@ func (s *AttachmentService) ToMediaURLs(ctx context.Context, list []string) []st
 			continue
 		}
 		if conv == nil {
-			out = append(out, attachmenturl.FallbackURLIn(dir, src))
+			out = append(out, attachmenturl.FallbackURLInCtx(ctx, dir, src))
 			continue
 		}
 		out = append(out, conv.ToMedia(rel))

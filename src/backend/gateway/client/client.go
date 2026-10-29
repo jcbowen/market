@@ -73,7 +73,8 @@ func initClients(cfg *config.Config) (*ServiceClients, error) {
 			// 本地上传模式图片经 gateway 转发，单条消息可达数 MB，需放宽客户端发送上限
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(10*1024*1024), grpc.MaxCallRecvMsgSize(10*1024*1024)),
 			// 缺省 deadline 兜底：HTTP 请求上下文不带截止时间，下游卡死时请求不能无限挂起
-			grpc.WithUnaryInterceptor(defaultDeadlineUnaryInterceptor),
+			// 请求基址透传：把网关注入的访问域名带进 metadata，服务端兜底拼装附件 URL 用
+			grpc.WithChainUnaryInterceptor(requestBaseUnaryInterceptor, defaultDeadlineUnaryInterceptor),
 		)
 		if cErr != nil {
 			_ = clients.Close()

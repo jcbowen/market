@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"google.golang.org/grpc/metadata"
 	"gorm.io/gorm"
 )
 
@@ -103,6 +104,35 @@ func TestFallbackURLIn(t *testing.T) {
 	}
 	if got := FallbackURLIn("media", "https://other.example.com/x.jpg"); got != "https://other.example.com/x.jpg" {
 		t.Errorf("外链应原样返回: %q", got)
+	}
+}
+
+// TestFallbackURLInCtx 验证带请求上下文的兜底口径：
+// metadata 有网关透传的请求基址 → 拼完整 URL；无基址回落站内绝对路径；外链恒原样
+func TestFallbackURLInCtx(t *testing.T) {
+	base := "http://192.168.1.5:8080"
+	incoming := metadata.NewIncomingContext(context.Background(),
+		metadata.Pairs("x-request-base", base))
+
+	if got := FallbackURLInCtx(incoming, "uploads", "images/a.jpg"); got != base+"/uploads/images/a.jpg" {
+		t.Errorf("有请求基址应拼完整 URL: %q", got)
+	}
+	if got := FallbackURLInCtx(incoming, "", "seed/products/latiao.png"); got != base+"/uploads/seed/products/latiao.png" {
+		t.Errorf("默认目录应回 uploads: %q", got)
+	}
+	if got := FallbackURLInCtx(incoming, "", "/uploads/seed/products/water.png"); got != base+"/uploads/seed/products/water.png" {
+		t.Errorf("站内路径应归一重拼: %q", got)
+	}
+	if got := FallbackURLInCtx(incoming, "", "https://other.example.com/x.jpg"); got != "https://other.example.com/x.jpg" {
+		t.Errorf("外链应原样返回: %q", got)
+	}
+
+	// 无基址（后台任务/直调/单测）回落站内绝对路径，与 FallbackURLIn 等价
+	if got := FallbackURLInCtx(context.Background(), "", "images/a.jpg"); got != "/uploads/images/a.jpg" {
+		t.Errorf("无基址应回落站内绝对路径: %q", got)
+	}
+	if got := FallbackURLInCtx(nil, "", "images/a.jpg"); got != "/uploads/images/a.jpg" {
+		t.Errorf("nil ctx 应回落站内绝对路径: %q", got)
 	}
 }
 

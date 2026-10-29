@@ -13,10 +13,13 @@
 //
 // 完整地址的前提是 local 模式 visit_domain 恒有值：该值只来自显式配置（后台手填、
 // 站点设置 base_url / SITE_BASE_URL 联动，见 gateway site.go）；从未显式配置时
-// visit_domain 保持为空，出库长期降级拼站内相对路径 /uploads/<path>——由浏览器按
-// 当前访问域名解析，任何入口（含局域网 IP）开箱即用，不以「首个请求的域名」入库
-// 兜底（健康检查/本机调试的首访会把临时值固化成错误配置）。降级期间按节流周期
-// 记提示日志，提醒管理员到后台配置正式域名（分享/导出等脱离浏览器上下文的场景需要）。
+// visit_domain 保持为空，出库兜底优先按网关透传的当前访问域名（gRPC metadata
+// x-request-base，见 common/rpcmeta）拼完整地址——小程序/APP 端 image 组件无法解析
+// 站内相对路径，必须给完整 URL；基址未透传（后台任务/直调/单测）降级拼站内相对路径
+// /uploads/<path>，由浏览器按当前访问域名解析。兜底仅发生在响应层，一律不入库，
+// 不以「首个请求的域名」固化配置（健康检查/本机调试的首访不会污染 attachment_config）。
+// 降级期间按节流周期记提示日志，提醒管理员到后台配置正式域名（分享/导出等脱离
+// 浏览器上下文的场景需要）。
 package attachmenturl
 
 import (
@@ -30,6 +33,8 @@ import (
 	"github.com/jcbowen/jcbaseGo"
 	"github.com/jcbowen/jcbaseGo/component/attachment"
 	"gorm.io/gorm"
+
+	"github.com/jcbowen/market/src/backend/common/rpcmeta"
 )
 
 // DefaultCacheTTL 配置缓存默认有效期
@@ -290,7 +295,7 @@ func (l *Loader) MediaURL(ctx context.Context, src string) string {
 	}
 	conv := NewConverter(cfg)
 	if conv == nil {
-		return FallbackURLIn(dir, src)
+		return FallbackURLInCtx(ctx, dir, src)
 	}
 	return conv.ToMedia(rel)
 }
@@ -444,6 +449,7 @@ func FallbackURL(src string) string {
 }
 
 // FallbackURLIn FallbackURL 的目录参数版：兜底路径段与配置目录一致
+// 无 gRPC 上下文形态（纯函数/单测），带请求上下文请用 FallbackURLInCtx
 //
 // 参数:
 //   - dir: 配置的本地存储目录名（空值回默认 uploads）
@@ -452,12 +458,33 @@ func FallbackURL(src string) string {
 // 返回值:
 //   - string: 站内绝对路径；外链或未知绝对路径原样返回
 func FallbackURLIn(dir, src string) string {
+	return FallbackURLInCtx(nil, dir, src)
+}
+
+// FallbackURLInCtx FallbackURLIn 的上下文版：附件访问域名未配置时的出库兜底
+// 优先按网关透传的请求基址（gRPC metadata x-request-base）拼完整 URL——
+// 小程序/APP 端 image 组件无法解析站内相对路径，必须给完整地址；
+// 基址未透传（后台任务/进程内直调/单测）回落站内绝对路径 /<dir>/<path>，
+// 由浏览器按当前访问域名解析。仅响应层拼装，一律不入库
+//
+// 参数:
+//   - ctx: 上下文（gRPC 服务端方法上下文可读出请求基址，可为 nil）
+//   - dir: 配置的本地存储目录名（空值回默认 uploads）
+//   - src: 相对路径或存量完整 URL
+//
+// 返回值:
+//   - string: 完整访问 URL（有请求基址）或站内绝对路径；外链原样返回
+func FallbackURLInCtx(ctx context.Context, dir, src string) string {
 	rel, passthrough := RelPathIn(dir, src)
 	if passthrough {
 		return rel
 	}
 	remindFallback()
-	return "/" + LocalDirName(dir) + "/" + rel
+	segment := "/" + LocalDirName(dir) + "/" + rel
+	if base := rpcmeta.FromIncomingContext(ctx); base != "" {
+		return strings.TrimSuffix(base, "/") + segment
+	}
+	return segment
 }
 
 // ensureTrailingSlash 确保域名以 / 结尾
