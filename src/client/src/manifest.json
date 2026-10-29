@@ -58,7 +58,15 @@
             "minifyWXML" : true
         },
         "lazyCodeLoading" : "requiredComponents",
-        "usingComponents" : true
+        "usingComponents" : true,
+        /* getLocation 属微信隐私接口：2022-07 后未在 requiredPrivateInfos 声明时真机调用必失败
+           （开发工具可能不报错），会静默降级走 IP 定位兜底；平台侧申请项见 02-小程序发版方案.md */
+        "requiredPrivateInfos" : [ "getLocation" ],
+        "permission" : {
+            "scope.userLocation" : {
+                "desc" : "用于就近推荐社区并展示与社区的距离"
+            }
+        }
     },
     "mp-alipay" : {
         "usingComponents" : true

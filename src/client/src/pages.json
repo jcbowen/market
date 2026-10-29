@@ -15,8 +15,11 @@
         // navigationStyle: custom 是微信端写法，支付宝端编译时被忽略导致原生导航栏出现，
         // 与页面内沉浸式布局（top: statusBarHeight）叠加成双重让位空白；
         // 支付宝端等效配置为 transparentTitle: always（导航透明、内容延伸到状态栏）
-        // + titlePenetrate: YES（透明导航层点击穿透，否则搜索框上半部分点击被拦截）
+        // + titlePenetrate: YES（透明导航层点击穿透，否则搜索框上半部分点击被拦截）；
+        // 注意 transparentTitle 只让导航背景透明，原生标题「社区商超」仍会渲染并与
+        // 页面内自定义头部（社区选择栏）文字重叠，故支付宝端必须将页面标题置空
         // #ifdef MP-ALIPAY
+        "navigationBarTitleText": "",
         "transparentTitle": "always",
         "titlePenetrate": "YES"
         // #endif
