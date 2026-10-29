@@ -244,6 +244,7 @@ import { getBanners, getCategories, getProducts, getProductByBarcode, getProduct
 import { addCartItem, getCart, updateCartItem, removeCartItem } from '@/api/cart'
 import { ensureCommunity } from '@/utils/community'
 import { formatPrice } from '@/utils/format'
+import { readPageCache, writePageCache } from '@/utils/pageCache'
 import { goOrderConfirm, goLogin, goCommunitySelect, goPage, goProductDetail } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
 import SiteFooter from '@/components/SiteFooter.vue'
@@ -298,6 +299,35 @@ const rightScrollTop = ref(0)
 const leftScrollIntoView = ref('')
 const lastCommunityId = ref<number | undefined>(undefined)
 const banners = ref<Banner[]>([])
+
+/* 缓存先渲染（stale-while-revalidate）配置：
+   回访用户先展示缓存立即渲染，再发请求刷新覆盖；key 按社区隔离避免串数据 */
+/** 页面数据缓存有效期：10 分钟（价格/库存属强实时数据，短 TTL 缓解展示偏差） */
+const PAGE_CACHE_TTL = 10 * 60 * 1000
+
+/**
+ * 分类列表缓存 key（按社区隔离）
+ * @param communityId 社区 ID（未选社区时归 0）
+ */
+function cacheKeyCategories(communityId?: number) {
+  return `page_cache_categories_${communityId || 0}`
+}
+
+/**
+ * 全分类商品缓存 key（按社区隔离，整体存储各分类商品映射）
+ * @param communityId 社区 ID（未选社区时归 0）
+ */
+function cacheKeyCategoryProducts(communityId?: number) {
+  return `page_cache_category_products_${communityId || 0}`
+}
+
+/**
+ * Banner 缓存 key（按社区与展示位隔离，展示位 2 为分类页 Banner）
+ * @param communityId 社区 ID（未选社区时归 0）
+ */
+function cacheKeyBanners(communityId?: number) {
+  return `page_cache_banners_${communityId || 0}_2`
+}
 /** 各分类分区的固定内容内偏移（scroll-view 原生滚动不改变该值，配合 scrollTop 可实时计算当前分类） */
 const sectionOffsets = ref<{ id: number; top: number; bottom: number }[]>([])
 /** 右侧列表（scroll-view）相对页面视口的固定顶部坐标，用于吸顶/高亮联动的阈值判断 */
@@ -397,35 +427,62 @@ async function initPage() {
 }
 
 /**
- * 加载商品分类
+ * 加载商品分类（缓存先渲染 + 请求异步刷新）
  * 若本地未选中社区，先获取社区列表并默认选中第一个
  */
 async function loadCategories() {
   try {
     await ensureCommunity()
-    const res = await getCategories({ parent_id: 0, community_id: userStore.communityInfo?.id })
-    categories.value = res.data || []
+    const communityId = userStore.communityInfo?.id
+    // 缓存先渲染：过期数据也立即展示兜底（分类仅用于布局与导航，过期风险低）
+    const cached = readPageCache<Category[]>(cacheKeyCategories(communityId), PAGE_CACHE_TTL)
+    if (cached?.data?.length) {
+      categories.value = cached.data
+      if (!activeCategoryId.value && categories.value.length) {
+        activeCategoryId.value = categories.value[0].id
+      }
+      await renderCachedCategoryProducts(communityId)
+    }
+    const res = await getCategories({ parent_id: 0, community_id: communityId })
+    const list = res.data || []
+    categories.value = list
+    if (list.length) {
+      writePageCache(cacheKeyCategories(communityId), list)
+    }
     if (!activeCategoryId.value && categories.value.length) {
       activeCategoryId.value = categories.value[0].id
     }
     await loadAllCategoryProducts()
   } catch {
-    categories.value = []
+    // 缓存已渲染时保留数据避免网络失败清空页面；无缓存则维持原空态
   }
 }
 
 /**
- * 加载分类页 Banner
+ * 加载分类页 Banner（缓存先渲染 + 请求异步刷新）
  */
 async function loadBanners() {
+  const communityId = userStore.communityInfo?.id
+  // 缓存先渲染：过期数据也展示兜底
+  const cached = readPageCache<Banner[]>(cacheKeyBanners(communityId), PAGE_CACHE_TTL)
+  if (cached) {
+    banners.value = cached.data
+  }
   try {
     const res = await getBanners({
-      community_id: userStore.communityInfo?.id,
+      community_id: communityId,
       position: 2,
     })
-    banners.value = res.data || []
+    const list = res.data || []
+    banners.value = list
+    if (list.length) {
+      writePageCache(cacheKeyBanners(communityId), list)
+    }
   } catch {
-    banners.value = []
+    // 缓存已渲染时保留数据；无缓存则维持原空态
+    if (!cached) {
+      banners.value = []
+    }
   }
 }
 
@@ -440,7 +497,33 @@ function onBannerClick(index: number) {
 }
 
 /**
+ * 用缓存的分类商品数据先渲染（stale-while-revalidate 的 stale 阶段）
+ * 仅在存在有效缓存映射时渲染，之后请求刷新会覆盖
+ * @param communityId 社区 ID
+ */
+async function renderCachedCategoryProducts(communityId?: number) {
+  const cached = readPageCache<Record<number, Product[]>>(cacheKeyCategoryProducts(communityId), PAGE_CACHE_TTL)
+  if (cached?.data && Object.keys(cached.data).length) {
+    await applyCategoryProducts(cached.data)
+  }
+}
+
+/**
+ * 渲染分类商品数据并重新度量分区（缓存渲染与网络刷新共用出口）
+ * @param map 分类 ID → 商品列表映射
+ */
+async function applyCategoryProducts(map: Record<number, Product[]>) {
+  categoryProducts.value = map
+  await nextTick()
+  setTimeout(() => {
+    observeSections()
+    measureSections()
+  }, 200)
+}
+
+/**
  * 加载所有分类的商品（首屏），用于右侧无缝滚动展示
+ * 成功后写入页面缓存供下次秒开；失败分类保留当前渲染数据，避免断网时把缓存内容覆盖为空
  */
 async function loadAllCategoryProducts() {
   const communityId = userStore.communityInfo?.id
@@ -458,16 +541,12 @@ async function loadAllCategoryProducts() {
         })
         map[cat.id] = res.data?.list || []
       } catch {
-        map[cat.id] = []
+        map[cat.id] = categoryProducts.value[cat.id] || []
       }
     }),
   )
-  categoryProducts.value = map
-  await nextTick()
-  setTimeout(() => {
-    observeSections()
-    measureSections()
-  }, 200)
+  writePageCache(cacheKeyCategoryProducts(communityId), map)
+  await applyCategoryProducts(map)
 }
 
 /**

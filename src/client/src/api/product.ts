@@ -138,7 +138,7 @@ export function getCategories(params?: { parent_id?: number; community_id?: numb
 
 /**
  * 获取商品列表
- * @param params 分页、分类、关键词等参数
+ * @param params 分页、分类、关键词、排序等参数（sort 口径见后端 ListProducts：sales=销量降序，price_asc/price_desc=价格升降序，缺省按后台 sort 值降序）
  */
 export function getProducts(params?: {
   page?: number
@@ -146,6 +146,7 @@ export function getProducts(params?: {
   category_id?: number
   keyword?: string
   community_id?: number
+  sort?: 'sales' | 'price_asc' | 'price_desc'
 }) {
   return get<PageData<RawProduct>>('/products', params as Record<string, unknown>).then((res) => {
     if (res.data && res.data.list) {

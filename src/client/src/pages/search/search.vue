@@ -17,13 +17,36 @@
       <view class="search-btn" @click="onSearch">搜索</view>
     </view>
 
-    <!-- 搜索结果 -->
+    <!-- 列表区：初始态展示搜索历史 + 热销推荐，搜索态展示结果（两态互斥，卡片结构共用） -->
     <view class="search-result">
       <scroll-view class="search-result-list" scroll-y>
-        <view v-if="searchLoading" class="empty-tip">搜索中...</view>
-        <view v-else-if="!searchResults.length" class="empty-tip">未找到相关商品</view>
+        <template v-if="!hasSearched">
+          <!-- 搜索历史：无历史时整块不渲染 -->
+          <view v-if="searchHistory.length" class="history-section">
+            <view class="section-header">
+              <text class="section-title">搜索历史</text>
+              <u-icon name="trash" size="18" color="#999999" @click="onClearHistory" />
+            </view>
+            <view class="history-tags">
+              <view
+                v-for="word in searchHistory"
+                :key="word"
+                class="history-tag"
+                @click="onHistoryClick(word)"
+              >
+                {{ word }}
+              </view>
+            </view>
+          </view>
+          <!-- 热销推荐：销量降序兜底内容，加载失败或无数据时不显示标题 -->
+          <view v-if="hotProducts.length" class="section-header hot-header">
+            <text class="section-title">热销推荐</text>
+          </view>
+        </template>
+        <view v-if="hasSearched && searchLoading" class="empty-tip">搜索中...</view>
+        <view v-else-if="hasSearched && !displayProducts.length" class="empty-tip">未找到相关商品</view>
         <view
-          v-for="item in searchResults"
+          v-for="item in displayProducts"
           :key="item.id"
           class="product-card"
           @click="onProductClick(item)"
@@ -55,10 +78,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getProductDetail, searchProducts } from '@/api/product'
+import { getProductDetail, getProducts, searchProducts } from '@/api/product'
 import { addCartItem } from '@/api/cart'
 import { addLocalCartItem } from '@/utils/localCart'
 import { decodeQueryValue } from '@/utils/query'
@@ -74,17 +97,35 @@ const searchResults = ref<Product[]>([])
 const searchLoading = ref(false)
 const SEARCH_PAGE_SIZE = 20
 
+/** 是否已执行过搜索：初始态（历史+热销推荐）与结果态的切换开关 */
+const hasSearched = ref(false)
+
+/** 搜索历史本地存储 key */
+const SEARCH_HISTORY_KEY = 'search_history'
+/** 搜索历史上限条数 */
+const SEARCH_HISTORY_MAX = 10
+const searchHistory = ref<string[]>([])
+
+/** 热销推荐商品（销量降序兜底内容） */
+const hotProducts = ref<Product[]>([])
+
+/** 列表展示数据：搜索态展示搜索结果，初始态展示热销推荐（卡片结构共用） */
+const displayProducts = computed(() => (hasSearched.value ? searchResults.value : hotProducts.value))
+
 const showSkuPopup = ref(false)
 /** 当前加购弹窗商品（搜索结果项，SKU/规格数据由组件内兜底加载） */
 const currentProduct = ref<Partial<Product> & { id: number } | null>(null)
 
 onLoad((query) => {
+  loadSearchHistory()
   // 首页扫码未命中条码时携带关键词跳入，直接执行搜索
   // 发送端 encodeURIComponent 过，小程序端 onLoad 不保证自动解码，走防御性解码
   const word = decodeQueryValue(query?.keyword).trim()
   if (word) {
     keyword.value = word
     doSearch()
+  } else {
+    loadHotProducts()
   }
 })
 
@@ -95,13 +136,19 @@ function onSearch() {
 
 /**
  * 按关键词搜索商品
+ * 空关键词时回到初始态（搜索历史 + 热销推荐）
  */
 async function doSearch() {
   const word = keyword.value.trim()
   if (!word) {
+    hasSearched.value = false
     searchResults.value = []
+    if (!hotProducts.value.length) {
+      loadHotProducts()
+    }
     return
   }
+  hasSearched.value = true
   searchLoading.value = true
   try {
     const res = await searchProducts({
@@ -111,10 +158,76 @@ async function doSearch() {
       community_id: userStore.communityInfo?.id,
     })
     searchResults.value = res.data?.list || []
+    saveSearchHistory(word)
   } catch {
     searchResults.value = []
   } finally {
     searchLoading.value = false
+  }
+}
+
+/**
+ * 读取本地搜索历史（最新在前）
+ * 存储损坏或类型异常时静默降级为空列表
+ */
+function loadSearchHistory() {
+  try {
+    const raw = uni.getStorageSync(SEARCH_HISTORY_KEY)
+    const list = typeof raw === 'string' ? JSON.parse(raw) : raw
+    searchHistory.value = Array.isArray(list) ? list.filter((w) => typeof w === 'string' && w) : []
+  } catch {
+    searchHistory.value = []
+  }
+}
+
+/**
+ * 写入搜索历史：去重后最新置顶，超出上限截断
+ * @param word 搜索关键词
+ */
+function saveSearchHistory(word: string) {
+  const next = [word, ...searchHistory.value.filter((w) => w !== word)].slice(0, SEARCH_HISTORY_MAX)
+  searchHistory.value = next
+  try {
+    uni.setStorageSync(SEARCH_HISTORY_KEY, JSON.stringify(next))
+  } catch {
+    // 存储不可用时静默降级，仅本次会话内可见
+  }
+}
+
+/**
+ * 点击历史词：回填关键词并立即搜索
+ * @param word 历史搜索词
+ */
+function onHistoryClick(word: string) {
+  keyword.value = word
+  doSearch()
+}
+
+/** 清空搜索历史（本地同步移除，误触成本低无需二次确认） */
+function onClearHistory() {
+  searchHistory.value = []
+  try {
+    uni.removeStorageSync(SEARCH_HISTORY_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * 加载热销推荐商品（销量降序，真实+虚拟销量口径）
+ * 失败静默：区块不渲染标题，不影响搜索主流程
+ */
+async function loadHotProducts() {
+  try {
+    const res = await getProducts({
+      sort: 'sales',
+      page: 1,
+      page_size: SEARCH_PAGE_SIZE,
+      community_id: userStore.communityInfo?.id,
+    })
+    hotProducts.value = res.data?.list || []
+  } catch {
+    hotProducts.value = []
   }
 }
 
@@ -308,6 +421,47 @@ async function doAddCart(product: Product, sku: Sku, quantity: number) {
   text-align: center;
   font-size: 26rpx;
   color: #999999;
+}
+
+/* 初始态区块：搜索历史 + 热销推荐标题 */
+.history-section {
+  padding: 20rpx 10rpx 0;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-title {
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
+/* 热销推荐标题与历史区块的间距 */
+.hot-header {
+  padding: 30rpx 10rpx 20rpx;
+}
+
+.history-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+.history-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 12rpx 28rpx;
+  border-radius: 32rpx;
+  background-color: #ffffff;
+  font-size: 24rpx;
+  color: #666666;
 }
 
 /* 商品卡片样式与首页搜索结果一致 */
