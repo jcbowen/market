@@ -257,4 +257,20 @@ async function fetchFirstCommunity(coords?: {
   min-height: 100vh;
   background-color: #f5f5f5;
 }
+
+/* #ifdef H5 */
+/* iOS 回弹卡死修复：scroll-view 滚到边界继续拖拽会触发橡皮筋回弹，
+   回弹后内部滚动状态错乱，整页无法再滚动（仅 iOS，Android/小程序不受影响）。
+   对所有 H5 scroll-view 的实际滚动容器禁用边界回弹，从源头消除；
+   顶层 html/body 一并禁用，兜住从非滚动区域发起的下拉。
+   注意：overscroll-behavior 需 iOS 16+，更低版本本属性不生效也无副作用 */
+.uni-scroll-view {
+  overscroll-behavior: none;
+}
+
+html,
+body {
+  overscroll-behavior: none;
+}
+/* #endif */
 </style>
