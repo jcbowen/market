@@ -219,6 +219,7 @@ import { notifyPayOutcome, onReturnToSite, payOrder } from '@/utils/pay'
 import { goAddressList, goLogin } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { removeLocalCartItem } from '@/utils/localCart'
+import { queryIdList, queryNumber } from '@/utils/query'
 import { calcCouponDiscount, couponTitle, isCouponExpired } from '@/utils/coupon'
 import { DELIVERY_TYPE_PICKUP, DELIVERY_TYPE_DELIVERY } from '@/utils/order'
 import type { Address, Community, FullReduction, PaymentChannel, UserCoupon } from '@/api/types'
@@ -603,15 +604,13 @@ const totalDiscount = computed(() => {
 })
 
 onLoad((query) => {
-  productId.value = Number(query?.productId) || 0
-  skuId.value = Number(query?.skuId) || 0
-  quantity.value = Number(query?.quantity) || 1
-  const ids = query?.cartItemIds
-  if (ids) {
-    cartItemIds.value = String(ids).split(',').map(Number)
-  }
+  productId.value = queryNumber(query, 'productId')
+  skuId.value = queryNumber(query, 'skuId')
+  quantity.value = queryNumber(query, 'quantity', 1)
+  // withQuery 会把逗号编码为 %2C，queryIdList 内做防御性解码并过滤正整数
+  cartItemIds.value = queryIdList(query, 'cartItemIds')
   // 购物车跨社区结算：显式指定结算社区（商品/履约/活动均按该社区口径）
-  settleCommunityId.value = Number(query?.communityId) || 0
+  settleCommunityId.value = queryNumber(query, 'communityId')
 })
 
 /** 进入页面时记录的社区 ID，用于识别结算中途切换社区 */

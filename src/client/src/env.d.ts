@@ -35,3 +35,9 @@ declare function getOpenerEventChannel(): {
   on(event: string, callback: (...args: any[]) => void): void
   emit(event: string, ...args: unknown[]): void
 }
+
+// 支付宝小程序运行时全局对象（uni 未映射 ext 配置 API，需直调；仅 MP-ALIPAY 运行时存在）
+declare const my: {
+  /** 读取模板小程序 ext.json 的 ext 字段（模板实例化时经 alipay.open.mini.version.upload 注入） */
+  getExtConfigSync?: () => Record<string, unknown>
+}

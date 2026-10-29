@@ -61,6 +61,7 @@ import { useUserStore } from '@/stores/user'
 import { getProductDetail, searchProducts } from '@/api/product'
 import { addCartItem } from '@/api/cart'
 import { addLocalCartItem } from '@/utils/localCart'
+import { decodeQueryValue } from '@/utils/query'
 import { formatPrice } from '@/utils/format'
 import { goProductDetail } from '@/utils/navigate'
 import SkuSelector from '@/components/sku-selector.vue'
@@ -79,7 +80,8 @@ const currentProduct = ref<Partial<Product> & { id: number } | null>(null)
 
 onLoad((query) => {
   // 首页扫码未命中条码时携带关键词跳入，直接执行搜索
-  const word = (query?.keyword || '').trim()
+  // 发送端 encodeURIComponent 过，小程序端 onLoad 不保证自动解码，走防御性解码
+  const word = decodeQueryValue(query?.keyword).trim()
   if (word) {
     keyword.value = word
     doSearch()

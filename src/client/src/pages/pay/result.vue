@@ -88,6 +88,7 @@ import { onLoad, onShow, onHide } from '@dcloudio/uni-app'
 import { getPaymentStatusPublic } from '@/api/payment'
 import { useUserStore } from '@/stores/user'
 import { formatPrice } from '@/utils/format'
+import { decodeQueryValue, queryNumber } from '@/utils/query'
 
 /** 轮询间隔（毫秒）：回调到账通常在秒级，2.5s 足够跟手又不打扰 */
 const POLL_INTERVAL = 2500
@@ -125,8 +126,8 @@ let pollStartAt = 0
 
 onLoad((query) => {
   // 支付单号优先取显式参数；支付宝回跳会在 URL 上追加 out_trade_no，两者取其一
-  paymentNo.value = query?.no ? decodeURIComponent(query.no) : (query?.out_trade_no || '')
-  orderId.value = Number(query?.order_id) || 0
+  paymentNo.value = query?.no ? decodeQueryValue(query.no) : (query?.out_trade_no || '')
+  orderId.value = queryNumber(query, 'order_id')
   checkOnce()
 })
 

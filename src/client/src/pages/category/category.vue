@@ -2,7 +2,8 @@
   <view class="category-page" :style="{ top: statusBarHeight + 'px' }">
     <!-- 顶部社区与搜索栏 -->
     <view class="top-bar" :style="capsuleReserve ? { right: capsuleReserve + 'px' } : {}">
-      <view v-show="!isSearching" class="community-bar" @click="goCommunitySelect">
+      <!-- 同搜索栏口径：v-show 在支付宝端被 display:flex 覆盖，必须用 v-if -->
+      <view v-if="!isSearching" class="community-bar" @click="goCommunitySelect">
         <u-icon name="map-fill" size="18" color="#07c160" />
         <text class="community-name">{{ communityName }}</text>
         <u-icon name="arrow-down" size="12" color="#999999" />
@@ -25,7 +26,7 @@
           @blur="onSearchBlur"
         />
         <!-- #endif -->
-        <!-- #ifdef MP-WEIXIN || APP-PLUS -->
+        <!-- #ifndef H5 -->
         <view class="scan-btn" @click.stop="onScanCode">
           <u-icon name="scan" size="20" color="#333333" />
         </view>
@@ -236,7 +237,7 @@
 <script setup lang="ts">
 import { ref, computed, getCurrentInstance, nextTick } from 'vue'
 import type { Ref } from 'vue'
-import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
+import { onLoad, onShow, onUnload, onReady } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
 import { useCartStore } from '@/stores/cart'
 import { getBanners, getCategories, getProducts, getProductByBarcode, getProductDetail, searchProducts } from '@/api/product'
@@ -266,13 +267,23 @@ const instance = getCurrentInstance()
 const statusBarHeight = ref(0)
 /** 小程序端顶栏右侧让出的胶囊按钮预留宽度（px），避免扫码按钮被胶囊遮挡；H5 为 0 不让位 */
 const capsuleReserve = ref(0)
-// #ifdef MP-WEIXIN
+// #ifndef H5
+// 胶囊矩形：uni 已映射微信/支付宝小程序（支付宝端为 my.getMenuButtonBoundingClientRect）。
+// 支付宝官方文档注明：iOS 上胶囊未渲染完时 left 可能为 0 / Android 报 1111 not titleBar，
+// setup 阶段过早调用拿不到时保持 0，onReady 重试一次；仍取不到则走 CSS 变量兜底
 try {
   const windowInfo = uni.getWindowInfo()
   statusBarHeight.value = windowInfo.statusBarHeight || 0
-  const menuRect = uni.getMenuButtonBoundingClientRect()
-  if (menuRect && menuRect.left > 0) {
-    capsuleReserve.value = windowInfo.windowWidth - menuRect.left + 8
+  const applyCapsule = () => {
+    if (typeof uni.getMenuButtonBoundingClientRect !== 'function') return
+    const menuRect = uni.getMenuButtonBoundingClientRect()
+    if (menuRect && menuRect.left > 0) {
+      capsuleReserve.value = windowInfo.windowWidth - menuRect.left + 8
+    }
+  }
+  applyCapsule()
+  if (!capsuleReserve.value) {
+    onReady(() => applyCapsule())
   }
 } catch {
   // 取不到时保持 0，走 CSS 变量兜底

@@ -43,3 +43,52 @@ export function withQuery(path: string, params: Record<string, QueryValue | Quer
   const qs = buildQueryString(params)
   return qs ? `${path}?${qs}` : path
 }
+
+/**
+ * 解码单个 query 参数值
+ * 小程序端 onLoad 的 query 不保证自动解码（H5 路由已解码一次），此处统一做防御性解码：
+ * - 值不含 % 时原样返回，H5 端重复调用幂等无害
+ * - 含非法转义序列时保持原值，由调用方/类型转换兜底
+ */
+export function decodeQueryValue(value: unknown): string {
+  const raw = value === undefined || value === null ? '' : String(value)
+  if (!raw.includes('%')) return raw
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
+
+/**
+ * 从 onLoad query 中取数值参数
+ * @param query onLoad 收到的 query 对象
+ * @param key 参数名
+ * @param fallback 参数缺失/非法时的回退值，默认 0
+ */
+export function queryNumber(
+  query: Record<string, string | undefined> | undefined | null,
+  key: string,
+  fallback = 0,
+): number {
+  const raw = query?.[key]
+  if (raw === undefined || raw === null || raw === '') return fallback
+  const n = Number(decodeQueryValue(raw))
+  return Number.isFinite(n) ? n : fallback
+}
+
+/**
+ * 从 onLoad query 中取逗号分隔的 ID 列表参数（配合 buildQueryString 的数组拼接口径）
+ * 解码后按逗号切分，仅保留正整数，异常片段直接丢弃
+ */
+export function queryIdList(
+  query: Record<string, string | undefined> | undefined | null,
+  key: string,
+): number[] {
+  const raw = query?.[key]
+  if (!raw) return []
+  return decodeQueryValue(raw)
+    .split(',')
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0)
+}

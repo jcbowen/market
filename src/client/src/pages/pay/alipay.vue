@@ -79,7 +79,7 @@ import { ref } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { isWeixinBrowser } from '@/utils/platform'
 import { getAlipayPayUrlPublic } from '@/api/payment'
-import { withQuery } from '@/utils/query'
+import { withQuery, decodeQueryValue, queryNumber } from '@/utils/query'
 // #ifdef H5
 import { copyTextToClipboard } from '@/utils/pay'
 // #endif
@@ -92,8 +92,8 @@ const loading = ref(true)
 const errorMsg = ref('')
 
 onLoad((query) => {
-  paymentNo.value = query?.no || ''
-  orderId.value = Number(query?.order_id) || 0
+  paymentNo.value = decodeQueryValue(query?.no)
+  orderId.value = queryNumber(query, 'order_id')
 })
 
 onShow(async () => {
