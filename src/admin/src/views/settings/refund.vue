@@ -11,8 +11,16 @@
             </n-space>
           </n-radio-group>
         </n-form-item>
-        <n-form-item label="售后窗口（小时）">
-          <n-input-number v-model:value="completedRefundHours" :min="0" :max="8760" :step="24" style="width: 200px" />
+        <n-form-item label="售后窗口">
+          <n-input-number
+            v-model:value="completedRefundHours"
+            :min="0"
+            :max="8760"
+            :step="24"
+            style="width: 160px"
+          >
+            <template #suffix>小时</template>
+          </n-input-number>
           <span class="window-hint">{{ windowHint }}</span>
         </n-form-item>
         <n-alert type="info" :show-icon="true" style="margin-top: 4px">
@@ -102,8 +110,10 @@ refreshOnActivated(load)
 
 <style scoped>
 .window-hint {
-  margin-left: 8px;
+  margin-left: 10px;
   color: var(--n-text-color-disabled, #999);
   font-size: 12px;
+  line-height: 34px;
+  white-space: nowrap;
 }
 </style>
