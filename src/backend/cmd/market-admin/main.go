@@ -443,7 +443,7 @@ func resetPasswordFlow(db *gorm.DB, reader *bufio.Reader) {
 		password = p
 		generated = true
 	case "2":
-		fmt.Print("请输入新密码（至少 8 位，输入过程明文可见）: ")
+		fmt.Printf("请输入新密码（至少 %d 位，输入过程明文可见）: ", minPasswordLength)
 		pw, _ := reader.ReadString('\n')
 		password = strings.TrimSpace(pw)
 		if len(password) < minPasswordLength {
