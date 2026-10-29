@@ -163,6 +163,9 @@ async function runLimited(limit, tasks) {
 
 // 直接编译（不走依赖自动修复）：并发路径使用，失败只记录不修复，
 // 失败项收集后由 runWithRepair 串行重试——修复含 go mod tidy，不能并发写 go.mod/go.sum
+// env 必须展开 process.env：execFile 不经 shell，命令名靠 PATH 解析，
+// 只给 ctx.goEnv（GOPATH/CGO_ENABLED）会连 go 本身都找不到，报 spawn go ENOENT——
+// 现象是并发阶段每个服务都失败、再被串行重试全部"修好"，等于并发提速从未生效
 function buildOnePlain(goos, arch, svc) {
   const ext = goos === 'windows' ? '.exe' : '';
   const out = path.join(BUILD_DIR, `${goos}-${arch}`, svc + ext);
@@ -170,7 +173,7 @@ function buildOnePlain(goos, arch, svc) {
     execFile(
       'go',
       ['build', '-ldflags', LDFLAGS, '-o', out, srcDirOf(svc)],
-      { cwd: BACKEND_DIR, env: { ...ctx.goEnv, GOOS: goos, GOARCH: arch } },
+      { cwd: BACKEND_DIR, env: { ...process.env, ...ctx.goEnv, GOOS: goos, GOARCH: arch } },
       (err) => (err ? reject(err) : resolve()),
     );
   });
