@@ -197,3 +197,10 @@ export function goFlash() {
 export function goFullReduction() {
   goPage('/pagesGoods/full-reduction/full-reduction')
 }
+
+/**
+ * 跳转关于页（版本号与构建信息展示）
+ */
+export function goAbout() {
+  goPage('/pagesMine/about/about')
+}

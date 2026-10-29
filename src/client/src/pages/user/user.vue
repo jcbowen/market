@@ -68,6 +68,7 @@
         <u-cell icon="clock" title="限时秒杀" @click="goFlash" />
         <u-cell icon="tags" title="满减活动" @click="goFullReduction" />
         <u-cell icon="home" title="切换社区" @click="goCommunitySelect" />
+        <u-cell icon="info-circle" title="关于" :value="`V${APP_VERSION}`" @click="goAbout" />
       </u-cell-group>
     </view>
 
@@ -114,6 +115,7 @@ import { getProducts } from '@/api/product'
 import { getOrderStatusCounts } from '@/api/order'
 import { getFulfillmentStatus } from '@/api/fulfillment'
 import { formatPrice, maskPhone } from '@/utils/format'
+import { APP_VERSION } from '@/utils/version'
 import {
   goLogin,
   goOrderList,
@@ -125,6 +127,7 @@ import {
   goFullReduction,
   goProductDetail,
   goHome,
+  goAbout,
 } from '@/utils/navigate'
 import type { Product } from '@/api/types'
 import SiteFooter from '@/components/SiteFooter.vue'

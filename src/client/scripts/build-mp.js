@@ -275,6 +275,10 @@ function main() {
     fail(`未找到 uni CLI: ${path.relative(ROOT, UNI_BIN)}，请先执行 npm install`)
   }
 
+  // 先同步版本号到 manifest（必须在读取 original 之前：appid 的备份-恢复机制
+  // 会还原 manifest，gen-version 若在其后执行，版本号改动会被 restore 洗掉）
+  runNodeScript(path.resolve(ROOT, 'scripts/gen-version.js'))
+
   const options = parseArgs()
   const platform = options.platform
   const { label, APPID_PATTERN, APPID_HINT, PLACEHOLDER_APPID } = PLATFORMS[platform]

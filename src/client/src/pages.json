@@ -130,6 +130,12 @@
           "style": {
             "navigationBarTitleText": "优惠券包"
           }
+        },
+        {
+          "path": "about/about",
+          "style": {
+            "navigationBarTitleText": "关于"
+          }
         }
       ]
     },
