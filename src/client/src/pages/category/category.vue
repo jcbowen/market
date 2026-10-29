@@ -92,7 +92,7 @@
               <text v-if="item.show_sales" class="product-sales">已售 {{ item.sales || 0 }}</text>
               <view class="product-bottom">
                   <text class="product-price">{{ formatPrice(item.price) }}</text>
-                  <view class="add-btn" @click.stop="onAddClick(item)">
+                  <view class="add-btn" hover-class="add-btn-active" hover-start-time="0" hover-stay-time="100" @click.stop="onAddClick(item, $event)">
                     <u-icon name="plus-circle-fill" size="44" color="#07c160" />
                   </view>
                 </view>
@@ -133,7 +133,7 @@
             <text v-if="item.show_sales" class="product-sales">已售 {{ item.sales || 0 }}</text>
             <view class="product-bottom">
               <text class="product-price">{{ formatPrice(item.price) }}</text>
-              <view class="add-btn" @click.stop="onAddClick(item)">
+              <view class="add-btn" hover-class="add-btn-active" hover-start-time="0" hover-stay-time="100" @click.stop="onAddClick(item, $event)">
                 <u-icon name="plus-circle-fill" size="44" color="#07c160" />
               </view>
             </view>
@@ -231,6 +231,9 @@
 
     <!-- 社区推荐确认弹窗（启动自动选社区时展示） -->
     <community-recommend-dialog />
+
+    <!-- 加购飞球动画层（fixed 全屏，不响应点击） -->
+    <fly-to-cart ref="flyRef" />
   </view>
 </template>
 
@@ -249,6 +252,8 @@ import { goOrderConfirm, goLogin, goCommunitySelect, goPage, goProductDetail } f
 import SkuSelector from '@/components/sku-selector.vue'
 import SiteFooter from '@/components/SiteFooter.vue'
 import CommunityRecommendDialog from '@/components/community-recommend-dialog.vue'
+import FlyToCart from '@/components/fly-to-cart.vue'
+import { getDefaultFlyPoint, getFlyTarget, pointFromEvent, type FlyPoint, type FlyToCartInstance } from '@/utils/flyCart'
 import {
   addLocalCartItem,
   updateLocalCartItem,
@@ -261,6 +266,11 @@ import type { Banner, Category, Product, Sku, CartItem } from '@/api/types'
 const userStore = useUserStore()
 const cartStore = useCartStore()
 const instance = getCurrentInstance()
+
+/** 飞球动画组件实例：加购成功后播放抛物线飞入购物车动画 */
+const flyRef = ref<FlyToCartInstance>()
+/** 最近一次点击加号的触点坐标（px）：作为飞球起点；无坐标场景兜底屏幕底部中央 */
+const lastFlyFrom = ref<FlyPoint | null>(null)
 
 /** 状态栏高度（px）。小程序端 uniapp 注入的 --status-bar-height 固定为 25px（编译期常量），
  *  灵动岛/刘海屏机型真实状态栏更高（约 47~60px），顶栏会被遮挡，需运行时取真实值；
@@ -1009,7 +1019,9 @@ function goSearchWithKeyword(word: string) {
  * 单规格直接加购，多规格弹出选择窗
  * @param product 商品对象
  */
-function onProductClick(product: Product) {
+function onProductClick(product: Product, e?: unknown) {
+  // 记录触点作为飞球起点：卡片点击（无事件）置空，后续规格弹窗确认走底部中央兜底起点
+  lastFlyFrom.value = pointFromEvent(e)
   if (product.is_multi_spec) {
     openSkuPopup(product)
   } else {
@@ -1028,9 +1040,10 @@ function onImageClick(product: Product) {
 /**
  * 点击加号按钮，与点击卡片行为一致
  * @param product 商品对象
+ * @param e 点击事件对象（透传触点坐标作为飞球起点）
  */
-function onAddClick(product: Product) {
-  onProductClick(product)
+function onAddClick(product: Product, e?: unknown) {
+  onProductClick(product, e)
 }
 
 /**
@@ -1114,11 +1127,22 @@ async function doAddCart(product: Product, sku: Sku, quantity: number) {
     } else {
       addLocalCartItem(product, sku, quantity, communityId)
     }
-    uni.showToast({ title: '已加入购物车', icon: 'success' })
+    playFlyToCart()
     loadCartSummary()
   } catch {
     // 请求拦截器已统一提示
   }
+}
+
+/**
+ * 播放加购飞球动画
+ * 起点为最近一次点击加号/卡片的位置（规格弹窗确认、扫码加购无点击坐标，兜底屏幕底部中央），
+ * 落点为底部购物车栏图标；与购物车数量刷新并行，不阻塞主流程
+ */
+async function playFlyToCart() {
+  const to = await getFlyTarget('.cart-icon')
+  const from = lastFlyFrom.value || getDefaultFlyPoint()
+  await flyRef.value?.fly(from, to)
 }
 
 /**
@@ -1504,6 +1528,12 @@ function onSettlement() {
 
 .add-btn {
   padding: 6rpx;
+  transition: transform 0.12s ease;
+}
+
+/* 按压反馈：小程序端 :active 不可靠，用 view 的 hover-class 实现 */
+.add-btn-active {
+  transform: scale(0.8);
 }
 
 .cart-bar {

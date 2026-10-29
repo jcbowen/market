@@ -45,7 +45,8 @@ test.describe.serial('C 端购物与下单', () => {
   test('商品详情加购后购物车页出现该商品', async ({ page }) => {
     const name = await openFirstProduct(page);
     await page.locator('uni-button').filter({ hasText: '加入购物车' }).click();
-    await expect(page.getByText('已加入购物车')).toBeVisible({ timeout: 10_000 });
+    // 加购成功反馈为抛物线飞球动画（不再弹 toast）：动画层挂载即代表接口成功回调
+    await expect(page.locator('.fly-track')).toBeVisible({ timeout: 10_000 });
 
     await page.goto('/s/#/pages/cart/cart');
     const item = page.locator('.cart-item').filter({ hasText: name }).first();

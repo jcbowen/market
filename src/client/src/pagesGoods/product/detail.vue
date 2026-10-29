@@ -43,7 +43,7 @@
         <u-icon name="home" size="24" color="#666666" />
         <text>首页</text>
       </view>
-      <view class="icon-btn" @click="goCart">
+      <view class="icon-btn cart-entry" @click="goCart">
         <u-icon name="shopping-cart" size="24" color="#666666" />
         <text>购物车</text>
       </view>
@@ -91,6 +91,9 @@
         </view>
       </view>
     </u-popup>
+
+    <!-- 加购飞球动画层（fixed 全屏，不响应点击） -->
+    <fly-to-cart ref="flyRef" />
   </view>
 </template>
 
@@ -104,8 +107,12 @@ import { formatPrice } from '@/utils/format'
 import { ensureCommunity } from '@/utils/community'
 import { goHome, goOrderConfirm, goLogin } from '@/utils/navigate'
 import type { Product, Sku } from '@/api/types'
+import FlyToCart from '@/components/fly-to-cart.vue'
+import { getFlyTarget, type FlyToCartInstance } from '@/utils/flyCart'
 
 const userStore = useUserStore()
+/** 飞球动画组件实例：加购成功后播放抛物线飞入购物车动画 */
+const flyRef = ref<FlyToCartInstance>()
 const productId = ref(0)
 const product = ref<Product>({
   id: 0,
@@ -323,10 +330,20 @@ async function onAddCart() {
   selectedSku.value = matchedSku.value
   try {
     await addCartItem(product.value.id, selectedSku.value.id, quantity.value, userStore.communityInfo?.id)
-    uni.showToast({ title: '已加入购物车', icon: 'success' })
+    playFlyToCart()
   } catch {
     // ignore
   }
+}
+
+/**
+ * 播放加购飞球动画
+ * 起点为「加入购物车」按钮（footer 第一个 .action-btn），落点为底部购物车图标；
+ * 详情页角标由购物车 tab onShow 刷新，动画不阻塞主流程
+ */
+async function playFlyToCart() {
+  const [from, to] = await Promise.all([getFlyTarget('.action-btn'), getFlyTarget('.cart-entry')])
+  await flyRef.value?.fly(from, to)
 }
 
 /**
