@@ -15,8 +15,9 @@ import { type FlyPoint } from '@/utils/flyCart'
  *   const [from, to] = await Promise.all([getFlyTarget('.action-btn'), getFlyTarget('.cart-entry')])
  *   await flyRef.value?.fly(from, to)
  *
- * 实现说明：外层 track 负责 X 方向线性匀速位移，内层小球负责 Y 方向
- * 「上抛(ease-out) → 下落(ease-in)」两段过渡，合成近似抛物线轨迹。
+ * 实现说明：外层 track 负责 X/Y 线性匀速位移（就位起点 → 终点），内层小球负责
+ * 「上抛(ease-out) → 下落(ease-in) 回到轨道原点」，两者叠加形成抛物线轨迹，
+ * 拱顶位于行程中点上方 UP_HEIGHT 处；终态 track 在落点、小球回到原点，位置精确对齐落点中心。
  * 全程 fixed 视口定位，仅用 px 坐标，H5/微信/支付宝/App 行为一致。
  */
 
@@ -49,10 +50,10 @@ const trackStyle = computed(() => {
   }
 })
 
-/** 内层小球样式：Y 方向就位/上抛/下落三态 */
+/** 内层小球样式：Y 方向就位/上抛/下落三态；下落段回到轨道原点（Y 终态即落点，不叠加净位移） */
 const ballStyle = computed(() => {
   if (!ball.value) return {}
-  const { from, to, phase } = ball.value
+  const { phase } = ball.value
   if (phase === 'ready') {
     return { transform: 'translateY(0px)', transition: 'none' }
   }
@@ -62,9 +63,9 @@ const ballStyle = computed(() => {
       transition: `transform ${HALF_DURATION}ms ease-out`,
     }
   }
-  const dy = to.y - from.y
+  // 下落段：track 已同步线性行进至终点，小球从拱顶 ease-in 落回轨道原点
   return {
-    transform: `translateY(${dy}px)`,
+    transform: 'translateY(0px)',
     transition: `transform ${HALF_DURATION}ms cubic-bezier(0.55, 0, 1, 0.45)`,
   }
 })
@@ -118,6 +119,9 @@ defineExpose({ fly })
 .fly-ball {
   width: 24rpx;
   height: 24rpx;
+  /* 负 margin 让 track 的 translate 坐标对准球心（与触点/落点中心一致，而非球的左上角） */
+  margin-left: -12rpx;
+  margin-top: -12rpx;
   border-radius: 50%;
   background-color: #07c160;
   box-shadow: 0 2rpx 8rpx rgba(7, 193, 96, 0.4);
