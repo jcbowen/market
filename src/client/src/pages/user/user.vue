@@ -71,6 +71,13 @@
       </u-cell-group>
     </view>
 
+    <!-- 退出登录：固定在功能列表下方，不随热门商品列表增长下移 -->
+    <view v-if="userStore.isLogin" class="logout-btn">
+      <!-- u-button 默认阻止事件冒泡（stop: true），click 必须绑在组件上而非外层 view -->
+      <!-- 显式指定样式（plain 透明底 + 固定红色描边），不依赖 uview 默认卡片背景变量，规避深色模式漂移 -->
+      <u-button text="退出登录" plain type="error" @click="onLogout" />
+    </view>
+
     <!-- 热门商品 -->
     <view class="product-section">
       <text class="section-title">热门商品</text>
@@ -90,12 +97,6 @@
         </view>
       </view>
       <u-loadmore :status="loadStatus" />
-    </view>
-
-    <view v-if="userStore.isLogin" class="logout-btn">
-      <!-- u-button 默认阻止事件冒泡（stop: true），click 必须绑在组件上而非外层 view -->
-      <!-- 显式指定样式（plain 透明底 + 固定红色描边），不依赖 uview 默认卡片背景变量，规避深色模式漂移 -->
-      <u-button text="退出登录" plain type="error" @click="onLogout" />
     </view>
 
     <SiteFooter />
