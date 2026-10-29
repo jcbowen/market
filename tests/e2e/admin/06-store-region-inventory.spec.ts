@@ -64,9 +64,12 @@ test.describe.serial('门店与系统配置页面', () => {
     });
 
     // 真实交互：按区划名称搜索（接口为 GET /admin/regions?keyword=）
+    // 关键词固定用「重庆」：它是内置演示数据包自带的区划（重庆市 + 37 区县），
+    // 新库首启即可命中；曾用「北京」依赖后台「行政区划 → 检查更新」同步过全国数据，
+    // 未同步的库会让本用例假红，属环境前置而非页面缺陷
     const input = page.getByPlaceholder('搜索区划代码或名称');
-    await input.fill('北京');
-    // 树形表格折叠模式下搜索命中应展示北京相关行
-    await expect(page.locator('text=北京').first()).toBeVisible({ timeout: 10_000 });
+    await input.fill('重庆');
+    // 树形表格折叠模式下搜索命中应展示重庆相关行
+    await expect(page.locator('text=重庆').first()).toBeVisible({ timeout: 10_000 });
   });
 });
