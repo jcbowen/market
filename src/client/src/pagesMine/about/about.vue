@@ -11,10 +11,10 @@
     <view class="info-card">
       <u-cell-group>
         <u-cell title="版本号" :value="APP_VERSION" />
-        <u-cell title="版本码" :value="String(APP_VERSION_CODE)" />
-        <u-cell title="运行环境" :value="APP_ENV_LABEL[APP_ENV]" />
-        <u-cell title="版本环境" :value="APP_STAGE_LABEL[APP_STAGE]" />
-        <u-cell v-if="APP_VERSION_RAW !== APP_VERSION" title="构建版本" :value="APP_VERSION_RAW" />
+        <u-cell title="版本编号" :value="String(APP_VERSION_CODE)" />
+        <u-cell title="运行模式" :value="APP_ENV_LABEL[APP_ENV]" />
+        <u-cell title="版本类型" :value="APP_STAGE_LABEL[APP_STAGE]" />
+        <u-cell v-if="APP_VERSION_RAW !== APP_VERSION" title="完整版本号" :value="APP_VERSION_RAW" />
         <u-cell title="构建时间" :value="formatBuildTime(APP_BUILD_TIME)" />
       </u-cell-group>
     </view>
@@ -26,7 +26,7 @@
 
 <script setup lang="ts">
 /**
- * 关于页：展示应用版本号、版本码、运行环境、版本环境与构建信息
+ * 关于页：展示应用版本号、版本编号、运行模式、版本类型与构建信息
  * 数据全部来自构建期注入（vite.config.ts define）与运行时判定（utils/version.ts）；
  * 页脚版权与站点其他页面共用 SiteFooter（后端站点设置下发）
  */

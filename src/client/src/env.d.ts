@@ -45,7 +45,7 @@ declare const my: {
 // 构建期版本常量（vite.config.ts define 注入，与 scripts/gen-version.js 同一优先级）
 /** 应用版本号：剔除 v 前缀与预发布后缀（如 0.1.0） */
 declare const __APP_VERSION__: string
-/** 应用版本码：git tag 数量（App versionCode 与统计口径） */
+/** 应用版本编号：git tag 数量（App versionCode 与统计口径） */
 declare const __APP_VERSION_CODE__: number
 /** git 原始版本串：含预发布后缀（如 v0.1.0-beta），仅关于页展示 */
 declare const __APP_VERSION_RAW__: string

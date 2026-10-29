@@ -18,7 +18,7 @@ function resolveRawVersion(): string {
 }
 
 /**
- * 读取 git tag 数量作为版本码（App versionCode 与统计口径），无 git 环境返回 0
+ * 读取 git tag 数量作为版本编号（App versionCode 与统计口径），无 git 环境返回 0
  * @returns {number}
  */
 function resolveVersionCode(): number {

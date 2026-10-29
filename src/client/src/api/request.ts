@@ -345,7 +345,7 @@ function requestOnce<T = unknown>(
   }
   // 客户端渠道标识：服务端按渠道渲染支付方式与解析登录/支付凭证
   header['X-Channel-Code'] = CLIENT_CHANNEL
-  // 版本信息（版本号/版本码）+ 运行环境（dev/release）+ 版本环境（开发/体验/正式版）
+  // 版本信息（版本号/版本编号）+ 运行模式（dev/release）+ 版本类型（开发/体验/正式版）
   Object.assign(header, buildVersionHeaders())
 
   // #ifndef H5
@@ -507,7 +507,7 @@ function uploadOnce<T = unknown>(
       header: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'X-Channel-Code': CLIENT_CHANNEL,
-        // 与 requestOnce 一致：版本信息 + 运行环境 + 版本环境
+        // 与 requestOnce 一致：版本信息 + 运行模式 + 版本类型
         ...buildVersionHeaders(),
       },
       timeout: REQUEST_TIMEOUT,
