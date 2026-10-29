@@ -130,3 +130,69 @@ func (h *AdminHandler) ImportDataPackage(c *gin.Context) {
 	}
 	response.Success(c, resp)
 }
+
+// DataCleanupRunReqBody 执行清理请求体
+type DataCleanupRunReqBody struct {
+	// ConfirmText 强确认文案，必须与服务端约定文案完全一致才执行
+	ConfirmText string `json:"confirm_text" binding:"required"`
+}
+
+// PreviewDataCleanup 数据清理预检：逐域统计将清理的记录行数与附件文件数（只读）
+// 仅超管可用：路由级 product:create 权限码 + 本函数 IsSuperAdmin 双闸（与数据导入同模式）
+// 异常：非超管 → 11005；预检失败按服务侧错误码透传
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - 无（响应写回 gin）：成功为各数据域行数/文件数统计
+//
+// 使用示例：
+//
+//	GET /api/v1/admin/data-cleanup/preview
+func (h *AdminHandler) PreviewDataCleanup(c *gin.Context) {
+	if !middleware.IsSuperAdmin(c) {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	resp, err := h.productClient.PreviewDataCleanup(c.Request.Context(), &product.DataCleanupPreviewReq{
+		CommunityId: h.getAdminCommunityID(c),
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}
+
+// RunDataCleanup 执行数据清理：一键清空全部业务数据（不可逆，需强确认文案）
+// 仅超管可用：路由级 product:create 权限码 + 本函数 IsSuperAdmin 双闸
+// 异常：请求体非法 → 10001；非超管 → 11005；确认文案不匹配按服务侧错误码透传
+// 参数：
+//   - c: gin 上下文，请求体为 DataCleanupRunReqBody
+//
+// 返回值：
+//   - 无（响应写回 gin）：成功为清理统计（域数/行数/文件数）与逐域、逐文件明细
+//
+// 使用示例：
+//
+//	POST /api/v1/admin/data-cleanup/run
+//	{"confirm_text":"确认清空全部业务数据"}
+func (h *AdminHandler) RunDataCleanup(c *gin.Context) {
+	if !middleware.IsSuperAdmin(c) {
+		response.Error(c, errcode.NoPermission)
+		return
+	}
+	var req DataCleanupRunReqBody
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	resp, err := h.productClient.RunDataCleanup(c.Request.Context(), &product.DataCleanupRunReq{
+		ConfirmText: req.ConfirmText,
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, resp)
+}

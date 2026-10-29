@@ -22,6 +22,85 @@
       </div>
     </n-card>
 
+    <!-- 数据清理入口（与导入并列，仅超管可见本页） -->
+    <n-card v-if="step === 'packages'" title="数据清理" class="mb-16">
+      <div class="pkg-head">
+        <div>
+          <div class="pkg-name">清空全部业务数据</div>
+          <div class="pkg-desc">
+            按依赖顺序清理订单/售后/支付流水/进销存/营销/商品目录/购物车/用户持券/C端用户；
+            保留支付配置、附件配置、站点设置、管理员与社区等系统骨架及演示种子图片。
+            操作不可逆，需输入确认文案。
+          </div>
+        </div>
+        <n-button type="error" ghost @click="openCleanup">清空业务数据</n-button>
+      </div>
+    </n-card>
+
+    <!-- 数据清理弹窗：预检 → 确认 → 执行结果 -->
+    <n-modal
+      v-model:show="showCleanup"
+      preset="card"
+      title="数据清理"
+      style="width: 720px"
+      :mask-closable="!cleaning"
+    >
+      <!-- 执行结果视图 -->
+      <template v-if="cleanupResult">
+        <n-space class="mb-16">
+          <n-statistic label="删除记录" :value="cleanupResult.rows_deleted" />
+          <n-statistic label="删除文件" :value="cleanupResult.files_deleted" />
+          <n-statistic label="失败文件" :value="cleanupResult.files_failed" />
+        </n-space>
+        <n-alert v-if="cleanupResult.sections_failed > 0" type="warning" class="mb-16">
+          {{ cleanupResult.sections_failed }} 个数据域清理失败，可重新执行（已清理部分会跳过）。
+        </n-alert>
+        <n-data-table
+          size="small"
+          :columns="cleanupResultColumns"
+          :data="cleanupResult.details"
+          :row-key="(row: DataCleanupItem) => row.section_key + '-' + row.name"
+          :max-height="360"
+        />
+      </template>
+
+      <!-- 预检视图 -->
+      <template v-else>
+        <n-alert type="warning" class="mb-16">
+          即将清空全部业务数据，操作<b>不可逆</b>。保留：支付配置、附件配置、站点设置、
+          管理员/社区/角色/行政区划、渠道凭证、演示种子图片（/uploads/seed/）。
+        </n-alert>
+        <n-data-table
+          size="small"
+          :columns="cleanupPreviewColumns"
+          :data="cleanupPreview"
+          :row-key="(row: DataCleanupSection) => row.key"
+          :loading="cleanupPreviewing"
+          :max-height="320"
+        />
+        <n-input
+          v-model:value="cleanupConfirmText"
+          class="mt-16"
+          :placeholder="`请输入「${DATA_CLEANUP_CONFIRM_TEXT}」以启用执行按钮`"
+        />
+      </template>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button :disabled="cleaning" @click="showCleanup = false">关闭</n-button>
+          <n-button
+            v-if="!cleanupResult"
+            type="error"
+            :loading="cleaning"
+            :disabled="cleanupConfirmText !== DATA_CLEANUP_CONFIRM_TEXT || cleanupPreview.length === 0"
+            @click="doCleanup"
+          >
+            执行清理
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!-- 步骤二：预检报告（可排除） -->
     <n-card v-if="step === 'preview'" title="预检报告" class="mb-16">
       <template #header-extra>
@@ -117,8 +196,8 @@ import {
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { listDataPackages, previewDataImport, importDataPackage } from '@/api/dataImport'
-import type { DataImportItem, DataPackage } from '@/api/dataImport'
+import { listDataPackages, previewDataImport, importDataPackage, previewDataCleanup, runDataCleanup, DATA_CLEANUP_CONFIRM_TEXT } from '@/api/dataImport'
+import type { DataImportItem, DataPackage, DataCleanupItem, DataCleanupSection, DataCleanupResult } from '@/api/dataImport'
 import { getCommunityList } from '@/api/user'
 import type { User } from '@/api/types'
 import UserPicker from '@/components/UserPicker.vue'
@@ -143,6 +222,81 @@ const communityName = ref('')
 // --- 指定导入会员（用户券/购物车落到该会员名下） ---
 const showUserPicker = ref(false)
 const targetUser = ref<User | null>(null)
+
+// --- 数据清理（弹窗：预检 → 确认文案 → 执行结果） ---
+const showCleanup = ref(false)
+const cleanupPreviewing = ref(false)
+const cleaning = ref(false)
+const cleanupPreview = ref<DataCleanupSection[]>([])
+const cleanupConfirmText = ref('')
+const cleanupResult = ref<DataCleanupResult | null>(null)
+
+const cleanupPreviewColumns: DataTableColumns<DataCleanupSection> = [
+  { title: '数据域', key: 'name', width: 120 },
+  { title: '覆盖范围', key: 'description', ellipsis: { tooltip: true } },
+  { title: '将清理记录', key: 'row_count', width: 110, render: (row) => `${row.row_count} 行` },
+  {
+    title: '将删除文件',
+    key: 'file_count',
+    width: 110,
+    render: (row) => (row.file_count > 0 ? `${row.file_count} 个` : '-'),
+  },
+]
+
+const cleanupResultColumns: DataTableColumns<DataCleanupItem> = [
+  { title: '对象', key: 'name', width: 200, ellipsis: { tooltip: true } },
+  {
+    title: '状态',
+    key: 'status',
+    width: 90,
+    render(row) {
+      const conf =
+        row.status === 'failed'
+          ? { label: '失败', type: 'error' as const }
+          : { label: '已清理', type: 'success' as const }
+      return h(NTag, { size: 'small', type: conf.type, bordered: false }, { default: () => conf.label })
+    },
+  },
+  { title: '行数', key: 'rows', width: 90, render: (row) => (row.rows ? String(row.rows) : '-') },
+  { title: '说明', key: 'message', ellipsis: { tooltip: true }, render: (row) => row.message || '-' },
+]
+
+/**
+ * 打开清理弹窗：重置状态并拉取预检统计
+ */
+async function openCleanup() {
+  cleanupResult.value = null
+  cleanupConfirmText.value = ''
+  showCleanup.value = true
+  cleanupPreviewing.value = true
+  try {
+    const res = await previewDataCleanup()
+    cleanupPreview.value = res.data.data?.sections ?? []
+  } catch {
+    message.error('清理预检失败')
+    showCleanup.value = false
+  } finally {
+    cleanupPreviewing.value = false
+  }
+}
+
+/**
+ * 执行清理（确认文案由按钮启用条件与服务端双重校验）
+ */
+async function doCleanup() {
+  cleaning.value = true
+  try {
+    const res = await runDataCleanup(cleanupConfirmText.value)
+    cleanupResult.value = res.data.data ?? null
+    message.success(
+      `清理完成：删除记录 ${cleanupResult.value?.rows_deleted ?? 0} 行，文件 ${cleanupResult.value?.files_deleted ?? 0} 个`,
+    )
+  } catch {
+    message.error('清理执行失败')
+  } finally {
+    cleaning.value = false
+  }
+}
 
 /** 预检结果是否包含用户侧数据段（需指定导入会员） */
 const hasUserAssets = computed(() => previewItems.value.some((it) => it.section_key === 'user_assets'))
@@ -385,6 +539,9 @@ onMounted(async () => {
 <style lang="scss" scoped>
 .mb-16 {
   margin-bottom: 16px;
+}
+.mt-16 {
+  margin-top: 16px;
 }
 .pkg-card {
   border: 1px solid #efeff5;

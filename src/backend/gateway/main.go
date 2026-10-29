@@ -559,6 +559,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.POST("/data-import/preview", gwMiddleware.RequirePermission("product:create"), adminHandler.PreviewDataImport)
 			authAdmin.POST("/data-import/import", gwMiddleware.RequirePermission("product:create"), adminHandler.ImportDataPackage)
 
+			// 数据清理（应用中心）：一键清空业务数据，仅超管，handler 内 IsSuperAdmin 双闸
+			authAdmin.GET("/data-cleanup/preview", gwMiddleware.RequirePermission("product:create"), adminHandler.PreviewDataCleanup)
+			authAdmin.POST("/data-cleanup/run", gwMiddleware.RequirePermission("product:create"), adminHandler.RunDataCleanup)
+
 			authAdmin.GET("/settings/site", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetSiteSetting)
 			authAdmin.PUT("/settings/site", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateSiteSetting)
 			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentSetting)

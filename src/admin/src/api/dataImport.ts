@@ -95,3 +95,64 @@ export function importDataPackage(
     },
   })
 }
+
+/** 数据清理预检的单个数据域统计 */
+export interface DataCleanupSection {
+  key: string
+  name: string
+  description: string
+  /** 将清理的记录行数 */
+  row_count: number
+  /** 将删除的文件数（仅附件域） */
+  file_count: number
+}
+
+/** 数据清理预检报告 */
+export interface DataCleanupPreview {
+  sections: DataCleanupSection[]
+}
+
+/** 数据清理结果条目（域级或附件文件级） */
+export interface DataCleanupItem {
+  section_key: string
+  name: string
+  /** cleaned=已清理 failed=失败 */
+  status: string
+  message?: string
+  rows?: number
+}
+
+/** 数据清理结果 */
+export interface DataCleanupResult {
+  sections_total: number
+  sections_failed: number
+  rows_deleted: number
+  files_deleted: number
+  files_failed: number
+  details: DataCleanupItem[]
+}
+
+/** 执行清理必须输入的确认文案（与服务端约定一致） */
+export const DATA_CLEANUP_CONFIRM_TEXT = '确认清空全部业务数据'
+
+/**
+ * 数据清理预检：逐域统计将清理的行数（只读）
+ */
+export function previewDataCleanup() {
+  return request<ApiResult<DataCleanupPreview>>({
+    url: '/api/v1/admin/data-cleanup/preview',
+    method: 'GET',
+  })
+}
+
+/**
+ * 执行数据清理（不可逆）
+ * @param confirmText 强确认文案，必须与 DATA_CLEANUP_CONFIRM_TEXT 完全一致
+ */
+export function runDataCleanup(confirmText: string) {
+  return request<ApiResult<DataCleanupResult>>({
+    url: '/api/v1/admin/data-cleanup/run',
+    method: 'POST',
+    data: { confirm_text: confirmText },
+  })
+}

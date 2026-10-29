@@ -162,6 +162,10 @@ service ProductService {
   rpc ListDataPackages(ListDataPackagesReq) returns (ListDataPackagesResp);
   rpc PreviewDataImport(DataImportPreviewReq) returns (DataImportPreviewResp);
   rpc ImportDataPackage(DataImportReq) returns (DataImportResp);
+
+  // 数据清理（应用中心；实现见 service/datacleanup.go，初期仅超管）
+  rpc PreviewDataCleanup(DataCleanupPreviewReq) returns (DataCleanupPreviewResp);
+  rpc RunDataCleanup(DataCleanupRunReq) returns (DataCleanupRunResp);
 }
 
 // --- 数据导入 ---
@@ -228,6 +232,48 @@ message DataImportResp {
   int32 skipped = 2;
   int32 failed = 3;
   repeated DataImportItem details = 4;
+}
+
+// --- 数据清理（应用中心；保留支付配置/附件配置/站点设置/系统骨架/演示种子图片） ---
+// DataCleanupSectionInfo 预检返回的单个数据域（行数统计 + 附件域的文件数统计）
+message DataCleanupSectionInfo {
+  string key = 1;         // 域标识：refunds / orders / payments / inventory / user_assets / marketing / catalog / attachments / users
+  string name = 2;        // 展示名
+  string description = 3; // 覆盖范围说明（含保留项提示）
+  int64 row_count = 4;    // 将清理的记录行数
+  int64 file_count = 5;   // 将删除的文件数（仅 attachments 域：本地文件/OSS 对象）
+}
+
+message DataCleanupPreviewReq {
+  int64 community_id = 1; // 预留（清理为全库口径，当前未按社区过滤）
+}
+
+message DataCleanupPreviewResp {
+  repeated DataCleanupSectionInfo sections = 1;
+}
+
+// DataCleanupItem 执行结果明细（域级 + 附件文件级）
+// status: cleaned=已清理 failed=失败
+message DataCleanupItem {
+  string section_key = 1;
+  string name = 2;     // 域展示名（域级）或文件相对路径（附件文件级）
+  string status = 3;
+  string message = 4;  // 失败原因等补充
+  int64 rows = 5;      // 该域删除的记录行数（文件级条目为 0）
+}
+
+message DataCleanupRunReq {
+  // confirm_text 强确认文案：必须与后端约定文案完全一致才执行（防误触，操作不可逆）
+  string confirm_text = 1;
+}
+
+message DataCleanupRunResp {
+  int32 sections_total = 1;   // 参与清理的域数
+  int32 sections_failed = 2;  // 失败域数（单域失败不阻断后续域）
+  int64 rows_deleted = 3;     // 删除记录总行数
+  int64 files_deleted = 4;    // 文件删除成功数
+  int64 files_failed = 5;     // 文件删除失败数（明细见 details）
+  repeated DataCleanupItem details = 6;
 }
 
 // --- 分类 ---

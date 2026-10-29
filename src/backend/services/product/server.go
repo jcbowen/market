@@ -37,6 +37,7 @@ type server struct {
 	bannerService     *service.BannerService
 	attachmentService *service.AttachmentService
 	dataImportService *service.DataImportService
+	dataCleanupSvc    *service.DataCleanupService
 }
 
 // newServer 创建商品服务 gRPC 实现
@@ -68,6 +69,8 @@ func newServer(db *mysql.Instance, cfg *config.Config) *server {
 	}
 	// 数据导入依赖商品/Banner/营销三个服务的创建链路，须在其后构造
 	s.dataImportService = service.NewDataImportService(db, s.productService, s.bannerService, s.marketingService)
+	// 数据清理与导入互为逆向操作，依赖附件服务（文件本体删除）
+	s.dataCleanupSvc = service.NewDataCleanupService(db, attachmentService)
 	return s
 }
 
@@ -1473,4 +1476,14 @@ func rpcKeySet(keys []string) map[string]bool {
 		m[k] = true
 	}
 	return m
+}
+
+// PreviewDataCleanup 数据清理预检：逐域统计将清理的记录行数（只读，不写库）
+func (s *server) PreviewDataCleanup(ctx stdctx.Context, _ *product.DataCleanupPreviewReq) (*product.DataCleanupPreviewResp, error) {
+	return s.dataCleanupSvc.Preview(ctx)
+}
+
+// RunDataCleanup 执行数据清理：强确认文案校验 → 逆依赖顺序逐域清理 → 统计与明细回显
+func (s *server) RunDataCleanup(ctx stdctx.Context, req *product.DataCleanupRunReq) (*product.DataCleanupRunResp, error) {
+	return s.dataCleanupSvc.Run(ctx, req)
 }

@@ -123,6 +123,8 @@ const (
 	ProductService_ListDataPackages_FullMethodName              = "/product.ProductService/ListDataPackages"
 	ProductService_PreviewDataImport_FullMethodName             = "/product.ProductService/PreviewDataImport"
 	ProductService_ImportDataPackage_FullMethodName             = "/product.ProductService/ImportDataPackage"
+	ProductService_PreviewDataCleanup_FullMethodName            = "/product.ProductService/PreviewDataCleanup"
+	ProductService_RunDataCleanup_FullMethodName                = "/product.ProductService/RunDataCleanup"
 )
 
 // ProductServiceClient is the client API for ProductService service.
@@ -265,6 +267,9 @@ type ProductServiceClient interface {
 	ListDataPackages(ctx context.Context, in *ListDataPackagesReq, opts ...grpc.CallOption) (*ListDataPackagesResp, error)
 	PreviewDataImport(ctx context.Context, in *DataImportPreviewReq, opts ...grpc.CallOption) (*DataImportPreviewResp, error)
 	ImportDataPackage(ctx context.Context, in *DataImportReq, opts ...grpc.CallOption) (*DataImportResp, error)
+	// 数据清理（应用中心；实现见 service/datacleanup.go，初期仅超管）
+	PreviewDataCleanup(ctx context.Context, in *DataCleanupPreviewReq, opts ...grpc.CallOption) (*DataCleanupPreviewResp, error)
+	RunDataCleanup(ctx context.Context, in *DataCleanupRunReq, opts ...grpc.CallOption) (*DataCleanupRunResp, error)
 }
 
 type productServiceClient struct {
@@ -1305,6 +1310,26 @@ func (c *productServiceClient) ImportDataPackage(ctx context.Context, in *DataIm
 	return out, nil
 }
 
+func (c *productServiceClient) PreviewDataCleanup(ctx context.Context, in *DataCleanupPreviewReq, opts ...grpc.CallOption) (*DataCleanupPreviewResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DataCleanupPreviewResp)
+	err := c.cc.Invoke(ctx, ProductService_PreviewDataCleanup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *productServiceClient) RunDataCleanup(ctx context.Context, in *DataCleanupRunReq, opts ...grpc.CallOption) (*DataCleanupRunResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DataCleanupRunResp)
+	err := c.cc.Invoke(ctx, ProductService_RunDataCleanup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProductServiceServer is the server API for ProductService service.
 // All implementations must embed UnimplementedProductServiceServer
 // for forward compatibility.
@@ -1445,6 +1470,9 @@ type ProductServiceServer interface {
 	ListDataPackages(context.Context, *ListDataPackagesReq) (*ListDataPackagesResp, error)
 	PreviewDataImport(context.Context, *DataImportPreviewReq) (*DataImportPreviewResp, error)
 	ImportDataPackage(context.Context, *DataImportReq) (*DataImportResp, error)
+	// 数据清理（应用中心；实现见 service/datacleanup.go，初期仅超管）
+	PreviewDataCleanup(context.Context, *DataCleanupPreviewReq) (*DataCleanupPreviewResp, error)
+	RunDataCleanup(context.Context, *DataCleanupRunReq) (*DataCleanupRunResp, error)
 	mustEmbedUnimplementedProductServiceServer()
 }
 
@@ -1763,6 +1791,12 @@ func (UnimplementedProductServiceServer) PreviewDataImport(context.Context, *Dat
 }
 func (UnimplementedProductServiceServer) ImportDataPackage(context.Context, *DataImportReq) (*DataImportResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ImportDataPackage not implemented")
+}
+func (UnimplementedProductServiceServer) PreviewDataCleanup(context.Context, *DataCleanupPreviewReq) (*DataCleanupPreviewResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method PreviewDataCleanup not implemented")
+}
+func (UnimplementedProductServiceServer) RunDataCleanup(context.Context, *DataCleanupRunReq) (*DataCleanupRunResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method RunDataCleanup not implemented")
 }
 func (UnimplementedProductServiceServer) mustEmbedUnimplementedProductServiceServer() {}
 func (UnimplementedProductServiceServer) testEmbeddedByValue()                        {}
@@ -3639,6 +3673,42 @@ func _ProductService_ImportDataPackage_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProductService_PreviewDataCleanup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataCleanupPreviewReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).PreviewDataCleanup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_PreviewDataCleanup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).PreviewDataCleanup(ctx, req.(*DataCleanupPreviewReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProductService_RunDataCleanup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataCleanupRunReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProductServiceServer).RunDataCleanup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProductService_RunDataCleanup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProductServiceServer).RunDataCleanup(ctx, req.(*DataCleanupRunReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ProductService_ServiceDesc is the grpc.ServiceDesc for ProductService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -4057,6 +4127,14 @@ var ProductService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ImportDataPackage",
 			Handler:    _ProductService_ImportDataPackage_Handler,
+		},
+		{
+			MethodName: "PreviewDataCleanup",
+			Handler:    _ProductService_PreviewDataCleanup_Handler,
+		},
+		{
+			MethodName: "RunDataCleanup",
+			Handler:    _ProductService_RunDataCleanup_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
