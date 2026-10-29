@@ -798,8 +798,9 @@ function buildPayload(): PaymentSetting {
 
 /**
  * 提交支付配置并同步服务端状态
- * 成功后重新拉取，只为刷新 updated_at 版本号（服务端每次保存都会推进）；
- * 失败只在版本冲突时重拉（不刷新版本号会一直撞同一个冲突），其余错误保留用户输入——
+ * 成功后仅回写就绪/上传状态与 updated_at 版本号（服务端每次保存都会推进），不整份重拉——
+ * V3 密钥等敏感字段服务端不回传明文，整份重拉会清空已填输入框，造成「已保存却像没保存」的错觉；
+ * 失败只在版本冲突时整份重拉（不刷新版本号会一直撞同一个冲突），其余错误保留用户输入——
  * 校验类失败改一处即可重提，整表回滚等于把没填错的字段也一并清空
  * @returns 是否保存成功
  */
@@ -810,15 +811,15 @@ async function submitPaymentSetting(): Promise<boolean> {
   } catch (err) {
     paymentSaving.value = false
     // 非冲突错误的提示由请求层统一弹出，表单必须保留用户输入；
-    // 版本冲突才重拉刷新 updated_at 版本号，否则按同一份旧表单重试会一直撞同一个冲突
+    // 版本冲突才整份重拉，否则按同一份旧表单重试会一直撞同一个冲突
     if ((err as BizError).code === CODE_DATA_CONFLICT) {
       message.warning('支付配置已被他人更新，已刷新为最新配置，请重新填写后再保存')
       await refreshSetting()
     }
     return false
   }
-  // 保存成功后刷新版本号与就绪状态；重拉失败不改变本次结论（refreshSetting 内部已吞掉异常）
-  await refreshSetting()
+  // 保存成功后刷新就绪状态与版本号；重拉失败不改变本次结论（此处已吞掉异常）
+  await refreshPayRuntime().catch(() => {})
   paymentSaving.value = false
   return true
 }
@@ -865,6 +866,22 @@ function validateAlipayForm(): string {
 }
 
 /**
+ * 微信支付就绪缺项检查
+ * 口径与网关 GetPaymentSetting 的 wechatReady 判定一致（AppID/商户号/V3 密钥/证书序列号/私钥），
+ * 回调地址由部署域名派生恒非空故不列入；AppID 在「渠道管理」维护、此处只读展示
+ * @returns 缺失项名称列表，全部就绪时为空数组
+ */
+function wechatMissingItems(): string[] {
+  const missing: string[] = []
+  if (!paymentForm.wechat.app_id) missing.push('微信 AppID（请在「渠道管理」配置）')
+  if (!paymentForm.wechat.mch_id.trim()) missing.push('商户号')
+  if (!paymentForm.wechat_api_v3_configured && !paymentForm.wechat.api_v3_key.trim()) missing.push('API V3 密钥')
+  if (!paymentForm.wechat.cert_serial_no.trim()) missing.push('证书序列号')
+  if (!paymentForm.wechat_cert_uploaded) missing.push('商户私钥证书')
+  return missing
+}
+
+/**
  * 弹窗内保存微信支付配置，成功后刷新就绪状态并关闭弹窗
  */
 async function saveWechatConfig() {
@@ -875,7 +892,8 @@ async function saveWechatConfig() {
       showConfigModal.value = false
       return
     }
-    message.warning('已保存，但微信支付配置仍不完整，C 端不会展示微信支付')
+    const missing = wechatMissingItems()
+    message.warning('已保存，但以下配置仍缺失，C 端不会展示微信支付：' + missing.join('、'))
   }
 }
 
@@ -938,12 +956,15 @@ async function fetchPaymentSetting() {
 }
 
 /**
- * 仅回写服务端的就绪/上传状态与乐观锁版本号
+ * 仅回写服务端的就绪/上传状态、渠道开关顺序与乐观锁版本号，不覆盖表单编辑
  * 证书写入接口是即时落库的，但表单里往往还有未保存的编辑（刚切换的加签方式、已填未存的 AppID），
- * 整份重读会把这些覆盖回服务端旧值，表现为「证书上传成功但表单跳回公钥模式」，故此处只刷状态位
+ * 整份重读会把这些覆盖回服务端旧值，表现为「证书上传成功但表单跳回公钥模式」，故此处只刷状态位；
+ * 保存成功后同样适用：V3 密钥等敏感字段服务端不回传明文（恒为空串），
+ * 整份重读会清空已填输入框，造成「已保存却像没保存」的错觉
  */
-async function refreshUploadStatus() {
+async function refreshPayRuntime() {
   const data = (await getPaymentSetting()).data.data
+  enabledOrder.value = data.enabled_channels
   paymentForm.wechat_payment_ready = data.wechat_payment_ready
   paymentForm.alipay_ready = data.alipay_ready
   paymentForm.alipay_ready_message = data.alipay_ready_message ?? ''
@@ -976,7 +997,7 @@ async function handleCertUpload(channel: string, certType: string, options: Uplo
     const res = await uploadPaymentCert(channel, certType, file)
     message.success(res.data.message || '证书上传成功')
     options.onFinish()
-    await refreshUploadStatus()
+    await refreshPayRuntime()
   } catch {
     options.onError()
   } finally {
@@ -1006,7 +1027,7 @@ async function saveCertDraft(channel: string, certType: string, label: string) {
     const res = await uploadPaymentCert(channel, certType, file)
     message.success(res.data.message || `${label}已保存`)
     certDraft[key] = ''
-    await refreshUploadStatus()
+    await refreshPayRuntime()
   } catch {
     // 失败原因已由请求层提示，此处仅保留草稿内容
   } finally {
