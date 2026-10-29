@@ -1,13 +1,20 @@
 /**
  * 页面跳转封装
  * 统一处理登录页、商品详情、订单确认等常用跳转
+ *
+ * 路径约定（分包结构，与 pages.json subPackages 保持一致）：
+ * - 主包 pages/：tabBar 页 + 登录/社区选择/支付结果等启动与支付闭环页
+ * - pagesGoods/：商品域（详情/秒杀/满减）
+ * - pagesOrder/：订单域（确认/列表/详情/支付宝引导）
+ * - pagesMine/：个人域（资料/地址/优惠券）
+ * - pagesStaff/：履约工作台
  */
 import { TAB_BAR_PATHS } from './tab-bar-paths'
 import { withQuery } from './query'
 
 /**
  * 解析跳转地址，返回归一化后的纯路径与 query 参数
- * @param url 跳转地址，如 /pages/product/detail?id=1
+ * @param url 跳转地址，如 /pagesGoods/product/detail?id=1
  * @returns path：以 / 开头的纯路径；query：? 之后的原始参数串（可能为空）
  */
 function parsePageUrl(url: string) {
@@ -23,10 +30,10 @@ function parsePageUrl(url: string) {
  * - tabBar 页面：switchTab 跳转（switchTab 不支持 query 参数，参数会被丢弃）
  * - 普通页面：navigateTo 跳转，失败（如页面栈超 10 层）时降级 redirectTo
  * - 外部链接（http/https 开头）：H5 端新窗口打开，其他端提示暂不支持
- * @param url 跳转地址，支持带 query，如 /pages/product/detail?id=1
+ * @param url 跳转地址，支持带 query，如 /pagesGoods/product/detail?id=1
  * @returns 无
  * @example
- * goPage('/pages/product/detail?id=1') // 普通页面
+ * goPage('/pagesGoods/product/detail?id=1') // 普通页面
  * goPage('/pages/cart/cart') // tabBar 页面自动 switchTab
  * goPage('https://example.com') // 外部链接
  */
@@ -96,7 +103,7 @@ export function goHome() {
  * @param id 商品 ID
  */
 export function goProductDetail(id: number) {
-  goPage(`/pages/product/detail?id=${id}`)
+  goPage(`/pagesGoods/product/detail?id=${id}`)
 }
 
 /**
@@ -111,7 +118,7 @@ export function goOrderConfirm(query?: {
   cartItemIds?: number[]
   communityId?: number
 }) {
-  goPage(withQuery('/pages/order/confirm', {
+  goPage(withQuery('/pagesOrder/order/confirm', {
     productId: query?.productId,
     skuId: query?.skuId,
     quantity: query?.quantity,
@@ -127,8 +134,8 @@ export function goOrderConfirm(query?: {
  */
 export function goOrderList(status?: number) {
   const url = status !== undefined
-    ? `/pages/order/list?status=${status}`
-    : '/pages/order/list'
+    ? `/pagesOrder/order/list?status=${status}`
+    : '/pagesOrder/order/list'
   goPage(url)
 }
 
@@ -137,21 +144,21 @@ export function goOrderList(status?: number) {
  * @param id 订单 ID
  */
 export function goOrderDetail(id: number) {
-  goPage(`/pages/order/detail?id=${id}`)
+  goPage(`/pagesOrder/order/detail?id=${id}`)
 }
 
 /**
  * 跳转地址列表
  */
 export function goAddressList() {
-  goPage('/pages/address/list')
+  goPage('/pagesMine/address/list')
 }
 
 /**
  * 跳转个人资料页
  */
 export function goUserProfile() {
-  goPage('/pages/user/profile')
+  goPage('/pagesMine/user/profile')
 }
 
 /**
@@ -159,7 +166,7 @@ export function goUserProfile() {
  * @param id 地址 ID，新增时不传
  */
 export function goAddressEdit(id?: number) {
-  const url = id ? `/pages/address/edit?id=${id}` : '/pages/address/edit'
+  const url = id ? `/pagesMine/address/edit?id=${id}` : '/pagesMine/address/edit'
   goPage(url)
 }
 
@@ -174,19 +181,19 @@ export function goCommunitySelect() {
  * 跳转优惠券页
  */
 export function goCoupon() {
-  goPage('/pages/coupon/coupon')
+  goPage('/pagesMine/coupon/coupon')
 }
 
 /**
  * 跳转秒杀活动页
  */
 export function goFlash() {
-  goPage('/pages/flash/flash')
+  goPage('/pagesGoods/flash/flash')
 }
 
 /**
  * 跳转满减活动页
  */
 export function goFullReduction() {
-  goPage('/pages/full-reduction/full-reduction')
+  goPage('/pagesGoods/full-reduction/full-reduction')
 }

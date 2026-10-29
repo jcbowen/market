@@ -100,7 +100,7 @@ export async function launchAlipayPay(paramsJson: string, paymentNo = '', orderI
         paymentNo ? `no=${encodeURIComponent(paymentNo)}` : '',
         orderId ? `order_id=${orderId}` : '',
       ].filter(Boolean).join('&')
-      uni.redirectTo({ url: `/pages/pay/alipay?${query}` })
+      uni.redirectTo({ url: `/pagesOrder/pay/alipay?${query}` })
       return 'guided'
     }
     window.location.href = params.alipay_pay_url

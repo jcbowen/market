@@ -82,7 +82,7 @@ test.describe.serial('C 端购物与下单', () => {
   });
 
   test('订单列表页正常渲染并含刚下的单', async ({ page }) => {
-    await page.goto('/s/#/pages/order/list');
+    await page.goto('/s/#/pagesOrder/order/list');
     await expect(page.locator('.order-card, .order-item').first()).toBeVisible({ timeout: 15_000 });
   });
 });

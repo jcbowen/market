@@ -33,63 +33,9 @@
       }
     },
     {
-      "path": "pages/user/profile",
-      "style": {
-        "navigationBarTitleText": "个人资料"
-      }
-    },
-    {
       "path": "pages/login/login",
       "style": {
         "navigationBarTitleText": "登录"
-      }
-    },
-    {
-      "path": "pages/product/detail",
-      "style": {
-        "navigationBarTitleText": "商品详情"
-      }
-    },
-    {
-      "path": "pages/order/confirm",
-      "style": {
-        "navigationBarTitleText": "确认订单"
-      }
-    },
-    {
-      "path": "pages/order/list",
-      "style": {
-        "navigationBarTitleText": "我的订单"
-      }
-    },
-    {
-      "path": "pages/order/detail",
-      "style": {
-        "navigationBarTitleText": "订单详情"
-      }
-    },
-    {
-      "path": "pages/pay/alipay",
-      "style": {
-        "navigationBarTitleText": "支付宝支付"
-      }
-    },
-    {
-      "path": "pages/pay/result",
-      "style": {
-        "navigationBarTitleText": "支付结果"
-      }
-    },
-    {
-      "path": "pages/address/list",
-      "style": {
-        "navigationBarTitleText": "收货地址"
-      }
-    },
-    {
-      "path": "pages/address/edit",
-      "style": {
-        "navigationBarTitleText": "编辑地址"
       }
     },
     {
@@ -99,30 +45,116 @@
       }
     },
     {
-      "path": "pages/coupon/coupon",
+      "path": "pages/pay/result",
       "style": {
-        "navigationBarTitleText": "优惠券包"
-      }
-    },
-    {
-      "path": "pages/flash/flash",
-      "style": {
-        "navigationBarTitleText": "限时秒杀"
-      }
-    },
-    {
-      "path": "pages/full-reduction/full-reduction",
-      "style": {
-        "navigationBarTitleText": "满减活动"
-      }
-    },
-    {
-      "path": "pages/fulfillment/fulfillment",
-      "style": {
-        "navigationBarTitleText": "履约工作台"
+        "navigationBarTitleText": "支付结果"
       }
     }
   ],
+  "subPackages": [
+    {
+      "root": "pagesGoods",
+      "pages": [
+        {
+          "path": "product/detail",
+          "style": {
+            "navigationBarTitleText": "商品详情"
+          }
+        },
+        {
+          "path": "flash/flash",
+          "style": {
+            "navigationBarTitleText": "限时秒杀"
+          }
+        },
+        {
+          "path": "full-reduction/full-reduction",
+          "style": {
+            "navigationBarTitleText": "满减活动"
+          }
+        }
+      ]
+    },
+    {
+      "root": "pagesOrder",
+      "pages": [
+        {
+          "path": "order/confirm",
+          "style": {
+            "navigationBarTitleText": "确认订单"
+          }
+        },
+        {
+          "path": "order/list",
+          "style": {
+            "navigationBarTitleText": "我的订单"
+          }
+        },
+        {
+          "path": "order/detail",
+          "style": {
+            "navigationBarTitleText": "订单详情"
+          }
+        },
+        {
+          "path": "pay/alipay",
+          "style": {
+            "navigationBarTitleText": "支付宝支付"
+          }
+        }
+      ]
+    },
+    {
+      "root": "pagesMine",
+      "pages": [
+        {
+          "path": "user/profile",
+          "style": {
+            "navigationBarTitleText": "个人资料"
+          }
+        },
+        {
+          "path": "address/list",
+          "style": {
+            "navigationBarTitleText": "收货地址"
+          }
+        },
+        {
+          "path": "address/edit",
+          "style": {
+            "navigationBarTitleText": "编辑地址"
+          }
+        },
+        {
+          "path": "coupon/coupon",
+          "style": {
+            "navigationBarTitleText": "优惠券包"
+          }
+        }
+      ]
+    },
+    {
+      "root": "pagesStaff",
+      "pages": [
+        {
+          "path": "fulfillment/fulfillment",
+          "style": {
+            "navigationBarTitleText": "履约工作台"
+          }
+        }
+      ]
+    }
+  ],
+  "preloadRule": {
+    "pages/category/category": {
+      "network": "all",
+      "packages": ["pagesGoods", "pagesOrder"]
+    },
+    "pages/user/user": {
+      "network": "wifi",
+      "packages": ["pagesMine"]
+    }
+  },
   "globalStyle": {
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "社区商超",

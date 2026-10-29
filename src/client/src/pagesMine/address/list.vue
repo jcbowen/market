@@ -108,7 +108,7 @@ function onAdd() {
 function onEdit(id: number) {
   const address = addresses.value.find((item) => item.id === id)
   uni.navigateTo({
-    url: `/pages/address/edit?id=${id}`,
+    url: `/pagesMine/address/edit?id=${id}`,
     success: (res) => {
       if (address) {
         res.eventChannel.emit('addressData', address)

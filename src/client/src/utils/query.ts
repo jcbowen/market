@@ -15,7 +15,7 @@ export type QueryValue = string | number | undefined | null
  * @returns query 串，如 "id=1&keyword=%E7%89%9B%E5%A5%B6&ids=1%2C2"；无有效参数时返回空串
  * @example
  * buildQueryString({ id: 1, redirect: undefined }) // "id=1"
- * goPage(`/pages/order/confirm?${buildQueryString({ productId: 3 })}`)
+ * goPage(`/pagesOrder/order/confirm?${buildQueryString({ productId: 3 })}`)
  */
 export function buildQueryString(
   params: Record<string, QueryValue | QueryValue[]>,
@@ -35,9 +35,9 @@ export function buildQueryString(
 
 /**
  * 在路径后拼 query 串，无有效参数时返回原路径
- * @param path 页面路径，如 /pages/order/confirm
+ * @param path 页面路径，如 /pagesOrder/order/confirm
  * @param params 参数对象，见 buildQueryString
- * @returns 带参路径，如 /pages/order/confirm?productId=1
+ * @returns 带参路径，如 /pagesOrder/order/confirm?productId=1
  */
 export function withQuery(path: string, params: Record<string, QueryValue | QueryValue[]>): string {
   const qs = buildQueryString(params)

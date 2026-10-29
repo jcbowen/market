@@ -219,7 +219,7 @@ async function checkOnce() {
 
 function goOrder() {
   if (!orderId.value) return
-  uni.redirectTo({ url: `/pages/order/detail?id=${orderId.value}` })
+  uni.redirectTo({ url: `/pagesOrder/order/detail?id=${orderId.value}` })
 }
 
 function goHome() {

@@ -203,7 +203,7 @@ async function checkFulfiller() {
  * 跳转履约工作台
  */
 function goFulfillment() {
-  uni.navigateTo({ url: '/pages/fulfillment/fulfillment' })
+  uni.navigateTo({ url: '/pagesStaff/fulfillment/fulfillment' })
 }
 
 onReachBottom(() => {

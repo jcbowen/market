@@ -3,7 +3,7 @@ import { clientLogin } from '../../helpers/e2e';
 
 /**
  * C 端 H5 E2E 03：个人中心与地址管理
- * 页面：pages/user/user、pages/address/list、pages/address/edit、pages/community/select
+ * 页面：pages/user/user、pagesMine/address/list、pagesMine/address/edit、pages/community/select
  */
 
 test.describe.serial('C 端个人中心', () => {
@@ -17,17 +17,17 @@ test.describe.serial('C 端个人中心', () => {
   });
 
   test('地址列表页可达', async ({ page }) => {
-    await page.goto('/s/#/pages/address/list');
+    await page.goto('/s/#/pagesMine/address/list');
     await expect(page.locator('uni-view').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('新增地址页可达', async ({ page }) => {
-    await page.goto('/s/#/pages/address/edit');
+    await page.goto('/s/#/pagesMine/address/edit');
     await expect(page.locator('uni-view').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('新增地址表单提交成功', async ({ page }) => {
-    await page.goto('/s/#/pages/address/edit');
+    await page.goto('/s/#/pagesMine/address/edit');
     await page.waitForTimeout(2500);
     // uni-input placeholder 为遮罩 div，按 input 顺序定位（收货人/手机号/详细地址）
     const inputs = page.locator('input');
@@ -44,7 +44,7 @@ test.describe.serial('C 端个人中心', () => {
     await page.waitForTimeout(2000);
     // 保存成功后页面走 uni.navigateBack 返回（直接 goto 打开时无历史栈，可能停留原页），
     // 故以列表页出现新地址作为成功依据
-    await page.goto('/s/#/pages/address/list');
+    await page.goto('/s/#/pagesMine/address/list');
     await page.waitForTimeout(2500);
     await expect(page.getByText('13900001234').first()).toBeVisible({ timeout: 10_000 });
   });
@@ -55,7 +55,7 @@ test.describe.serial('C 端个人中心', () => {
   });
 
   test('履约工作台可达', async ({ page }) => {
-    await page.goto('/s/#/pages/fulfillment/fulfillment');
+    await page.goto('/s/#/pagesStaff/fulfillment/fulfillment');
     await expect(page.locator('uni-view').first()).toBeVisible({ timeout: 15_000 });
   });
 });

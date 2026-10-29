@@ -225,7 +225,7 @@ function onBirthdayConfirm(e: { value: number }) {
 onShow(async () => {
   // 未登录直接回登录页（本页无独立浏览价值）
   if (!userStore.isLogin) {
-    goLogin('/pages/user/profile')
+    goLogin('/pagesMine/user/profile')
     return
   }
   try {

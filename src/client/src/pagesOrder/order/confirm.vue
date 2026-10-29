@@ -925,7 +925,7 @@ async function onSubmit() {
     userStore.setAddress(null)
     const outcome = await payOrder(createdOrderId, selectedChannel.value.channel)
     notifyPayOutcome(outcome, selectedChannel.value.channel)
-    const detailUrl = `/pages/order/detail?id=${createdOrderId}`
+    const detailUrl = `/pagesOrder/order/detail?id=${createdOrderId}`
     // 已整页跳转第三方收银台：当前文档即将卸载，此刻执行站内路由不生效，
     // 改为等回跳或用户切回标签页后再进订单详情，避免停留在确认页看到已结算商品或重复下单
     if (outcome === 'redirected') {
@@ -947,7 +947,7 @@ async function onSubmit() {
     // 在待支付状态下重新发起支付
     if (createdOrderId) {
       console.warn('[onSubmit] 支付环节异常，转订单详情', err)
-      uni.redirectTo({ url: `/pages/order/detail?id=${createdOrderId}` })
+      uni.redirectTo({ url: `/pagesOrder/order/detail?id=${createdOrderId}` })
     }
   } finally {
     submitting.value = false

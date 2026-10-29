@@ -148,7 +148,7 @@ async function waitForFulfillmentRequest(
  */
 async function openWorkbench(page: Page) {
   await uiLogin(page, phone);
-  return waitForFulfillmentRequest(page, () => page.goto('/s/#/pages/fulfillment/fulfillment'));
+  return waitForFulfillmentRequest(page, () => page.goto('/s/#/pagesStaff/fulfillment/fulfillment'));
 }
 
 test.describe.serial('履约工作台单据类型对应', () => {

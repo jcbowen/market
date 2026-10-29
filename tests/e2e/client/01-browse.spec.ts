@@ -34,7 +34,7 @@ test.describe('C 端登录与浏览', () => {
 
     // 秒杀页需登录态（路由守卫会跳登录页），且登录后应用初始化才解析出当前社区
     await clientLogin(page, '13800138000');
-    await page.goto('/s/#/pages/flash/flash');
+    await page.goto('/s/#/pagesGoods/flash/flash');
     const card = page.locator('.flash-card').first();
     await expect(card, '列表不应为空（onShow 复位分页状态后才有卡片）').toBeVisible({ timeout: 15_000 });
 
@@ -50,12 +50,12 @@ test.describe('C 端登录与浏览', () => {
   });
 
   test('满减页可达', async ({ page }) => {
-    await page.goto('/s/#/pages/full-reduction/full-reduction');
+    await page.goto('/s/#/pagesGoods/full-reduction/full-reduction');
     await expect(page.locator('uni-view').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('领券中心页可达', async ({ page }) => {
-    await page.goto('/s/#/pages/coupon/coupon');
+    await page.goto('/s/#/pagesMine/coupon/coupon');
     await expect(page.locator('uni-view').first()).toBeVisible({ timeout: 15_000 });
   });
 });

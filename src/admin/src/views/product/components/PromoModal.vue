@@ -37,7 +37,7 @@ import type { Product } from '@/api/types'
  * PromoModal 商品推广弹窗
  *
  * 展示商品 C 端 H5 详情页二维码与链接，支持复制链接。
- * 链接格式：{effective_base_url}/s/#/pages/product/detail?id={商品ID}
+ * 链接格式：{effective_base_url}/s/#/pagesGoods/product/detail?id={商品ID}
  * （C 端为 hash 路由，base=/s/；域名取站点设置最终生效值）
  * 二维码由 qrcode 包纯前端生成，无后端接口。
  */
@@ -66,7 +66,7 @@ const qrDataUrl = ref('')
 /** C 端商品详情分享链接 */
 const shareUrl = computed(() => {
   if (!props.product || !baseUrl.value) return ''
-  return `${baseUrl.value}/s/#/pages/product/detail?id=${props.product.id}`
+  return `${baseUrl.value}/s/#/pagesGoods/product/detail?id=${props.product.id}`
 })
 
 // 弹窗打开时拉站点域名并生成二维码

@@ -86,29 +86,29 @@ import type { Category, PageResult, Product } from '@/api/types'
 interface LinkOption {
   /** 页面名称 */
   name: string
-  /** 页面路径（以 /pages 开头，可直接用于 C 端跳转） */
+  /** 页面路径（以 / 开头，含分包前缀，可直接用于 C 端跳转） */
   path: string
   /** 是否 tabBar 页面（C 端以 switchTab 方式跳转） */
   isTab?: boolean
 }
 
-/** C 端可跳转页面静态列表（与 src/client/src/pages.json 保持同步） */
+/** C 端可跳转页面静态列表（与 src/client/src/pages.json 的主包+subPackages 保持同步） */
 const PAGE_OPTIONS: LinkOption[] = [
   // 首页与分类已合并为同一页面，路径以 pages.json 为准
   { name: '首页/分类', path: '/pages/category/category', isTab: true },
   { name: '购物车', path: '/pages/cart/cart', isTab: true },
   { name: '我的', path: '/pages/user/user', isTab: true },
-  { name: '订单列表', path: '/pages/order/list' },
-  { name: '优惠券', path: '/pages/coupon/coupon' },
-  { name: '收货地址', path: '/pages/address/list' },
+  { name: '订单列表', path: '/pagesOrder/order/list' },
+  { name: '优惠券', path: '/pagesMine/coupon/coupon' },
+  { name: '收货地址', path: '/pagesMine/address/list' },
   { name: '选择社区', path: '/pages/community/select' },
 ]
 
-/** C 端活动页面静态列表（与 src/client/src/pages.json 保持同步） */
+/** C 端活动页面静态列表（与 src/client/src/pages.json 的 subPackages 保持同步） */
 const ACTIVITY_OPTIONS: LinkOption[] = [
-  { name: '限时秒杀', path: '/pages/flash/flash' },
-  { name: '满减活动', path: '/pages/full-reduction/full-reduction' },
-  { name: '优惠券领取', path: '/pages/coupon/coupon' },
+  { name: '限时秒杀', path: '/pagesGoods/flash/flash' },
+  { name: '满减活动', path: '/pagesGoods/full-reduction/full-reduction' },
+  { name: '优惠券领取', path: '/pagesMine/coupon/coupon' },
 ]
 
 const props = withDefaults(
@@ -254,7 +254,7 @@ function choose(path: string) {
  * @param product 选中的商品
  */
 function chooseProduct(product: Product) {
-  choose(`/pages/product/detail?id=${product.id}`)
+  choose(`/pagesGoods/product/detail?id=${product.id}`)
 }
 
 /**

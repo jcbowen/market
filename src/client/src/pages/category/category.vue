@@ -1139,7 +1139,7 @@ function onSettlement() {
   if (!userStore.isLogin) {
     // 本地购物车 ID 为临时负数，登录同步后才能拿到服务端真实 ID，
     // 因此未登录时只回跳确认订单页，由页面加载同步后的已选中购物车项。
-    goLogin('/pages/order/confirm')
+    goLogin('/pagesOrder/order/confirm')
     return
   }
   showCartPopup.value = false
