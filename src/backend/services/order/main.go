@@ -123,19 +123,8 @@ func runGRPCServer(server *grpc.Server, port int) error {
 //
 // 返回值：
 //   - error: 迁移错误信息
+//
+// 表清单来自 model.Models()（与 market-admin init 的等待面同源，新增模型只改那一处）
 func autoMigrate(db *mysql.Instance) error {
-	return db.GetDb().AutoMigrate(
-		&model.Order{},
-		&model.OrderItem{},
-		&model.OrderStatusLog{},
-		&model.Refund{},
-		&model.RefundItem{},
-		&model.RefundConfig{},
-		&model.RefundLog{},
-		&model.SchedulerFailure{},
-		&model.PosHeldOrder{},
-		&model.PosShift{},
-		&model.AppPreference{},
-		&model.ExportTask{},
-	)
+	return db.GetDb().AutoMigrate(model.Models()...)
 }

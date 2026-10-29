@@ -956,14 +956,27 @@ func (s *DataImportService) SeedDemoBootstrap(ctx context.Context, logf func(str
 // ReRunDemoSections 幂等复跑全部演示段（全局段 + 每个演示社区的社区域段，含 init_only）。
 // 与 SeedDemoBootstrap 的区别：不做「空库短路」，逐条按各自幂等键判重——
 // 供初始化中断重试与端到端验证使用；已有数据全部 skip，无副作用。
-func (s *DataImportService) ReRunDemoSections(ctx context.Context, logf func(string, ...any)) (created, skipped, failed int32) {
+// 参数：
+//   - ctx: 上下文
+//   - logf: 进度打印器（nil 时静默）
+//
+// 返回：
+//   - created/skipped/failed: 条目计数
+//   - error: 演示数据包未注册（seeddata 缺失或解析失败）时返回内部错误，
+//     避免调用方把「什么都没跑」读成「跑完且无失败」
+//
+// 使用示例：
+//
+//	c, s, f, err := importSvc.ReRunDemoSections(ctx, logf)
+func (s *DataImportService) ReRunDemoSections(ctx context.Context, logf func(string, ...any)) (created, skipped, failed int32, err error) {
 	if s.demoPkg == nil {
-		return 0, 0, 0
+		return 0, 0, 0, bizerr.New(codes.Internal, "演示数据包未注册（seeddata 缺失或解析失败）")
 	}
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return s.runAllDemoSections(ctx, logf)
+	c, sk, fl := s.runAllDemoSections(ctx, logf)
+	return c, sk, fl, nil
 }
 
 // runAllDemoSections 导入主体：全局段 → 演示社区内置角色补建 → 各社区社区域段。

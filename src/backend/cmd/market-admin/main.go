@@ -10,6 +10,8 @@
 //     随后导入演示种子（非 production 且 communities 为空时）：数据来自 product
 //     服务内嵌演示数据包（full-demo.json），经 SeedDemoBootstrap 直连库导入，
 //     替代原 deploy/init.dev.sql 的 SQL 导入链路（详见 seed.go）。
+//     等待各服务自动迁移的过程会每 10 秒打印进度与缺失表名；超时或种子残缺时
+//     以退出码 1 结束（不再静默成功），可用 `init --rerun` 逐条幂等补导。
 //     再做初始社区兜底：库中不存在任何社区时创建一个默认社区（名称取
 //     MARKET_DEFAULT_COMMUNITY，默认「默认社区」），并初始化内置社区管理员
 //     角色（与后台创建社区同链路），避免全新部署时超管被卡在「社区选择」页
@@ -65,20 +67,27 @@ func main() {
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "init" {
 		timeout := 300
-		for i := 1; i+1 < len(args); i++ {
-			if args[i] == "--timeout" {
-				if v, err := strconv.Atoi(args[i+1]); err == nil && v > 0 {
-					timeout = v
+		rerun := false
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "--rerun":
+				rerun = true
+			case "--timeout":
+				if i+1 < len(args) {
+					if v, err := strconv.Atoi(args[i+1]); err == nil && v > 0 {
+						timeout = v
+					}
 				}
 			}
 		}
-		runInit(timeout)
+		runInit(timeout, rerun)
 		return
 	}
 	if len(args) > 0 {
 		fmt.Println("用法:")
 		fmt.Println("  market-admin           交互式管理菜单（查看列表/查看密码/重置密码）")
-		fmt.Println("  market-admin init [--timeout N]   初始化超管与默认社区（entrypoint 自动调用）")
+		fmt.Println("  market-admin init [--timeout N]        初始化超管与默认社区（entrypoint 自动调用）")
+		fmt.Println("  market-admin init --rerun [--timeout N] 幂等复跑演示种子各段（补上次残缺，不受空库短路限制）")
 		os.Exit(2)
 	}
 	runInteractive()
@@ -95,30 +104,37 @@ func openDB() (*mysql.Instance, error) {
 // init 子命令
 // ============================================================
 
-// runInit 初始化超管账号与默认社区（幂等，失败不阻断容器启动由 entrypoint 兜底提示）
-func runInit(timeoutSec int) {
+// runInit 初始化超管账号与默认社区（幂等）
+// 参数：
+//   - timeoutSec: 等待各服务自动迁移的上限（秒）
+//   - rerun: true 时演示种子走幂等复跑（不受「communities 非空即跳过」限制），
+//     用于补齐上次导入的残缺条目
+//
+// 返回：
+//   - 无返回值，异常经进程退出码表达：0 成功或明确让路退出；
+//     1 失败（连库失败 / 等待迁移超时 / 超管创建失败 / 演示种子未完整落地）
+//
+// 使用示例：
+//
+//	docker exec market-gateway ./market-admin init --timeout 300
+//	docker exec market-gateway ./market-admin init --rerun
+func runInit(timeoutSec int, rerun bool) {
 	fmt.Println("==> [market-admin] 初始化开始")
 	inst, err := openDB()
 	if err != nil {
 		fmt.Printf("==> [market-admin] 初始化失败: %v\n", err)
+		fmt.Println("    多为 MySQL 不可达或 market 库不存在（DROP DATABASE 后 mysql 镜像不会自动重建库，")
+		fmt.Println("    见 docs/需求文档/10-部署方案/02-本地启动与测试.md「整库重置」）")
 		os.Exit(1)
 	}
 	db := inst.GetDb()
 
-	// 等待 admin_users 表就绪：user-service 启动时 AutoMigrate 建表，
-	// 此前表不存在属正常现象，轮询直至超时
-	deadline := time.Now().Add(time.Duration(timeoutSec) * time.Second)
-	for !db.Migrator().HasTable(&model.Admin{}) {
-		if time.Now().After(deadline) {
-			fmt.Println("==> [market-admin] 等待 admin_users 表超时（user-service 可能未完成自动迁移），放弃本次初始化")
-			fmt.Println("    稍后可执行: docker exec <容器名> ./market-admin init  重试")
-			os.Exit(0)
-		}
-		if _, err := os.Stat(shutdownMarker); err == nil {
-			fmt.Println("==> [market-admin] 检测到容器停止信号，让路退出")
-			os.Exit(0)
-		}
-		time.Sleep(2 * time.Second)
+	// 等待用户服务表迁移完成（admin_users 等）：user-service 启动时 AutoMigrate 建表，
+	// 此前表不存在属正常现象；进度与缺失表名由 waitForTables 打印，超时按失败退出
+	if err := waitForTables(db, userModels(), timeoutSec, "user-service 自动迁移"); err != nil {
+		fmt.Printf("==> [market-admin] 初始化中止: %v\n", err)
+		fmt.Println("    稍后可执行: docker exec <容器名> ./market-admin init  重试")
+		os.Exit(1)
 	}
 
 	// 演示种子导入（原 init.dev.sql 的替代链路，非 production 且空库时执行）：
@@ -127,7 +143,13 @@ func runInit(timeoutSec int) {
 	//     已配置 MARKET_ADMIN_PASSWORD 时演示段让位（种子内部判断）；
 	//   - 演示社区先建，ensureDefaultCommunity 检测到社区已存在即不再创建「默认社区」，
 	//     仅补建缺内置角色的社区（覆盖两个演示社区）
-	seedDemoPackage(inst, timeoutSec)
+	// 失败只记录不中断：超管/默认社区兜底仍须执行，最后统一以退出码反馈
+	var seedErr error
+	if rerun {
+		seedErr = rerunDemoSeed(inst, timeoutSec)
+	} else {
+		seedErr = seedDemoPackage(inst, timeoutSec)
+	}
 
 	if err := ensureSuperAdmin(db); err != nil {
 		fmt.Printf("==> [market-admin] 超管初始化失败: %v\n", err)
@@ -135,6 +157,13 @@ func runInit(timeoutSec int) {
 	}
 
 	ensureDefaultCommunity(inst)
+
+	if seedErr != nil {
+		fmt.Printf("==> [market-admin] 初始化未完全成功（演示种子）: %v\n", seedErr)
+		fmt.Println("    补齐方式: docker exec <容器名> ./market-admin init --rerun（逐条幂等，已有数据不受影响）")
+		os.Exit(1)
+	}
+	fmt.Println("==> [market-admin] 初始化完成")
 }
 
 // ensureSuperAdmin 确保存在超管账号（幂等：已有超管则跳过，绝不重置既有密码）

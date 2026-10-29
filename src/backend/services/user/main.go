@@ -84,24 +84,12 @@ func main() {
 }
 
 // autoMigrate 自动迁移用户服务相关数据表
+// 表清单来自 model.Models()（与 market-admin init 的等待面同源，新增模型只改那一处）
 // 参数：
 //   - db: MySQL 实例
 //
 // 返回：
 //   - error: 迁移错误信息
 func autoMigrate(db *mysql.Instance) error {
-	return db.GetDb().AutoMigrate(
-		&model.User{},
-		&model.UserCommunity{},
-		&model.Address{},
-		&model.Community{},
-		&model.Admin{},
-		&model.AdminCommunity{},
-		&model.Role{},
-		&model.Region{},
-		&model.RegionUpdateTask{},
-		&model.ClientChannel{},
-		&model.UserChannelIdentity{},
-		&model.SiteConfig{},
-	)
+	return db.GetDb().AutoMigrate(model.Models()...)
 }

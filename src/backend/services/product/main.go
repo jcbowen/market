@@ -58,45 +58,14 @@ func main() {
 }
 
 // autoMigrate 自动迁移商品服务相关数据表
+// 表清单来自 model.Models()（与 market-admin init 的等待面同源，新增模型只改那一处）
 // 参数：
 //   - db: MySQL 实例
 //
 // 返回值：
 //   - error: 迁移错误信息
 func autoMigrate(db *mysql.Instance) error {
-	if err := db.GetDb().AutoMigrate(
-		&model.Category{},
-		&model.Product{},
-		&model.ProductImage{},
-		&model.ProductSpec{},
-		&model.ProductSpecValue{},
-		&model.Sku{},
-		&model.CommunityPricing{},
-		&model.StockRecord{},
-		&model.StockOpLog{},
-		&model.StockBatch{},
-		&model.Supplier{},
-		&model.PurchaseOrder{},
-		&model.PurchaseOrderItem{},
-		&model.StockInOrder{},
-		&model.StockInOrderItem{},
-		&model.StockOutOrder{},
-		&model.StockOutOrderItem{},
-		&model.StockCheck{},
-		&model.StockCheckItem{},
-		&model.Coupon{},
-		&model.UserCoupon{},
-		&model.CouponProductScope{},
-		&model.FlashSale{},
-		&model.FlashSaleItem{},
-		&model.FullReduction{},
-		&model.FreeShippingActivity{},
-		&model.FreeShippingScope{},
-		&model.Banner{},
-		&model.AttachmentConfig{},
-		&model.Attachment{},
-		&model.AttachmentMigrateItem{},
-	); err != nil {
+	if err := db.GetDb().AutoMigrate(model.Models()...); err != nil {
 		return err
 	}
 	// 存量数据对齐须在建索引之前：历史「商品软删但 SKU 仍启用」的行会占住条码，
