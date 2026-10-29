@@ -92,9 +92,9 @@ func main() {
 
 	r.Use(baseMw.SetGPC(r))
 	r.Use(staticCacheMiddleware())
-	// 附件访问域名（visit_domain）惰性补写：全新部署从未保存站点设置时按首个请求兜底，
-	// 保证 product 服务能把附件 URL 拼为「配置的附件域名+路径」完整地址（详见 handler/attachment_domain_sync.go）
-	r.Use(handler.NewAttachmentDomainSync(clients.ProductClient).Middleware())
+	// 附件访问域名（visit_domain）不做运行期补写：为空时附件 URL 长期按站内绝对路径
+	// /uploads/<path> 降级（随访问域名解析，任何入口开箱即用），仅站点设置/环境变量
+	// 等显式配置才联动写库（见 site.go syncAttachmentVisitDomain）
 
 	// 后台 WebSocket 推送（新订单语音通知）：hub 管理在线连接，
 	// 订阅器接收 order 服务的支付成功事件按社区转发；订阅失败不阻断启动（自动重试）

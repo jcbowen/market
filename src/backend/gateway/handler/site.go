@@ -7,7 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/errcode"
+	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
+	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
 	"github.com/jcbowen/market/src/backend/gateway/brand"
@@ -169,9 +171,12 @@ func (h *AdminHandler) UpdateSiteSetting(c *gin.Context) {
 	if snap.BaseURL != "" {
 		h.syncPayCallbackURLs(c.Request.Context(), snap.BaseURL)
 	}
-	// 附件访问域名联动：本地存储且未配置访问域名时补写为生效部署域名（详见 syncAttachmentVisitDomain）
+	// 附件访问域名联动：本地存储且未配置访问域名时补写为生效部署域名（详见 syncAttachmentVisitDomain）。
+	// 仅认显式配置来源（db 站点设置 / env SITE_BASE_URL）；base 为请求现推（request）时
+	// 首访者是谁域名就是谁，写库会把临时兜底固化成错误配置（如局域网被 localhost 抢占），
+	// 此时保持 visit_domain 为空，附件 URL 长期按站内绝对路径降级、随访问域名解析
 	attachmentSynced := false
-	if snap.BaseURL != "" {
+	if snap.BaseURL != "" && snap.BaseURLSource != "request" {
 		attachmentSynced = h.syncAttachmentVisitDomain(c.Request.Context(), snap.BaseURL)
 	}
 
@@ -222,7 +227,8 @@ func (h *AdminHandler) syncPayCallbackURLs(ctx context.Context, baseURL string) 
 }
 
 // syncAttachmentVisitDomain 站点域名联动补空附件访问域名（站点设置保存路径的触发点）
-// 核心逻辑在 syncAttachmentVisitDomainBy；运行期惰性补写见 attachment_domain_sync.go 中间件
+// 核心逻辑在 syncAttachmentVisitDomainBy；调用方须保证 baseURL 来自显式配置
+// （db 站点设置 / SITE_BASE_URL 环境变量），请求现推的域名不入库
 //
 // 参数：
 //   - ctx: 上下文
@@ -232,4 +238,34 @@ func (h *AdminHandler) syncPayCallbackURLs(ctx context.Context, baseURL string) 
 //   - bool: 是否发生了补写
 func (h *AdminHandler) syncAttachmentVisitDomain(ctx context.Context, baseURL string) bool {
 	return syncAttachmentVisitDomainBy(h.productClient, ctx, baseURL)
+}
+
+// syncAttachmentVisitDomainBy 附件域名补写核心：local 存储且 visit_domain 为空时补写为 baseURL
+// 单向只补空：visit_domain 一旦有值（手填或历史补写）不再回写；OSS 模式域名由 OSS 配置派生，不处理。
+// 为空且无显式配置来源时不写库：附件 URL 按站内绝对路径 /uploads/<path> 降级，随访问域名解析
+//
+// 参数：
+//   - productClient: product 服务 gRPC 客户端
+//   - ctx: 上下文
+//   - baseURL: 显式配置的部署域名基址（形如 https://host）
+//
+// 返回值：
+//   - bool: 是否发生了补写
+func syncAttachmentVisitDomainBy(productClient product.ProductServiceClient, ctx context.Context, baseURL string) bool {
+	cfg, err := productClient.GetAttachmentConfig(ctx, &common.Empty{})
+	if err != nil {
+		log.Printf("联动附件访问域名前读取附件配置失败: %v", err)
+		return false
+	}
+	if cfg.StorageType != "local" || cfg.VisitDomain != "" {
+		return false
+	}
+
+	cfg.VisitDomain = baseURL
+	if _, err := productClient.SaveAttachmentConfig(ctx, cfg); err != nil {
+		log.Printf("按部署域名补写附件访问域名失败: %v", err)
+		return false
+	}
+	log.Printf("附件访问域名未配置，已按显式配置的部署域名补写: %s", baseURL)
+	return true
 }

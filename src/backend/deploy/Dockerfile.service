@@ -32,7 +32,10 @@ EXPOSE ${SERVICE_PORT}
 
 # 健康检查：gRPC 端口 TCP 探活（busybox nc）；
 # shell 形式在容器运行时展开 ENV SERVICE_PORT，与镜像内服务实际监听端口一致
-HEALTHCHECK --interval=10s --timeout=3s --retries=5 --start-period=15s \
+# start-period/retries 与 Dockerfile.app 对齐（120s + 10 次）：gRPC 端口在 AutoMigrate
+# 之后才监听，全新空库首启要建 60+ 张表，原 15s+5×10s≈65s 的预算会把「正在正常迁移」
+# 的服务判成 unhealthy，进而让 compose 的 service_healthy 依赖门（gateway 等下游）失效
+HEALTHCHECK --interval=10s --timeout=3s --retries=10 --start-period=120s \
     CMD nc -z 127.0.0.1 ${SERVICE_PORT} || exit 1
 
 CMD ["./service"]

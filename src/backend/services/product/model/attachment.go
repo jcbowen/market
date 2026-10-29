@@ -24,7 +24,7 @@ type AttachmentConfig struct {
 	LocalDir string `gorm:"column:local_dir;type:varchar(64);not null;default:'uploads';comment:本地存储目录名，落盘目录与 URL 路径段共用，默认 uploads" json:"local_dir"`
 
 	// 自定义访问域名，空则本地模式按请求域名动态拼接、OSS 用 bucket 域名
-	VisitDomain string `gorm:"column:visit_domain;type:varchar(255);not null;default:'';comment:自定义访问域名，商品/Banner 等图片字段出库时按此域名拼接完整 URL，本地模式必填（OSS 模式图片走 oss_custom_visit_domain/bucket 域名，可空）" json:"visit_domain"`
+	VisitDomain string `gorm:"column:visit_domain;type:varchar(255);not null;default:'';comment:自定义访问域名，商品/Banner 等图片字段出库时按此域名拼接完整 URL，本地模式选填——未配置时按 /uploads/ 站内路径兜底随访问域名解析，仅站点域名/SITE_BASE_URL 等显式配置联动写入（OSS 模式图片走 oss_custom_visit_domain/bucket 域名，可空）" json:"visit_domain"`
 
 	// 阿里云 OSS
 	OssAccessKeyId       string `gorm:"column:oss_access_key_id;type:varchar(128);not null;default:'';comment:阿里云 AccessKey ID" json:"oss_access_key_id"`

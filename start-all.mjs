@@ -273,6 +273,8 @@ if (CLEAN) {
 
 // 启动服务
 console.log('==> 启动服务...');
+// 记录启动时刻：下方迁移等待据此判断业务服务容器是否在本轮被（重）建过
+const UP_STARTED_AT = Date.now();
 await runWithRepair(ctx, 'docker', ['compose', 'up', '-d'], { cwd: ROOT_DIR, step: '启动服务' });
 
 // 前端构建脚本会先 rm -rf 产物目录，仍在运行的 gateway 容器绑定的是被删掉的旧 inode，
@@ -297,26 +299,101 @@ for (let i = 1; i <= 60; i++) {
 }
 
 // 等待后端服务完成表迁移
-console.log('==> 等待微服务完成自动迁移...');
-for (let i = 1; i <= 60; i++) {
-  if (dockerExec([
+// 探测口径 = market-admin 演示种子真正写入的五域代表表（权威定义见
+// src/backend/cmd/market-admin/wait.go 的 seedModels()，它取五个服务 model.Models() 的并集；
+// 这里刻意只列跨域代表表，任何一域漏建都能被发现，而不必在脚本里维护 60 张全量表名）。
+// 原先只探 categories（product 域）：user/order/payment/cart 未迁移完也会被判「已就绪」，
+// init 于是在缺表的库上开写，留下社区已建、业务段残缺的半导入态。
+const MIGRATION_PROBE_TABLES = [
+  'admin_users', 'users', 'communities', 'regions', 'site_configs',
+  'categories', 'products', 'product_skus', 'coupons', 'user_coupons', 'banners',
+  'orders', 'order_items', 'refunds', 'pos_shifts',
+  'carts',
+  'payments', 'pay_config',
+];
+
+// 迁移相关的五个业务服务：compose 服务名（restart 用）与容器名（inspect 用）各一份
+const MIGRATION_SERVICE_KEYS = ['user-service', 'product-service', 'order-service', 'cart-service', 'payment-service'];
+const MIGRATION_SERVICE_CONTAINERS = ['market-user', 'market-product', 'market-order', 'market-cart', 'market-payment'];
+
+// 查询探测表中仍缺失的部分；MySQL 或 market 库不可用时返回 null（服务侧同样连不上库）
+function probeMissingTables() {
+  const probe = dockerExec([
     ...MYSQL_EXEC_ARGS,
-    '-i', 'market-mysql', 'mysql', '-uroot', 'market',
-    '--default-character-set=utf8mb4', '-e', 'SELECT 1 FROM categories LIMIT 1',
-  ], MYSQL_EXEC_ENV).ok) {
+    '-i', 'market-mysql', 'mysql', '-uroot', 'market', '-N', '-B',
+    '--default-character-set=utf8mb4',
+    '-e', `SELECT table_name FROM information_schema.tables WHERE table_schema='market' AND table_name IN ('${MIGRATION_PROBE_TABLES.join('\',\'')}')`,
+  ], MYSQL_EXEC_ENV);
+  if (!probe.ok) return null;
+  const present = new Set(probe.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean));
+  return MIGRATION_PROBE_TABLES.filter((t) => !present.has(t));
+}
+
+// 判断五个业务服务容器是否全部「早于 thresholdMs 就已启动」（即本轮流程没有重启过它们）：
+// AutoMigrate 只在服务进程启动时执行，而 compose up -d 在镜像未变时沿用旧容器——
+// 手工删表/删库后若不重启服务，表永远不会重建，等待只会一路超时
+function serviceContainersPredate(thresholdMs) {
+  const r = spawnSync('docker', [
+    'inspect', '-f', '{{.State.Running}}|{{.State.StartedAt}}',
+    ...MIGRATION_SERVICE_CONTAINERS,
+  ], { encoding: 'utf8', shell: needsShell('docker') });
+  if (r.status !== 0) return false;
+  const lines = (r.stdout || '').trim().split(/\r?\n/);
+  return lines.length === MIGRATION_SERVICE_CONTAINERS.length && lines.every((line) => {
+    const [running, startedAt] = line.split('|');
+    const ts = Date.parse(startedAt);
+    return running === 'true' && Number.isFinite(ts) && ts < thresholdMs - 2000;
+  });
+}
+
+console.log('==> 等待微服务完成自动迁移...');
+
+// 表缺失且服务进程早于本轮启动 → 说明是本轮之前就在跑的旧进程（多为手工删表/删库），
+// 主动重启一次触发 AutoMigrate；本轮刚启动/重建的容器不重启，避免打断正在进行的迁移
+const initialMissing = probeMissingTables();
+if (initialMissing && initialMissing.length > 0 && serviceContainersPredate(UP_STARTED_AT)) {
+  console.log('    检测到业务服务在本轮启动前已在运行、且库表缺失（多为手工删表/删库）');
+  console.log('    AutoMigrate 仅在服务启动时执行，正在重启五个业务服务以触发自动迁移...');
+  await runWithRepair(ctx, 'docker', ['compose', 'restart', ...MIGRATION_SERVICE_KEYS], {
+    cwd: ROOT_DIR,
+    step: '重启业务服务触发自动迁移',
+  });
+}
+
+let migrationReady = false;
+// 上限 180s：全新空库首启要建 60+ 张表，原先 60s 会把正常迁移误判为失败
+for (let i = 1; i <= 180; i++) {
+  const missing = probeMissingTables();
+  if (missing === null) {
+    if (i % 10 === 0) {
+      console.log(`    已等待 ${i}s/180s，MySQL 或 market 库尚不可用（服务侧同样连不上库）`);
+    }
+  } else if (missing.length === 0) {
     console.log('    数据库表已就绪');
+    migrationReady = true;
     break;
+  } else if (i % 10 === 0) {
+    console.log(`    已等待 ${i}s/180s，仍缺 ${missing.length} 张表: ${missing.join(', ')}`);
   }
   await sleep(1000);
-  if (i === 60) {
-    console.log('警告: 等待数据库表就绪超时，继续执行初始化');
-  }
+}
+if (!migrationReady) {
+  console.error('错误: 等待表迁移超时（180s），中止初始化。排查顺序：');
+  console.error('  1) docker compose ps   看是否有容器处于 Restarting / Unhealthy');
+  console.error('  2) docker compose logs user-service product-service order-service cart-service payment-service');
+  console.error('  3) 若是手工删表/删库后报此错：AutoMigrate 只在服务启动时执行，需重启业务服务');
+  console.error('     docker compose restart user-service product-service order-service cart-service payment-service');
+  console.error('     常见真因：market 库不存在（只 DROP DATABASE 时 mysql 镜像不会重建库，需');
+  console.error("     CREATE DATABASE market CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci，详见");
+  console.error('     docs/需求文档/10-部署方案/02-本地启动与测试.md「整库重置」');
+  process.exit(1);
 }
 
 // 初始化超管账号与演示种子（幂等，可在服务就绪后重试）：
-// market-admin init 内部等待各服务表迁移完成，先经内嵌演示数据包导入演示种子
-// （替代原 deploy/init.dev.sql SQL 导入，非 production 且空库时执行），
-// 再兜底超管账号与默认社区；弱口令演示账号仅存在于演示包，生产环境 init 自动跳过
+// market-admin init 内部等待各服务表迁移完成（带进度输出，超时按失败退出），
+// 先经内嵌演示数据包导入演示种子（替代原 deploy/init.dev.sql SQL 导入，非 production
+// 且空库时执行），再兜底超管账号与默认社区；弱口令演示账号仅存在于演示包，生产环境 init 自动跳过；
+// 上次导入有残缺时用 `init --rerun` 逐条幂等补导（普通 init 会被空库短路跳过）
 console.log('==> 初始化超管账号与演示种子...');
 await runWithRepair(ctx, 'docker', [
   'exec', 'market-gateway', './market-admin', 'init', '--timeout', '300',
