@@ -11,9 +11,12 @@
 //   - RelPath / FallbackURL / SourcePath：纯函数形态的归一化与兜底，无 DB 依赖
 //     （SourcePath 委托 jcbaseGo attachment.ToSource，剥离口径以上游实现为准）
 //
-// 完整地址的前提是 local 模式 visit_domain 恒有值：gateway 在站点设置保存时与运行期
-// 惰性补写（站点域名 > 当前访问域名，单向只补空）；仅在该补写尚未完成的短暂窗口内，
-// 降级拼站内相对路径 /uploads/<path> 并记一次告警日志。
+// 完整地址的前提是 local 模式 visit_domain 恒有值：该值只来自显式配置（后台手填、
+// 站点设置 base_url / SITE_BASE_URL 联动，见 gateway site.go）；从未显式配置时
+// visit_domain 保持为空，出库长期降级拼站内相对路径 /uploads/<path>——由浏览器按
+// 当前访问域名解析，任何入口（含局域网 IP）开箱即用，不以「首个请求的域名」入库
+// 兜底（健康检查/本机调试的首访会把临时值固化成错误配置）。降级期间按节流周期
+// 记提示日志，提醒管理员到后台配置正式域名（分享/导出等脱离浏览器上下文的场景需要）。
 package attachmenturl
 
 import (
@@ -240,7 +243,7 @@ func buildAttachment(cfg *Config) *attachment.Attachment {
 }
 
 // NewConverter 按配置构造转换器
-// 配置为 nil，或 local 模式未配访问域名（gateway 补写尚未完成的异常窗口）时返回 nil，
+// 配置为 nil，或 local 模式未配访问域名（未做显式配置的常态）时返回 nil，
 // 调用方按 FallbackURL 兜底
 //
 // 参数:
@@ -403,13 +406,33 @@ func IsExternalMediaRef(src string) bool {
 		strings.HasPrefix(src, "//")
 }
 
-// fallbackWarnOnce 保证站内路径降级告警每个进程只记一次，避免列表页逐行刷日志
-var fallbackWarnOnce sync.Once
+// fallbackReminderInterval 附件访问域名未配置的提示日志节流间隔
+// 降级是合法运行态（零配置开箱即用）而非异常，按周期低噪提醒即可，避免列表页逐行刷日志
+const fallbackReminderInterval = 10 * time.Minute
 
-// FallbackURL 附件访问域名不可用时的兜底拼装（配置缺失/补写未完成的异常窗口）
+// fallbackLastRemind 提示日志的节流时间戳（进程内共享，写入点仅 remindFallback 一处）
+var fallbackLastRemind time.Time
+
+var fallbackRemindMu sync.Mutex
+
+// remindFallback 节流记录「未配置附件访问域名」的提示日志
+// 临界区只圈时间戳判定与推进，log 本身也在锁内：输出顺序与节流判定一致，
+// 且临界区极短，列表页并发触发的争用可忽略
+func remindFallback() {
+	fallbackRemindMu.Lock()
+	defer fallbackRemindMu.Unlock()
+	if !fallbackLastRemind.IsZero() && time.Since(fallbackLastRemind) < fallbackReminderInterval {
+		return
+	}
+	fallbackLastRemind = time.Now()
+	log.Printf("[提示] 附件访问域名未配置，图片地址暂按当前访问域名返回（各端均可正常显示）；" +
+		"微信分享/导出等脱离浏览器上下文的场景需要正式域名，请到后台附件配置或站点设置填写")
+}
+
+// FallbackURL 附件访问域名不可用时的兜底拼装（未做显式配置的常态运行形态）
 // 默认目录 uploads 版；自定义 local_dir 请用 FallbackURLIn
 // 返回站内绝对路径 /<dir>/<path>：网关对应静态路由承接，且不随浏览器当前页面
-// 路径解析（SPA 子路径如 /b/ 下不会错拼成 /b/images/...）；首次触发记告警日志
+// 路径解析（SPA 子路径如 /b/ 下不会错拼成 /b/images/...），按节流周期记提示日志
 //
 // 参数:
 //   - src: 相对路径或存量完整 URL
@@ -433,9 +456,7 @@ func FallbackURLIn(dir, src string) string {
 	if passthrough {
 		return rel
 	}
-	fallbackWarnOnce.Do(func() {
-		log.Printf("[WARN] 附件访问域名未就绪，图片地址降级为站内相对路径（网关会自动补写 visit_domain）: %s", rel)
-	})
+	remindFallback()
 	return "/" + LocalDirName(dir) + "/" + rel
 }
 

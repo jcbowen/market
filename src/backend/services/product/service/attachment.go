@@ -781,8 +781,8 @@ func buildOSSConfig(cfg *model.AttachmentConfig) (*remote.OSSConfig, error) {
 //   - relPath: 对象相对路径
 //
 // 返回值:
-//   - string: 访问 URL（local 模式 visit_domain 为空时返回空串；正常部署下 gateway
-//     会按部署域名自动补写 visit_domain，见 gateway syncAttachmentVisitDomain）
+//   - string: 访问 URL（local 模式 visit_domain 为空时返回空串；未配置访问域名时
+//     附件出库走 attachmenturl.FallbackURL 的站内相对路径降级，显式配置见 gateway site.go）
 func buildVisitURL(cfg *model.AttachmentConfig, relPath string) string {
 	if cfg.StorageType == "oss" {
 		if cfg.OssCustomVisitDomain != "" {
@@ -1151,7 +1151,8 @@ func commonAttachmentConfig(cfg *model.AttachmentConfig) *attachmenturl.Config {
 //  1. 外链 URL（http/https/协议相对）与未知 / 开头绝对路径原样返回
 //  2. 其余形态（相对路径、/<local_dir>/ 与 <local_dir>/ 前缀路径，含 /<local_dir>/seed 演示素材）
 //     归一为相对路径后拼接：<域名>/<local_dir>/<path>（local）或 <域名>/<path>（oss）
-//  3. local 模式 visit_domain 未就绪（补写尚未完成）→ 临时拼站内相对路径 /<local_dir>/<path> 并告警
+//  3. local 模式 visit_domain 未配置（未做显式配置的常态）→ 拼站内相对路径 /<local_dir>/<path>，
+//     随访问域名解析，按节流周期记提示日志（见 attachmenturl.remindFallback）
 //
 // 参数:
 //   - ctx: 上下文
