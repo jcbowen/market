@@ -9,9 +9,11 @@
       </view>
       <view class="search-bar">
         <u-icon name="search" size="16" color="#999999" />
+        <!-- 注意：此处必须用 v-if 而非 v-show。支付宝小程序把 v-show 编译为 hidden 属性，
+             会被 .search-text 的 display:flex 等类样式覆盖，导致输入框/取消/搜索商品三元素同显 -->
         <!-- #ifndef MP-WEIXIN -->
         <input
-          v-show="isSearching"
+          v-if="isSearching"
           ref="searchInputRef"
           v-model="keyword"
           class="search-input native-input"
@@ -29,9 +31,9 @@
         </view>
         <!-- #endif -->
         <!-- #ifndef MP-WEIXIN -->
-        <text v-show="isSearching" class="search-cancel" @click="cancelSearch">取消</text>
+        <text v-if="isSearching" class="search-cancel" @click="cancelSearch">取消</text>
         <!-- #endif -->
-        <view v-show="!isSearching" class="search-text" @click="startSearch">搜索商品</view>
+        <view v-if="!isSearching" class="search-text" @click="startSearch">搜索商品</view>
       </view>
     </view>
 

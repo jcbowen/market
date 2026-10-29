@@ -16,7 +16,7 @@
       <text class="title">社区商超</text>
     </view>
 
-    <!-- #ifdef H5 || MP-WEIXIN -->
+    <!-- #ifdef H5 || MP-WEIXIN || MP-ALIPAY -->
     <view class="form-wrap">
       <u-input
         v-model="phone"

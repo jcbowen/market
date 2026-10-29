@@ -3,6 +3,7 @@
  * 统一处理登录页、商品详情、订单确认等常用跳转
  */
 import { TAB_BAR_PATHS } from './tab-bar-paths'
+import { withQuery } from './query'
 
 /**
  * 解析跳转地址，返回归一化后的纯路径与 query 参数
@@ -110,16 +111,14 @@ export function goOrderConfirm(query?: {
   cartItemIds?: number[]
   communityId?: number
 }) {
-  const params = new URLSearchParams()
-  if (query?.productId) params.append('productId', String(query.productId))
-  if (query?.skuId) params.append('skuId', String(query.skuId))
-  if (query?.quantity) params.append('quantity', String(query.quantity))
-  if (query?.cartItemIds?.length) {
-    params.append('cartItemIds', query.cartItemIds.join(','))
-  }
-  if (query?.communityId) params.append('communityId', String(query.communityId))
-  const qs = params.toString()
-  goPage(`/pages/order/confirm${qs ? '?' + qs : ''}`)
+  goPage(withQuery('/pages/order/confirm', {
+    productId: query?.productId,
+    skuId: query?.skuId,
+    quantity: query?.quantity,
+    // 数组统一以逗号拼接，与历史口径一致（原来 URLSearchParams 会编码为 %2C）
+    cartItemIds: query?.cartItemIds?.length ? query.cartItemIds.join(',') : undefined,
+    communityId: query?.communityId,
+  }))
 }
 
 /**

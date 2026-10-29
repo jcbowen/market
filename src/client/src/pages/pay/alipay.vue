@@ -79,6 +79,7 @@ import { ref } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { isWeixinBrowser } from '@/utils/platform'
 import { getAlipayPayUrlPublic } from '@/api/payment'
+import { withQuery } from '@/utils/query'
 // #ifdef H5
 import { copyTextToClipboard } from '@/utils/pay'
 // #endif
@@ -169,11 +170,10 @@ function onCopy() {
  * 已完成支付？进入免登录结果页轮询支付状态
  */
 function goResult() {
-  const params = new URLSearchParams()
-  if (paymentNo.value) params.append('no', paymentNo.value)
-  if (orderId.value) params.append('order_id', String(orderId.value))
-  const qs = params.toString()
-  uni.redirectTo({ url: `/pages/pay/result${qs ? '?' + qs : ''}` })
+  uni.redirectTo({ url: withQuery('/pages/pay/result', {
+    no: paymentNo.value,
+    order_id: orderId.value || undefined,
+  }) })
 }
 </script>
 
