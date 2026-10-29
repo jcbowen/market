@@ -40,6 +40,16 @@ declare function getOpenerEventChannel(): {
 declare const my: {
   /** 读取模板小程序 ext.json 的 ext 字段（模板实例化时经 alipay.open.mini.version.upload 注入） */
   getExtConfigSync?: () => Record<string, unknown>
+  /** 导航栏左侧按钮（返回键）矩形。支付宝 10.3.60+ 在含 tabBar 首页在内的所有页面强制渲染返回按钮，
+   *  官方明确无法隐藏，沉浸式自定义顶栏需据此让位（与右侧胶囊矩形 API 对称） */
+  getLeftButtonsBoundingClientRect?: () => {
+    left: number
+    right: number
+    top: number
+    bottom: number
+    width: number
+    height: number
+  } | null
 }
 
 // 构建期版本常量（vite.config.ts define 注入，与 scripts/gen-version.js 同一优先级）

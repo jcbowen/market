@@ -1,7 +1,7 @@
 <template>
   <view class="category-page" :style="{ top: statusBarHeight + 'px' }">
-    <!-- 顶部社区与搜索栏 -->
-    <view class="top-bar" :style="capsuleReserve ? { right: capsuleReserve + 'px' } : {}">
+    <!-- 顶部社区与搜索栏：左右分别避让支付宝强制渲染的返回按钮与胶囊按钮 -->
+    <view class="top-bar" :style="topBarStyle">
       <!-- 同搜索栏口径：v-show 在支付宝端被 display:flex 覆盖，必须用 v-if -->
       <view v-if="!isSearching" class="community-bar" @click="goCommunitySelect">
         <u-icon name="map-fill" size="18" color="#07c160" />
@@ -268,6 +268,17 @@ const instance = getCurrentInstance()
 const statusBarHeight = ref(0)
 /** 小程序端顶栏右侧让出的胶囊按钮预留宽度（px），避免扫码按钮被胶囊遮挡；H5 为 0 不让位 */
 const capsuleReserve = ref(0)
+/** 支付宝端顶栏左侧让出的返回按钮宽度（px）。支付宝 10.3.60+ 在含 tabBar 首页在内的所有页面
+ *  强制渲染导航栏返回按钮且官方明确无法隐藏，沉浸式顶栏需整体右移避让；其他端为 0 不让位 */
+const backReserve = ref(0)
+
+/** 顶栏内联样式：小程序端左右分别避让系统返回按钮与胶囊按钮，值为 0 时不设置保持 CSS 默认 */
+const topBarStyle = computed(() => {
+  const style: Record<string, string> = {}
+  if (capsuleReserve.value) style.right = capsuleReserve.value + 'px'
+  if (backReserve.value) style.left = backReserve.value + 'px'
+  return style
+})
 // #ifndef H5
 // 胶囊矩形：uni 已映射微信/支付宝小程序（支付宝端为 my.getMenuButtonBoundingClientRect）。
 // 支付宝官方文档注明：iOS 上胶囊未渲染完时 left 可能为 0 / Android 报 1111 not titleBar，
@@ -283,9 +294,25 @@ try {
     }
   }
   applyCapsule()
+  // #ifdef MP-ALIPAY
+  // 支付宝 10.3.60+ 强制渲染导航栏返回按钮（官方明确无法隐藏），运行时取左侧按钮真实矩形让位；
+  // 取不到（低版本客户端/按钮未渲染完）时保持 0 不让位——旧版客户端栈深度 1 的首页本无返回按钮
+  const applyBackReserve = () => {
+    const rect = my.getLeftButtonsBoundingClientRect?.()
+    if (rect && rect.width > 0 && rect.right > 0) {
+      backReserve.value = Math.ceil(rect.right) + 8
+    }
+  }
+  applyBackReserve()
+  // #endif
   if (!capsuleReserve.value) {
     onReady(() => applyCapsule())
   }
+  // #ifdef MP-ALIPAY
+  if (!backReserve.value) {
+    onReady(() => applyBackReserve())
+  }
+  // #endif
 } catch {
   // 取不到时保持 0，走 CSS 变量兜底
 }
