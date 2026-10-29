@@ -8,8 +8,8 @@
         <text class="community-name">{{ communityName }}</text>
         <u-icon name="arrow-down" size="12" color="#999999" />
       </view>
-      <view class="search-bar">
-        <u-icon name="search" size="16" color="#999999" />
+      <view class="search-bar" :class="{ expanded: isSearching }" @click="onSearchBarTap">
+        <u-icon name="search" size="16" color="#999999" class="search-lead" />
         <!-- 注意：此处必须用 v-if 而非 v-show。支付宝小程序把 v-show 编译为 hidden 属性，
              会被 .search-text 的 display:flex 等类样式覆盖，导致输入框/取消/搜索商品三元素同显 -->
         <!-- #ifndef MP-WEIXIN -->
@@ -27,14 +27,25 @@
         />
         <!-- #endif -->
         <!-- #ifndef H5 -->
+        <!-- #ifndef MP-ALIPAY -->
         <view class="scan-btn" @click.stop="onScanCode">
+          <u-icon name="scan" size="20" color="#333333" />
+        </view>
+        <!-- #endif -->
+        <!-- #endif -->
+        <!-- #ifdef MP-ALIPAY -->
+        <!-- 支付宝端常驻搜索框会被导航栏强制渲染的收藏星标遮挡挤压，非搜索态收缩为搜索图标，
+             扫码入口随搜索态展示（星标让位已并入 capsuleReserve） -->
+        <view v-if="isSearching" class="scan-btn" @click.stop="onScanCode">
           <u-icon name="scan" size="20" color="#333333" />
         </view>
         <!-- #endif -->
         <!-- #ifndef MP-WEIXIN -->
         <text v-if="isSearching" class="search-cancel" @click="cancelSearch">取消</text>
         <!-- #endif -->
+        <!-- #ifndef MP-ALIPAY -->
         <view v-if="!isSearching" class="search-text" @click="startSearch">搜索商品</view>
+        <!-- #endif -->
       </view>
     </view>
 
@@ -300,7 +311,14 @@ try {
     if (typeof uni.getMenuButtonBoundingClientRect !== 'function') return
     const menuRect = uni.getMenuButtonBoundingClientRect()
     if (menuRect && menuRect.left > 0) {
+      // #ifdef MP-ALIPAY
+      // 新版导航栏在胶囊左侧强制渲染收藏星标（框架元素，无独立定位 API），
+      // 在胶囊间距 8px 基础上叠加星标典型宽度约 44px，避免扫码/取消按钮被压
+      capsuleReserve.value = windowInfo.windowWidth - menuRect.left + 52
+      // #endif
+      // #ifndef MP-ALIPAY
       capsuleReserve.value = windowInfo.windowWidth - menuRect.left + 8
+      // #endif
     }
   }
   applyCapsule()
@@ -830,6 +848,17 @@ async function loadCartSummary() {
  * H5/App 端：维持原页内搜索
  * H5 下通过 nextTick + DOM 查询聚焦原生 input，部分浏览器需用户手动点击
  */
+/**
+ * 搜索栏点击入口
+ * 支付宝端常驻搜索框收缩为图标（避让导航栏强制渲染的收藏星标），点击图标区进入搜索态；
+ * 其他端作为「搜索商品」占位之外的补充点击区域
+ * @returns {void} 搜索态中重复点击直接忽略，避免重置进行中的搜索
+ */
+function onSearchBarTap() {
+  if (isSearching.value) return
+  startSearch()
+}
+
 function startSearch() {
   // #ifdef MP-WEIXIN
   uni.navigateTo({ url: '/pages/search/search' })
@@ -1381,6 +1410,27 @@ function onSettlement() {
   align-items: center;
   padding: 0 8rpx 0 16rpx;
 }
+
+/* 支付宝端：常驻搜索框会被导航栏强制渲染的收藏星标遮挡挤压，非搜索态收缩为图标入口，
+   搜索态恢复占满（星标让位已并入 capsuleReserve），隐藏装饰性放大镜为输入框让宽 */
+/* #ifdef MP-ALIPAY */
+.search-bar {
+  flex: none;
+}
+
+.search-bar.expanded {
+  flex: 1;
+}
+
+.search-bar.expanded .search-lead {
+  display: none;
+}
+
+/* 收缩后顶栏空间有限，社区名上限收窄避免与搜索图标互挤 */
+.community-name {
+  max-width: 160rpx;
+}
+/* #endif */
 
 .content,
 .search-result {
