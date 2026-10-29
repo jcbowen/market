@@ -11,7 +11,15 @@
       "path": "pages/category/category",
       "style": {
         "navigationBarTitleText": "社区商超",
-        "navigationStyle": "custom"
+        "navigationStyle": "custom",
+        // navigationStyle: custom 是微信端写法，支付宝端编译时被忽略导致原生导航栏出现，
+        // 与页面内沉浸式布局（top: statusBarHeight）叠加成双重让位空白；
+        // 支付宝端等效配置为 transparentTitle: always（导航透明、内容延伸到状态栏）
+        // + titlePenetrate: YES（透明导航层点击穿透，否则搜索框上半部分点击被拦截）
+        // #ifdef MP-ALIPAY
+        "transparentTitle": "always",
+        "titlePenetrate": "YES"
+        // #endif
       }
     },
     {
