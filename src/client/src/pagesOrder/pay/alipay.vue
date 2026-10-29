@@ -81,7 +81,7 @@ import { isWeixinBrowser } from '@/utils/platform'
 import { getAlipayPayUrlPublic } from '@/api/payment'
 import { withQuery, decodeQueryValue, queryNumber } from '@/utils/query'
 // #ifdef H5
-import { copyTextToClipboard } from '@/utils/pay'
+import { copyTextToClipboard } from '@/pagesOrder/common/pay'
 // #endif
 
 const payUrl = ref('')

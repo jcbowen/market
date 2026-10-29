@@ -133,7 +133,7 @@ import { onLoad, onUnload, onHide, onShow } from '@dcloudio/uni-app'
 import { getOrderDetail, confirmReceive, reorderOrder } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
-import { notifyPayOutcome, onReturnToSite, payOrder } from '@/utils/pay'
+import { notifyPayOutcome, onReturnToSite, payOrder } from '@/pagesOrder/common/pay'
 import { goOrderList, goProductDetail } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { canReceive, receiveButtonText, canCancel, canRefund, canReorder, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
@@ -191,8 +191,8 @@ const showRefundProgress = computed(() => order.value.status === 7 || order.valu
 
 // --- 自提取货码 ---
 // 待自提（已支付2/备货中3）时展示取货码与二维码；已完成/已取消不再展示
-// @ts-ignore qrcode-generator 为无类型声明的本地静态库
-import qrcodeLib from '../../static/qrcode.min.js'
+// @ts-ignore qrcode-generator 为无类型声明的本地库（置于分包目录，仅本分包使用）
+import qrcodeLib from './qrcode.min.js'
 
 const pickupQrcodeUrl = ref('')
 

@@ -18,7 +18,7 @@ declare module 'uview-plus' {
   export default uview
 }
 
-// qrcode-generator 本地静态库（src/static/qrcode.min.js，无官方类型）
+// qrcode-generator 本地库（src/pagesOrder/order/qrcode.min.js，无官方类型；置于分包目录避免打进主包）
 declare module '*.min.js' {
   interface QrCodeInstance {
     addData(data: string, mode?: string): void

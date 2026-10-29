@@ -106,7 +106,7 @@ import { ref, computed, onMounted } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { createAddress, updateAddress, getCommunity, locateRegion, getAddressList } from '@/api/user'
 import { joinRegionAddress } from '@/utils/region'
-import { loadProvinces, loadCities, loadDistricts } from '@/utils/regionCache'
+import { loadProvinces, loadCities, loadDistricts } from '@/pagesMine/common/regionCache'
 import { useUserStore } from '@/stores/user'
 import { goCommunitySelect } from '@/utils/navigate'
 import type { Address, Community } from '@/api/types'
@@ -203,7 +203,7 @@ const selectedRegion = ref<{ province: Region | null; city: Region | null; distr
 })
 
 /**
- * 区划列表加载与缓存统一收敛到 utils/regionCache：
+ * 区划列表加载与缓存统一收敛到 pagesMine/common/regionCache：
  * 省级持久化缓存（7 天过期自动重拉），市/区县模块级内存缓存（跨页面实例复用）
  */
 
