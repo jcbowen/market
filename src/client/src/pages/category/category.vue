@@ -305,24 +305,26 @@ try {
   }
   applyCapsule()
   // #ifdef MP-ALIPAY
-  // 支付宝 10.3.60+ 强制渲染导航栏返回按钮（官方明确无法隐藏），运行时取左侧按钮真实矩形让位；
-  // 取不到（低版本客户端/按钮未渲染完）时保持 0 不让位——旧版客户端栈深度 1 的首页本无返回按钮
+  // 支付宝 10.3.60+ 强制渲染导航栏返回按钮（官方明确无法隐藏），顶栏需整体右移避让。
+  // 开发者工具/低版本客户端/按钮未渲染完时 getLeftButtonsBoundingClientRect 常取不到有效矩形
+  // （实测模拟器恒为空导致漏避让），故先按热区典型宽度固定兜底让位，取到真实矩形后再覆盖
+  const BACK_RESERVE_FALLBACK = 48
   const applyBackReserve = () => {
     const rect = my.getLeftButtonsBoundingClientRect?.()
     if (rect && rect.width > 0 && rect.right > 0) {
       backReserve.value = Math.ceil(rect.right) + 8
+      return true
     }
+    backReserve.value = BACK_RESERVE_FALLBACK
+    return false
   }
-  applyBackReserve()
+  if (!applyBackReserve()) {
+    onReady(() => applyBackReserve())
+  }
   // #endif
   if (!capsuleReserve.value) {
     onReady(() => applyCapsule())
   }
-  // #ifdef MP-ALIPAY
-  if (!backReserve.value) {
-    onReady(() => applyBackReserve())
-  }
-  // #endif
 } catch {
   // 取不到时保持 0，走 CSS 变量兜底
 }
