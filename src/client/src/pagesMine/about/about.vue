@@ -19,17 +19,18 @@
       </u-cell-group>
     </view>
 
-    <view class="copyright">
-      <text>本应用基于开源项目构建 · 源码交付模式</text>
-    </view>
+    <!-- 页脚版权：统一走后端站点设置（footer_html 富文本），未配置时不渲染、不占位 -->
+    <SiteFooter />
   </view>
 </template>
 
 <script setup lang="ts">
 /**
  * 关于页：展示应用版本号、版本码、运行环境、版本环境与构建信息
- * 数据全部来自构建期注入（vite.config.ts define）与运行时判定（utils/version.ts）
+ * 数据全部来自构建期注入（vite.config.ts define）与运行时判定（utils/version.ts）；
+ * 页脚版权与站点其他页面共用 SiteFooter（后端站点设置下发）
  */
+import SiteFooter from '@/components/SiteFooter.vue'
 import {
   APP_VERSION,
   APP_VERSION_CODE,
@@ -95,12 +96,5 @@ function formatBuildTime(iso: string): string {
   background-color: #ffffff;
   border-radius: 24rpx;
   overflow: hidden;
-}
-
-.copyright {
-  margin-top: 48rpx;
-  text-align: center;
-  font-size: 24rpx;
-  color: #c0c4cc;
 }
 </style>
