@@ -511,5 +511,17 @@ function refreshList() {
   width: auto;
   min-width: 120rpx;
   padding: 0 28rpx;
+  /* uni-h5 对 uni-button 默认 margin: 0 auto，auto margin 在 flex 容器中优先于
+     justify-content 生效，会把按钮挤到居中而非右对齐 */
+  margin: 0;
+}
+
+/* uview-plus 的 u-popup 根元素自带 flex: 1（组件样式 .u-popup { flex: 1 }），
+   在本页 flex column 布局下，关闭态弹窗（内联 height:0 被当作 flex-basis）
+   仍会参与剩余高度瓜分，把滚动区压缩到约 1/3 屏（实测 800px 只剩 266px），
+   订单卡片在可视窗口边缘被截断；覆盖为 none 让关闭态回归 0 高。
+   弹出的面板本身是 fixed 定位（u-popup 内部 transitionStyle），不受影响 */
+.order-list-page :deep(.u-popup) {
+  flex: none;
 }
 </style>

@@ -79,9 +79,18 @@
       </view>
     </view>
 
+    <!-- 支付方式：待支付单直接在页面内渲染渠道选择（与确认订单页一致），
+         默认选中第一个渠道，点底部「去支付」按选中渠道拉起 -->
+    <PaymentChannelCard
+      v-if="showPaymentCard"
+      v-model="selectedChannel"
+      class="detail-payment"
+    />
+
     <view class="footer-bar">
+      <!-- 门店单（收银台代客）C 端只读，去支付由门店处理，与列表页口径一致 -->
       <view
-        v-if="order.status === 1"
+        v-if="order.status === 1 && !isStoreOrder(order)"
         class="action-btn"
       >
         <u-button type="success" text="去支付" @click="onPay" />
@@ -131,12 +140,12 @@
 import { ref, computed, watch } from 'vue'
 import { onLoad, onUnload, onHide, onShow } from '@dcloudio/uni-app'
 import { getOrderDetail, confirmReceive, reorderOrder } from '@/api/order'
-import { getPaymentChannels } from '@/api/payment'
 import { formatPrice, formatDate } from '@/utils/format'
 import { notifyPayOutcome, onReturnToSite, payOrder } from '@/pagesOrder/common/pay'
 import { goOrderList, goProductDetail } from '@/utils/navigate'
 import { joinRegionAddress } from '@/utils/region'
 import { canReceive, receiveButtonText, canCancel, canRefund, canReorder, isStoreOrder, DELIVERY_TYPE_PICKUP } from '@/utils/order'
+import PaymentChannelCard from '@/components/PaymentChannelCard.vue'
 import RefundModal from '@/components/RefundModal.vue'
 import RefundProgressModal from '@/components/RefundProgressModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
@@ -188,6 +197,12 @@ const isPickup = computed(() => order.value.delivery_type === DELIVERY_TYPE_PICK
 
 /** 是否展示「退款进度」入口：退款中(7)/已退款(8)订单 */
 const showRefundProgress = computed(() => order.value.status === 7 || order.value.status === 8)
+
+/** 是否展示支付方式卡片：待支付(1)且非门店单（门店单只读，支付由门店处理） */
+const showPaymentCard = computed(() => order.value.status === 1 && !isStoreOrder(order.value))
+
+/** 当前选中的支付渠道（支付方式卡片 v-model，组件内默认选中第一个） */
+const selectedChannel = ref<PaymentChannel | null>(null)
 
 // --- 自提取货码 ---
 // 待自提（已支付2/备货中3）时展示取货码与二维码；已完成/已取消不再展示
@@ -347,28 +362,17 @@ function copyOrderNo() {
 
 /**
  * 支付订单
- * 获取可用支付渠道后创建支付单并拉起支付：货到付款直接完成，
+ * 按页面内支付方式卡片选中的渠道创建支付单并拉起支付：货到付款直接完成，
  * 微信支付在小程序端调起 JSAPI、H5 端跳转支付页面，未开通渠道提示暂未开通；
  * 仅在支付真实完成时提示支付成功
  */
 async function onPay() {
+  if (!selectedChannel.value) {
+    uni.showToast({ title: '暂无可用支付方式', icon: 'none' })
+    return
+  }
+  const channel = selectedChannel.value
   try {
-    const channelRes = await getPaymentChannels()
-    const channels = channelRes.data?.channels || []
-    if (!channels.length) {
-      uni.showToast({ title: '暂无可用支付方式', icon: 'none' })
-      return
-    }
-    let channel: PaymentChannel | null = null
-    if (channels.length === 1) {
-      channel = channels[0]
-    } else {
-      const res = await uni.showActionSheet({
-        itemList: channels.map((item) => item.name),
-      })
-      channel = channels[res.tapIndex]
-    }
-    if (!channel) return
     const outcome = await payOrder(order.value.id, channel.channel)
     notifyPayOutcome(outcome, channel.channel)
     // 已整页跳转第三方收银台：文档即将卸载，此刻刷新订单结果无意义，
@@ -548,6 +552,12 @@ async function onReorder() {
   padding: 20rpx 24rpx;
   border-radius: 16rpx;
   background-color: #ffffff;
+}
+
+/* 支付方式卡片（PaymentChannelCard 根节点）与详情页其他卡片对齐：左右 30rpx 边距 */
+.detail-payment {
+  margin-left: 30rpx;
+  margin-right: 30rpx;
 }
 
 .goods-item {

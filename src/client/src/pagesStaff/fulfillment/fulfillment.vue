@@ -413,6 +413,14 @@ async function onSubmitVerify() {
   background-color: #f5f5f5;
 }
 
+/* uview-plus 的 u-popup 根元素自带 flex: 1（组件样式 .u-popup { flex: 1 }），
+   在本页 flex column 布局下，关闭态弹窗（内联 height:0 被当作 flex-basis）
+   仍会参与剩余高度瓜分，把订单滚动区压缩到约 1/3 屏；
+   覆盖为 none 让关闭态回归 0 高，弹出的面板本身是 fixed 定位不受影响 */
+.fulfillment-page :deep(.u-popup) {
+  flex: none;
+}
+
 .empty-wrap {
   display: flex;
   align-items: center;

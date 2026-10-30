@@ -109,32 +109,8 @@
     </view>
 
     <!-- 支付方式：独立卡片置底（抖音收银台风格），每渠道一行（品牌图标+名称+右侧单选圆圈），
-         默认选中第一个渠道（无需弹层选择） -->
-    <view class="payment-card">
-      <view class="payment-title">
-        <text class="payment-title-text">支付方式</text>
-      </view>
-      <view
-        v-for="channel in channels"
-        :key="channel.channel"
-        class="payment-option"
-        @click="selectedChannel = channel"
-      >
-        <u-icon
-          :name="channelIcon(channel.channel)"
-          :color="channelIconColor(channel.channel)"
-          size="24"
-        />
-        <text class="payment-option-name">{{ channel.name }}</text>
-        <view
-          class="payment-radio"
-          :class="{ checked: selectedChannel?.channel === channel.channel }"
-        />
-      </view>
-      <view v-if="!channels.length" class="payment-empty">
-        <text>暂无可用支付方式</text>
-      </view>
-    </view>
+         默认选中第一个渠道（无需弹层选择）；渠道加载与单选交互封装在公共组件内 -->
+    <PaymentChannelCard v-model="selectedChannel" />
 
     <!-- 底部结算 -->
     <view class="footer-bar">
@@ -211,7 +187,6 @@ import { getAddressList, getCommunityById } from '@/api/user'
 import { getCart, removeCartItem } from '@/api/cart'
 import { getFullReductions, getProductDetail, getSkuById } from '@/api/product'
 import { createOrder, previewCouponEligibility, previewFreeShipping, type CouponEligibilityPreview, type FreeShippingPreview } from '@/api/order'
-import { getPaymentChannels } from '@/api/payment'
 import { getUserCoupons } from '@/api/marketing'
 import { ensureCommunity } from '@/utils/community'
 import { formatPrice, formatDate } from '@/utils/format'
@@ -222,6 +197,7 @@ import { removeLocalCartItem } from '@/utils/localCart'
 import { queryIdList, queryNumber } from '@/utils/query'
 import { calcCouponDiscount, couponTitle, isCouponExpired } from '@/utils/coupon'
 import { DELIVERY_TYPE_PICKUP, DELIVERY_TYPE_DELIVERY } from '@/utils/order'
+import PaymentChannelCard from '@/components/PaymentChannelCard.vue'
 import type { Address, Community, FullReduction, PaymentChannel, UserCoupon } from '@/api/types'
 
 /** 结算页商品展示结构（购物车/直购中间态，无订单侧 id/total_price 字段） */
@@ -367,38 +343,7 @@ const belowMinAmount = computed(() => {
   return minOrderAmount.value - totalAmount.value
 })
 
-const channels = ref<PaymentChannel[]>([])
 const selectedChannel = ref<PaymentChannel | null>(null)
-
-/** 渠道品牌图标映射（uview-plus 图标名），未识别渠道回退人民币图标 */
-const channelIconMap: Record<string, string> = {
-  wechat: 'weixin-fill',
-  alipay: 'zhifubao-circle-fill',
-  cash: 'rmb-circle-fill',
-}
-
-/**
- * 渠道图标名
- * @param channel 渠道标识（wechat/alipay/cash）
- * @returns uview-plus 图标名，未识别渠道回退 rmb-circle-fill
- */
-function channelIcon(channel: string): string {
-  return channelIconMap[channel] || 'rmb-circle-fill'
-}
-
-/**
- * 渠道图标品牌色
- * @param channel 渠道标识（wechat/alipay/cash）
- * @returns 颜色值，未识别渠道用深灰
- */
-function channelIconColor(channel: string): string {
-  switch (channel) {
-    case 'wechat': return '#07c160'
-    case 'alipay': return '#1677ff'
-    case 'cash': return '#ff9800'
-    default: return '#666666'
-  }
-}
 
 const selectedCoupon = ref<UserCoupon | null>(null)
 const fullReductions = ref<FullReduction[]>([])
@@ -654,7 +599,6 @@ onShow(() => {
     settleCommunity.value = null
   }
   loadAddresses()
-  loadPaymentChannels()
   loadFullReductions()
   loadItems()
   // 券选项进入页面即加载：默认选中最优可用券（不依赖用户点开弹窗）
@@ -789,22 +733,6 @@ async function loadDirectItems() {
     }
   } catch {
     orderItems.value = []
-  }
-}
-
-/**
- * 加载可用支付渠道
- */
-async function loadPaymentChannels() {
-  try {
-    const res = await getPaymentChannels()
-    const list = res.data?.channels || []
-    channels.value = list
-    if (list.length && !selectedChannel.value) {
-      selectedChannel.value = list[0]
-    }
-  } catch {
-    channels.value = []
   }
 }
 
@@ -1146,61 +1074,7 @@ async function onSubmit() {
   color: #333333;
 }
 
-/* 支付方式卡片：独立置底（抖音收银台风格），每渠道一行（品牌图标+名称+右侧圆圈） */
-.payment-card {
-  margin-top: 20rpx;
-  padding: 0 30rpx 10rpx;
-  background-color: #ffffff;
-}
-
-.payment-title {
-  padding: 24rpx 0 8rpx;
-}
-
-.payment-title-text {
-  font-size: 28rpx;
-  color: #333333;
-}
-
-.payment-option {
-  display: flex;
-  align-items: center;
-  gap: 16rpx;
-  padding: 24rpx 0;
-  border-bottom: 1rpx solid #f5f5f5;
-}
-
-.payment-option:last-child {
-  border-bottom: none;
-}
-
-.payment-option-name {
-  flex: 1;
-  font-size: 28rpx;
-  color: #333333;
-}
-
-/* 单选圆点：与配送方式一致，未选中为灰色空心圆，选中为绿色实心 */
-.payment-radio {
-  width: 36rpx;
-  height: 36rpx;
-  box-sizing: border-box;
-  border: 2rpx solid #cccccc;
-  border-radius: 50%;
-  background-color: transparent;
-  transition: all 0.2s;
-}
-
-.payment-radio.checked {
-  border: 10rpx solid #07c160;
-}
-
-/* 无可用渠道时的占位提示 */
-.payment-empty {
-  padding: 20rpx 0 24rpx;
-  font-size: 26rpx;
-  color: #999999;
-}
+/* 支付方式卡片的模板与样式已抽取为公共组件 PaymentChannelCard（订单详情页共用） */
 
 /* 免配送费试算展示：右对齐两行（金额+活动进度提示） */
 .fs-detail {
