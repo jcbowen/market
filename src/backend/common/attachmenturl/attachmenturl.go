@@ -458,7 +458,7 @@ func FallbackURL(src string) string {
 // 返回值:
 //   - string: 站内绝对路径；外链或未知绝对路径原样返回
 func FallbackURLIn(dir, src string) string {
-	return FallbackURLInCtx(nil, dir, src)
+	return FallbackURLInCtx(context.TODO(), dir, src)
 }
 
 // FallbackURLInCtx FallbackURLIn 的上下文版：附件访问域名未配置时的出库兜底
@@ -468,7 +468,7 @@ func FallbackURLIn(dir, src string) string {
 // 由浏览器按当前访问域名解析。仅响应层拼装，一律不入库
 //
 // 参数:
-//   - ctx: 上下文（gRPC 服务端方法上下文可读出请求基址，可为 nil）
+//   - ctx: 上下文（gRPC 服务端方法上下文可读出请求基址；无上下文时传 context.TODO，内部兼容 nil）
 //   - dir: 配置的本地存储目录名（空值回默认 uploads）
 //   - src: 相对路径或存量完整 URL
 //

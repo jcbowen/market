@@ -131,8 +131,9 @@ func TestFallbackURLInCtx(t *testing.T) {
 	if got := FallbackURLInCtx(context.Background(), "", "images/a.jpg"); got != "/uploads/images/a.jpg" {
 		t.Errorf("无基址应回落站内绝对路径: %q", got)
 	}
-	if got := FallbackURLInCtx(nil, "", "images/a.jpg"); got != "/uploads/images/a.jpg" {
-		t.Errorf("nil ctx 应回落站内绝对路径: %q", got)
+	// 纯函数版走 context.TODO（无基址），与 context.Background 回落结果一致
+	if got := FallbackURLIn("", "images/a.jpg"); got != "/uploads/images/a.jpg" {
+		t.Errorf("纯函数版应回落站内绝对路径: %q", got)
 	}
 }
 
