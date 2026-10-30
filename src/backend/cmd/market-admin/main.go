@@ -139,8 +139,9 @@ func runInit(timeoutSec int, rerun bool) {
 
 	// 演示种子导入（原 init.dev.sql 的替代链路，非 production 且空库时执行）：
 	// 必须先于 ensureSuperAdmin/ensureDefaultCommunity——
-	//   - 演示超管（admin/admin123）优先生效，ensureSuperAdmin 随后跳过；
-	//     已配置 MARKET_ADMIN_PASSWORD 时演示段让位（种子内部判断）；
+	//   - 演示超管在 accounts 段内创建（已配置 MARKET_ADMIN_PASSWORD 时按配置口令，
+	//     否则用演示弱口令），后续段的操作员解析经 Refs 依赖该账号；
+	//     ensureSuperAdmin 检测到已有超管即跳过（幂等兜底，段被排除时仍能建超管）；
 	//   - 演示社区先建，ensureDefaultCommunity 检测到社区已存在即不再创建「默认社区」，
 	//     仅补建缺内置角色的社区（覆盖两个演示社区）
 	// 失败只记录不中断：超管/默认社区兜底仍须执行，最后统一以退出码反馈

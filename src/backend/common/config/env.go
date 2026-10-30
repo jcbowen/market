@@ -44,7 +44,15 @@ func IsProduction() bool {
 // 参数：
 //   - cfg: 已加载的全局配置（原地修改）
 func ApplyEnvOverrides(cfg *Config) {
+	// MYSQL_PASSWORD 优先；为空时回退 MYSQL_ROOT_PASSWORD：
+	// allinone 部署只在容器层注入 MYSQL_ROOT_PASSWORD，entrypoint 导出的
+	// MYSQL_PASSWORD 仅存在于 entrypoint 进程链内，docker exec 新起的 shell
+	// 直跑 market-admin 等工具不继承，回退保证 exec 场景同样能拿到口令
+	// （allinone 内业务与 root 同一口令，语义一致）；多容器 compose 的应用
+	// 容器没有该变量，此回退不会触发
 	if v := os.Getenv("MYSQL_PASSWORD"); v != "" {
+		cfg.Db.Password = v
+	} else if v := os.Getenv("MYSQL_ROOT_PASSWORD"); v != "" {
 		cfg.Db.Password = v
 	}
 	if v := os.Getenv("REDIS_PASSWORD"); v != "" {

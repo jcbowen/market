@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/pwdpolicy"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	userModel "github.com/jcbowen/market/src/backend/services/user/model"
 	userService "github.com/jcbowen/market/src/backend/services/user/service"
@@ -205,11 +207,21 @@ func (s *accountsSection) Import(ctx context.Context, pkg *SeedPackage, req *Imp
 		if !isImportable(req, a.Key) {
 			continue
 		}
-		// 部署方显式配置了初始超管口令时，演示超管让位（由 ensureSuperAdmin 用配置口令创建）
-		if a.IsSuper && os.Getenv("MARKET_ADMIN_PASSWORD") != "" {
-			appendImportResult(items, s.Key(), a.Key, a.Username, "skipped",
-				"已配置 MARKET_ADMIN_PASSWORD，超管由初始化流程按配置口令创建")
-			continue
+		// 口令选取：部署方显式配置 MARKET_ADMIN_PASSWORD 时，演示超管按配置口令就地
+		// 创建（不再让位跳过）——后续段（采购/收银/订单/退款）的操作员解析经 Refs 依赖
+		// 本账号，而按配置口令的超管原本要等种子导入完成后的 ensureSuperAdmin 才创建，
+		// 跳过会导致整段操作员解析 record not found 连锁失败；
+		// 未配置口令时沿用包内演示弱口令。ensureSuperAdmin 保留幂等兜底
+		password := a.Password
+		if a.IsSuper {
+			if envPwd := os.Getenv("MARKET_ADMIN_PASSWORD"); envPwd != "" {
+				if len(envPwd) < pwdpolicy.MinLength {
+					appendImportResult(items, s.Key(), a.Key, a.Username, "failed",
+						fmt.Sprintf("MARKET_ADMIN_PASSWORD 长度不足（至少 %d 位）", pwdpolicy.MinLength))
+					continue
+				}
+				password = envPwd
+			}
 		}
 		var exist userModel.Admin
 		if err := s.svc.db.GetDb().WithContext(ctx).
@@ -218,7 +230,7 @@ func (s *accountsSection) Import(ctx context.Context, pkg *SeedPackage, req *Imp
 			appendImportResult(items, s.Key(), a.Key, a.Username, "skipped", "同名账号已存在")
 			continue
 		}
-		hashed, err := bcrypt.GenerateFromPassword([]byte(a.Password), bcrypt.DefaultCost)
+		hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			appendImportResult(items, s.Key(), a.Key, a.Username, "failed", "密码哈希失败："+err.Error())
 			continue

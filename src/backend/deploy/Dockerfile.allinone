@@ -20,8 +20,11 @@
 #     -p 127.0.0.1:3306:3306 -p 127.0.0.1:6379:6379 \
 #     （3306/6379 映射为可选调试项：宿主机端口已被占用时改宿主侧端口如 13306/16379，
 #      或直接去掉这两个 -p，调试改走 docker exec）
-#     -e MYSQL_ROOT_PASSWORD='<强口令>' -e REDIS_PASSWORD='<强口令>' \
-#     -e JWT_SECRET='<随机强密钥>' -e APP_ENV=production \
+#     -e MYSQL_ROOT_PASSWORD='<强口令>' -e MYSQL_PASSWORD='<强口令>' \
+#     （MYSQL_PASSWORD 须与 MYSQL_ROOT_PASSWORD 同值显式注入：docker exec 直跑
+#      ./market-admin 等工具的新 shell 不继承 entrypoint 的 export；漏配时应用
+#      会回退 MYSQL_ROOT_PASSWORD，但显式注入保证各链路口径一致） \
+#     -e REDIS_PASSWORD='<强口令>' -e JWT_SECRET='<随机强密钥>' -e APP_ENV=production \
 #     -v /opt/market/data/mysql:/var/lib/mysql \
 #     -v /opt/market/data/redis:/data \
 #     -v /opt/market/data/uploads:/app/uploads \

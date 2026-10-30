@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"os"
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
@@ -939,8 +940,11 @@ func (s *DataImportService) SeedDemoBootstrap(ctx context.Context, logf func(str
 	created, skipped, failed := s.runAllDemoSections(ctx, logf)
 	res.Created, res.Skipped, res.Failed = created, skipped, failed
 
-	// 演示超管凭证上报（供调用方写入凭证文件）
-	if after := s.findDemoSuperAdmin(s.demoPkg); demoAdmin == nil && after != nil {
+	// 演示超管凭证上报（供调用方写入凭证文件）：
+	// 已配置 MARKET_ADMIN_PASSWORD 时超管按配置口令在 accounts 段就地创建，
+	// 真实口令部署方自知（且 ensureSuperAdmin 不再重复创建），凭证文件不应
+	// 记录与实际不符的演示弱口令，故仅纯演示场景（未配置口令）上报
+	if after := s.findDemoSuperAdmin(s.demoPkg); demoAdmin == nil && after != nil && os.Getenv("MARKET_ADMIN_PASSWORD") == "" {
 		for i := range s.demoPkg.Admins {
 			a := &s.demoPkg.Admins[i]
 			if a.IsSuper && a.Username == after.Username {

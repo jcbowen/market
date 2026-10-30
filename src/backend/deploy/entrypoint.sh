@@ -50,7 +50,10 @@ if [ -z "${REDIS_PASSWORD:-}" ]; then
   exit 1
 fi
 
-# 服务读取口径与 compose 部署一致：MYSQL_PASSWORD 由 ApplyEnvOverrides 覆盖配置
+# 业务进程读取口径：导出 MYSQL_PASSWORD 供 entrypoint 子进程（业务进程/初始化）
+# 经 ApplyEnvOverrides 覆盖配置；注意 export 仅本进程链内生效，docker exec 新起
+# 的 shell 不继承——exec 场景由 ApplyEnvOverrides 回退 MYSQL_ROOT_PASSWORD 兜底，
+# 部署时也可显式注入同值 MYSQL_PASSWORD 保证口径一致
 export MYSQL_PASSWORD="$MYSQL_ROOT_PASSWORD"
 
 # docker start 复用容器文件系统：上次优雅停止遗留的标记必须先清除，
@@ -251,9 +254,9 @@ done
 
 # 密钥回填（仅 JWT）：框架回写发生在环境变量覆盖之前（文件恒为空占位）。
 # db/redis 口令不再回写——业务进程经 start_service 继承 entrypoint export 的
-# MYSQL_PASSWORD / REDIS_PASSWORD；docker exec 场景下进程继承容器 Config.Env
-# （部署示例已把 MYSQL_PASSWORD / REDIS_PASSWORD 一并注入），明文口令不再落到
-# 宿主机 runtime 目录的配置副本里。JWT 是密钥且 entrypoint 会自动生成
+# MYSQL_PASSWORD / REDIS_PASSWORD；docker exec 新起的 shell 不继承该 export，
+# 由 ApplyEnvOverrides 回退 MYSQL_ROOT_PASSWORD 兜底（容器层必有），明文口令
+# 不再落到宿主机 runtime 目录的配置副本里。JWT 是密钥且 entrypoint 会自动生成
 # （不在 Config.Env 里），docker exec 启动的 market-admin 过 EnsureSecureJWT
 # 校验时必须能读到它；写入副本与 $RUNTIME_DIR/jwt_secret 同值，不新增暴露面。
 JWT_ESC=$(sed_escape "$JWT_SECRET")
