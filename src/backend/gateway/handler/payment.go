@@ -33,6 +33,13 @@ const (
 	payTypeCash   int32 = 3
 )
 
+// 支付平台标识（client_channels.pay_methods 绑定与 pay_config.platform 共用取值）
+const (
+	payPlatformWechat = "wechat"
+	payPlatformAlipay = "alipay"
+	payMethodCash     = "cash"
+)
+
 // 微信支付按客户端渠道解析的业务错误
 var (
 	errWechatClientChannelNotReady = errors.New("微信小程序渠道未启用或未配置")
@@ -89,53 +96,142 @@ func channelToPayType(channel string) (int32, bool) {
 	}
 }
 
-// isChannelEnabled 检查支付渠道是否被后台配置开启
+// parsePayMethodEntry 拆解渠道绑定的支付方式条目
+// 语法："cash"（货到付款内置项）或 "<platform>:<config_id>"（如 "wechat:3"）
+//
 // 参数：
-//   - channel: 支付渠道
-//   - enabled: 已开启渠道列表
+//   - entry: 绑定条目原文
 //
 // 返回值：
-//   - bool: 是否开启
-func isChannelEnabled(channel string, enabled []string) bool {
-	for _, ch := range enabled {
-		if ch == channel {
+//   - string: 平台标识（wechat/alipay），cash 条目返回空串
+//   - int64: 支付配置 ID，cash 条目或非法条目返回 0
+func parsePayMethodEntry(entry string) (string, int64) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" || entry == payMethodCash {
+		return "", 0
+	}
+	idx := strings.Index(entry, ":")
+	if idx <= 0 || idx == len(entry)-1 {
+		return "", 0
+	}
+	id, err := strconv.ParseInt(entry[idx+1:], 10, 64)
+	if err != nil || id <= 0 {
+		return "", 0
+	}
+	return entry[:idx], id
+}
+
+// listActivePayMethodSet 拉取启用且就绪的支付配置集合（键 "platform:config_id"）
+// 用于在网关侧提前拦截「渠道绑定了但配置未就绪」的支付方式，给 C 端更友好的错误提示；
+// 拉取失败返回 nil：调用方按降级口径处理，不因配置服务抖动放大为整体不可用
+//
+// 参数：
+//   - ctx: 上下文
+//   - client: payment-service gRPC 客户端
+//
+// 返回值：
+//   - map[string]struct{}: 就绪支付配置集合，nil 表示拉取失败
+func listActivePayMethodSet(ctx context.Context, client payment.PaymentServiceClient) map[string]struct{} {
+	resp, err := client.ListActivePayMethods(ctx, &payment.ListActivePayMethodsReq{})
+	if err != nil {
+		return nil
+	}
+	set := make(map[string]struct{}, len(resp.Methods))
+	for _, m := range resp.Methods {
+		set[fmt.Sprintf("%s:%d", m.Platform, m.ConfigId)] = struct{}{}
+	}
+	return set
+}
+
+// resolveChannelPayBinding 解析客户端渠道绑定的支付方式配置
+// 渠道启用什么支付方式完全由渠道侧绑定（client_channels.pay_methods）决定；
+// 未携带渠道头的旧客户端按 h5 渠道口径处理（h5 为兜底渠道且恒启用）
+//
+// 参数：
+//   - clientCode: 客户端渠道 code，空串按 h5 处理
+//   - clientChannels: 客户端渠道索引（code → 渠道信息）
+//
+// 返回值：
+//   - *user.ClientChannelInfo: 渠道信息，渠道不存在时为 nil
+func resolveChannelPayBinding(clientCode string, clientChannels map[string]*user.ClientChannelInfo) *user.ClientChannelInfo {
+	if clientCode == "" {
+		clientCode = channel.H5
+	}
+	return clientChannels[clientCode]
+}
+
+// firstConfigIDForPlatform 从渠道绑定中取指定平台的第一个支付配置 ID
+// 绑定顺序即收银台展示顺序，同平台至多一条（user 服务保存时校验），取首个仅为防御
+//
+// 参数：
+//   - methods: 渠道绑定的支付方式列表
+//   - platform: 平台标识（wechat/alipay）
+//
+// 返回值：
+//   - int64: 支付配置 ID，未绑定时为 0
+func firstConfigIDForPlatform(methods []string, platform string) int64 {
+	for _, entry := range methods {
+		if p, id := parsePayMethodEntry(entry); p == platform {
+			return id
+		}
+	}
+	return 0
+}
+
+// bindingHasCash 渠道绑定中是否包含货到付款
+//
+// 参数：
+//   - methods: 渠道绑定的支付方式列表
+//
+// 返回值：
+//   - bool: 是否包含
+func bindingHasCash(methods []string) bool {
+	for _, entry := range methods {
+		if strings.TrimSpace(entry) == payMethodCash {
 			return true
 		}
 	}
 	return false
 }
 
-// getPayConfigRuntime 获取支付配置运行时信息
-// 从 payment 服务读取数据库中的支付渠道开关与渠道就绪状态
+// wechatPayReadyOnClient 判断微信支付在指定客户端渠道上的能力是否就绪
+// mp 需要 mp 渠道已启用且凭证完整（JSAPI）；h5 走微信 H5 支付恒就绪；
+// gzh 需公众号 OAuth 授权链路（未接入）、alimp 处于支付宝生态内无法唤起微信、
+// android/ios 需 App 支付 SDK（未接入），均视为未就绪
 // 参数：
-//   - ctx: 上下文
+//   - clientCode: 客户端渠道 code
+//   - clientChannels: 客户端渠道索引，nil 时 mp 渠道按未就绪处理
 //
 // 返回值：
-//   - *payment.PayConfig: 支付配置，读取失败时返回 nil
-//   - error: 读取失败错误
-func (h *PaymentHandler) getPayConfigRuntime(ctx context.Context) (*payment.PayConfig, error) {
-	return h.paymentClient.GetPayConfig(ctx, &payment.GetPayConfigReq{})
-}
-
-// isChannelUsable 判断渠道在配置开关中开启且实际配置完整
-// 参数：
-//   - channel: 支付渠道
-//   - cfg: 支付配置
-//
-// 返回值：
-//   - bool: 是否可用
-func isChannelUsable(channel string, cfg *payment.PayConfig) bool {
-	if cfg == nil || !isChannelEnabled(channel, cfg.EnabledChannels) {
-		return false
-	}
-	switch channel {
-	case "wechat":
-		return cfg.WechatPaymentReady
-	case "alipay":
-		return cfg.AlipayReady
-	case "cash":
+//   - bool: 是否就绪
+func wechatPayReadyOnClient(clientCode string, clientChannels map[string]*user.ClientChannelInfo) bool {
+	switch clientCode {
+	case channel.MP:
+		ch := clientChannels[channel.MP]
+		return ch != nil && ch.Enabled && ch.Configured
+	case channel.H5:
 		return true
 	default:
+		// gzh/alimp/android/ios 均无可用微信支付链路
+		return false
+	}
+}
+
+// alipayPayReadyOnClient 判断支付宝支付在指定客户端渠道上的能力是否就绪
+// h5 走手机网站支付（跳转支付宝收银台）、alimp 走 V3 trade.create 预下单，均恒就绪
+// （配置就绪由 listActivePayMethodSet 与 payment 服务下单校验兜底）；
+// mp/gzh 处于微信生态内无法唤起支付宝；android/ios 需 App 支付 SDK（未接入），均视为未就绪
+// 参数：
+//   - clientCode: 客户端渠道 code
+//
+// 返回值：
+//   - bool: 是否就绪
+func alipayPayReadyOnClient(clientCode string) bool {
+	switch clientCode {
+	case channel.H5, channel.ALIMP:
+		return true
+	default:
+		// mp/gzh/android/ios 均无可用支付宝支付链路
 		return false
 	}
 }
@@ -160,83 +256,6 @@ func listClientChannelsMap(ctx context.Context, client user.UserServiceClient) m
 	return m
 }
 
-// wechatPayReadyOnClient 判断微信支付在指定客户端渠道上的能力是否就绪
-// mp 需要 mp 渠道已启用且凭证完整（JSAPI）；h5 走微信 H5 支付恒就绪；
-// gzh 需公众号 OAuth 授权链路（未开放）、app 需 App 支付 SDK（未接入），均视为未就绪
-// 参数：
-//   - clientCode: 客户端渠道 code
-//   - clientChannels: 客户端渠道索引，nil 时按存量口径放行
-//
-// 返回值：
-//   - bool: 是否就绪
-func wechatPayReadyOnClient(clientCode string, clientChannels map[string]*user.ClientChannelInfo) bool {
-	switch clientCode {
-	case channel.MP:
-		ch := clientChannels[channel.MP]
-		return ch != nil && ch.Enabled && ch.Configured
-	case channel.H5:
-		return true
-	case channel.GZH, channel.APP:
-		return false
-	default:
-		// 未知渠道保持存量行为（未带渠道头的旧客户端）
-		return true
-	}
-}
-
-// alipayPayReadyOnClient 判断支付宝支付在指定客户端渠道上的能力是否就绪
-// h5 走手机网站支付（跳转支付宝收银台）恒就绪；
-// mp（微信小程序）/gzh（公众号网页）处于微信生态内无法唤起支付宝；
-// app 需 App 支付 SDK（未接入），均视为未就绪
-// 参数：
-//   - clientCode: 客户端渠道 code
-//   - clientChannels: 客户端渠道索引，nil 时按存量口径放行
-//
-// 返回值：
-//   - bool: 是否就绪
-func alipayPayReadyOnClient(clientCode string, clientChannels map[string]*user.ClientChannelInfo) bool {
-	switch clientCode {
-	case channel.H5:
-		return true
-	case channel.MP, channel.GZH, channel.APP:
-		return false
-	default:
-		// 未知渠道保持存量行为（未带渠道头的旧客户端）
-		return true
-	}
-}
-
-// isChannelUsableOnClient 判断支付渠道在指定客户端渠道上是否可用
-// 支付配置的适用渠道勾选（空=全部）与客户端渠道能力就绪取交集
-// 参数：
-//   - payChannel: 支付渠道（wechat/alipay/cash）
-//   - clientCode: 客户端渠道 code，空串或非法值时按存量口径不过滤
-//   - cfg: 支付配置
-//   - clientChannels: 客户端渠道索引
-//
-// 返回值：
-//   - bool: 是否可用
-func isChannelUsableOnClient(payChannel, clientCode string, cfg *payment.PayConfig, clientChannels map[string]*user.ClientChannelInfo) bool {
-	if clientCode == "" || !channel.IsValid(clientCode) {
-		return true
-	}
-	switch payChannel {
-	case "wechat":
-		if len(cfg.WechatClientChannels) > 0 && !containsString(cfg.WechatClientChannels, clientCode) {
-			return false
-		}
-		return wechatPayReadyOnClient(clientCode, clientChannels)
-	case "alipay":
-		if len(cfg.AlipayClientChannels) > 0 && !containsString(cfg.AlipayClientChannels, clientCode) {
-			return false
-		}
-		return alipayPayReadyOnClient(clientCode, clientChannels)
-	default:
-		// cash 等无需第三方配置的渠道全客户端可用
-		return true
-	}
-}
-
 // containsString 判断列表中是否包含目标字符串
 //
 // 参数：
@@ -256,7 +275,8 @@ func containsString(list []string, target string) bool {
 
 // CreatePayment 创建支付单
 // 根据 order_id 查询订单金额，channel 转换为 pay_type，再调用 payment-service 创建支付单
-// 会校验当前渠道是否在后台支付开关配置中开启
+// 支付方式由当前客户端渠道的绑定（client_channels.pay_methods）决定：
+// 渠道未启用/未绑定该支付方式/绑定配置未就绪均拦截在下单前
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) CreatePayment(c *gin.Context) {
@@ -266,14 +286,54 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 
-	payCfg, err := h.getPayConfigRuntime(c.Request.Context())
-	if err != nil {
-		response.GRPCError(c, err)
+	payType, ok := channelToPayType(req.Channel)
+	if !ok {
+		response.Error(c, errcode.ParamError, "不支持该支付渠道")
 		return
 	}
-	if !isChannelUsable(req.Channel, payCfg) {
-		response.Error(c, errcode.ParamError, "当前支付方式未开启或配置不完整")
+
+	// 客户端渠道识别：X-Channel-Code 由 C 端构建期注入（h5/gzh/mp/alimp/android/ios），
+	// 未携带时按 h5 渠道口径处理（h5 为兜底渠道）
+	clientCode := channel.Normalize(c.GetHeader("X-Channel-Code"))
+	if clientCode != "" && !channel.IsValid(clientCode) {
+		response.Error(c, errcode.ParamError, "未知客户端渠道")
 		return
+	}
+	clientChannels := listClientChannelsMap(c.Request.Context(), h.userClient)
+	cur := resolveChannelPayBinding(clientCode, clientChannels)
+	if cur == nil || !cur.Enabled {
+		response.Error(c, errcode.OperationNotAllowed, "当前客户端渠道未启用")
+		return
+	}
+
+	// 渠道绑定校验：该支付方式必须已绑定到当前渠道，且绑定引用的配置启用就绪；
+	// 就绪集合拉取失败时跳过该层校验（配置可用性由 payment 服务下单校验兜底）
+	var configID int64
+	if req.Channel == payMethodCash {
+		if !bindingHasCash(cur.PayMethods) {
+			response.Error(c, errcode.ParamError, "当前支付方式未开启")
+			return
+		}
+	} else {
+		configID = firstConfigIDForPlatform(cur.PayMethods, req.Channel)
+		if configID == 0 {
+			response.Error(c, errcode.ParamError, "当前支付方式未开启")
+			return
+		}
+		if req.Channel == payPlatformWechat && !wechatPayReadyOnClient(clientCode, clientChannels) {
+			response.Error(c, errcode.ParamError, "当前支付方式在当前客户端不可用")
+			return
+		}
+		if req.Channel == payPlatformAlipay && !alipayPayReadyOnClient(clientCode) {
+			response.Error(c, errcode.ParamError, "当前支付方式在当前客户端不可用")
+			return
+		}
+		if set := listActivePayMethodSet(c.Request.Context(), h.paymentClient); set != nil {
+			if _, ok := set[fmt.Sprintf("%s:%d", req.Channel, configID)]; !ok {
+				response.Error(c, errcode.ParamError, "当前支付方式未开启或配置不完整")
+				return
+			}
+		}
 	}
 
 	uc := appcontext.GetUserContext(c)
@@ -294,24 +354,6 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 	// 仅待支付订单可发起支付，防止对已支付/已完成订单重复创建支付单
 	if orderResp.Order.Status != 1 {
 		response.Error(c, errcode.OperationNotAllowed, "订单当前状态不可支付")
-		return
-	}
-
-	payType, ok := channelToPayType(req.Channel)
-	if !ok {
-		response.Error(c, errcode.ParamError, "不支持该支付渠道")
-		return
-	}
-
-	// 客户端渠道识别：X-Channel-Code 由 C 端构建期注入（mp/gzh/app/h5），未携带时按存量口径处理
-	clientCode := channel.Normalize(c.GetHeader("X-Channel-Code"))
-	if clientCode != "" && !channel.IsValid(clientCode) {
-		response.Error(c, errcode.ParamError, "未知客户端渠道")
-		return
-	}
-	clientChannels := listClientChannelsMap(c.Request.Context(), h.userClient)
-	if !isChannelUsableOnClient(req.Channel, clientCode, payCfg, clientChannels) {
-		response.Error(c, errcode.ParamError, "当前支付方式在当前客户端不可用")
 		return
 	}
 
@@ -337,6 +379,9 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		// 支付异常队列按社区隔离、后台按订单号核对都依赖这两项快照
 		CommunityId: orderResp.Order.CommunityId,
 		OrderNo:     orderResp.Order.OrderNo,
+		// 支付配置由网关按渠道绑定解析后传入；客户端渠道供支付宝分流下单方式
+		ConfigId:      configID,
+		ClientChannel: clientCode,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -393,8 +438,10 @@ func (h *PaymentHandler) resolveWechatPayIdentity(ctx context.Context, userID in
 		}
 		return "", "", nil
 	case channel.GZH:
+		// 公众号 OAuth 支付链路未接入（渠道列表接口已隐藏该组合），直接拒绝
 		return "", "", errWechatGzhNotOpen
-	case channel.APP:
+	case channel.ANDROID, channel.IOS:
+		// App 支付 SDK 未接入（渠道列表接口已隐藏该组合），直接拒绝
 		return "", "", errWechatAppNotOpen
 	default:
 		// 存量口径：users.openid（排除 phone_ 占位）+ 支付配置默认 AppID
@@ -429,46 +476,65 @@ type PaymentChannel struct {
 	Name    string `json:"name"`
 }
 
-// PaymentChannels 获取当前启用的支付方式列表
-// 根据数据库支付配置中的渠道开关与渠道实际配置完整性返回可用渠道，
-// 并按 X-Channel-Code 声明的客户端渠道取交集（未携带渠道头时保持存量口径不过滤）
+// PaymentChannels 获取当前渠道可用的支付方式列表
+// 数据源为当前客户端渠道的绑定（client_channels.pay_methods，有序），
+// 逐项过滤渠道能力就绪与配置就绪；未携带渠道头时按 h5 渠道口径处理
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) PaymentChannels(c *gin.Context) {
 	channelNames := map[string]string{
-		"wechat": "微信支付",
-		"alipay": "支付宝支付",
-		"cash":   "货到付款",
+		payPlatformWechat: "微信支付",
+		payPlatformAlipay: "支付宝支付",
+		payMethodCash:     "货到付款",
 	}
 
-	payCfg, err := h.getPayConfigRuntime(c.Request.Context())
-	if err != nil {
-		response.GRPCError(c, err)
+	// 客户端渠道识别：未携带渠道头按 h5 渠道口径处理；非法渠道头按无可用支付方式返回
+	clientCode := channel.Normalize(c.GetHeader("X-Channel-Code"))
+	if clientCode != "" && !channel.IsValid(clientCode) {
+		response.Success(c, gin.H{"channels": []PaymentChannel{}})
+		return
+	}
+	clientChannels := listClientChannelsMap(c.Request.Context(), h.userClient)
+	cur := resolveChannelPayBinding(clientCode, clientChannels)
+	if cur == nil || !cur.Enabled {
+		response.Success(c, gin.H{"channels": []PaymentChannel{}})
 		return
 	}
 
-	// 客户端渠道识别：拉取失败时降级为不过滤，避免渠道服务抖动阻断支付方式列表
-	clientCode := channel.Normalize(c.GetHeader("X-Channel-Code"))
-	if clientCode != "" && !channel.IsValid(clientCode) {
-		clientCode = ""
-	}
-	var clientChannels map[string]*user.ClientChannelInfo
-	if clientCode != "" {
-		clientChannels = listClientChannelsMap(c.Request.Context(), h.userClient)
-	}
+	// 就绪支付配置集合：拉取失败时只回现金，避免把未就绪的第三方支付展示给用户
+	// （服务端下单仍有渠道校验兑底，不会放过无法支付的方式）
+	active := listActivePayMethodSet(c.Request.Context(), h.paymentClient)
 
 	var list []PaymentChannel
-	for _, ch := range payCfg.EnabledChannels {
-		if !isChannelUsable(ch, payCfg) {
+	for _, entry := range cur.PayMethods {
+		platform, configID := parsePayMethodEntry(entry)
+		if platform == "" {
+			if strings.TrimSpace(entry) == payMethodCash {
+				list = append(list, PaymentChannel{Channel: payMethodCash, Name: channelNames[payMethodCash]})
+			}
 			continue
 		}
-		if !isChannelUsableOnClient(ch, clientCode, payCfg, clientChannels) {
+		if active != nil {
+			if _, ok := active[fmt.Sprintf("%s:%d", platform, configID)]; !ok {
+				continue
+			}
+		}
+		switch platform {
+		case payPlatformWechat:
+			if !wechatPayReadyOnClient(clientCode, clientChannels) {
+				continue
+			}
+		case payPlatformAlipay:
+			if !alipayPayReadyOnClient(clientCode) {
+				continue
+			}
+		default:
 			continue
 		}
-		list = append(list, PaymentChannel{
-			Channel: ch,
-			Name:    channelNames[ch],
-		})
+		list = append(list, PaymentChannel{Channel: platform, Name: channelNames[platform]})
+	}
+	if list == nil {
+		list = []PaymentChannel{}
 	}
 	response.Success(c, gin.H{"channels": list})
 }

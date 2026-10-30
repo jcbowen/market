@@ -762,8 +762,8 @@ message CheckFulfillerResp {
 ### 客户端渠道管理（2026-10-18 新增 RPC）
 
 ```protobuf
-  // 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
-  // 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+  // 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与支付方式绑定；
+  // 登录与支付链路按渠道取用凭证与绑定，C 端收银台按绑定渲染支付方式
   rpc ListClientChannels(ListClientChannelsReq) returns (ListClientChannelsResp);
   rpc GetClientChannel(GetClientChannelReq) returns (ClientChannelInfo);
   rpc SaveClientChannel(SaveClientChannelReq) returns (ClientChannelInfo);
@@ -773,7 +773,7 @@ message CheckFulfillerResp {
   rpc UpsertUserChannelIdentity(UpsertUserChannelIdentityReq) returns (common.CommonResponse);
 ```
 
-- `ListClientChannels(only_enabled)` / `GetClientChannel(code)` / `SaveClientChannel`：客户端渠道主数据（client_channels 表：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5）的查询与维护；`SaveClientChannel` 的 AppSecret 留空保留原值，code 不可变更，返回 `ClientChannelInfo`（含 `configured` 凭证完整性，h5 恒 true）。
+- `ListClientChannels(only_enabled)` / `GetClientChannel(code)` / `SaveClientChannel`：客户端渠道主数据（client_channels 表，2026-10-30 重构为 7 个内置渠道：h5 浏览器H5 / gzh 微信公众号 / mp 微信小程序 / alimp 支付宝小程序 / android 安卓App / ios iOS App / pos 门店收银台，删除 app；列表按固定常用顺序返回 h5 → gzh → mp → alimp → android → ios，pos 恒在末位，**无 sort 排序字段**）的查询与维护；`SaveClientChannel` 的 AppSecret 留空保留原值，code 不可变更，返回 `ClientChannelInfo`（含 `configured` 凭证完整性：h5/pos 恒 true，alimp 仅需 AppID，其余需 AppID+AppSecret）。
 - `GetUserChannelOpenid(user_id, channel_code)`：查询用户在指定渠道的微信 openid/unionid；渠道身份表（user_channel_identities）优先，mp 渠道回落存量 `users.openid`（排除 phone_ 占位），零迁移兼容。
 - `UpsertUserChannelIdentity(user_id, channel_code, openid, unionid)`：登录成功后幂等写入/更新用户渠道身份；内容一致时跳过写入，并发唯一索引冲突视为已存在。
 
@@ -781,14 +781,17 @@ message CheckFulfillerResp {
 // ClientChannelInfo 客户端渠道信息
 message ClientChannelInfo {
   int64 id = 1;
-  // 渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5
+  // 渠道标识：h5 浏览器H5 / gzh 微信公众号 / mp 微信小程序 / alimp 支付宝小程序 /
+  // android 安卓App / ios iOS App / pos 门店收银台
   string code = 2;
   string name = 3;
   string app_id = 4;
   string app_secret = 5;
   bool enabled = 6;
-  int32 sort = 7;
-  // 凭证是否配置完整（AppID+AppSecret 均非空），C 端渲染与支付就绪判定用
+  // 渠道绑定的支付方式列表（有序，顺序即收银台展示顺序）：
+  // 每项为 "cash" 或 "<platform>:<config_id>"（如 "wechat:3"）
+  repeated string pay_methods = 10;
+  // 凭证是否配置完整（h5/pos 恒真；alimp 仅需 AppID；其余需 AppID+AppSecret）
   bool configured = 8;
   string updated_at = 9;
 }
@@ -815,7 +818,8 @@ message SaveClientChannelReq {
   // 为空时保留原值，避免未重新输入时清空已保存的 Secret
   string app_secret = 5;
   bool enabled = 6;
-  int32 sort = 7;
+  // 渠道绑定的支付方式列表（全量覆盖，服务端校验语法/平台兼容/去重）
+  repeated string pay_methods = 8;
 }
 
 message GetUserChannelOpenidReq {
@@ -836,7 +840,8 @@ message UpsertUserChannelIdentityReq {
 }
 ```
 
-- 服务归属说明：渠道本质是「客户端身份与准入」（登录换 openid、按端授权、未来的渠道访问开关），与 identities 同域闭环在 user 服务；支付仅是消费场景，payment 侧不感知渠道表，按网关传入的 app_id+openid 下单。
+- **`pay_methods` 绑定（2026-10-30 绑定关系反转）**：原支付配置侧的 `enabled_channels`/`wechat_channels`/`alipay_channels` 渠道勾选已废弃，「哪个渠道启用哪些支付配置」改由本字段表达——有序数组，顺序即该端收银台展示顺序，每项为 `cash`（货到付款/现金内置项）或 `<platform>:<config_id>`（指向 pay_config 行 ID）。`SaveClientChannel` 全量覆盖保存，服务端校验语法、平台兼容矩阵（wechat→h5/gzh/mp/pos，alipay→h5/alimp/pos）与同平台去重；C 端渲染（`GET /payments/channels`）与下单（`CreatePaymentReq.config_id`）均由网关按本绑定解析，未携带 `X-Channel-Code` 按 h5 兑底。
+- 服务归属说明：渠道本质是「客户端身份与准入」（登录换 openid、按端授权、支付方式绑定），与 identities 同域闭环在 user 服务；支付仅是消费场景，payment 侧不感知渠道表，按网关传入的 config_id+app_id+openid 下单。
 
 ### 站点设置（2026-10-20 新增 RPC）
 

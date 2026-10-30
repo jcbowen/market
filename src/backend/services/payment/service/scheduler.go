@@ -931,18 +931,23 @@ func (s *Scheduler) scanPendingRefunds(ctx context.Context, stat *reconcileStat)
 
 	s.escalateStaleRefunds(ctx, stat)
 
-	if !wechatPayReady(s.payment) {
+	if len(s.payment.allWechatClients(ctx)) == 0 {
 		log.Println("[payment-scheduler] 微信渠道未配置，本轮退款查单跳过")
 		return
 	}
 
 	deadline := time.Now().Add(-refundAcceptWindow).Format(timeLayout)
-	var flows []model.RefundPayment
-	// refund_payments 无 pay_type 冗余列：JOIN payments 过滤微信渠道（pay_type 1/5）
+	// refundFlowWithConfig 退款流水 + 支付单绑定的配置行 ID（多配置下查单路由到对应商户客户端）
+	type refundFlowWithConfig struct {
+		model.RefundPayment
+		ConfigID int64
+	}
+	var flows []refundFlowWithConfig
+	// refund_payments 无 pay_type/config_id 冗余列：JOIN payments 过滤微信渠道（pay_type 1/5）并带出 config_id；
 	// retry_count 上限是「放弃收敛」的出口；escalated 只作待办去重，不影响是否再查
 	if err := s.payment.db.GetDb().WithContext(ctx).
 		Table("refund_payments").
-		Select("refund_payments.*").
+		Select("refund_payments.*, payments.config_id AS config_id").
 		Joins("JOIN payments ON payments.payment_no = refund_payments.payment_no AND payments.pay_type IN ?", []int32{1, 5}).
 		Where("refund_payments.status = ? AND refund_payments.retry_count < ? AND refund_payments.updated_at < ?",
 			1, refundQueryMaxRetry, deadline).
@@ -955,22 +960,22 @@ func (s *Scheduler) scanPendingRefunds(ctx context.Context, stat *reconcileStat)
 
 	for i := range flows {
 		flow := &flows[i]
-		status, refundID, err := wechatRefundQuery(ctx, s.payment, flow.RefundNo)
+		status, refundID, err := wechatRefundQuery(ctx, s.payment, flow.ConfigID, flow.RefundNo)
 		if err != nil {
 			// 查单失败不算渠道终态失败：渠道单刚创建时可能暂不可查，下一轮继续，
 			// 但必须推进节流与重试次数，否则同一笔会永久霸占队首名额
 			log.Printf("[payment-scheduler] 退款查单失败 refund_no=%s: %v", flow.RefundNo, err)
-			s.retryRefundQuery(ctx, flow, err, stat)
+			s.retryRefundQuery(ctx, &flow.RefundPayment, err, stat)
 			continue
 		}
 		switch status {
 		case "SUCCESS":
 			flow.TransactionID = refundID
-			if err := s.payment.completeChannelRefundSuccess(ctx, &model.Payment{PaymentNo: flow.PaymentNo}, flow); err != nil {
+			if err := s.payment.completeChannelRefundSuccess(ctx, &model.Payment{PaymentNo: flow.PaymentNo}, &flow.RefundPayment); err != nil {
 				// 渠道侧已出款，本地只是写库抖动：同样按重试推进，下一轮再来，
 				// 连续失败到上限转人工待办，不会静默停在待退款
 				log.Printf("[payment-scheduler] 退款成功落库失败 refund_no=%s: %v", flow.RefundNo, err)
-				s.retryRefundQuery(ctx, flow, err, stat)
+				s.retryRefundQuery(ctx, &flow.RefundPayment, err, stat)
 				stat.failed++
 				continue
 			}
@@ -999,7 +1004,7 @@ func (s *Scheduler) scanPendingRefunds(ctx context.Context, stat *reconcileStat)
 			}
 		default:
 			// PROCESSING / 渠道未给状态等：保持待退款，只推进节流指针，按窗口节奏再查
-			s.touchRefundFlow(ctx, flow)
+			s.touchRefundFlow(ctx, &flow.RefundPayment)
 		}
 	}
 }

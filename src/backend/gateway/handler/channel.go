@@ -15,17 +15,19 @@ import (
 // 渠道为平台级配置（与社区无关），权限沿用系统配置 settings:view / settings:update
 
 // ClientChannelView 客户端渠道视图对象
-// 同时用于 GET 响应与 PUT 请求；AppSecret 为空提交时服务端保留原值
+// 同时用于 GET 响应与 PUT 请求；AppSecret 为空提交时服务端保留原值；
+// PayMethods 为渠道绑定的支付方式列表（有序，顺序即收银台展示顺序），
+// 每项为 "cash" 或 "<platform>:<config_id>"（如 "wechat:3"），全量覆盖保存
 type ClientChannelView struct {
-	ID         int64  `json:"id"`
-	Code       string `json:"code"`
-	Name       string `json:"name"`
-	AppID      string `json:"app_id"`
-	AppSecret  string `json:"app_secret"`
-	Enabled    bool   `json:"enabled"`
-	Sort       int32  `json:"sort"`
-	Configured bool   `json:"configured"`
-	UpdatedAt  string `json:"updated_at"`
+	ID         int64    `json:"id"`
+	Code       string   `json:"code"`
+	Name       string   `json:"name"`
+	AppID      string   `json:"app_id"`
+	AppSecret  string   `json:"app_secret"`
+	Enabled    bool     `json:"enabled"`
+	PayMethods []string `json:"pay_methods"`
+	Configured bool     `json:"configured"`
+	UpdatedAt  string   `json:"updated_at"`
 }
 
 // GetClientChannels 获取客户端渠道列表（全部，含停用）
@@ -50,12 +52,12 @@ func (h *AdminHandler) GetClientChannels(c *gin.Context) {
 
 // UpdateClientChannelRequest 更新客户端渠道请求体
 type UpdateClientChannelRequest struct {
-	Code      string `json:"code" binding:"required"`
-	Name      string `json:"name" binding:"required"`
-	AppID     string `json:"app_id"`
-	AppSecret string `json:"app_secret"`
-	Enabled   bool   `json:"enabled"`
-	Sort      int32  `json:"sort"`
+	Code       string   `json:"code" binding:"required"`
+	Name       string   `json:"name" binding:"required"`
+	AppID      string   `json:"app_id"`
+	AppSecret  string   `json:"app_secret"`
+	Enabled    bool     `json:"enabled"`
+	PayMethods []string `json:"pay_methods"`
 }
 
 // UpdateClientChannel 更新客户端渠道配置
@@ -80,13 +82,13 @@ func (h *AdminHandler) UpdateClientChannel(c *gin.Context) {
 	}
 
 	resp, err := h.userClient.SaveClientChannel(c.Request.Context(), &user.SaveClientChannelReq{
-		Id:        id,
-		Code:      req.Code,
-		Name:      req.Name,
-		AppId:     req.AppID,
-		AppSecret: req.AppSecret,
-		Enabled:   req.Enabled,
-		Sort:      req.Sort,
+		Id:         id,
+		Code:       req.Code,
+		Name:       req.Name,
+		AppId:      req.AppID,
+		AppSecret:  req.AppSecret,
+		Enabled:    req.Enabled,
+		PayMethods: req.PayMethods,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -114,7 +116,7 @@ func toClientChannelView(ch *user.ClientChannelInfo) ClientChannelView {
 		AppID:      ch.AppId,
 		AppSecret:  "",
 		Enabled:    ch.Enabled,
-		Sort:       ch.Sort,
+		PayMethods: ch.PayMethods,
 		Configured: ch.Configured,
 		UpdatedAt:  ch.UpdatedAt,
 	}

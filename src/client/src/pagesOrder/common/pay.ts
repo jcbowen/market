@@ -39,9 +39,10 @@ interface WechatH5Params {
 /** 微信调起参数（两种形态的并集） */
 type WechatPayParams = WechatJsapiParams & WechatH5Params
 
-/** 支付宝手机网站支付调起参数 */
+/** 支付宝调起参数：H5 为收银台链接；支付宝小程序为 trade.create 预下单交易号 */
 interface AlipayPayParams {
   alipay_pay_url?: string
+  trade_no?: string
 }
 
 /**
@@ -90,6 +91,13 @@ export async function launchAlipayPay(paramsJson: string, paymentNo = '', orderI
     return 'failed'
   }
 
+  // #ifdef MP-ALIPAY
+  // 支付宝小程序：后端 V3 alipay.trade.create 预下单返回交易号，my.tradePay 唤起收银台
+  if (params.trade_no) {
+    return requestAlipayMiniPayment(params.trade_no)
+  }
+  // #endif
+
   // #ifdef H5
   if (params.alipay_pay_url) {
     // 微信内置浏览器：直接跳转会被微信拦截卡死，跳独立引导页由用户转系统浏览器
@@ -111,6 +119,39 @@ export async function launchAlipayPay(paramsJson: string, paymentNo = '', orderI
 
   return 'unsupported'
 }
+
+// #ifdef MP-ALIPAY
+/**
+ * 调用 my.tradePay 完成支付宝小程序支付
+ * uni-app 未封装支付宝小程序支付（uni.requestPayment 在该端行为不稳定），
+ * 直接调用支付宝小程序全局 API：tradeNO 为服务端 trade.create 预下单返回的交易号
+ * @param tradeNo 支付宝交易号
+ * @returns 支付成功、用户取消或失败（9000=成功，8001/6001=取消/失败等）
+ */
+async function requestAlipayMiniPayment(tradeNo: string): Promise<PayOutcome> {
+  // 支付宝小程序全局对象，仅在该端运行时存在
+  const my = (globalThis as { my?: { tradePay: (opts: Record<string, unknown>) => void } }).my
+  if (!my?.tradePay) {
+    return 'failed'
+  }
+  return new Promise<PayOutcome>((resolve) => {
+    my.tradePay({
+      tradeNO: tradeNo,
+      success: (res: { resultCode?: string }) => {
+        // 9000=支付成功；8000=处理中（以订单状态为准）；其余视为取消/失败
+        if (res?.resultCode === '9000') {
+          resolve('success')
+        } else if (res?.resultCode === '8000') {
+          resolve('redirected')
+        } else {
+          resolve('cancelled')
+        }
+      },
+      fail: () => resolve('failed'),
+    })
+  })
+}
+// #endif
 
 // #ifdef H5
 /**

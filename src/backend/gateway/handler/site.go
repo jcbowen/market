@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
@@ -227,28 +228,50 @@ func (h *AdminHandler) GetPublicSiteInfo(c *gin.Context) {
 	})
 }
 
-// syncPayCallbackURLs 把站点域名派生的回调地址回写 pay_config
-// 与渠道 AppID 回写同构：已是派生值时不写库，避免每次读取配置都产生一次无意义更新
+// syncPayCallbackURLs 把站点域名派生的回调地址回写全部支付配置行
+// pay_config 为多行制：逐行按平台覆写对应回调字段，已是派生值的行跳过，
+// 避免每次读取配置都产生无意义更新；并发下版本冲突仅记日志（下次保存自愈）
 //
 // 参数：
 //   - ctx: 上下文
 //   - baseURL: 生效的部署域名基址
 func (h *AdminHandler) syncPayCallbackURLs(ctx context.Context, baseURL string) {
-	resp, err := h.paymentClient.GetPayConfig(ctx, &payment.GetPayConfigReq{})
+	resp, err := h.paymentClient.ListPayConfigs(ctx, &payment.ListPayConfigsReq{})
 	if err != nil {
 		log.Printf("派生支付回调地址前读取支付配置失败: %v", err)
 		return
 	}
 
 	wechatNotify, alipayNotify, alipayReturn := payCallbackURLsFor(baseURL)
-	if resp.WechatNotifyUrl == wechatNotify && resp.AlipayNotifyUrl == alipayNotify && resp.AlipayReturnUrl == alipayReturn {
-		return
+	for _, row := range resp.List {
+		var changed bool
+		switch row.Platform {
+		case "wechat":
+			changed = row.WechatNotifyUrl != wechatNotify
+		case "alipay":
+			changed = row.AlipayNotifyUrl != alipayNotify || row.AlipayReturnUrl != alipayReturn
+		default:
+			continue
+		}
+		if !changed {
+			continue
+		}
+		// 以读到的行为底只覆写回调字段（含 updated_at 乐观锁版本），其余字段原样保留
+		// proto 消息内含锁，须深拷贝而非值拷贝
+		payload, ok := proto.Clone(row).(*payment.PayConfigRow)
+		if !ok {
+			continue
+		}
+		if row.Platform == "wechat" {
+			payload.WechatNotifyUrl = wechatNotify
+		} else {
+			payload.AlipayNotifyUrl = alipayNotify
+			payload.AlipayReturnUrl = alipayReturn
+		}
+		if _, err := h.paymentClient.SavePayConfigRow(ctx, payload); err != nil {
+			log.Printf("回写支付配置回调地址失败 config_id=%d: %v", row.Id, err)
+		}
 	}
-	h.writeBackPayConfig(ctx, resp, func(p *payment.PayConfig) {
-		p.WechatNotifyUrl = wechatNotify
-		p.AlipayNotifyUrl = alipayNotify
-		p.AlipayReturnUrl = alipayReturn
-	})
 }
 
 // syncAttachmentVisitDomain 站点域名联动补空附件访问域名（站点设置保存路径的触发点）

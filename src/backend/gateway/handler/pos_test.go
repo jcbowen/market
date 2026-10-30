@@ -15,6 +15,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
+	"github.com/jcbowen/market/src/backend/common/proto/user"
 )
 
 /**
@@ -68,10 +69,25 @@ func (s *stubPosOrderClient) GetOrder(ctx context.Context, in *order.GetOrderReq
 	return &order.OrderDetail{Order: s.orderInfo}, nil
 }
 
-// stubPosPaymentClient 收银台链路支付服务桩
+// stubPosUserClient 收银台链路用户服务桩：提供 POS 渠道绑定信息
+type stubPosUserClient struct {
+	user.UserServiceClient
+	posChannel *user.ClientChannelInfo
+}
+
+func (s *stubPosUserClient) GetClientChannel(ctx context.Context, in *user.GetClientChannelReq, opts ...grpc.CallOption) (*user.ClientChannelInfo, error) {
+	return s.posChannel, nil
+}
+
+// posChannelOf 构造 POS 渠道信息（绑定 pay_methods）
+func posChannelOf(methods ...string) *user.ClientChannelInfo {
+	return &user.ClientChannelInfo{Code: "pos", Name: "门店收银台", Enabled: true, Configured: true, PayMethods: methods}
+}
+
+// stubPosPaymentClient 收银台链路支付服务桩（多行制：就绪配置以 ListActivePayMethods 提供）
 type stubPosPaymentClient struct {
 	payment.PaymentServiceClient
-	cfg          *payment.PayConfig
+	active       []*payment.ActivePayMethod
 	createCalled bool
 	createReq    *payment.CreatePaymentReq
 	closeCalled  bool
@@ -79,8 +95,8 @@ type stubPosPaymentClient struct {
 	closeErr     error
 }
 
-func (s *stubPosPaymentClient) GetPayConfig(ctx context.Context, in *payment.GetPayConfigReq, opts ...grpc.CallOption) (*payment.PayConfig, error) {
-	return s.cfg, nil
+func (s *stubPosPaymentClient) ListActivePayMethods(ctx context.Context, in *payment.ListActivePayMethodsReq, opts ...grpc.CallOption) (*payment.ListActivePayMethodsResp, error) {
+	return &payment.ListActivePayMethodsResp{Methods: s.active}, nil
 }
 
 func (s *stubPosPaymentClient) CreatePayment(ctx context.Context, in *payment.CreatePaymentReq, opts ...grpc.CallOption) (*payment.CreatePaymentResp, error) {
@@ -133,16 +149,23 @@ func newPosTestHandler(orderStub *stubPosOrderClient, payStub *stubPosPaymentCli
 	return &AdminHandler{orderClient: orderStub, paymentClient: payStub}
 }
 
+// newPosTestHandlerWithUser 组装带用户服务桩（POS 渠道绑定）的处理器
+func newPosTestHandlerWithUser(orderStub *stubPosOrderClient, userStub *stubPosUserClient, payStub *stubPosPaymentClient) *AdminHandler {
+	return &AdminHandler{orderClient: orderStub, userClient: userStub, paymentClient: payStub}
+}
+
 // TestPosCodePayChecksChannelBeforeCreateOrder 付款码渠道就绪校验必须先于建单（P1-8）
 func TestPosCodePayChecksChannelBeforeCreateOrder(t *testing.T) {
-	notReady := &payment.PayConfig{EnabledChannels: []string{"cash"}, WechatPaymentReady: false}
-	ready := &payment.PayConfig{EnabledChannels: []string{"wechat"}, WechatPaymentReady: true}
 	body := []byte(`{"user_id":0,"pay_type":5,"delivery_type":3,"items":[{"sku_id":1,"quantity":1}]}`)
+	// 未就绪：POS 仅绑现金；就绪：绑定 wechat:1 且该配置启用就绪
+	notReadyUser := &stubPosUserClient{posChannel: posChannelOf("cash")}
+	readyUser := &stubPosUserClient{posChannel: posChannelOf("wechat:1", "cash")}
+	readyPay := &stubPosPaymentClient{active: []*payment.ActivePayMethod{{ConfigId: 1, Platform: "wechat", AppId: "wx1"}}}
 
 	t.Run("渠道未就绪时不建单", func(t *testing.T) {
 		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
-		payStub := &stubPosPaymentClient{cfg: notReady}
-		h := newPosTestHandler(orderStub, payStub)
+		payStub := &stubPosPaymentClient{}
+		h := newPosTestHandlerWithUser(orderStub, notReadyUser, payStub)
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -164,8 +187,8 @@ func TestPosCodePayChecksChannelBeforeCreateOrder(t *testing.T) {
 			shift:     &order.PosShiftInfo{Id: 1},
 			orderInfo: &order.OrderInfo{Id: 100, OrderNo: "POSTEST-1", PayAmount: 10, PickupCode: "1234"},
 		}
-		payStub := &stubPosPaymentClient{cfg: ready}
-		h := newPosTestHandler(orderStub, payStub)
+		payStub := readyPay
+		h := newPosTestHandlerWithUser(orderStub, readyUser, payStub)
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -180,6 +203,10 @@ func TestPosCodePayChecksChannelBeforeCreateOrder(t *testing.T) {
 		if !payStub.createCalled || payStub.createReq.GetPayType() != posPayTypeWechatCode {
 			t.Fatalf("应创建付款码待支付单: %+v", payStub.createReq)
 		}
+		// 占位单发生在扫码前、平台未知：config_id 留空，扫码后由 PayByAuthCode 按前缀回填
+		if payStub.createReq.GetConfigId() != 0 {
+			t.Errorf("付款码占位单不应携带 config_id，got %d", payStub.createReq.GetConfigId())
+		}
 		// 两步化第一步：仅建待支付单，扫码扣款后才确认收款
 		if paid, _ := resp.Data["paid"].(bool); paid {
 			t.Error("付款码下单应为待支付（paid=false）")
@@ -191,8 +218,9 @@ func TestPosCodePayChecksChannelBeforeCreateOrder(t *testing.T) {
 			shift:     &order.PosShiftInfo{Id: 1},
 			orderInfo: &order.OrderInfo{Id: 101, OrderNo: "POSTEST-0", PayAmount: 0},
 		}
-		payStub := &stubPosPaymentClient{cfg: ready}
-		h := newPosTestHandler(orderStub, payStub)
+		// 就绪桩须新建：同一实例跨子测试复用会残留 createCalled 状态
+		payStub := &stubPosPaymentClient{active: readyPay.active}
+		h := newPosTestHandlerWithUser(orderStub, readyUser, payStub)
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -361,10 +389,10 @@ func TestPayPosOrderByCash(t *testing.T) {
 
 // TestEnsurePosCodePaySession 待支付订单重建付款码收款会话（订单查询「继续收款」入口）
 func TestEnsurePosCodePaySession(t *testing.T) {
-	t.Run("两渠道均未配置时拒绝", func(t *testing.T) {
+	t.Run("两渠道均未绑定时拒绝", func(t *testing.T) {
 		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 400, OrderNo: "POSTEST-S", CommunityId: 1, Status: 1, Source: 2, PayAmount: 8}}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
-		h := newPosTestHandler(orderStub, payStub)
+		payStub := &stubPosPaymentClient{}
+		h := newPosTestHandlerWithUser(orderStub, &stubPosUserClient{posChannel: posChannelOf("cash")}, payStub)
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/400/pay-code-session", nil)
 		c.Params = gin.Params{{Key: "id", Value: "400"}}
@@ -381,8 +409,12 @@ func TestEnsurePosCodePaySession(t *testing.T) {
 
 	t.Run("两渠道齐备时以占位 5 重建会话", func(t *testing.T) {
 		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 400, OrderNo: "POSTEST-S", CommunityId: 1, Status: 1, Source: 2, PayAmount: 8}}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{EnabledChannels: []string{"wechat", "alipay"}, WechatPaymentReady: true, AlipayReady: true}}
-		h := newPosTestHandler(orderStub, payStub)
+		userStub := &stubPosUserClient{posChannel: posChannelOf("wechat:1", "alipay:2", "cash")}
+		payStub := &stubPosPaymentClient{active: []*payment.ActivePayMethod{
+			{ConfigId: 1, Platform: "wechat", AppId: "wx1"},
+			{ConfigId: 2, Platform: "alipay", AppId: "2021"},
+		}}
+		h := newPosTestHandlerWithUser(orderStub, userStub, payStub)
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/400/pay-code-session", nil)
 		c.Params = gin.Params{{Key: "id", Value: "400"}}
@@ -410,8 +442,7 @@ func TestCreatePosOrderManualAmount(t *testing.T) {
 	t.Run("非到店模式拒绝", func(t *testing.T) {
 		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":1,"manual_amount":5}`)
 		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
-		h := newPosTestHandler(orderStub, payStub)
+		h := newPosTestHandlerWithUser(orderStub, &stubPosUserClient{posChannel: posChannelOf("cash")}, &stubPosPaymentClient{})
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -428,8 +459,7 @@ func TestCreatePosOrderManualAmount(t *testing.T) {
 	t.Run("金额超出单笔上限拒绝", func(t *testing.T) {
 		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3,"manual_amount":1000000}`)
 		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
-		h := newPosTestHandler(orderStub, payStub)
+		h := newPosTestHandlerWithUser(orderStub, &stubPosUserClient{posChannel: posChannelOf("cash")}, &stubPosPaymentClient{})
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -447,8 +477,7 @@ func TestCreatePosOrderManualAmount(t *testing.T) {
 		// 0.004 会在服务端四舍五入成 0 元完结单，网关须拒绝（0 元口径属全额优惠特例）
 		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3,"manual_amount":0.004}`)
 		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
-		h := newPosTestHandler(orderStub, payStub)
+		h := newPosTestHandlerWithUser(orderStub, &stubPosUserClient{posChannel: posChannelOf("cash")}, &stubPosPaymentClient{})
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -467,8 +496,8 @@ func TestCreatePosOrderManualAmount(t *testing.T) {
 		// 取消单回补不到明细造成库存永久泄漏
 		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3,"manual_amount":8.8,"items":[{"sku_id":3,"quantity":1}]}`)
 		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
-		h := newPosTestHandler(orderStub, payStub)
+		payStub := &stubPosPaymentClient{}
+		h := newPosTestHandlerWithUser(orderStub, &stubPosUserClient{posChannel: posChannelOf("cash")}, payStub)
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -485,8 +514,7 @@ func TestCreatePosOrderManualAmount(t *testing.T) {
 	t.Run("常规单无商品无金额拒绝", func(t *testing.T) {
 		body := []byte(`{"user_id":0,"pay_type":4,"delivery_type":3}`)
 		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
-		h := newPosTestHandler(orderStub, payStub)
+		h := newPosTestHandlerWithUser(orderStub, &stubPosUserClient{posChannel: posChannelOf("cash")}, &stubPosPaymentClient{})
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)
@@ -507,8 +535,8 @@ func TestCreatePosOrderManualAmount(t *testing.T) {
 			shift:     &order.PosShiftInfo{Id: 1},
 			orderInfo: &order.OrderInfo{Id: 95, OrderNo: "POSTEST-M", PayAmount: 8.8},
 		}
-		payStub := &stubPosPaymentClient{cfg: &payment.PayConfig{}}
-		h := newPosTestHandler(orderStub, payStub)
+		payStub := &stubPosPaymentClient{}
+		h := newPosTestHandlerWithUser(orderStub, &stubPosUserClient{posChannel: posChannelOf("cash")}, payStub)
 
 		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
 		h.CreatePosOrder(c)

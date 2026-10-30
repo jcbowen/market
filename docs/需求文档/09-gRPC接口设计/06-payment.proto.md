@@ -21,24 +21,30 @@ service PaymentService {
   rpc BatchGetPayments(BatchGetPaymentsReq) returns (BatchGetPaymentsResp);
   rpc HandleWechatCallback(WechatCallbackReq) returns (common.CommonResponse);
   rpc HandleAlipayCallback(AlipayCallbackReq) returns (common.CommonResponse);
-  // ProcessRefund 发起渠道退款。completed=false 表示渠道已受理未到终态
+  // ProcessRefund 发起渠道退款。completed=false 表示渠道已受理但未到终态
   // （微信受理常态 PROCESSING），调用方不得按成功收尾，由退款查单任务收敛
   rpc ProcessRefund(ProcessRefundReq) returns (ProcessRefundResp);
   // QueryRefundResult 查询渠道退款流水状态（order 侧卡单退款收敛用，读库不触渠道）
   rpc QueryRefundResult(QueryRefundResultReq) returns (QueryRefundResultResp);
   // ResetRefundFlow 人工重置「待退款」流水的自动收敛预算（B2）
-  // 退款查单任务对同一笔流水连续失败达上限后会永久退出自动批次，而微信退款允许 1-3 个工作日到账，
-  // 渠道后续给出终态也没人来收；本方法把 retry_count/escalated 归零让流水重新被查单任务看见，
+  // 退款查单任务对同一笔流水连续失败达上限后会永久退出自动批次，
+  // 而微信退款允许 1-3 个工作日到账，渠道后续给出终态也没人再来收；
+  // 本方法把 retry_count/escalated 归零，让流水重新被查单任务看见，
   // 只处理待退款(1)流水——已成功(2)/已失败(3)一律拒绝，避免对已出款流水重复触渠道
   rpc ResetRefundFlow(ResetRefundFlowReq) returns (ResetRefundFlowResp);
-  rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
-  rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
+  // ListPayConfigs 支付配置列表（管理端，含凭证与就绪状态；网关负责脱敏）
+  rpc ListPayConfigs(ListPayConfigsReq) returns (ListPayConfigsResp);
+  // SavePayConfigRow 新增（id=0）或更新一条支付配置；updated_at 乐观锁
+  rpc SavePayConfigRow(PayConfigRow) returns (PayConfigRow);
+  // DeletePayConfigRow 删除一条支付配置（渠道引用校验由网关负责）
+  rpc DeletePayConfigRow(DeletePayConfigRowReq) returns (common.CommonResponse);
+  // ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
+  rpc ListActivePayMethods(ListActivePayMethodsReq) returns (ListActivePayMethodsResp);
   rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
   // 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
   rpc ClosePayments(ClosePaymentsReq) returns (common.CommonResponse);
   // SyncPaymentFromChannel 主动向渠道查询收款结果并在已收款时补同步
   // 两个消费方：后台订单详情「同步支付状态」按钮；order 服务取消前置确认（order_id 单入参即查该单待支付单）
-  // 线下收款单（pay_type 3/4）没有渠道可问：命中后走本地口径补同步，不发起任何渠道调用
   rpc SyncPaymentFromChannel(SyncPaymentReq) returns (SyncPaymentResp);
   // ListOrderPayments 按订单取全部支付尝试（含未成功），供后台详情展示支付次数与状态
   // 与 BatchGetPayments 的区别：后者只回口径与 GetPayment 一致的成功单，无法反映失败/待支付记录
@@ -60,10 +66,10 @@ service PaymentService {
   // （实测 ? 会被 uni-app 路由解析改写为 =，无论编码几层）；
   // 仅对待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
   rpc GetAlipayPayUrl(GetAlipayPayUrlReq) returns (GetAlipayPayUrlResp);
-  // FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（2026-10-24 新增，后台订单搜索）
-  // 单框双号，字段渠道无关：payment_no 即渠道账单「商家订单号」（out_trade_no），
+  // FindOrdersByPayNo 按支付单号或渠道交易号反查关联订单号（后台订单列表「支付单号/渠道交易号」搜索用）
+  // 单框双号，字段渠道无关：payment_no 即渠道账单的「商家订单号」（out_trade_no），
   // transaction_id 即渠道交易号（支付宝 trade_no / 微信 transaction_id）。
-  // 精确匹配（两列均有索引），同一订单多笔支付尝试命中后按订单号去重；未命中返回空列表非错误
+  // 精确匹配；同一订单可能有多笔支付尝试，命中后去重回传订单号
   rpc FindOrdersByPayNo(FindOrdersByPayNoReq) returns (FindOrdersByPayNoResp);
 }
 
@@ -77,6 +83,7 @@ message FindOrdersByPayNoResp {
   repeated string order_nos = 1;
 }
 
+// GetPaymentStatusReq 按支付单号查询支付状态
 message GetPaymentStatusReq {
   string payment_no = 1;
 }
@@ -122,6 +129,13 @@ message CreatePaymentReq {
   // 顾客付款码：付款码支付（pay_type 5/6）扣款用。两步化流程下 CreatePayment 不填
   // （只建待支付单不扣款），扫码后由 PayByAuthCode 传入
   string auth_code = 9;
+  // 支付配置 ID：网关按渠道绑定（client_channels.pay_methods）解析后传入；
+  // pay_type 1/2/5/6 必填，服务端校验配置存在、启用、平台匹配且凭证就绪；
+  // 现金/货到付款（3/4）不填
+  int64 config_id = 10;
+  // 客户端渠道 code（X-Channel-Code）：支付宝按它分流下单方式
+  // （alimp → alipay.trade.create 小程序内支付，其余 → 手机网站支付）；其余渠道暂未使用
+  string client_channel = 11;
 }
 
 message CreatePaymentResp {
@@ -129,7 +143,9 @@ message CreatePaymentResp {
   int32 pay_type = 2;
   double amount = 3;
   string wechat_pay_params = 4;   // JSON string，仅 pay_type=1 时填充
-  string alipay_pay_params = 5;   // JSON string，仅 pay_type=2 时填充；现金支付两者均为空
+  string alipay_pay_params = 5;   // JSON string，仅 pay_type=2 时填充；
+                                  // H5/手机网站支付为 {"alipay_pay_url":"..."}，
+                                  // 支付宝小程序为 {"trade_no":"..."}（my.tradePay 用）；现金支付两者均为空
 }
 
 // PayByAuthCodeReq 付款码扣款入参（收银台 B扫C）
@@ -143,6 +159,8 @@ message PayByAuthCodeReq {
   int64 operator_id = 3;
   // 订单 ID（URL 路径参数，必传）：与支付单 OrderID 不一致时拒绝扣款
   int64 order_id = 4;
+  // 支付配置 ID：网关按 pos 渠道绑定解析（付款码前缀识别平台后取对应配置），必填
+  int64 config_id = 5;
 }
 
 // PayByAuthCodeResp 付款码扣款结果（归一化）
@@ -162,10 +180,6 @@ message GetPaymentReq {
   int64 order_id = 1;
 }
 
-// GetPayment 口径（2026-10-23 修正）：返回该订单最近一笔「有效」支付单——
-// status 为支付成功(2)或已退款(4)。已退款单的支付单状态被置 4，
-// 原先只查 status=2 导致已退款订单详情支付方式显示「未支付」，现退款后仍返回该笔（Status=4），调用方按需甄别。
-// BatchGetPayments 与本口径保持一致。
 message PaymentInfo {
   int64 id = 1;
   string payment_no = 2;
@@ -187,7 +201,7 @@ message PaymentInfo {
 }
 
 // BatchGetPaymentsReq 支付记录批量查询（后台订单列表按行取支付方式，替代逐行 GetPayment）
-// 每个订单可能有多条支付记录，服务端按订单只回传口径与 GetPayment 一致的那条（成功 2 或已退款 4）
+// 每个订单可能有多条支付记录，服务端按订单只回传口径与 GetPayment 一致的那条
 message BatchGetPaymentsReq {
   repeated int64 order_ids = 1;
 }
@@ -212,12 +226,14 @@ message ProcessRefundReq {
   string payment_no = 4;
 }
 
-// ProcessRefundResp completed=渠道退款是否已到成功终态（受理未到终态回 false，调用方不得走成功收尾）
+// ProcessRefundResp 退款处理结果
+// completed=false：渠道已受理（退款流水保持待退款），调用方不得走成功收尾，
+// 终态由 payment 侧退款查单任务对 RefundQuery 结果收敛
 message ProcessRefundResp {
   bool completed = 1;
 }
 
-// QueryRefundResultReq 渠道退款流水状态查询（order_id 做归属校验）
+// QueryRefundResultReq 按退款单号查退款流水状态（order_id 仅作归属校验）
 message QueryRefundResultReq {
   int64 order_id = 1;
   string refund_no = 2;
@@ -229,8 +245,8 @@ message QueryRefundResultResp {
   int32 status = 1;
 }
 
-// ResetRefundFlowReq 人工重置退款流水的自动收敛预算（B2）
-// remark 必填：本动作等于「人工核实渠道后重新交给系统收敛」，没有依据不许执行
+// ResetRefundFlowReq 人工重置退款流水的自动收敛预算
+// remark 必填：本动作等于「人工核实渠道后重新交给系统收敛」，没有核实依据不许执行
 message ResetRefundFlowReq {
   int64 order_id = 1;
   string refund_no = 2;
@@ -240,8 +256,8 @@ message ResetRefundFlowReq {
 }
 
 // ResetRefundFlowResp 重置结果
-// recovered=false 表示无对应流水（失败流水在重新发起前会被清理），message 说明原因、不算错误
-// 字段名刻意不叫 reset：与 protobuf 消息自带的 Reset() 方法冲突，生成物会变成 Reset_
+// recovered=false 表示无对应流水（历史失败流水已被清理），此时 message 说明原因、不算错误
+// 字段名不叫 reset：与 protobuf 消息自带的 Reset() 方法冲突，生成物会变成 Reset_
 message ResetRefundFlowResp {
   bool recovered = 1;
   string message = 2;
@@ -251,50 +267,74 @@ message ClosePaymentsReq {
   int64 order_id = 1;
 }
 
-message GetPayConfigReq {}
-
-// PayConfig 支付配置（数据库单行存储）
+// PayConfigRow 单条支付配置行（pay_config 多行存储）
+// platform 决定凭证字段组：wechat 取 wechat_* 字段，alipay 取 alipay_* 字段；
 // 读写均通过 payment 服务，gateway 不直接访问数据库
-message PayConfig {
-  repeated string enabled_channels = 1;
-  // 微信支付 V3
-  string wechat_app_id = 2;
-  string wechat_app_secret = 3;
-  string wechat_mch_id = 4;
-  string wechat_api_v3_key = 5;
-  string wechat_cert_serial_no = 6;
-  string wechat_private_key = 7;
-  string wechat_notify_url = 8;
-  // 支付宝
-  string alipay_app_id = 9;
-  string alipay_private_key = 10;
-  string alipay_public_key = 11;
-  string alipay_notify_url = 12;
-  string alipay_return_url = 13;
-  // 证书上传状态（上传后内容存库，此处仅回传标志）
-  bool wechat_cert_uploaded = 14;
-  bool alipay_cert_uploaded = 15;
-  // 版本与就绪状态
-  string updated_at = 16;
-  bool wechat_payment_ready = 17;
-  bool alipay_ready = 18;
-  // 适用客户端渠道（勾选的客户端渠道 code 列表：mp/gzh/app/h5；空=全部客户端渠道可用，兼容存量数据）
-  repeated string wechat_client_channels = 19;
-  repeated string alipay_client_channels = 20;
+message PayConfigRow {
+  int64 id = 1;
+  // 展示名称（如「支付宝-H5」「微信支付-主力」），管理端列表与渠道绑定下拉展示用
+  string name = 2;
+  // 平台类型：wechat / alipay
+  string platform = 3;
+  bool enabled = 4;
+  // 微信支付 V3 凭证（platform=wechat 时取用）
+  string wechat_app_id = 10;
+  string wechat_app_secret = 11;
+  string wechat_mch_id = 12;
+  string wechat_api_v3_key = 13;
+  string wechat_cert_serial_no = 14;
+  string wechat_private_key = 15;
+  string wechat_notify_url = 16;
+  // 商户私钥是否已上传（内容存库，此处仅回传标志）
+  bool wechat_cert_uploaded = 17;
+  // 支付宝凭证（platform=alipay 时取用）
+  string alipay_app_id = 20;
+  string alipay_private_key = 21;
+  string alipay_public_key = 22;
+  string alipay_notify_url = 23;
+  string alipay_return_url = 24;
+  // 加签方式：public 公钥模式（默认）/ cert 证书模式
+  string alipay_mode = 25;
   // 支付宝网关地址，空=生产环境 https://openapi.alipay.com（填沙箱网关即切沙箱）
-  string alipay_gateway_url = 21;
-  // 支付宝配置自检失败原因，空表示自检通过；就绪状态为「字段齐全且自检通过」
-  string alipay_ready_message = 22;
-  // 支付宝加签方式：public 公钥模式（默认，空串兼容存量）/ cert 证书模式
-  string alipay_mode = 23;
-  // 证书模式三证书上传状态（内容存库仅走上传接口，此处只回传标志，读写均不携带内容）
-  bool alipay_app_cert_uploaded = 24;
-  bool alipay_public_cert_uploaded = 25;
-  bool alipay_root_cert_uploaded = 26;
+  string alipay_gateway_url = 26;
+  // 应用私钥与三证书上传状态（内容存库，此处仅回传标志，读写均不携带内容）
+  bool alipay_cert_uploaded = 27;
+  bool alipay_app_cert_uploaded = 28;
+  bool alipay_public_cert_uploaded = 29;
+  bool alipay_root_cert_uploaded = 30;
+  // 版本与就绪状态（仅查询回传；就绪 = 启用 + 字段齐全 + 自检通过）
+  string updated_at = 40;
+  bool ready = 41;
+  string ready_message = 42;
+}
+
+message ListPayConfigsReq {}
+
+message ListPayConfigsResp {
+  repeated PayConfigRow list = 1;
+}
+
+message DeletePayConfigRowReq {
+  int64 id = 1;
+}
+
+message ListActivePayMethodsReq {}
+
+// ActivePayMethod 启用且就绪的支付配置摘要（渲染过滤与下单解析用）
+message ActivePayMethod {
+  int64 config_id = 1;
+  // 平台类型：wechat / alipay
+  string platform = 2;
+  // 下单 AppID（微信 JSAPI 与渠道 AppID 一致性校验用）
+  string app_id = 3;
+}
+
+message ListActivePayMethodsResp {
+  repeated ActivePayMethod methods = 1;
 }
 
 message UploadPayCertReq {
-  string channel = 1;    // 渠道：wechat / alipay
+  int64 config_id = 1;   // 支付配置行 ID
   string cert_type = 2;  // 类型：private_key（商户/应用私钥）、app_cert / alipay_public_cert / root_cert（支付宝证书模式）
   string filename = 3;   // 原始文件名，用于校验扩展名
   bytes content = 4;     // 证书文件内容
@@ -345,7 +385,7 @@ message ListOrderPaymentsResp {
 // raw_body/headers 仅当请求 with_raw=true（网关校验 payment:raw:view 权限）时回填
 message PaymentAnomalyInfo {
   int64 id = 1;
-  // 1渠道回调 2对账补同步 3挂账检出(系统) 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8挂账检出(后台人工核实) 9付款码扣款
+  // 1渠道回调 2对账补同步 3挂账检出 4渠道关单 5后台手动同步 6放弃对账 7人工恢复退款收敛 8人工核实挂账检出 9付款码扣款
   int32 kind = 2;
   // 1确认成功 2幂等忽略 3验签或解密失败 4金额不符 5处理异常 6渠道未支付 7渠道无此交易 8关单结果 9资金挂账 10订单同步失败 11人工恢复退款收敛
   int32 result = 3;
@@ -409,22 +449,21 @@ message MarkPaymentPaidReq {
   // 路径中的订单 ID（网关已过社区隔离）：服务层据此校验支付单归属，
   // 防止在 A 订单页面提交 B 订单的支付单号，跨订单确认资金状态
   int64 order_id = 5;
-
 }
 ```
 
 ### 配置管理说明
 
-支付配置存储于数据库 pay_config 表（单行），由 payment 服务统一管理，gateway 通过 `GetPayConfig/SavePayConfig/UploadPayCert` 三个 RPC 读写，不直接访问数据库。
+支付配置存储于数据库 pay_config 表（**多行**，2026-10-30 重构：每行 `name + platform(wechat/alipay) + enabled + 凭证`，同平台可多条、独立启停），由 payment 服务统一管理，gateway 通过 `ListPayConfigs/SavePayConfigRow/DeletePayConfigRow/UploadPayCert(config_id)` 读写，不直接访问数据库。「哪个客户端渠道启用哪些配置」由 user 服务 `client_channels.pay_methods` 绑定表达（见 02-user.proto.md），本表无渠道勾选；`ListActivePayMethods` 返回启用且就绪的配置摘要（config_id/platform/app_id），供网关在 C 端渲染过滤与下单/扣款解析 config_id 时使用。
 
-热更新机制：payment 服务进程内缓存配置副本，每次支付链路调用时对比数据库 `updated_at` 版本号——版本一致时直接复用已构建的微信支付客户端（零重建开销），版本变更时才刷新缓存并重建客户端。后台保存配置后即时生效，无需重启。
+热更新机制：payment 服务进程内缓存全部配置行（`payClientRegistry`：version = 行数 + 各行 updated_at 拼接），每次支付链路调用时对比版本号——版本一致时直接复用已构建的微信/支付宝客户端（零重建开销），版本变更时才刷新缓存并重建客户端；数据库查询异常时降级使用缓存，不阻断支付。后台保存配置后即时生效，无需重启。
 
 ### 支付回调与关单语义
 
 - **回调金额强校验**：`HandleWechatCallback` 落账前将回调报文中的金额与支付单 `amount` 强制比对（注意微信侧单位为分、支付单为元），不一致直接拒绝并返回失败，防止篡改金额或串单；`HandleAlipayCallback` 同口径。
 - **支付宝回调验签（已实装）**：网关 `POST /api/v1/payments/callback/alipay` 为公开路由，验签在 payment 服务 `parseAlipayCallback` 内按加签方式分流——公钥模式用 `alipaysdk.RsaCheckV1` + `alipay_public_key`；证书模式用 `alipaysdk.RsaCheckV1WithCert`，通知带 `alipay_cert_sn` 时在 `alipay_public_cert`（命中则取证书公钥）与 `alipay_root_cert`（逐段比对序列号）中按序列号定位验签公钥，定位不到即拒绝；通知未带该字段时直接用 `alipay_public_cert` 里的公钥验签（官方从未承诺异步通知携带该字段，各语言 SDK 的通知验签入口也都不读它；2026-10-23 起 SDK v0.0.6 口径，信任锚仍是本地那份支付宝公钥证书，签名不出自该证书私钥照样拒绝）。随后依次校验通知身份 `app_id` 与本地配置一致、`trade_status` 仅限 `TRADE_SUCCESS`/`TRADE_FINISHED`、`total_amount` 解析成功且大于 0，任一项不过即拒绝处理。当前模式所需验签载体（公钥或证书）缺失时直接拒绝，不存在「未验签放行」的路径。
-- **支付宝加签方式（2026-10-20 新增）**：`alipay_mode`（23 号字段）决定必填口径与录入面，公钥模式需 `alipay_public_key`，证书模式需三证书；证书内容刻意义不进 `PayConfig`（保存是单行全量覆写，携带内容字段会把未提交的证书清空），只经 `UploadPayCert` 写入并以 `alipay_app_cert_uploaded`/`alipay_public_cert_uploaded`/`alipay_root_cert_uploaded`（24/25/26 号字段）回传状态。`UploadPayCert` 对支付宝四类内容先校验可解析性再落库，校验失败以 `codes.FailedPrecondition` 原样透传原因（`codes.Internal` 网关不透传原始消息）。
-- **支付宝渠道开关**：就绪判定为「当前加签方式的必填字段齐全且配置自检通过」（`alipay_ready` + `alipay_ready_message`，见 `PayConfig` 18/22 号字段），配置来源是数据库 `pay_config` 单行而非环境变量；就绪即可下单、回调与退款。当前仅实现手机网站支付（`alipay.trade.wap.pay`），小程序/公众号客户端渠道不支持，网关会明确拒绝。
+- **支付宝加签方式（2026-10-20 新增）**：`PayConfigRow.alipay_mode`（25 号字段）决定必填口径与录入面，公钥模式需 `alipay_public_key`，证书模式需三证书；证书内容刻意义不进 `PayConfigRow`（证书只经上传接口写入，保存请求不携带内容字段，避免未提交的证书被清空），只经 `UploadPayCert` 写入并以 `alipay_app_cert_uploaded`/`alipay_public_cert_uploaded`/`alipay_root_cert_uploaded`（28/29/30 号字段）回传状态。`UploadPayCert` 的 `config_id`（1 号字段）指定写入的配置行，对支付宝四类内容先校验可解析性再落库，校验失败以 `codes.FailedPrecondition` 原样透传原因（`codes.Internal` 网关不透传原始消息）。
+- **支付宝渠道开关**：就绪判定为「当前加签方式的必填字段齐全且配置自检通过」（`PayConfigRow.ready` + `ready_message`，见 41/42 号字段），配置来源是数据库 `pay_config` 多行；启用（enabled）且就绪即可被渠道绑定引用并下单、回调与退款。支持手机网站支付（h5 渠道）与支付宝小程序 `alipay.trade.create`（alimp 渠道，2026-10-30 起），其余客户端渠道的能力矩阵在渠道绑定保存时即拒绝。
 - **回调幂等**：置支付成功采用条件更新 `WHERE payment_no=? AND status=1`，重复回调与并发回调只生效一次；支付单/订单已处于终态时走终态兜底，不再重复推进订单状态。
 - **支付确认与订单同步解耦（2026-10-17）**：`handlePaySuccess` 拆分为两阶段——阶段一仅在数据库事务内落支付单成功状态（不依赖 order-service 可用性，事务内不再有跨服务 RPC）；阶段二在事务提交后调用 order 服务 `UpdateOrderStatus` 同步订单状态，失败重试 3 次仍不成功时记录 `[CRITICAL]` 日志（支付已确认但订单状态未同步，需人工介入排查），不再因跨服务 RPC 失败回滚已确认的支付，避免回调超时导致渠道重复通知与支付状态反复。
 - **ClosePayments**：订单取消（用户取消/后台取消）或调度器超时关单后，由 order 服务调用本 RPC，将该订单下全部 `status=1`（待支付）支付单条件更新为 `status=5 已关闭`；此后到达的迟到回调因状态不匹配被幂等拦截，防止"已关单却回调成功"造成资损。`ClosePaymentsReq` 按订单维度（`order_id`）批量关闭，无需逐单枚举支付单号。2026-10-21 起在本地关单前先逐单 `inspectForClose` 向渠道核实：渠道已收款 → 记挂账流水（`kind=3`/`result=9`）进异常队列且不改本地状态；`NOT_EXIST` → 无渠道交易可关，跳过；其余未收款 → 调渠道关单（支付宝 `/v3/alipay/trade/close`、微信 `Client.CloseOrder`），最后才做本地条件更新。现金/货到付款在 `queryChannelOrder` 返回「无渠道查询能力」，按查询失败跳过（不猜资金状态也不调渠道）。渠道语义不可颠倒：两侧都只允许关闭未支付交易，对已付款交易返回业务失败且不会自动退款。
@@ -450,12 +489,13 @@ message MarkPaymentPaidReq {
 - `with_raw` 由网关按权限点 `payment:raw:view` 决定（该权限点刻意不进社区管理员默认权限上限），服务层不判权限；`raw_body`/`headers` 仅失败与挂账场景入库，成功回调不落原文，`headers` 中签名与证书序列号入库前掩码。另注意支付宝的 `raw_body` 是**含 `sign` 原文**的通知参数（2026-10-23 放开掩码）：验签类故障只有拿到签名值才能离线复算待验签串，而买家账号等字段本就原文入库，凭据出口统一由该权限点守住（详见 07-基础设施/04-第三方支付对接.md「验签失败取证」）。
 - 网关错误映射约定：payment 服务需让运营看到具体原因的业务拒绝一律用 `bizerr.New(codes.InvalidArgument/NotFound/FailedPrecondition, msg)`，`TranslateGRPCError` 才对映射码透传原始文案；裸 `fmt.Errorf` 会落到 Internal/Unknown，前端只显示「服务器内部错误」。
 
-### 客户端渠道相关字段（2026-10-18 新增）
+### 渠道绑定与下单解析（2026-10-30 重构，替代原「客户端渠道相关字段」）
 
-- `PayConfig` 新增 `wechat_client_channels` / `alipay_client_channels`（repeated string）：各支付方式适用的客户端渠道 code 勾选（mp/gzh/app/h5），落库为 `pay_config.wechat_channels/alipay_channels` JSON；空=全部客户端渠道可用（存量兼容口径）。
-- `CreatePaymentReq` 新增 `app_id`（field 6）：微信下单使用的 AppID，由网关按客户端渠道解析后传入（小程序=渠道管理的 mp AppID；H5=mp AppID 或默认）；为空回落 pay_config 默认 AppID。wego `JSAPIPay/H5Pay` 支持请求级 AppID 覆盖，无需多客户端实例。
-- `CreatePaymentReq` 新增 `community_id`（field 7）与 `order_no`（field 8，2026-10-21）：payment 服务不查 orders 表，社区隔离与异常流水展示所依赖的订单事实只能在创建支付单时随订单一起带入并落库（`payments.community_id`/`order_no`，流水继承该快照）。
-- 付款码支付（2026-10-22）：`CreatePaymentReq.pay_type` 放行 5/6（只建待支付单不扣款、拒收 0 元、渠道就绪校验为微信/支付宝任一开启）；新增 `auth_code`（field 9）与 `PayByAuthCode` RPC——渠道按付款码前缀识别（微信 10-15→5，支付宝 25-30→6，占位单原地纠正），结果归一化 PAID/PAYING/FAILED，失败重试复用同一支付单（out_trade_no 不变），云闪付（62 开头）明确拒绝；退款/查单/关单/对账调度器/SyncPaymentFromChannel 全链路按 5→微信、6→支付宝映射（微信付款码关单走撤销 reverse）。
+- **绑定关系反转**：原 `PayConfig.wechat_client_channels`/`alipay_client_channels`（适用客户端渠道勾选，19/20 号字段）与 `enabled_channels`（1 号字段）已随单行配置一并删除。「哪个客户端渠道用哪些支付配置」改由 user 服务 `client_channels.pay_methods` 表达（有序数组：`cash` 或 `<platform>:<config_id>`，见 02-user.proto.md「客户端渠道管理」），渠道内置渠道集合为 h5/gzh/mp/alimp/android/ios/pos（删除 app）。
+- **下单解析链路**：网关按 `X-Channel-Code`（未携带按 h5 兑底）取渠道绑定，解析出 `pay_type` 对应平台的 `config_id`，经 `ListActivePayMethods` 的启用集校验后随 `CreatePaymentReq` 传入：`config_id`（10 号字段，pay_type 1/2 必填、付款码占位单 5/6 建单时免填——平台未知，扫码后由 `PayByAuthCode` 回填）与 `client_channel`（11 号字段，支付宝按它分流 alimp→`alipay.trade.create`、其余→手机网站支付）。
+- **付款码扣款**：`PayByAuthCodeReq` 新增 `config_id`（5 号字段）：网关按 pos 渠道绑定 + 付款码前缀识别平台后解析传入，服务端校验配置存在、启用、平台匹配。渠道按付款码前缀识别（微信 10-15→5，支付宝 25-30→6，占位单原地纠正），结果归一化 PAID/PAYING/FAILED，失败重试复用同一支付单（out_trade_no 不变），云闪付（62 开头）明确拒绝；退款/查单/关单/对账调度器/SyncPaymentFromChannel 全链路按 5→微信、6→支付宝映射（微信付款码关单走撤销 reverse）。
+- **C 端渲染**：`GET /payments/channels` 按渠道绑定 ∩ `ListActivePayMethods` 过滤返回，顺序即绑定顺序；运行时就绪门槛（如微信仅 mp/h5 放行、支付宝仅 h5/alimp 放行）由网关把控。
+- 历史：`CreatePaymentReq.app_id`（6 号字段）仍为微信下单 AppID（小程序=渠道管理的 mp AppID）；wego `JSAPIPay/H5Pay` 支持请求级 AppID 覆盖，无需多客户端实例。`community_id`（7 号字段）与 `order_no`（8 号字段）语义不变：payment 服务不查 orders 表，社区隔离与异常流水展示所依赖的订单事实只能在创建支付单时随订单带入并落库。
 
 ### 支付状态查询与收银台链接换取（2026-10-23 新增，免登录公开口径）
 

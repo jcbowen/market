@@ -569,11 +569,14 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 			authAdmin.GET("/settings/site", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetSiteSetting)
 			authAdmin.PUT("/settings/site", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateSiteSetting)
-			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentSetting)
-			authAdmin.PUT("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdatePaymentSetting)
+			// 支付配置（pay_config 多行制）：同平台可配多行，渠道按 "platform:id" 绑定使用哪一行
+			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentConfigs)
+			authAdmin.POST("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.SavePaymentConfig)
+			authAdmin.PUT("/settings/payment/:id", gwMiddleware.RequirePermission("settings:update"), adminHandler.SavePaymentConfig)
+			authAdmin.DELETE("/settings/payment/:id", gwMiddleware.RequirePermission("settings:update"), adminHandler.DeletePaymentConfig)
 			authAdmin.POST("/settings/payment/cert", gwMiddleware.RequirePermission("settings:update"), adminHandler.UploadPaymentCert)
 
-			// 渠道管理（系统空间）：客户端渠道主数据（凭证/启用/排序），登录与支付链路按渠道取用
+			// 渠道管理（系统空间）：客户端渠道主数据（凭证/启用/支付方式绑定），登录与支付链路按渠道取用
 			authAdmin.GET("/settings/channels", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetClientChannels)
 			authAdmin.PUT("/settings/channels/:id", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateClientChannel)
 

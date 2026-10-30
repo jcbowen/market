@@ -3,7 +3,8 @@
     <n-spin :show="loading">
       <n-alert type="info" style="margin-bottom: 16px;">
         客户端渠道是各端的访问凭证（AppID/AppSecret）与启用开关：小程序登录、公众号 OAuth、按端支付下单均取用此处配置。
-        启用前需先点击卡片完成凭证配置；配置保存后即时生效，无需重启服务。
+        每个渠道可绑定启用的支付方式（含货到付款），绑定顺序即该端收银台的展示顺序；
+        凭证与绑定保存后即时生效，无需重启服务。
       </n-alert>
 
       <div class="channel-cards">
@@ -11,7 +12,7 @@
           v-for="ch in channels"
           :key="ch.code"
           class="channel-card"
-          :class="{ inactive: !ch.enabled }"
+          :class="{ inactive: !ch.enabled, disabled: isDisabledChannel(ch.code) }"
           @click="openConfig(ch)"
         >
           <div class="card-main">
@@ -20,22 +21,36 @@
               <n-tag size="small" :bordered="false" :type="codeTagType(ch.code)">{{ codeLabel(ch.code) }}</n-tag>
             </div>
             <div class="card-status">
-              <span v-if="ch.code === 'h5'" class="status-text ok">无需配置凭证</span>
+              <span v-if="isDisabledChannel(ch.code)" class="status-text muted">暂不支持</span>
+              <span v-else-if="ch.code === 'h5' || ch.code === 'pos'" class="status-text ok">无需配置凭证</span>
               <span v-else class="status-text" :class="ch.configured ? 'ok' : 'warn'">
                 {{ ch.configured ? '已配置' : '未配置' }}
               </span>
             </div>
             <div class="card-desc">{{ channelDesc(ch.code) }}</div>
+            <div class="card-paymethods">
+              <n-tag
+                v-for="m in ch.pay_methods"
+                :key="m"
+                size="tiny"
+                :bordered="false"
+                :disabled="!ch.enabled"
+                class="pm-tag"
+              >
+                {{ payMethodLabel(m) }}
+              </n-tag>
+              <span v-if="!ch.pay_methods?.length" class="pm-empty">未绑定支付方式</span>
+            </div>
             <div class="card-ops">
               <span class="switch-holder" @click.stop>
                 <n-switch
                   size="small"
                   :value="ch.enabled"
-                  :disabled="ch.code !== 'h5' && !ch.configured && !ch.enabled"
+                  :disabled="isDisabledChannel(ch.code) || (ch.code !== 'h5' && ch.code !== 'pos' && !ch.configured && !ch.enabled)"
                   @update:value="(on: boolean) => onToggle(ch, on)"
                 />
               </span>
-              <n-button quaternary size="tiny" @click.stop="openConfig(ch)">配置</n-button>
+              <n-button quaternary size="tiny" :disabled="isDisabledChannel(ch.code)" @click.stop="openConfig(ch)">配置</n-button>
             </div>
           </div>
 
@@ -61,8 +76,8 @@
         </div>
       </div>
       <n-text depth="3" class="form-hint">
-        支付配置中可按渠道勾选各支付方式的适用范围；H5 扫码入口基于站点设置生效域名（{{ h5BaseUrl || '未配置' }}）生成，
-        小程序码与公众号二维码需在微信公众平台获取。
+        H5 扫码入口基于站点设置生效域名（{{ h5BaseUrl || '未配置' }}）生成，小程序码与公众号二维码需在对应开放平台获取。
+        支付方式与支付配置在「支付配置」页维护，此处仅绑定引用。
       </n-text>
 
       <!-- H5 二维码放大弹窗 -->
@@ -78,20 +93,25 @@
         </n-space>
       </n-modal>
 
-      <n-modal v-model:show="showConfigModal" preset="card" :title="`配置 - ${modalChannel?.name ?? ''}`" style="width: 560px; max-width: 92vw;">
+      <n-modal v-model:show="showConfigModal" preset="card" :title="`配置 - ${modalChannel?.name ?? ''}`" style="width: 600px; max-width: 92vw;">
         <template v-if="modalChannel">
           <n-alert v-if="modalChannel.code === 'h5'" type="success" style="margin-bottom: 16px;">
-            浏览器 H5 渠道无需配置凭证，仅需控制启用状态。
+            浏览器 H5 渠道无需配置凭证，仅需控制启用状态与支付方式绑定。
+          </n-alert>
+          <n-alert v-else-if="modalChannel.code === 'alimp'" type="success" style="margin-bottom: 16px;">
+            支付宝小程序仅需配置 AppID：登录为手机号表单登录，支付的服务端签名凭证复用支付配置，无需在此录入密钥。
           </n-alert>
 
           <n-form label-placement="left" label-width="110">
             <n-form-item label="渠道名称">
               <n-input v-model:value="modalChannel.name" placeholder="显示名称" />
             </n-form-item>
-            <template v-if="modalChannel.code !== 'h5'">
+            <template v-if="needsAppID(modalChannel.code)">
               <n-form-item label="AppID">
-                <n-input v-model:value="modalChannel.app_id" placeholder="微信 AppID" />
+                <n-input v-model:value="modalChannel.app_id" :placeholder="appIDPlaceholder(modalChannel.code)" />
               </n-form-item>
+            </template>
+            <template v-if="needsAppSecret(modalChannel.code)">
               <n-form-item label="AppSecret">
                 <n-input
                   v-model:value="modalChannel.app_secret"
@@ -101,11 +121,43 @@
                 />
               </n-form-item>
             </template>
-            <n-form-item label="排序">
-              <n-input-number v-model:value="modalChannel.sort" :min="0" style="width: 160px;" />
-            </n-form-item>
             <n-form-item label="启用渠道">
-              <n-switch v-model:value="modalChannel.enabled" :disabled="modalChannel.code !== 'h5' && !hasCredential && !modalChannel.enabled" />
+              <n-switch
+                v-model:value="modalChannel.enabled"
+                :disabled="!hasCredential && !modalChannel.enabled"
+              />
+            </n-form-item>
+
+            <!-- 支付方式绑定：勾选 + 排序，顺序即该端收银台展示顺序 -->
+            <n-form-item label="支付方式">
+              <div class="paymethod-box">
+                <div v-if="modalChannel.pay_methods.length === 0" class="pm-none">
+                  未绑定任何支付方式，该端收银台将为空。请从下方「添加支付方式」中选择。
+                </div>
+                <div v-for="(m, idx) in modalChannel.pay_methods" :key="m" class="pm-row">
+                  <n-tag size="small" :bordered="false" :type="m === 'cash' ? 'default' : pmPlatform(m) === 'wechat' ? 'success' : 'info'">
+                    {{ payMethodLabel(m) }}
+                  </n-tag>
+                  <n-text v-if="m !== 'cash' && !payConfigReady(m)" depth="3" class="pm-warn">配置未就绪，收银台将隐藏</n-text>
+                  <span class="pm-spacer" />
+                  <n-button quaternary size="tiny" :disabled="idx === 0" @click="movePayMethod(idx, -1)">↑</n-button>
+                  <n-button quaternary size="tiny" :disabled="idx === modalChannel.pay_methods.length - 1" @click="movePayMethod(idx, 1)">↓</n-button>
+                  <n-button quaternary size="tiny" type="error" @click="removePayMethod(idx)">移除</n-button>
+                </div>
+                <n-select
+                  :value="null"
+                  placeholder="＋添加支付方式"
+                  clearable
+                  filterable
+                  :options="addablePayMethods"
+                  :disabled="addablePayMethods.length === 0"
+                  @update:value="(v: string | null) => v && addPayMethod(v)"
+                />
+                <n-text depth="3" class="pm-hint">
+                  仅列出与该渠道平台兼容、已启用且就绪的支付配置；绑定顺序即收银台展示顺序，
+                  保存后写入渠道并在该端支付链路即时生效。
+                </n-text>
+              </div>
             </n-form-item>
           </n-form>
         </template>
@@ -136,15 +188,14 @@ import { useRouter } from 'vue-router'
 import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useMessage } from 'naive-ui'
 import QRCode from 'qrcode'
-import { getClientChannels, getSiteSetting, updateClientChannel } from '@/api/admin'
-import type { ClientChannel } from '@/api/admin'
+import { getClientChannels, getSiteSetting, getPaymentConfigs, updateClientChannel } from '@/api/admin'
+import type { ClientChannel, PayConfigRow } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 
 /**
  * 渠道管理页面
- * 左右布局卡片：左侧维护渠道凭证与启用状态，右侧统一「扫码访问」区；
- * H5 基于站点设置生效域名纯前端生成站点二维码，小程序/公众号/App 展示差异化说明统一占位；
- * 凭证保存后即时生效（小程序登录与支付下单按渠道现取现用）
+ * 卡片维护渠道凭证、启用状态与支付方式绑定；右侧统一「扫码访问」区；
+ * 凭证与绑定保存后即时生效（小程序登录与支付下单按渠道现取现用）
  */
 const message = useMessage()
 const authStore = useAuthStore()
@@ -153,6 +204,8 @@ const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const channels = ref<ClientChannel[]>([])
+/** 支付配置行列表（支付方式绑定的候选数据源） */
+const payConfigs = ref<PayConfigRow[]>([])
 
 const showConfigModal = ref(false)
 const modalChannel = ref<ClientChannel | null>(null)
@@ -170,6 +223,21 @@ const secretPlaceholder = computed(() =>
   modalChannel.value?.configured ? '已配置，留空则保留原值' : '微信 AppSecret',
 )
 
+/** 暂不支持渠道（服务端 fixedOrder 之外的禁用态展示）：不可配置、不可启用 */
+function isDisabledChannel(code: string): boolean {
+  return code === 'android' || code === 'ios'
+}
+
+/** 渠道是否需要配置 AppID（h5/pos 无凭证；android/ios 禁用态不可配置） */
+function needsAppID(code: string): boolean {
+  return !['h5', 'pos', 'android', 'ios'].includes(code)
+}
+
+/** 渠道是否需要配置 AppSecret（仅微信系渠道；alimp 签名私钥复用支付配置） */
+function needsAppSecret(code: string): boolean {
+  return code === 'mp' || code === 'gzh'
+}
+
 /**
  * 弹窗内凭证是否完整（控制启用开关的可用性）
  * Secret 不回传明文：以 configured 标志判断存量凭证，或本次弹窗内新输入了完整凭证
@@ -177,7 +245,8 @@ const secretPlaceholder = computed(() =>
 const hasCredential = computed(() => {
   const ch = modalChannel.value
   if (!ch) return false
-  if (ch.code === 'h5') return true
+  if (ch.code === 'h5' || ch.code === 'pos') return true
+  if (ch.code === 'alimp') return ch.configured || Boolean(ch.app_id)
   return ch.configured || Boolean(ch.app_id && ch.app_secret)
 })
 
@@ -187,10 +256,13 @@ const hasCredential = computed(() => {
  */
 function codeLabel(code: string): string {
   const map: Record<string, string> = {
-    mp: '小程序',
-    gzh: '公众号',
-    app: 'App',
     h5: '浏览器',
+    gzh: '公众号',
+    mp: '小程序',
+    alimp: '支付宝小程序',
+    android: '安卓App',
+    ios: 'iOS App',
+    pos: '收银台',
   }
   return map[code] ?? code
 }
@@ -199,12 +271,14 @@ function codeLabel(code: string): string {
  * 渠道 code 标签配色
  * @param code 渠道标识
  */
-function codeTagType(code: string): 'default' | 'info' | 'warning' {
+function codeTagType(code: string): 'default' | 'info' | 'success' | 'warning' {
   switch (code) {
     case 'mp':
-      return 'info'
     case 'gzh':
-    case 'app':
+      return 'info'
+    case 'alimp':
+      return 'success'
+    case 'pos':
       return 'warning'
     default:
       return 'default'
@@ -212,17 +286,29 @@ function codeTagType(code: string): 'default' | 'info' | 'warning' {
 }
 
 /**
- * 渠道一句话用途说明（卡片内展示，替代原底部汇总文案）
+ * 渠道一句话用途说明（卡片内展示）
  * @param code 渠道标识
  */
 function channelDesc(code: string): string {
   const map: Record<string, string> = {
-    mp: 'Code2Session 登录 + 小程序内 JSAPI 支付',
-    gzh: '网页授权 + 微信内支付（授权链路暂未开放）',
-    app: '开放平台 App 支付（暂未开放）',
     h5: '微信外浏览器访问，无需凭证',
+    gzh: '网页授权 + 微信内 JSAPI 支付（授权链路暂未开放）',
+    mp: 'Code2Session 登录 + 小程序内 JSAPI 支付',
+    alimp: '手机号登录 + 小程序内支付宝支付，仅需 AppID',
+    android: '开放平台安卓应用，暂不支持',
+    ios: '开放平台 iOS 应用，暂不支持',
+    pos: '门店收银台（独立应用），付款码/现金收款',
   }
   return map[code] ?? ''
+}
+
+/**
+ * AppID 输入框占位提示
+ * @param code 渠道标识
+ */
+function appIDPlaceholder(code: string): string {
+  if (code === 'alimp') return '支付宝开放平台小程序 AppID'
+  return '微信 AppID'
 }
 
 /**
@@ -237,26 +323,83 @@ function scanMode(code: string): ScanMode {
 }
 
 /**
- * 扫码区说明文案（小程序/公众号给出获取指引，App 明确无需扫码）
+ * 扫码区说明文案（各渠道给出获取指引，App 明确无需扫码）
  * @param code 渠道标识
  */
 function scanHint(code: string): string {
   const map: Record<string, string> = {
-    mp: '小程序码请在微信公众平台下载后分享使用',
     gzh: '公众号二维码请在公众平台「账号详情」页获取',
-    app: 'App 通过应用商店分发安装，无需扫码',
+    mp: '小程序码请在微信公众平台下载后分享使用',
+    alimp: '支付宝小程序码请在开放平台获取',
+    android: 'App 通过应用商店分发安装，无需扫码',
+    ios: 'App 通过应用商店分发安装，无需扫码',
+    pos: '收银台为独立部署的后台应用，无需扫码',
   }
   return map[code] ?? ''
 }
 
 /**
- * 加载渠道列表
+ * 绑定条目展示名
+ * @param entry "cash" 或 "<platform>:<config_id>"
+ */
+function payMethodLabel(entry: string): string {
+  if (entry === 'cash') return '货到付款'
+  const [platform, id] = entry.split(':')
+  const row = payConfigs.value.find((r) => String(r.id) === id && r.platform === platform)
+  return row ? row.name : entry
+}
+
+/** 绑定条目的平台标识（cash 返回空串） */
+function pmPlatform(entry: string): string {
+  return entry === 'cash' ? '' : entry.split(':')[0]
+}
+
+/** 绑定条目引用的配置是否就绪（cash 恒就绪；配置不存在按未就绪处理） */
+function payConfigReady(entry: string): boolean {
+  if (entry === 'cash') return true
+  const [platform, id] = entry.split(':')
+  const row = payConfigs.value.find((r) => String(r.id) === id && r.platform === platform)
+  return !!row?.ready
+}
+
+/**
+ * 渠道与支付平台的兼容矩阵（与服务端 validatePayMethods 一致）
+ */
+const PAY_COMPAT: Record<string, string[]> = {
+  wechat: ['h5', 'gzh', 'mp', 'pos'],
+  alipay: ['h5', 'alimp', 'pos'],
+}
+
+/**
+ * 「＋添加支付方式」候选：内置现金（未绑定时）+ 平台兼容且启用就绪的支付配置（未绑定时）
+ */
+const addablePayMethods = computed(() => {
+  const ch = modalChannel.value
+  if (!ch) return []
+  const options: { label: string; value: string }[] = []
+  if (!ch.pay_methods.includes('cash')) {
+    options.push({ label: '货到付款（内置）', value: 'cash' })
+  }
+  for (const row of payConfigs.value) {
+    if (!row.enabled || !row.ready) continue
+    if (!(PAY_COMPAT[row.platform] ?? []).includes(ch.code)) continue
+    const entry = `${row.platform}:${row.id}`
+    if (ch.pay_methods.includes(entry)) continue
+    options.push({ label: row.name, value: entry })
+  }
+  return options
+})
+
+/**
+ * 加载渠道列表与支付配置列表（绑定候选数据源）
  */
 async function loadChannels() {
   loading.value = true
   try {
     const res = await getClientChannels()
     channels.value = res.data.data.channels
+    const cfgRes = await getPaymentConfigs()
+    payConfigs.value = cfgRes.data.data.list
   } finally {
     loading.value = false
   }
@@ -319,8 +462,44 @@ async function copyH5Link() {
  * @param ch 渠道项
  */
 function openConfig(ch: ClientChannel) {
-  modalChannel.value = { ...ch }
+  if (isDisabledChannel(ch.code)) return
+  modalChannel.value = { ...ch, pay_methods: [...(ch.pay_methods ?? [])] }
   showConfigModal.value = true
+}
+
+/**
+ * 绑定列表上移/下移（调整收银台展示顺序，保存后生效）
+ * @param idx 条目下标
+ * @param direction -1 上移，1 下移
+ */
+function movePayMethod(idx: number, direction: -1 | 1) {
+  const ch = modalChannel.value
+  if (!ch) return
+  const next = idx + direction
+  if (next < 0 || next >= ch.pay_methods.length) return
+  const list = [...ch.pay_methods]
+  ;[list[idx], list[next]] = [list[next], list[idx]]
+  ch.pay_methods = list
+}
+
+/**
+ * 移除绑定条目
+ * @param idx 条目下标
+ */
+function removePayMethod(idx: number) {
+  const ch = modalChannel.value
+  if (!ch) return
+  ch.pay_methods = ch.pay_methods.filter((_, i) => i !== idx)
+}
+
+/**
+ * 追加绑定条目（选择器值变化触发）
+ * @param entry "cash" 或 "<platform>:<config_id>"
+ */
+function addPayMethod(entry: string) {
+  const ch = modalChannel.value
+  if (!ch || ch.pay_methods.includes(entry)) return
+  ch.pay_methods = [...ch.pay_methods, entry]
 }
 
 /**
@@ -338,7 +517,7 @@ async function onToggle(ch: ClientChannel, on: boolean) {
       app_id: ch.app_id,
       app_secret: '',
       enabled: ch.enabled,
-      sort: ch.sort,
+      pay_methods: ch.pay_methods,
     })
     message.success('渠道状态已保存')
     await loadChannels()
@@ -351,7 +530,7 @@ async function onToggle(ch: ClientChannel, on: boolean) {
 }
 
 /**
- * 弹窗内保存渠道配置
+ * 弹窗内保存渠道配置（凭证 + 支付方式绑定全量覆盖）
  */
 async function saveChannel() {
   if (!modalChannel.value) {
@@ -371,7 +550,7 @@ async function saveChannel() {
       // Secret 留空时服务端保留原值，避免未重新输入时清空
       app_secret: ch.app_secret,
       enabled: ch.enabled,
-      sort: ch.sort,
+      pay_methods: ch.pay_methods,
     })
     message.success('渠道配置已保存')
     await loadChannels()
@@ -382,7 +561,7 @@ async function saveChannel() {
 }
 
 /**
- * 刷新页面数据：渠道列表 + 站点生效域名（keep-alive 切回时域名可能在站点设置中被更新）
+ * 刷新页面数据：渠道列表 + 支付配置 + 站点生效域名（keep-alive 切回时可能已在别处更新）
  */
 function refreshAll() {
   loadChannels()
@@ -424,6 +603,21 @@ refreshOnActivated(refreshAll)
       color: #999;
     }
   }
+
+  // 暂不支持渠道（android/ios）：禁用态，不可点击配置
+  &.disabled {
+    background: #fafafa;
+    cursor: not-allowed;
+
+    .card-name {
+      color: #aaa;
+    }
+
+    &:hover {
+      border-color: #eee;
+      box-shadow: none;
+    }
+  }
 }
 
 .card-main {
@@ -463,13 +657,34 @@ refreshOnActivated(refreshAll)
   &.warn {
     color: #f0a020;
   }
+
+  &.muted {
+    color: #999;
+  }
 }
 
 .card-desc {
-  flex: 1;
   font-size: 12px;
   line-height: 1.6;
   color: #999;
+}
+
+.card-paymethods {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+
+  .pm-tag {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pm-empty {
+    font-size: 12px;
+    color: #bbb;
+  }
 }
 
 .card-ops {
@@ -485,6 +700,46 @@ refreshOnActivated(refreshAll)
   .n-button {
     padding: 0 6px;
   }
+}
+
+/* 支付方式绑定区块：有序条目列表 + 添加选择器 */
+.paymethod-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.pm-none {
+  padding: 8px 10px;
+  border: 1px dashed #e5e5e5;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #999;
+  line-height: 1.6;
+}
+
+.pm-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  .pm-spacer {
+    flex: 1;
+  }
+
+  .pm-warn {
+    font-size: 12px;
+  }
+
+  .n-button {
+    padding: 0 6px;
+  }
+}
+
+.pm-hint {
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 // 右侧扫码访问区：固定宽度统一占位，H5 出二维码，其余渠道展示说明文案

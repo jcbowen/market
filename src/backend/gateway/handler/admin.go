@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -17,7 +18,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
-	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/jwt"
@@ -27,7 +27,6 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
-	"github.com/jcbowen/market/src/backend/gateway/brand"
 	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
 )
 
@@ -5778,29 +5777,129 @@ func orderStatusText(status, deliveryType int32) string {
 	}
 }
 
-// PaymentSetting 支付配置视图对象
-// 同时用于 GET 响应与 PUT 请求；配置持久化在数据库 pay_config 表，由 payment 服务管理
-type PaymentSetting struct {
-	EnabledChannels    []string             `json:"enabled_channels"`
-	Wechat             config.WechatConfig  `json:"wechat"`
-	Alipay             config.AlipayConfig  `json:"alipay"`
-	WechatPaymentReady bool                 `json:"wechat_payment_ready"`
-	AlipayReady        bool                 `json:"alipay_ready"`
-	WechatCertUploaded bool                 `json:"wechat_cert_uploaded"`
-	AlipayCertUploaded bool                 `json:"alipay_cert_uploaded"`
-	UpdatedAt          string               `json:"updated_at"`
-	SuggestedURLs      PaymentSuggestedURLs `json:"suggested_urls"`
-	// 适用客户端渠道勾选（mp/gzh/app/h5；空数组=全部客户端渠道可用，存量兼容口径）
-	WechatClientChannels []string `json:"wechat_client_channels"`
-	AlipayClientChannels []string `json:"alipay_client_channels"`
-	// AlipayReadyMessage 支付宝配置自检失败原因，空表示自检通过（就绪=字段齐全且自检通过）；仅出参
-	AlipayReadyMessage string `json:"alipay_ready_message"`
-	// WechatApiV3Configured V3 密钥是否已配置：密钥明文不回传，前端据此展示「已配置」；仅出参
-	WechatApiV3Configured bool `json:"wechat_api_v3_configured"`
-	// 支付宝证书模式三证书上传状态：证书内容不回传，前端仅据此展示「已上传」并可重新上传；仅出参
+// PayConfigView 支付配置视图对象（pay_config 多行制）
+// GET 响应与 POST/PUT 请求共用；同平台可配置多行（如「支付宝-H5」「支付宝-小程序」），
+// 渠道按 "platform:id" 绑定使用哪一行。私钥/V3 密钥等敏感字段不回传明文，
+// 保存时空值由 payment 侧保留原值
+type PayConfigView struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name" binding:"required"`
+	Platform string `json:"platform" binding:"required,oneof=wechat alipay"`
+	Enabled  bool   `json:"enabled"`
+
+	// 微信支付 V3 凭证（platform=wechat 时取用）
+	WechatAppID        string `json:"wechat_app_id"`
+	WechatMchID        string `json:"wechat_mch_id"`
+	WechatAPIV3Key     string `json:"wechat_api_v3_key"`
+	WechatCertSerialNo string `json:"wechat_cert_serial_no"`
+	// 回调地址不接受前端入参：一律按部署域名派生后落库（只读展示）
+	WechatNotifyURL string `json:"wechat_notify_url"`
+
+	// 支付宝凭证（platform=alipay 时取用）
+	AlipayAppID      string `json:"alipay_app_id"`
+	AlipayMode       string `json:"alipay_mode"`
+	AlipayPublicKey  string `json:"alipay_public_key"`
+	AlipayNotifyURL  string `json:"alipay_notify_url"`
+	AlipayReturnURL  string `json:"alipay_return_url"`
+	AlipayGatewayURL string `json:"alipay_gateway_url"`
+
+	// 上传状态：证书/私钥内容不回传，前端仅据此展示「已上传」并可重新上传；仅出参
+	WechatCertUploaded       bool `json:"wechat_cert_uploaded"`
+	AlipayCertUploaded       bool `json:"alipay_cert_uploaded"`
 	AlipayAppCertUploaded    bool `json:"alipay_app_cert_uploaded"`
 	AlipayPublicCertUploaded bool `json:"alipay_public_cert_uploaded"`
 	AlipayRootCertUploaded   bool `json:"alipay_root_cert_uploaded"`
+
+	// WechatAPIV3Configured V3 密钥是否已配置：密钥明文不回传，前端据此展示「已配置」；仅出参
+	WechatAPIV3Configured bool `json:"wechat_api_v3_configured"`
+
+	// 就绪状态（仅出参）：启用 + 当前平台必填字段齐全（支付宝另要求密钥离线自检通过）
+	Ready        bool   `json:"ready"`
+	ReadyMessage string `json:"ready_message"`
+	// UpdatedAt 版本号：保存时回传，payment 侧乐观锁校验
+	UpdatedAt string `json:"updated_at"`
+}
+
+// payConfigViewOf 将 proto 支付配置行转换为后台视图对象（敏感字段脱敏）
+//
+// 参数：
+//   - row: proto 支付配置行，可为 nil
+//
+// 返回值：
+//   - PayConfigView: 视图对象
+func payConfigViewOf(row *payment.PayConfigRow) PayConfigView {
+	if row == nil {
+		return PayConfigView{}
+	}
+	return PayConfigView{
+		ID:       row.Id,
+		Name:     row.Name,
+		Platform: row.Platform,
+		Enabled:  row.Enabled,
+
+		WechatAppID:        row.WechatAppId,
+		WechatMchID:        row.WechatMchId,
+		WechatCertSerialNo: row.WechatCertSerialNo,
+		WechatNotifyURL:    row.WechatNotifyUrl,
+
+		AlipayAppID:      row.AlipayAppId,
+		AlipayMode:       row.AlipayMode,
+		AlipayPublicKey:  row.AlipayPublicKey,
+		AlipayNotifyURL:  row.AlipayNotifyUrl,
+		AlipayReturnURL:  row.AlipayReturnUrl,
+		AlipayGatewayURL: row.AlipayGatewayUrl,
+
+		WechatCertUploaded:       row.WechatCertUploaded,
+		AlipayCertUploaded:       row.AlipayCertUploaded,
+		AlipayAppCertUploaded:    row.AlipayAppCertUploaded,
+		AlipayPublicCertUploaded: row.AlipayPublicCertUploaded,
+		AlipayRootCertUploaded:   row.AlipayRootCertUploaded,
+
+		WechatAPIV3Configured: row.WechatApiV3Key != "",
+
+		Ready:        row.Ready,
+		ReadyMessage: row.ReadyMessage,
+		UpdatedAt:    row.UpdatedAt,
+	}
+}
+
+// payConfigRowOf 将后台视图对象转换为 proto 支付配置行
+// 私钥/V3 密钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值；
+// 回调地址一律按部署域名派生，不接受前端入参
+//
+// 参数：
+//   - v: 视图对象
+//   - wechatNotify/alipayNotify/alipayReturn: 按部署域名派生的回调地址
+//
+// 返回值：
+//   - *payment.PayConfigRow: proto 支付配置行
+func payConfigRowOf(v PayConfigView, wechatNotify, alipayNotify, alipayReturn string) *payment.PayConfigRow {
+	return &payment.PayConfigRow{
+		Id:       v.ID,
+		Name:     v.Name,
+		Platform: v.Platform,
+		Enabled:  v.Enabled,
+
+		WechatAppId:        v.WechatAppID,
+		WechatAppSecret:    "",
+		WechatMchId:        v.WechatMchID,
+		WechatApiV3Key:     v.WechatAPIV3Key,
+		WechatCertSerialNo: v.WechatCertSerialNo,
+		WechatPrivateKey:   "",
+		WechatNotifyUrl:    wechatNotify,
+
+		AlipayAppId:      v.AlipayAppID,
+		AlipayPrivateKey: "",
+		AlipayPublicKey:  v.AlipayPublicKey,
+		// 加签方式随表单整行覆写（证书内容不在本接口维护，由上传接口单独写入）
+		AlipayMode:       v.AlipayMode,
+		AlipayNotifyUrl:  alipayNotify,
+		AlipayReturnUrl:  alipayReturn,
+		AlipayGatewayUrl: v.AlipayGatewayURL,
+
+		// 携带前端读取时的版本号，库中版本已变化时 payment 侧拒绝整行覆写
+		UpdatedAt: v.UpdatedAt,
+	}
 }
 
 // PaymentSuggestedURLs 回调 URL 配置引导
@@ -5809,86 +5908,6 @@ type PaymentSuggestedURLs struct {
 	BaseURL         string `json:"base_url"`
 	WechatNotifyURL string `json:"wechat_notify_url"`
 	AlipayNotifyURL string `json:"alipay_notify_url"`
-}
-
-// wechatPayAppIDFromChannel 获取微信支付默认 AppID（渠道管理 mp 渠道为唯一来源）
-// AppID 属客户端身份凭证，统一在「渠道管理」维护；pay_config 仅保存派生值供
-// wego 客户端构建与存量口径（未携带 X-Channel-Code 的旧客户端）兜底
-//
-// 参数：
-//   - ctx: 上下文
-//
-// 返回值：
-//   - string: mp 渠道 AppID，渠道未配置或查询失败时为空串
-//   - bool: 渠道 AppID 是否可用
-func (h *AdminHandler) wechatPayAppIDFromChannel(ctx context.Context) (string, bool) {
-	chResp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.MP})
-	if err != nil || chResp == nil || chResp.AppId == "" {
-		return "", false
-	}
-	return chResp.AppId, true
-}
-
-// writeBackPayConfig 以「读取到的配置为底 + 局部覆写」回写支付配置并返回最新配置
-// 回写携带读取时的版本号，并发下若配置已被他人改写则放弃本次回写（仅记日志，下一次读取重新同步）；
-// 回写成功后必须重新读取配置，使返回给前端的 updated_at 与库中版本一致，
-// 否则前端下一次保存会被乐观锁误判为冲突
-// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
-//
-// 参数：
-//   - ctx: 上下文
-//   - resp: 本次读取到的支付配置
-//   - apply: 需要覆写的字段，nil 表示仅原样回写
-//
-// 返回值：
-//   - *payment.PayConfig: 最新配置，回写或重读失败时原样返回入参
-func (h *AdminHandler) writeBackPayConfig(ctx context.Context, resp *payment.PayConfig, apply func(*payment.PayConfig)) *payment.PayConfig {
-	payload := &payment.PayConfig{
-		EnabledChannels:    resp.EnabledChannels,
-		WechatAppId:        resp.WechatAppId,
-		WechatAppSecret:    resp.WechatAppSecret,
-		WechatMchId:        resp.WechatMchId,
-		WechatApiV3Key:     resp.WechatApiV3Key,
-		WechatCertSerialNo: resp.WechatCertSerialNo,
-		WechatNotifyUrl:    resp.WechatNotifyUrl,
-		AlipayAppId:        resp.AlipayAppId,
-		AlipayPublicKey:    resp.AlipayPublicKey,
-		AlipayNotifyUrl:    resp.AlipayNotifyUrl,
-		AlipayReturnUrl:    resp.AlipayReturnUrl,
-		AlipayGatewayUrl:   resp.AlipayGatewayUrl,
-		// 加签方式原样回写，避免每次回写都把证书模式重置为公钥模式
-		AlipayMode:           resp.AlipayMode,
-		WechatClientChannels: resp.WechatClientChannels,
-		AlipayClientChannels: resp.AlipayClientChannels,
-		UpdatedAt:            resp.UpdatedAt,
-	}
-	if apply != nil {
-		apply(payload)
-	}
-
-	if _, err := h.paymentClient.SavePayConfig(ctx, payload); err != nil {
-		log.Printf("回写支付配置失败: %v", err)
-		return resp
-	}
-	fresh, err := h.paymentClient.GetPayConfig(ctx, &payment.GetPayConfigReq{})
-	if err != nil {
-		log.Printf("回写支付配置后重读失败: %v", err)
-		return resp
-	}
-	return fresh
-}
-
-// syncWechatPayAppID 将渠道管理的微信 AppID 回写到支付配置并返回最新配置
-//
-// 参数：
-//   - ctx: 上下文
-//   - resp: 本次读取到的支付配置
-//   - appID: 渠道管理侧的微信 AppID
-//
-// 返回值：
-//   - *payment.PayConfig: 最新配置
-func (h *AdminHandler) syncWechatPayAppID(ctx context.Context, resp *payment.PayConfig, appID string) *payment.PayConfig {
-	return h.writeBackPayConfig(ctx, resp, func(p *payment.PayConfig) { p.WechatAppId = appID })
 }
 
 // payCallbackURLsFor 按部署域名派生支付回调地址
@@ -5904,154 +5923,129 @@ func payCallbackURLsFor(base string) (string, string, string) {
 	return base + wechatPayCallbackPath, base + alipayPayCallbackPath, base + h5PayResultHashURL
 }
 
-// GetPaymentSetting 获取支付配置
-// 从数据库读取支付渠道开关与微信/支付宝配置，并返回根据当前请求域名生成的回调 URL 建议
-// 微信 AppID 以渠道管理 mp 渠道实时值为准，就绪状态按「支付凭证齐全 + AppID 可用」重算
+// GetPaymentConfigs 获取支付配置列表（多行制）
+// 返回全部配置行（含停用），附按部署域名派生的回调地址建议供前端只读展示
+//
+// 接口: GET /api/v1/admin/settings/payment
 //
 // 参数：
 //   - c: gin 上下文
-func (h *AdminHandler) GetPaymentSetting(c *gin.Context) {
-	resp, err := h.paymentClient.GetPayConfig(c.Request.Context(), &payment.GetPayConfigReq{})
+func (h *AdminHandler) GetPaymentConfigs(c *gin.Context) {
+	resp, err := h.paymentClient.ListPayConfigs(c.Request.Context(), &payment.ListPayConfigsReq{})
 	if err != nil {
 		response.GRPCError(c, err)
 		return
 	}
 
-	wechatAppID := resp.WechatAppId
-	if appID, ok := h.wechatPayAppIDFromChannel(c.Request.Context()); ok {
-		wechatAppID = appID
+	list := make([]PayConfigView, 0, len(resp.List))
+	for _, row := range resp.List {
+		list = append(list, payConfigViewOf(row))
 	}
-	// 渠道 AppID 与 pay_config 派生值不一致（渠道侧更新过）时回写同步，
-	// 保证 payment 服务按最新 AppID 构建微信支付客户端；同步失败不阻断读取
-	if wechatAppID != resp.WechatAppId {
-		resp = h.syncWechatPayAppID(c.Request.Context(), resp, wechatAppID)
-	}
-
-	// 回调地址一律由部署域名派生：站点设置已配置域名（或 SITE_BASE_URL 兜底）且库中值与派生值不一致时回写自愈；
-	// 两者均未配置时只按当前请求展示、不写库，避免把临时访问到的 host 固化进配置
-	base := platformBaseURL(c)
-	wechatNotify, alipayNotify, alipayReturn := payCallbackURLsFor(base)
-	if snap := brand.Get(c.Request.Context()); snap.BaseURL != "" &&
-		(resp.WechatNotifyUrl != wechatNotify || resp.AlipayNotifyUrl != alipayNotify || resp.AlipayReturnUrl != alipayReturn) {
-		resp = h.writeBackPayConfig(c.Request.Context(), resp, func(p *payment.PayConfig) {
-			p.WechatNotifyUrl = wechatNotify
-			p.AlipayNotifyUrl = alipayNotify
-			p.AlipayReturnUrl = alipayReturn
-		})
-	}
-	// AppID 来源改为渠道管理后，就绪判定在网关重算，不再依赖 payment 服务基于 pay_config.AppID 的口径
-	wechatReady := wechatAppID != "" &&
-		resp.WechatMchId != "" &&
-		resp.WechatApiV3Key != "" &&
-		resp.WechatCertSerialNo != "" &&
-		resp.WechatPrivateKey != "" &&
-		resp.WechatNotifyUrl != ""
-
-	// 私钥/V3 密钥/AppSecret 不回传明文：私钥通过 cert_uploaded 标志、V3 密钥通过
-	// wechat_api_v3_configured 标志、AppSecret 通过渠道管理侧的 configured 标志告知前端状态；
-	// 保存时空值由 payment 侧保留原值，不会误清空
-	setting := PaymentSetting{
-		EnabledChannels: resp.EnabledChannels,
-		Wechat: config.WechatConfig{
-			AppID:        wechatAppID,
-			AppSecret:    "",
-			MchID:        resp.WechatMchId,
-			APIV3Key:     "",
-			CertSerialNo: resp.WechatCertSerialNo,
-			// 回调地址由部署域名派生，前端只读展示
-			NotifyURL: wechatNotify,
-		},
-		Alipay: config.AlipayConfig{
-			AppID:           resp.AlipayAppId,
-			Mode:            resp.AlipayMode,
-			AlipayPublicKey: resp.AlipayPublicKey,
-			NotifyURL:       alipayNotify,
-			ReturnURL:       alipayReturn,
-			GatewayURL:      resp.AlipayGatewayUrl,
-		},
-		WechatPaymentReady:       wechatReady,
-		AlipayReady:              resp.AlipayReady,
-		AlipayReadyMessage:       resp.AlipayReadyMessage,
-		WechatApiV3Configured:    resp.WechatApiV3Key != "",
-		WechatCertUploaded:       resp.WechatCertUploaded,
-		AlipayCertUploaded:       resp.AlipayCertUploaded,
-		AlipayAppCertUploaded:    resp.AlipayAppCertUploaded,
-		AlipayPublicCertUploaded: resp.AlipayPublicCertUploaded,
-		AlipayRootCertUploaded:   resp.AlipayRootCertUploaded,
-		UpdatedAt:                resp.UpdatedAt,
-		SuggestedURLs:            buildSuggestedURLs(c),
-
-		WechatClientChannels: resp.WechatClientChannels,
-		AlipayClientChannels: resp.AlipayClientChannels,
-	}
-
-	response.Success(c, setting)
+	response.Success(c, gin.H{
+		"list":            list,
+		"suggested_urls":  buildSuggestedURLs(c),
+	})
 }
 
-// UpdatePaymentSetting 更新支付配置
-// 配置写入数据库，payment 服务即时热更新，无需重启
+// SavePaymentConfig 新增（id=0）或更新一条支付配置
+// 回调地址一律按部署域名派生后落库；私钥/V3 密钥空值由 payment 侧保留原值
+//
+// 接口: POST /api/v1/admin/settings/payment（新增）
+//       PUT /api/v1/admin/settings/payment/:id（更新）
+//
 // 参数：
 //   - c: gin 上下文
-func (h *AdminHandler) UpdatePaymentSetting(c *gin.Context) {
-	var req PaymentSetting
+func (h *AdminHandler) SavePaymentConfig(c *gin.Context) {
+	var req PayConfigView
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.Error(c, errcode.ParamError)
 		return
 	}
-
-	// 微信 AppID 单一来源为渠道管理 mp 渠道：保存时强制以渠道实时值覆盖（未配置则清空），
-	// 前端不再提供 AppID/AppSecret 输入入口；AppSecret 为支付链路无关的历史字段，空值透传保留原值
-	wechatAppID := ""
-	if appID, ok := h.wechatPayAppIDFromChannel(c.Request.Context()); ok {
-		wechatAppID = appID
+	// 更新场景：路径 :id 优先于请求体 id，防不一致
+	if pathID := c.Param("id"); pathID != "" {
+		id, err := strconv.ParseInt(pathID, 10, 64)
+		if err != nil || id <= 0 {
+			response.Error(c, errcode.ParamError)
+			return
+		}
+		req.ID = id
+	}
+	// 新增行 id 必须为 0，防止伪造已存在 id 整行覆写
+	if c.Request.Method == http.MethodPost {
+		req.ID = 0
 	}
 
 	// 回调地址不接受前端入参：一律按部署域名派生后落库，与只读展示口径一致
 	saveWechatNotify, saveAlipayNotify, saveAlipayReturn := payCallbackURLsFor(platformBaseURL(c))
-	_, err := h.paymentClient.SavePayConfig(c.Request.Context(), &payment.PayConfig{
-		EnabledChannels:    req.EnabledChannels,
-		WechatAppId:        wechatAppID,
-		WechatAppSecret:    req.Wechat.AppSecret,
-		WechatMchId:        req.Wechat.MchID,
-		WechatApiV3Key:     req.Wechat.APIV3Key,
-		WechatCertSerialNo: req.Wechat.CertSerialNo,
-		// 私钥由证书上传接口单独维护，此处恒传空，payment 侧保留原值
-		WechatPrivateKey: "",
-		WechatNotifyUrl:  saveWechatNotify,
-		AlipayAppId:      req.Alipay.AppID,
-		AlipayPrivateKey: "",
-		AlipayPublicKey:  req.Alipay.AlipayPublicKey,
-		// 加签方式随表单整行覆写（证书内容不在本接口维护，由上传接口单独写入）
-		AlipayMode:       req.Alipay.Mode,
-		AlipayNotifyUrl:  saveAlipayNotify,
-		AlipayReturnUrl:  saveAlipayReturn,
-		AlipayGatewayUrl: req.Alipay.GatewayURL,
-
-		WechatClientChannels: req.WechatClientChannels,
-		AlipayClientChannels: req.AlipayClientChannels,
-		// 携带前端读取时的版本号，库中版本已变化时 payment 侧拒绝整行覆写
-		UpdatedAt: req.UpdatedAt,
-	})
+	saved, err := h.paymentClient.SavePayConfigRow(c.Request.Context(), payConfigRowOf(req, saveWechatNotify, saveAlipayNotify, saveAlipayReturn))
 	if err != nil {
-		log.Printf("保存支付设置失败: %v", err)
+		log.Printf("保存支付配置失败: %v", err)
 		response.GRPCError(c, err)
 		return
 	}
+	response.Success(c, payConfigViewOf(saved))
+}
 
+// DeletePaymentConfig 删除一条支付配置
+// 被任何渠道（含 POS 收银台）的支付方式绑定引用时拒绝删除，须先在渠道管理中解除绑定
+//
+// 接口: DELETE /api/v1/admin/settings/payment/:id
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) DeletePaymentConfig(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	// 渠道引用校验：payment 服务不读 user 服务的渠道表，由网关把关
+	listResp, err := h.paymentClient.ListPayConfigs(c.Request.Context(), &payment.ListPayConfigsReq{})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	var platform string
+	for _, row := range listResp.List {
+		if row.Id == id {
+			platform = row.Platform
+			break
+		}
+	}
+	if platform == "" {
+		response.Error(c, errcode.NotFound, "支付配置不存在")
+		return
+	}
+	if chList, err := h.userClient.ListClientChannels(c.Request.Context(), &user.ListClientChannelsReq{OnlyEnabled: false}); err == nil {
+		ref := fmt.Sprintf("%s:%d", platform, id)
+		for _, ch := range chList.List {
+			if containsString(ch.PayMethods, ref) {
+				response.Error(c, errcode.OperationNotAllowed,
+					fmt.Sprintf("该支付配置正被渠道「%s」引用，请先在渠道管理中解除绑定", ch.Name))
+				return
+			}
+		}
+	}
+
+	if _, err := h.paymentClient.DeletePayConfigRow(c.Request.Context(), &payment.DeletePayConfigRowReq{Id: id}); err != nil {
+		response.GRPCError(c, err)
+		return
+	}
 	response.Success(c, gin.H{"success": true})
 }
 
 // UploadPaymentCert 上传支付证书文件
-// 接收 multipart 文件，校验通过后转发给 payment 服务存入数据库
+// 接收 multipart 文件，按支付配置行 ID 转发给 payment 服务存入数据库
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
-	channel := c.PostForm("channel")
-	certType := c.PostForm("cert_type")
-	if channel != "wechat" && channel != "alipay" {
-		response.Error(c, errcode.ParamError, "不支持的支付渠道")
+	configID, err := strconv.ParseInt(strings.TrimSpace(c.PostForm("config_id")), 10, 64)
+	if err != nil || configID <= 0 {
+		response.Error(c, errcode.ParamError, "缺少支付配置 ID")
 		return
 	}
+	certType := c.PostForm("cert_type")
 	if certType == "" {
 		certType = "private_key"
 	}
@@ -6077,7 +6071,7 @@ func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
 	}
 
 	resp, err := h.paymentClient.UploadPayCert(c.Request.Context(), &payment.UploadPayCertReq{
-		Channel:  channel,
+		ConfigId: configID,
 		CertType: certType,
 		Filename: fileHeader.Filename,
 		Content:  content,

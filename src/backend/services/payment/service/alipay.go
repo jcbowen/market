@@ -164,13 +164,12 @@ func buildAlipayExecutor(cfg config.AlipayConfig) *alipaysdk.GenericExecuteApi {
 //   - string: 调起参数 JSON 字符串（{"alipay_pay_url": "https://openapi.alipay.com/..."}）
 //   - error: 错误信息
 func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment) (string, error) {
-	// 支付前检测数据库配置版本，后台修改配置后无需重启即可生效
-	s.getPayConfigCached(ctx)
-	executor := s.getAlipayExecutor()
+	// 客户端与配置均按支付单绑定的配置行获取（内部含版本热刷新）
+	executor := s.getAlipayExecutorFor(ctx, p.ConfigID)
 	if executor == nil {
 		return "", fmt.Errorf("支付宝支付未配置或配置不完整")
 	}
-	cfg := s.getAlipayPayConfig()
+	cfg := s.getAlipayConfigFor(ctx, p.ConfigID)
 
 	biz := map[string]interface{}{
 		"out_trade_no":    p.PaymentNo,
@@ -199,6 +198,54 @@ func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment
 	}
 
 	data, err := json.Marshal(map[string]string{"alipay_pay_url": payURL})
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// buildAlipayMiniParams 构造支付宝小程序支付（alipay.trade.create）调起参数
+// 小程序内无法唤起网页收银台，改用 V3 trade.create 预下单：
+// 服务端创建渠道交易拿到 trade_no，C 端凭 my.tradePay({ tradeNO }) 唤起支付宝收银台；
+// 异步通知地址经 V3 请求头 alipay-notify-url 传入，与手机网站支付共用同一通知链路
+// 参数：
+//   - ctx: 上下文
+//   - p: 支付记录模型
+//
+// 返回值：
+//   - string: 调起参数 JSON 字符串（{"trade_no": "..."}）
+//   - error: 错误信息
+func (s *PaymentService) buildAlipayMiniParams(ctx context.Context, p *model.Payment) (string, error) {
+	executor := s.getAlipayExecutorFor(ctx, p.ConfigID)
+	if executor == nil {
+		return "", fmt.Errorf("支付宝支付未配置或配置不完整")
+	}
+	cfg := s.getAlipayConfigFor(ctx, p.ConfigID)
+
+	biz := &alipaymodel.AlipayTradeCreateModel{
+		OutTradeNo:     alipaysdk.Str(p.PaymentNo),
+		TotalAmount:    alipaysdk.Str(fmt.Sprintf("%.2f", p.Amount)),
+		Subject:        alipaysdk.Str("社区商超订单"),
+		TimeoutExpress: alipaysdk.Str(s.alipayTimeoutExpress()),
+	}
+	req := &alipaysdk.OpenApiGenericRequest{BodyParams: biz}
+	if cfg.NotifyURL != "" {
+		// V3 异步通知地址走请求头：与手机网站支付共用同一通知链路（验签、幂等、终态兑底均同口径）
+		req.HeaderParams = map[string]string{"alipay-notify-url": cfg.NotifyURL}
+	}
+	resp, apiErr := executor.Execute("/v3/alipay/trade/create", "POST", req)
+	if apiErr != nil {
+		return "", fmt.Errorf("支付宝预下单失败: %s", apiErr.Error())
+	}
+	if failed, code, subCode, subMsg := alipayV3BizError(resp); failed {
+		return "", fmt.Errorf("支付宝预下单业务失败: code=%s sub_code=%s sub_msg=%s", code, subCode, subMsg)
+	}
+	tradeNo := alipayRespString(resp, "trade_no")
+	if tradeNo == "" {
+		return "", fmt.Errorf("支付宝预下单未返回 trade_no")
+	}
+
+	data, err := json.Marshal(map[string]string{"trade_no": tradeNo})
 	if err != nil {
 		return "", err
 	}
@@ -260,7 +307,7 @@ func (s *PaymentService) alipayTimeoutExpress() string {
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) alipayRefund(ctx context.Context, p *model.Payment, refund *model.RefundPayment) error {
-	executor := s.getAlipayExecutor()
+	executor := s.getAlipayExecutorFor(ctx, p.ConfigID)
 	if executor == nil {
 		return fmt.Errorf("支付宝支付未配置或配置不完整")
 	}
@@ -359,6 +406,8 @@ func alipayV3ApiErrBody(apiErr *alipaysdk.ApiException) map[string]interface{} {
 }
 
 // parseAlipayCallback 解析支付宝支付回调参数并完成 RSA2 验签
+// 多配置下按通知明文 app_id 路由到对应配置行（app_id 是通知必带字段），
+// 再用该配置的支付宝公钥/证书验签与归属校验
 // 验签按加签方式分流（RsaCheckV1 规则：剔除 sign/sign_type 后按 key 升序拼接验签），
 //   - 公钥模式：使用配置的支付宝公钥；
 //   - 证书模式：通知带 alipay_cert_sn 时按序列号在「支付宝公钥证书 + 根证书链」严格定位公钥，
@@ -368,17 +417,22 @@ func alipayV3ApiErrBody(apiErr *alipaysdk.ApiException) map[string]interface{} {
 //
 // 验签不通过直接拒绝；验签后再核对 app_id、交易状态与金额，防跨应用通知重放与非成功通知误置
 // 参数：
+//   - ctx: 上下文（按 app_id 定位配置行用）
 //   - params: 支付宝回调参数映射（POST form）
 //
 // 返回值：
 //   - *payCallbackParams: 解析后的通用参数
 //   - error: 错误信息
-func (s *PaymentService) parseAlipayCallback(params map[string]string) (*payCallbackParams, error) {
+func (s *PaymentService) parseAlipayCallback(ctx context.Context, params map[string]string) (*payCallbackParams, error) {
 	if len(params) == 0 {
 		return nil, fmt.Errorf("回调参数为空")
 	}
 
-	cfg := s.getAlipayPayConfig()
+	// 按 app_id 路由配置行：通知必带 app_id，多配置下以它定位验签公钥与归属校验基准
+	cfg, matched := s.alipayConfigByAppID(ctx, params["app_id"])
+	if !matched {
+		return nil, fmt.Errorf("支付宝通知 app_id %q 未匹配任何支付配置", params["app_id"])
+	}
 	var ok bool
 	var err error
 	if cfg.IsCertMode() {

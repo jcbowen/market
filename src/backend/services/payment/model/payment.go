@@ -32,7 +32,11 @@ type Payment struct {
 	// payment 服务不查 orders 表，跨服务归属只能在此落库
 	CommunityID int64   `gorm:"column:community_id;type:bigint;not null;default:0;index;comment:订单所属社区 ID，0=未知（仅超管可见）" json:"community_id"`
 	PayType     int32   `gorm:"column:pay_type;type:tinyint;not null;comment:1微信支付 2支付宝支付 3货到付款 4现金（收银台） 5微信付款码 6支付宝付款码；可回查/可对账的渠道口径为 {1,2,5,6}" json:"pay_type"`
-	Amount      float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:支付金额" json:"amount"`
+	// ConfigID 使用的支付配置行 ID（pay_config 多行）：创建支付单时由网关按渠道绑定解析后带入，
+	// 回调路由（多配置验签/验签公钥）、退款、查单、关单均按本列取对应配置的渠道客户端；
+	// 现金/货到付款（3/4）无渠道交互恒为 0
+	ConfigID  int64   `gorm:"column:config_id;type:bigint;not null;default:0;index;comment:支付配置 ID，0=线下/未关联" json:"config_id"`
+	Amount    float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:支付金额" json:"amount"`
 	Status      int32   `gorm:"column:status;type:tinyint;default:1;index:idx_payments_status_created,priority:1;index:idx_payments_status_reconciled,priority:1;comment:1待支付 2支付成功 3支付失败 4已退款 5已关闭" json:"status"`
 	// TransactionID 渠道交易号（支付宝 trade_no / 微信 transaction_id），渠道无关同列存放。
 	// 后台「支付单号/渠道交易号」单框搜索按本列精确匹配，加普通索引（允许空串重复，不能 unique）

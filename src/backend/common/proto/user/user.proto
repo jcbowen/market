@@ -82,9 +82,9 @@ service UserService {
   // 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
   rpc CheckFulfiller(CheckFulfillerReq) returns (CheckFulfillerResp);
 
-  // --- 客户端渠道管理（微信小程序/公众号/App/浏览器 H5） ---
-  // 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
-  // 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+  // --- 客户端渠道管理（微信小程序/公众号/支付宝小程序/浏览器 H5/收银台） ---
+  // 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与支付方式绑定（pay_methods）；
+  // 登录与支付链路按渠道取用凭证与绑定，C 端收银台按绑定渲染支付方式
   rpc ListClientChannels(ListClientChannelsReq) returns (ListClientChannelsResp);
   rpc GetClientChannel(GetClientChannelReq) returns (ClientChannelInfo);
   rpc SaveClientChannel(SaveClientChannelReq) returns (ClientChannelInfo);
@@ -782,14 +782,17 @@ message CheckFulfillerResp {
 // ClientChannelInfo 客户端渠道信息
 message ClientChannelInfo {
   int64 id = 1;
-  // 渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5
+  // 渠道标识：h5 浏览器H5 / gzh 微信公众号 / mp 微信小程序 / alimp 支付宝小程序 /
+  // android 安卓App / ios iOS App / pos 门店收银台
   string code = 2;
   string name = 3;
   string app_id = 4;
   string app_secret = 5;
   bool enabled = 6;
-  int32 sort = 7;
-  // 凭证是否配置完整（AppID+AppSecret 均非空），C 端渲染与支付就绪判定用
+  // 渠道绑定的支付方式列表（有序，顺序即收银台展示顺序）：
+  // 每项为 "cash" 或 "<platform>:<config_id>"（如 "wechat:3"）
+  repeated string pay_methods = 10;
+  // 凭证是否配置完整（h5/pos 恒真；alimp 仅需 AppID；其余需 AppID+AppSecret）
   bool configured = 8;
   string updated_at = 9;
 }
@@ -816,7 +819,8 @@ message SaveClientChannelReq {
   // 为空时保留原值，避免未重新输入时清空已保存的 Secret
   string app_secret = 5;
   bool enabled = 6;
-  int32 sort = 7;
+  // 渠道绑定的支付方式列表（全量覆盖，服务端校验语法/平台兼容/去重）
+  repeated string pay_methods = 8;
 }
 
 message GetUserChannelOpenidReq {

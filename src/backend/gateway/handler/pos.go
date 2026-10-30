@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
+	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
+	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/common/response"
 )
 
@@ -270,7 +273,7 @@ func (h *AdminHandler) cancelOrphanPosOrder(c *gin.Context, orderID int64, commu
 // ensurePosCodePayReady 校验收银台付款码支付对应渠道是否可用
 // 占位 pay_type 由 ListPosPayMethods 按实际可用渠道动态下发（两渠道齐备以 5 占位、
 // 仅支付宝可用下发 6），故此处按 payType 精确校验对应渠道，与 payment 服务下单校验同口径，
-// 可用 = pay_config 中该渠道开关开启且配置就绪
+// 可用 = POS 渠道绑定了该平台的支付配置 且 该配置启用就绪
 // 参数：
 //   - ctx: 上下文
 //   - payType: 支付方式（5=微信付款码 6=支付宝付款码）
@@ -278,30 +281,107 @@ func (h *AdminHandler) cancelOrphanPosOrder(c *gin.Context, orderID int64, commu
 // 返回值：
 //   - error: 对应渠道不可用或 payType 非法时返回带提示的错误
 func (h *AdminHandler) ensurePosCodePayReady(ctx context.Context, payType int32) error {
-	cfg, err := h.paymentClient.GetPayConfig(ctx, &payment.GetPayConfigReq{})
+	bound, err := h.posBoundPayMethods(ctx)
 	if err != nil {
 		return fmt.Errorf("支付配置读取失败，请改用现金收款")
 	}
+	var plat string
 	switch payType {
 	case posPayTypeWechatCode:
-		if isChannelUsable("wechat", cfg) {
-			return nil
-		}
-		return fmt.Errorf("微信付款码收款未开启，请使用现金收款")
+		plat = payPlatformWechat
 	case posPayTypeAlipayCode:
-		if isChannelUsable("alipay", cfg) {
-			return nil
-		}
-		return fmt.Errorf("支付宝付款码收款未开启，请使用现金收款")
+		plat = payPlatformAlipay
+	default:
+		return fmt.Errorf("该支付方式暂未开通，请选择现金收款")
 	}
-	return fmt.Errorf("该支付方式暂未开通，请选择现金收款")
+	if _, ok := h.posReadyConfig(ctx, bound, plat); !ok {
+		return fmt.Errorf("%s付款码收款未开启，请使用现金收款", posPlatformLabel(plat))
+	}
+	return nil
+}
+
+// posPlatformLabel 平台标识的中文名（错误提示用）
+func posPlatformLabel(platform string) string {
+	if platform == payPlatformAlipay {
+		return "支付宝"
+	}
+	return "微信"
+}
+
+// posBoundPayMethods 读取 POS 收银台渠道绑定的支付方式列表
+// POS 为特殊渠道：无登录凭证、恒启用，仅参与支付方式绑定
+//
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - []string: 渠道绑定的支付方式列表（"cash" 或 "<platform>:<config_id>"）
+//   - error: 渠道查询失败错误
+func (h *AdminHandler) posBoundPayMethods(ctx context.Context) ([]string, error) {
+	resp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.POS})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, nil
+	}
+	return resp.PayMethods, nil
+}
+
+// posReadyConfig 从 POS 绑定与就绪集合中解析指定平台的可用支付配置
+// POS 付款码按前缀自动识别平台，故每平台至多绑定一条配置（保存时校验）
+//
+// 参数：
+//   - ctx: 上下文
+//   - methods: POS 渠道绑定的支付方式列表
+//   - platform: 平台标识（wechat/alipay）
+//
+// 返回值：
+//   - int64: 可用支付配置 ID，不可用时为 0
+//   - bool: 是否存在启用且就绪的绑定配置
+func (h *AdminHandler) posReadyConfig(ctx context.Context, methods []string, platform string) (int64, bool) {
+	configID := firstConfigIDForPlatform(methods, platform)
+	if configID == 0 {
+		return 0, false
+	}
+	set := listActivePayMethodSet(ctx, h.paymentClient)
+	if set == nil {
+		// 就绪集合拉取失败：降级为绑定即视为可用，最终由 payment 服务扣款校验兜底
+		return configID, true
+	}
+	if _, ok := set[fmt.Sprintf("%s:%d", platform, configID)]; !ok {
+		return 0, false
+	}
+	return configID, true
+}
+
+// authCodePlatform 按付款码前缀识别支付平台
+// 微信付款码 10-15 开头 / 支付宝付款码 25-30 开头（均为纯数字）
+//
+// 参数：
+//   - authCode: 顾客付款码
+//
+// 返回值：
+//   - string: 平台标识（wechat/alipay），无法识别时为空串
+func authCodePlatform(authCode string) string {
+	authCode = strings.TrimSpace(authCode)
+	if len(authCode) < 2 {
+		return ""
+	}
+	switch authCode[:2] {
+	case "10", "11", "12", "13", "14", "15":
+		return payPlatformWechat
+	case "25", "26", "27", "28", "29", "30":
+		return payPlatformAlipay
+	}
+	return ""
 }
 
 // ListPosPayMethods 收银台可用支付方式（支付方式动态渲染的数据源）
-// 现金恒可用；付款码选项按实际可用渠道动态下发占位 pay_type：两渠道齐备以 5 占位
-// （label 用通用「付款码支付」，渠道由扫码时的付款码前缀自动识别）、仅微信可用下发
-// 5「微信付款码」、仅支付宝可用下发 6「支付宝付款码」，使下单校验具备真实渠道语义。
-// 拉取支付配置失败时降级只回现金（服务端下单仍有渠道校验兜底，不会放过无法收款的方式）
+// 现金恒可用；付款码选项按 POS 渠道绑定与配置就绪情况动态下发占位 pay_type：
+// 两渠道齐备以 5 占位（label 用通用「付款码支付」，渠道由扫码时的付款码前缀自动识别）、
+// 仅微信可用下发 5「微信付款码」、仅支付宝可用下发 6「支付宝付款码」，使下单校验具备真实渠道语义。
+// 拉取失败时降级只回现金（服务端下单仍有渠道校验兜底，不会放过无法收款的方式）
 //
 // 接口: GET /api/v1/admin/pos/pay-methods
 //
@@ -309,9 +389,9 @@ func (h *AdminHandler) ensurePosCodePayReady(ctx context.Context, payType int32)
 //   - c: gin 上下文
 func (h *AdminHandler) ListPosPayMethods(c *gin.Context) {
 	methods := []gin.H{{"pay_type": posPayTypeCash, "label": "现金"}}
-	if cfg, err := h.paymentClient.GetPayConfig(c.Request.Context(), &payment.GetPayConfigReq{}); err == nil {
-		wechatReady := isChannelUsable("wechat", cfg)
-		alipayReady := isChannelUsable("alipay", cfg)
+	if bound, err := h.posBoundPayMethods(c.Request.Context()); err == nil {
+		_, wechatReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformWechat)
+		_, alipayReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformAlipay)
 		switch {
 		case wechatReady && alipayReady:
 			methods = append(methods, gin.H{"pay_type": posPayTypeWechatCode, "label": "付款码支付"})
@@ -360,12 +440,33 @@ func (h *AdminHandler) PayPosOrderByCode(c *gin.Context) {
 	}
 
 	uc := appcontext.GetUserContext(c)
+
+	// 按付款码前缀识别平台，取 POS 渠道绑定的对应支付配置
+	// （PayByAuthCode 服务端会再校验配置存在、启用、平台匹配且凭证就绪）
+	plat := authCodePlatform(req.AuthCode)
+	if plat == "" {
+		response.Error(c, errcode.ParamError, "无法识别付款码类型，请确认扫描的是微信/支付宝付款码")
+		return
+	}
+	bound, err := h.posBoundPayMethods(c.Request.Context())
+	if err != nil {
+		response.Error(c, errcode.InternalServerError, "支付配置读取失败，请改用现金收款")
+		return
+	}
+	configID, ok := h.posReadyConfig(c.Request.Context(), bound, plat)
+	if !ok {
+		response.Error(c, errcode.OperationNotAllowed, fmt.Sprintf("%s付款码收款未开启，请使用现金收款", posPlatformLabel(plat)))
+		return
+	}
+
 	resp, err := h.paymentClient.PayByAuthCode(c.Request.Context(), &payment.PayByAuthCodeReq{
 		PaymentNo:  req.PaymentNo,
 		AuthCode:   req.AuthCode,
 		OperatorId: uc.UserID,
 		// 订单 ID（已过社区隔离）：服务端强校验与支付单的绑定关系，防跨订单收款
 		OrderId: id,
+		// 支付配置：按 POS 渠道绑定解析（付款码前缀识别平台后取对应配置）
+		ConfigId: configID,
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -633,15 +734,17 @@ func (h *AdminHandler) EnsurePosCodePaySession(c *gin.Context) {
 	}
 
 	// 占位 pay_type 与 ListPosPayMethods 下发口径一致：两渠道齐备以 5 占位（渠道按码前缀识别）、
-	// 仅支付宝可用下发 6。此处按渠道就绪情况选占位值，渠道未配置时报错提示改现金
+	// 仅支付宝可用下发 6。此处按 POS 渠道绑定与配置就绪情况选占位值，渠道未绑定时报错提示改现金
 	codePayType := posPayTypeWechatCode
-	cfg, err := h.paymentClient.GetPayConfig(c.Request.Context(), &payment.GetPayConfigReq{})
+	bound, err := h.posBoundPayMethods(c.Request.Context())
 	if err != nil {
 		response.Error(c, errcode.InternalServerError, "支付配置读取失败，请改用现金收款")
 		return
 	}
-	if !isChannelUsable("wechat", cfg) {
-		if !isChannelUsable("alipay", cfg) {
+	_, wechatReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformWechat)
+	_, alipayReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformAlipay)
+	if !wechatReady {
+		if !alipayReady {
 			response.Error(c, errcode.OperationNotAllowed, "付款码收款未开启，请使用现金收款")
 			return
 		}

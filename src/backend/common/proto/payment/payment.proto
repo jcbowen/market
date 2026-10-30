@@ -27,8 +27,14 @@ service PaymentService {
   // 本方法把 retry_count/escalated 归零，让流水重新被查单任务看见，
   // 只处理待退款(1)流水——已成功(2)/已失败(3)一律拒绝，避免对已出款流水重复触渠道
   rpc ResetRefundFlow(ResetRefundFlowReq) returns (ResetRefundFlowResp);
-  rpc GetPayConfig(GetPayConfigReq) returns (PayConfig);
-  rpc SavePayConfig(PayConfig) returns (common.CommonResponse);
+  // ListPayConfigs 支付配置列表（管理端，含凭证与就绪状态；网关负责脱敏）
+  rpc ListPayConfigs(ListPayConfigsReq) returns (ListPayConfigsResp);
+  // SavePayConfigRow 新增（id=0）或更新一条支付配置；updated_at 乐观锁
+  rpc SavePayConfigRow(PayConfigRow) returns (PayConfigRow);
+  // DeletePayConfigRow 删除一条支付配置（渠道引用校验由网关负责）
+  rpc DeletePayConfigRow(DeletePayConfigRowReq) returns (common.CommonResponse);
+  // ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
+  rpc ListActivePayMethods(ListActivePayMethodsReq) returns (ListActivePayMethodsResp);
   rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
   // 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
   rpc ClosePayments(ClosePaymentsReq) returns (common.CommonResponse);
@@ -118,6 +124,13 @@ message CreatePaymentReq {
   // 顾客付款码：付款码支付（pay_type 5/6）扣款用。两步化流程下 CreatePayment 不填
   // （只建待支付单不扣款），扫码后由 PayByAuthCode 传入
   string auth_code = 9;
+  // 支付配置 ID：网关按渠道绑定（client_channels.pay_methods）解析后传入；
+  // pay_type 1/2/5/6 必填，服务端校验配置存在、启用、平台匹配且凭证就绪；
+  // 现金/货到付款（3/4）不填
+  int64 config_id = 10;
+  // 客户端渠道 code（X-Channel-Code）：支付宝按它分流下单方式
+  // （alimp → alipay.trade.create 小程序内支付，其余 → 手机网站支付）；其余渠道暂未使用
+  string client_channel = 11;
 }
 
 message CreatePaymentResp {
@@ -125,7 +138,9 @@ message CreatePaymentResp {
   int32 pay_type = 2;
   double amount = 3;
   string wechat_pay_params = 4;   // JSON string，仅 pay_type=1 时填充
-  string alipay_pay_params = 5;   // JSON string，仅 pay_type=2 时填充；现金支付两者均为空
+  string alipay_pay_params = 5;   // JSON string，仅 pay_type=2 时填充；
+                                  // H5/手机网站支付为 {"alipay_pay_url":"..."}，
+                                  // 支付宝小程序为 {"trade_no":"..."}（my.tradePay 用）；现金支付两者均为空
 }
 
 // PayByAuthCodeReq 付款码扣款入参（收银台 B扫C）
@@ -139,6 +154,8 @@ message PayByAuthCodeReq {
   int64 operator_id = 3;
   // 订单 ID（URL 路径参数，必传）：与支付单 OrderID 不一致时拒绝扣款
   int64 order_id = 4;
+  // 支付配置 ID：网关按 pos 渠道绑定解析（付款码前缀识别平台后取对应配置），必填
+  int64 config_id = 5;
 }
 
 // PayByAuthCodeResp 付款码扣款结果（归一化）
@@ -245,50 +262,74 @@ message ClosePaymentsReq {
   int64 order_id = 1;
 }
 
-message GetPayConfigReq {}
-
-// PayConfig 支付配置（数据库单行存储）
+// PayConfigRow 单条支付配置行（pay_config 多行存储）
+// platform 决定凭证字段组：wechat 取 wechat_* 字段，alipay 取 alipay_* 字段；
 // 读写均通过 payment 服务，gateway 不直接访问数据库
-message PayConfig {
-  repeated string enabled_channels = 1;
-  // 微信支付 V3
-  string wechat_app_id = 2;
-  string wechat_app_secret = 3;
-  string wechat_mch_id = 4;
-  string wechat_api_v3_key = 5;
-  string wechat_cert_serial_no = 6;
-  string wechat_private_key = 7;
-  string wechat_notify_url = 8;
-  // 支付宝
-  string alipay_app_id = 9;
-  string alipay_private_key = 10;
-  string alipay_public_key = 11;
-  string alipay_notify_url = 12;
-  string alipay_return_url = 13;
-  // 证书上传状态（上传后内容存库，此处仅回传标志）
-  bool wechat_cert_uploaded = 14;
-  bool alipay_cert_uploaded = 15;
-  // 版本与就绪状态
-  string updated_at = 16;
-  bool wechat_payment_ready = 17;
-  bool alipay_ready = 18;
-  // 适用客户端渠道（勾选的客户端渠道 code 列表：mp/gzh/app/h5；空=全部客户端渠道可用，兼容存量数据）
-  repeated string wechat_client_channels = 19;
-  repeated string alipay_client_channels = 20;
+message PayConfigRow {
+  int64 id = 1;
+  // 展示名称（如「支付宝-H5」「微信支付-主力」），管理端列表与渠道绑定下拉展示用
+  string name = 2;
+  // 平台类型：wechat / alipay
+  string platform = 3;
+  bool enabled = 4;
+  // 微信支付 V3 凭证（platform=wechat 时取用）
+  string wechat_app_id = 10;
+  string wechat_app_secret = 11;
+  string wechat_mch_id = 12;
+  string wechat_api_v3_key = 13;
+  string wechat_cert_serial_no = 14;
+  string wechat_private_key = 15;
+  string wechat_notify_url = 16;
+  // 商户私钥是否已上传（内容存库，此处仅回传标志）
+  bool wechat_cert_uploaded = 17;
+  // 支付宝凭证（platform=alipay 时取用）
+  string alipay_app_id = 20;
+  string alipay_private_key = 21;
+  string alipay_public_key = 22;
+  string alipay_notify_url = 23;
+  string alipay_return_url = 24;
+  // 加签方式：public 公钥模式（默认）/ cert 证书模式
+  string alipay_mode = 25;
   // 支付宝网关地址，空=生产环境 https://openapi.alipay.com（填沙箱网关即切沙箱）
-  string alipay_gateway_url = 21;
-  // 支付宝配置自检失败原因，空表示自检通过；就绪状态为「字段齐全且自检通过」
-  string alipay_ready_message = 22;
-  // 支付宝加签方式：public 公钥模式（默认，空串兼容存量）/ cert 证书模式
-  string alipay_mode = 23;
-  // 证书模式三证书上传状态（内容存库仅走上传接口，此处只回传标志，读写均不携带内容）
-  bool alipay_app_cert_uploaded = 24;
-  bool alipay_public_cert_uploaded = 25;
-  bool alipay_root_cert_uploaded = 26;
+  string alipay_gateway_url = 26;
+  // 应用私钥与三证书上传状态（内容存库，此处仅回传标志，读写均不携带内容）
+  bool alipay_cert_uploaded = 27;
+  bool alipay_app_cert_uploaded = 28;
+  bool alipay_public_cert_uploaded = 29;
+  bool alipay_root_cert_uploaded = 30;
+  // 版本与就绪状态（仅查询回传；就绪 = 启用 + 字段齐全 + 自检通过）
+  string updated_at = 40;
+  bool ready = 41;
+  string ready_message = 42;
+}
+
+message ListPayConfigsReq {}
+
+message ListPayConfigsResp {
+  repeated PayConfigRow list = 1;
+}
+
+message DeletePayConfigRowReq {
+  int64 id = 1;
+}
+
+message ListActivePayMethodsReq {}
+
+// ActivePayMethod 启用且就绪的支付配置摘要（渲染过滤与下单解析用）
+message ActivePayMethod {
+  int64 config_id = 1;
+  // 平台类型：wechat / alipay
+  string platform = 2;
+  // 下单 AppID（微信 JSAPI 与渠道 AppID 一致性校验用）
+  string app_id = 3;
+}
+
+message ListActivePayMethodsResp {
+  repeated ActivePayMethod methods = 1;
 }
 
 message UploadPayCertReq {
-  string channel = 1;    // 渠道：wechat / alipay
+  int64 config_id = 1;   // 支付配置行 ID
   string cert_type = 2;  // 类型：private_key（商户/应用私钥）、app_cert / alipay_public_cert / root_cert（支付宝证书模式）
   string filename = 3;   // 原始文件名，用于校验扩展名
   bytes content = 4;     // 证书文件内容

@@ -27,9 +27,6 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
-	wegopayment "github.com/jcbowen/wego/payment"
-
-	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
 )
 
 // PaymentService 支付业务服务
@@ -43,14 +40,9 @@ type PaymentService struct {
 
 	// payMu 保护以下支付配置缓存字段的并发读写
 	payMu sync.RWMutex
-	// payCfg 数据库支付配置的内存副本（pay_config 单行），updated_at 兼作版本号
-	payCfg *model.PayConfig
-
-	wechatPayClient *wegopayment.Client
-
-	// alipayExecutor 支付宝通用执行器（V2 pageExecute + V3 API 共享），
-	// 随支付配置热更新整体重建；nil 表示未配置或配置不完整
-	alipayExecutor *alipaysdk.GenericExecuteApi
+	// registry 支付配置注册表（pay_config 全量行的缓存与按行构建的渠道客户端），
+	// 版本号任一行变更即整表重建；nil 表示尚未加载
+	registry *payClientRegistry
 }
 
 // NewPaymentService 创建支付业务服务
@@ -87,33 +79,35 @@ func (s *PaymentService) WithRedis(client *redis.Client) *PaymentService {
 	return s
 }
 
-// reloadPayConfig 启动时从数据库加载支付配置并构建支付客户端
+// reloadPayConfig 启动时从数据库加载支付配置并构建渠道客户端
 func (s *PaymentService) reloadPayConfig() {
-	var row model.PayConfig
-	if err := s.db.GetDb().First(&row, payConfigID).Error; err != nil {
+	rows, err := s.GetPayConfigs(context.Background())
+	if err != nil {
 		log.Printf("加载数据库支付配置失败（支付功能将不可用，可在后台配置后自动生效）: %v", err)
 		return
 	}
 	s.payMu.Lock()
 	defer s.payMu.Unlock()
-	s.applyPayConfig(&row)
+	s.applyPayConfig(rows)
 }
 
-// cashCreateLockTx 现金/货到付款建单的库级串行点：锁支付配置单行
+// cashCreateLockTx 现金/货到付款建单的库级串行点：锁支付配置表首行
 // 现金单「创建即已支付」，不置 pending_flag（唯一索引只保护待支付态），
 // 「查重 → 插入」在并发双击下非原子，同订单可落两笔已支付现金流水（交班营业额双计）。
-// 旧实现用进程内分段锁，只在单容器部署下成立；改为锁 pay_config 固定单行后，
+// 旧实现用进程内分段锁，只在单容器部署下成立；改为锁 pay_config 首行后，
 // 多实例同样串行。代价是现金/货到付款建单全局串行（事务内无远程调用，收银量级可忽略）。
+// pay_config 多行化后锁定目标改为 id 最小行（EnsureDefaultPayConfig 保证表内至少一行，
+// 锁哪一行不影响串行语义，只要求全实例锁定同一目标）。
 // 调用方必须在同一事务内紧接着复查「已存在成功支付单」，锁才有意义。
 // 参数：
 //   - tx: 建单事务
 //
 // 返回值：
-//   - error: 支付配置行缺失或加锁失败
+//   - error: 支付配置表为空或加锁失败
 func cashCreateLockTx(tx *gorm.DB) error {
 	var cfg model.PayConfig
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("id").First(&cfg, payConfigID).Error; err != nil {
+		Select("id").Order("id ASC").First(&cfg).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return bizerr.New(codes.FailedPrecondition, "支付配置缺失，请先在后台完成支付配置")
 		}
@@ -177,6 +171,21 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	now := time.Now().Format("2006-01-02 15:04:05")
 	paymentNo := generatePaymentNo()
 
+	// 渠道支付方式（1/2）必须携带网关按渠道绑定解析出的配置 ID，
+	// 并校验其平台匹配且启用就绪（配置不存在/停用/凭证不齐均拦截在下单）。
+	// 付款码占位单（5/6）例外：建单发生在扫码之前、平台未知，config_id 留空，
+	// 扫码后由 PayByAuthCode 按付款码前缀识别平台解析配置并回填 pay_type/config_id
+	switch req.PayType {
+	case 1:
+		if _, err = s.resolveActivePayConfig(ctx, req.ConfigId, model.PayPlatformWechat); err != nil {
+			return nil, "", err
+		}
+	case 2:
+		if _, err = s.resolveActivePayConfig(ctx, req.ConfigId, model.PayPlatformAlipay); err != nil {
+			return nil, "", err
+		}
+	}
+
 	p := &model.Payment{
 		PaymentNo:   paymentNo,
 		OrderID:     req.OrderId,
@@ -184,6 +193,7 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		UserID:      req.UserId,
 		CommunityID: req.CommunityId,
 		PayType:     req.PayType,
+		ConfigID:    req.ConfigId,
 		Amount:      req.Amount,
 		Status:      1,
 		CreatedAt:   now,
@@ -195,7 +205,13 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 	case 1:
 		payParams, err = s.buildWechatPayParams(ctx, p, req.Openid, req.AppId)
 	case 2:
-		payParams, err = s.buildAlipayParams(ctx, p)
+		// 支付宝按客户端渠道分流：支付宝小程序（alimp）走 V3 trade.create 预下单，
+		// C 端 my.tradePay 唤起；其余（当前仅 h5）走手机网站支付跳转收银台
+		if req.ClientChannel == "alimp" {
+			payParams, err = s.buildAlipayMiniParams(ctx, p)
+		} else {
+			payParams, err = s.buildAlipayParams(ctx, p)
+		}
 	case 3, 4:
 		// 货到付款(3)/收银台现金(4)只在本事务内把支付单标记为支付成功（4 含 0 元全额优惠单），
 		// 订单状态同步留到事务提交后由 syncOfflineOrderPaid 发出
@@ -205,10 +221,8 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		p.ConfirmSource = model.ConfirmSourceOffline
 	case 5, 6:
 		// 付款码支付：只建待支付单（无调起参数、不动订单状态），
-		// 创建前先校验渠道就绪，把「渠道未配置」拦在下单而不是扫码扣款时
-		if err := s.ensureCodePayChannelReady(ctx, req.PayType); err != nil {
-			return nil, "", err
-		}
+		// 平台与配置在扫码后的 PayByAuthCode 按付款码前缀识别并回填
+		_ = req.ConfigId
 	}
 	if err != nil {
 		return nil, "", err
@@ -376,8 +390,10 @@ func (s *PaymentService) findReusablePendingPayment(ctx context.Context, req *pa
 	}
 
 	var pending model.Payment
+	// 仅同配置行绑定才可复用：期间配置被换绑（同平台换配置）时旧待支付单
+	// 应走关闭重建流程，避免退款/回调路由到已废弃的配置
 	err := s.db.GetDb().WithContext(ctx).
-		Where("order_id = ? AND pay_type = ? AND amount = ? AND status = ?", req.OrderId, req.PayType, req.Amount, 1).
+		Where("order_id = ? AND pay_type = ? AND config_id = ? AND amount = ? AND status = ?", req.OrderId, req.PayType, req.ConfigId, req.Amount, 1).
 		Order("id desc").First(&pending).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -566,10 +582,6 @@ func (s *PaymentService) BatchGetPayments(ctx context.Context, orderIDs []int64)
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) HandleWechatCallback(ctx context.Context, req *payment.WechatCallbackReq) error {
-	// 回调前先检测配置版本：验签与解密依赖渠道客户端，未承接过下单的实例若沿用启动时的空配置，
-	// 会把合法通知判为验签失败
-	s.getPayConfigCached(ctx)
-
 	headers := make(http.Header)
 	for k, v := range req.Headers {
 		headers.Set(k, v)
@@ -621,10 +633,7 @@ func wechatCallbackFailureResult(err error) int32 {
 // 返回值：
 //   - error: 错误信息
 func (s *PaymentService) HandleAlipayCallback(ctx context.Context, req *payment.AlipayCallbackReq) error {
-	// 验签用的支付宝公钥来自配置缓存，先按版本号刷新，避免未承接过下单的实例因空配置拒绝合法通知
-	s.getPayConfigCached(ctx)
-
-	params, err := s.parseAlipayCallback(req.Params)
+	params, err := s.parseAlipayCallback(ctx, req.Params)
 	if err != nil {
 		// 支付宝通知的 out_trade_no 是明文表单字段，验签失败前后都能读到；
 		// 据此反查支付单即可把流水归到正确社区（反查只做只读定位，不可信的单号查不到就是空）
@@ -699,9 +708,8 @@ func (s *PaymentService) ProcessRefund(ctx context.Context, req *payment.Process
 		return &payment.ProcessRefundResp{Completed: true}, nil
 	}
 
-	// 渠道退款前检测配置版本：执行器/客户端随配置热更新重建，
+	// 渠道退款：客户端/执行器按支付单绑定的配置行取用（内部含热刷新），
 	// 未承接过下单的实例若沿用启动时的空配置会把可用渠道判为未配置而退款失败
-	s.getPayConfigCached(ctx)
 
 	now := time.Now().Format("2006-01-02 15:04:05")
 	refund := &model.RefundPayment{

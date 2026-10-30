@@ -43,7 +43,8 @@ type channelPayResult struct {
 	Raw           string
 }
 
-// 渠道调用以包级变量注入，单测直接替换为假渠道，无需真实商户配置
+// 渠道调用以包级变量注入，单测直接替换为假渠道，无需真实商户配置；
+// configID 为支付单绑定的配置行 ID（多配置下路由到对应商户客户端）
 var (
 	queryWechatOrder = defaultQueryWechatOrder
 	queryAlipayOrder = defaultQueryAlipayOrder
@@ -63,9 +64,9 @@ var (
 //   - error: 渠道调用或配置错误；State=ChannelStateError 时调用方不得改动本地状态
 //
 // 使用说明：
-//   - res, err := defaultQueryWechatOrder(ctx, s, "PAY20261021001")
-func defaultQueryWechatOrder(ctx context.Context, s *PaymentService, paymentNo string) (*channelPayResult, error) {
-	client := s.getWechatPayClient()
+//   - res, err := defaultQueryWechatOrder(ctx, s, 3, "PAY20261021001")
+func defaultQueryWechatOrder(ctx context.Context, s *PaymentService, configID int64, paymentNo string) (*channelPayResult, error) {
+	client := s.getWechatPayClientFor(ctx, configID)
 	if client == nil {
 		return &channelPayResult{State: ChannelStateError, Raw: "wechat client not configured"}, fmt.Errorf("微信支付未配置或配置不完整")
 	}
@@ -105,13 +106,14 @@ func defaultQueryWechatOrder(ctx context.Context, s *PaymentService, paymentNo s
 // 参数：
 //   - ctx: 上下文
 //   - s: 支付服务
+//   - configID: 支付配置行 ID
 //   - paymentNo: 商户订单号
 //
 // 返回值：
 //   - *channelPayResult: 归一化结果
 //   - error: 渠道调用或配置错误
-func defaultQueryAlipayOrder(ctx context.Context, s *PaymentService, paymentNo string) (*channelPayResult, error) {
-	executor := s.getAlipayExecutor()
+func defaultQueryAlipayOrder(ctx context.Context, s *PaymentService, configID int64, paymentNo string) (*channelPayResult, error) {
+	executor := s.getAlipayExecutorFor(ctx, configID)
 	if executor == nil {
 		return &channelPayResult{State: ChannelStateError, Raw: "alipay executor not configured"}, fmt.Errorf("支付宝支付未配置或配置不完整")
 	}
@@ -175,12 +177,13 @@ func normalizeAlipayTradeStatus(tradeStatus string) string {
 // 参数：
 //   - ctx: 上下文
 //   - s: 支付服务
+//   - configID: 支付配置行 ID
 //   - paymentNo: 商户订单号
 //
 // 返回值：
 //   - error: 关闭失败原因，调用方按「不影响本地关单」处理
-func defaultCloseWechatOrder(ctx context.Context, s *PaymentService, paymentNo string) error {
-	client := s.getWechatPayClient()
+func defaultCloseWechatOrder(ctx context.Context, s *PaymentService, configID int64, paymentNo string) error {
+	client := s.getWechatPayClientFor(ctx, configID)
 	if client == nil {
 		return fmt.Errorf("微信支付未配置或配置不完整")
 	}
@@ -193,12 +196,13 @@ func defaultCloseWechatOrder(ctx context.Context, s *PaymentService, paymentNo s
 // 参数：
 //   - ctx: 上下文
 //   - s: 支付服务
+//   - configID: 支付配置行 ID
 //   - paymentNo: 商户订单号
 //
 // 返回值：
 //   - error: 关闭失败原因
-func defaultCloseAlipayOrder(ctx context.Context, s *PaymentService, paymentNo string) error {
-	executor := s.getAlipayExecutor()
+func defaultCloseAlipayOrder(ctx context.Context, s *PaymentService, configID int64, paymentNo string) error {
+	executor := s.getAlipayExecutorFor(ctx, configID)
 	if executor == nil {
 		return fmt.Errorf("支付宝支付未配置或配置不完整")
 	}
@@ -235,12 +239,11 @@ func (s *PaymentService) queryChannelOrder(ctx context.Context, p *model.Payment
 	if p == nil {
 		return nil, fmt.Errorf("支付单为空")
 	}
-	s.getPayConfigCached(ctx)
 	switch p.PayType {
 	case 1, 5:
-		return queryWechatOrder(ctx, s, p.PaymentNo)
+		return queryWechatOrder(ctx, s, p.ConfigID, p.PaymentNo)
 	case 2, 6:
-		return queryAlipayOrder(ctx, s, p.PaymentNo)
+		return queryAlipayOrder(ctx, s, p.ConfigID, p.PaymentNo)
 	default:
 		return nil, fmt.Errorf("支付方式 %d 无渠道查询能力", p.PayType)
 	}
@@ -259,14 +262,13 @@ func (s *PaymentService) closeChannelOrder(ctx context.Context, p *model.Payment
 	if p == nil {
 		return fmt.Errorf("支付单为空")
 	}
-	s.getPayConfigCached(ctx)
 	switch p.PayType {
 	case 1:
-		return closeWechatOrder(ctx, s, p.PaymentNo)
+		return closeWechatOrder(ctx, s, p.ConfigID, p.PaymentNo)
 	case 2, 6:
-		return closeAlipayOrder(ctx, s, p.PaymentNo)
+		return closeAlipayOrder(ctx, s, p.ConfigID, p.PaymentNo)
 	case 5:
-		return closeWechatCodeOrder(ctx, s, p.PaymentNo)
+		return closeWechatCodeOrder(ctx, s, p.ConfigID, p.PaymentNo)
 	default:
 		return fmt.Errorf("支付方式 %d 无渠道关单能力", p.PayType)
 	}
@@ -286,12 +288,13 @@ var closeWechatCodeOrder = defaultCloseWechatCodeOrder
 // 参数：
 //   - ctx: 上下文
 //   - s: 支付服务
+//   - configID: 支付配置行 ID
 //   - paymentNo: 商户订单号（本系统支付单号）
 //
 // 返回值：
 //   - error: 渠道调用或配置错误
-func defaultCloseWechatCodeOrder(ctx context.Context, s *PaymentService, paymentNo string) error {
-	client := s.getWechatPayClient()
+func defaultCloseWechatCodeOrder(ctx context.Context, s *PaymentService, configID int64, paymentNo string) error {
+	client := s.getWechatPayClientFor(ctx, configID)
 	if client == nil {
 		return fmt.Errorf("微信支付未配置或配置不完整")
 	}

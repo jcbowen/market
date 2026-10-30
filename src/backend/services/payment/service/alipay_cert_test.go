@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -17,6 +18,7 @@ import (
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 
 	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
+	wegopayment "github.com/jcbowen/wego/payment"
 )
 
 /**
@@ -230,19 +232,30 @@ func TestParseAlipayCallbackCertMode(t *testing.T) {
 	}
 
 	s := &PaymentService{cfg: &config.Config{}}
-	s.payCfg = &model.PayConfig{
-		AlipayMode:       config.AlipayModeCert,
-		AlipayAppID:      testAlipayAppID,
-		AlipayPrivateKey: priKey,
-		// 验签取支付宝公钥证书与根证书，公钥模式残留公钥不参与
-		AlipayPublicKey:  "%%%bad-key%%%",
-		AlipayPublicCert: alipayCert,
-		AlipayRootCert:   carrier.AlipayRootCert,
+	// 证书模式回调按 app_id 从支付配置注册表路由（多行制）：
+	// 测试无 DB，GetPayConfigs 失败时 getRegistryCached 回落 s.registry 缓存，直接注入配置行
+	s.registry = &payClientRegistry{
+		version: "test",
+		rows: map[int64]*model.PayConfig{
+			1: {
+				ID:               1,
+				Platform:         model.PayPlatformAlipay,
+				AlipayMode:       config.AlipayModeCert,
+				AlipayAppID:      testAlipayAppID,
+				AlipayPrivateKey: priKey,
+				// 验签取支付宝公钥证书与根证书，公钥模式残留公钥不参与
+				AlipayPublicKey:  "%%%bad-key%%%",
+				AlipayPublicCert: alipayCert,
+				AlipayRootCert:   carrier.AlipayRootCert,
+			},
+		},
+		wechat: map[int64]*wegopayment.Client{},
+		alipay: map[int64]*alipaysdk.GenericExecuteApi{},
 	}
 
 	fields := successNotifyFields(testAlipayAppID)
 	fields["alipay_cert_sn"] = certSN
-	got, err := s.parseAlipayCallback(signedNotify(t, alipayPri, fields))
+	got, err := s.parseAlipayCallback(context.Background(), signedNotify(t, alipayPri, fields))
 	if err != nil {
 		t.Fatalf("证书模式合法通知应验签通过: %v", err)
 	}
@@ -252,20 +265,20 @@ func TestParseAlipayCallbackCertMode(t *testing.T) {
 
 	wrongSN := successNotifyFields(testAlipayAppID)
 	wrongSN["alipay_cert_sn"] = "0123456789abcdef0123456789abcdef"
-	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, wrongSN)); err == nil ||
+	if _, err := s.parseAlipayCallback(context.Background(), signedNotify(t, alipayPri, wrongSN)); err == nil ||
 		!strings.Contains(err.Error(), "验签失败") {
 		t.Fatalf("序列号不匹配应拒绝通知，实际: %v", err)
 	}
 
 	// 漏传 alipay_cert_sn：官方从不承诺通知带该字段（SDK v0.0.6 起按本商户支付宝公钥证书公钥直验）
 	noSN := successNotifyFields(testAlipayAppID)
-	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, noSN)); err != nil {
+	if _, err := s.parseAlipayCallback(context.Background(), signedNotify(t, alipayPri, noSN)); err != nil {
 		t.Fatalf("缺 alipay_cert_sn 的本证书合法通知应验签通过: %v", err)
 	}
 
 	// 缺字段不等于放宽验签钥匙：非本商户证书私钥签的通知仍须拒绝
 	_, foreignPri := newTestAlipayCert(t, 20262)
-	if _, err := s.parseAlipayCallback(signedNotify(t, foreignPri, successNotifyFields(testAlipayAppID))); err == nil {
+	if _, err := s.parseAlipayCallback(context.Background(), signedNotify(t, foreignPri, successNotifyFields(testAlipayAppID))); err == nil {
 		t.Fatalf("非本商户支付宝公钥证书签发的通知应拒绝")
 	}
 }
@@ -362,12 +375,21 @@ func TestParseAlipayCallbackRecordsVerifyEvidence(t *testing.T) {
 	}
 
 	s := &PaymentService{cfg: &config.Config{}}
-	s.payCfg = &model.PayConfig{
-		AlipayMode:       config.AlipayModeCert,
-		AlipayAppID:      testAlipayAppID,
-		AlipayPrivateKey: priKey,
-		AlipayPublicCert: alipayCert,
-		AlipayRootCert:   carrier.AlipayRootCert,
+	s.registry = &payClientRegistry{
+		version: "test",
+		rows: map[int64]*model.PayConfig{
+			1: {
+				ID:               1,
+				Platform:         model.PayPlatformAlipay,
+				AlipayMode:       config.AlipayModeCert,
+				AlipayAppID:      testAlipayAppID,
+				AlipayPrivateKey: priKey,
+				AlipayPublicCert: alipayCert,
+				AlipayRootCert:   carrier.AlipayRootCert,
+			},
+		},
+		wechat: map[int64]*wegopayment.Client{},
+		alipay: map[int64]*alipaysdk.GenericExecuteApi{},
 	}
 
 	// 取证要盯的故障形态是「证书不同源」：通知不带 alipay_cert_sn，签名又不出自本证书私钥。
@@ -377,7 +399,7 @@ func TestParseAlipayCallbackRecordsVerifyEvidence(t *testing.T) {
 	t.Cleanup(func() { debuglog.SetInstance(nil) })
 	_, foreignPri := newTestAlipayCert(t, 20262)
 	foreign := successNotifyFields(testAlipayAppID)
-	if _, err := s.parseAlipayCallback(signedNotify(t, foreignPri, foreign)); err == nil {
+	if _, err := s.parseAlipayCallback(context.Background(), signedNotify(t, foreignPri, foreign)); err == nil {
 		t.Fatalf("非本商户支付宝公钥证书签发的通知应拒绝")
 	}
 
@@ -385,12 +407,12 @@ func TestParseAlipayCallbackRecordsVerifyEvidence(t *testing.T) {
 	debuglog.SetInstance(dbg)
 
 	got := signedNotify(t, foreignPri, foreign)
-	if _, err := s.parseAlipayCallback(got); err == nil {
+	if _, err := s.parseAlipayCallback(context.Background(), got); err == nil {
 		t.Fatalf("非本商户支付宝公钥证书签发的通知应拒绝")
 	}
 
 	// 同一批字段改由本证书私钥签发：缺 alipay_cert_sn 也验签通过，且不落取证记录
-	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, successNotifyFields(testAlipayAppID))); err != nil {
+	if _, err := s.parseAlipayCallback(context.Background(), signedNotify(t, alipayPri, successNotifyFields(testAlipayAppID))); err != nil {
 		t.Fatalf("缺 alipay_cert_sn 的本证书合法通知应验签通过: %v", err)
 	}
 	if _, passed, err := dbg.GetStorage().FindAll(1, 50, map[string]interface{}{"record_type": "process"}); err != nil || passed != 1 {
@@ -434,7 +456,7 @@ func TestParseAlipayCallbackRecordsVerifyEvidence(t *testing.T) {
 	const wrongNotifySN = "0123456789abcdef0123456789abcdef"
 	wrongSN := successNotifyFields(testAlipayAppID)
 	wrongSN["alipay_cert_sn"] = wrongNotifySN
-	if _, err := s.parseAlipayCallback(signedNotify(t, alipayPri, wrongSN)); err == nil {
+	if _, err := s.parseAlipayCallback(context.Background(), signedNotify(t, alipayPri, wrongSN)); err == nil {
 		t.Fatalf("序列号不匹配的通知应拒绝")
 	}
 

@@ -50,13 +50,12 @@ type wechatPayParams struct {
 //   - string: 调起参数 JSON 字符串（JSAPI）或包含 h5_url 的 JSON（H5）
 //   - error: 错误信息
 func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Payment, openid, appID string) (string, error) {
-	// 支付前检测数据库配置版本，后台修改配置后无需重启即可生效
-	s.getPayConfigCached(ctx)
-	client := s.getWechatPayClient()
+	// 客户端与配置均按支付单绑定的配置行获取（内部含版本热刷新）
+	client := s.getWechatPayClientFor(ctx, p.ConfigID)
 	if client == nil {
 		return "", fmt.Errorf("微信支付未配置或配置不完整")
 	}
-	cfg := s.getWechatPayConfig()
+	cfg := s.getWechatConfigFor(ctx, p.ConfigID)
 	// 请求级 AppID 优先，为空回落配置默认值；JSAPI 签名必须使用与 openid 同源的 AppID
 	if appID == "" {
 		appID = cfg.AppID
@@ -152,7 +151,8 @@ var wechatRefundQuery = defaultWechatRefundQuery
 // defaultWechatRefundQuery 查询微信退款单终态（按商户退款单号 out_refund_no）
 // 参数：
 //   - ctx: 上下文
-//   - s: 支付服务（取配置热更新后的微信客户端）
+//   - s: 支付服务（按配置行取热更新后的微信客户端）
+//   - configID: 支付配置行 ID（退款调用点从支付单携带，多配置下路由到对应商户客户端）
 //   - refundNo: 商户退款单号（本系统退款流水号）
 //
 // 返回值：
@@ -161,9 +161,9 @@ var wechatRefundQuery = defaultWechatRefundQuery
 //   - error: 客户端未配置或渠道调用失败；调用方不得据此改动本地流水状态
 //
 // 使用示例：
-//   - status, refundID, err := defaultWechatRefundQuery(ctx, s, "RF20261021001")
-func defaultWechatRefundQuery(ctx context.Context, s *PaymentService, refundNo string) (status, refundID string, err error) {
-	client := s.getWechatPayClient()
+//   - status, refundID, err := defaultWechatRefundQuery(ctx, s, 3, "RF20261021001")
+func defaultWechatRefundQuery(ctx context.Context, s *PaymentService, configID int64, refundNo string) (status, refundID string, err error) {
+	client := s.getWechatPayClientFor(ctx, configID)
 	if client == nil {
 		return "", "", fmt.Errorf("微信支付未配置或配置不完整")
 	}
@@ -189,7 +189,7 @@ func defaultWechatRefundQuery(ctx context.Context, s *PaymentService, refundNo s
 // 返回值：
 //   - error: 渠道调用失败返回错误；受理未到终态返回 errRefundAccepted
 func (s *PaymentService) wechatRefund(ctx context.Context, p *model.Payment, refund *model.RefundPayment) error {
-	client := s.getWechatPayClient()
+	client := s.getWechatPayClientFor(ctx, p.ConfigID)
 	if client == nil {
 		return fmt.Errorf("微信支付未配置或配置不完整")
 	}
@@ -260,7 +260,9 @@ func verifyWechatCallbackIdentity(n *wechatTransactionNotification, wantMchID, w
 }
 
 // parseWechatCallback 解析微信支付回调报文
-// 使用 wego 验证通知签名并解密资源，然后提取支付单号与微信订单号
+// 多配置下回调报文不携带可用的明文路由信息（V3 通知全文加密，平台证书序列号
+// 在多商户配置间无区分度），采用遍历策略：逐个就绪配置的客户端尝试验签解密，
+// 首个成功者即回调归属的配置行，再用该配置的商户号/AppID 做归属校验
 // 参数：
 //   - s: 支付服务实例，用于获取 wego 客户端
 //   - ctx: 调用方上下文（回调处理链路），内部再套验签时限
@@ -271,19 +273,29 @@ func verifyWechatCallbackIdentity(n *wechatTransactionNotification, wantMchID, w
 //   - *payCallbackParams: 解析后的通用参数
 //   - error: 错误信息
 func parseWechatCallback(s *PaymentService, ctx context.Context, body []byte, headers http.Header) (*payCallbackParams, error) {
-	client := s.getWechatPayClient()
-	if client == nil {
-		return nil, fmt.Errorf("微信支付未配置或配置不完整")
-	}
 	if len(body) == 0 {
 		return nil, fmt.Errorf("回调体为空")
+	}
+	clients := s.allWechatClients(ctx)
+	if len(clients) == 0 {
+		return nil, fmt.Errorf("微信支付未配置或配置不完整")
 	}
 
 	verifyCtx, cancel := context.WithTimeout(ctx, wechatVerifyTimeout)
 	defer cancel()
-	notification, plainBytes, err := client.VerifyNotification(verifyCtx, headers, body)
-	if err != nil {
-		return nil, fmt.Errorf("微信支付回调验签解密失败: %w", err)
+	var matchedConfigID int64
+	var notification *wegopayment.Notification
+	var plainBytes []byte
+	var lastErr error
+	for id, client := range clients {
+		notification, plainBytes, lastErr = client.VerifyNotification(verifyCtx, headers, body)
+		if lastErr == nil {
+			matchedConfigID = id
+			break
+		}
+	}
+	if matchedConfigID == 0 {
+		return nil, fmt.Errorf("微信支付回调验签解密失败: %w", lastErr)
 	}
 
 	// 仅处理支付成功通知，避免退款等其他通知被误处理为支付成功
@@ -303,7 +315,7 @@ func parseWechatCallback(s *PaymentService, ctx context.Context, body []byte, he
 	if result.OutTradeNo == "" || result.TransactionID == "" {
 		return nil, fmt.Errorf("微信支付回调参数缺失")
 	}
-	wechatCfg := s.getWechatPayConfig()
+	wechatCfg := s.getWechatConfigFor(ctx, matchedConfigID)
 	if err := verifyWechatCallbackIdentity(&result, wechatCfg.MchID, wechatCfg.AppID); err != nil {
 		return nil, err
 	}

@@ -2,13 +2,11 @@ package main
 
 import (
 	stdctx "context"
-	"encoding/json"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
-	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
@@ -178,27 +176,44 @@ func (s *server) ResetRefundFlow(ctx stdctx.Context, req *payment.ResetRefundFlo
 	return resp, nil
 }
 
-// GetPayConfig 查询支付配置
-// 返回数据库中的支付渠道开关与微信/支付宝配置，并附渠道就绪状态
-func (s *server) GetPayConfig(ctx stdctx.Context, _ *payment.GetPayConfigReq) (*payment.PayConfig, error) {
-	row, err := s.paymentService.GetPayConfig(ctx)
+// ListPayConfigs 支付配置列表（管理端，含凭证与就绪状态；网关负责脱敏）
+func (s *server) ListPayConfigs(ctx stdctx.Context, _ *payment.ListPayConfigsReq) (*payment.ListPayConfigsResp, error) {
+	rows, err := s.paymentService.GetPayConfigs(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	return s.toPayConfig(row), nil
+	list := make([]*payment.PayConfigRow, 0, len(rows))
+	for i := range rows {
+		list = append(list, s.toPayConfigRow(rows[i]))
+	}
+	return &payment.ListPayConfigsResp{List: list}, nil
 }
 
-// SavePayConfig 保存支付配置
-// 保存成功后本实例立即热更新，其余实例按版本号在下一次支付调用时自动刷新
-func (s *server) SavePayConfig(ctx stdctx.Context, cfg *payment.PayConfig) (*common.CommonResponse, error) {
-	if err := s.paymentService.SavePayConfig(ctx, cfg); err != nil {
+// SavePayConfigRow 新增（id=0）或更新一条支付配置
+// 保存成功后本实例立即热重建，其余实例按版本号在下一次支付调用时自动刷新
+func (s *server) SavePayConfigRow(ctx stdctx.Context, in *payment.PayConfigRow) (*payment.PayConfigRow, error) {
+	row, err := s.paymentService.SavePayConfigRow(ctx, in)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return s.toPayConfigRow(row), nil
+}
+
+// DeletePayConfigRow 删除一条支付配置（渠道引用校验由网关负责）
+func (s *server) DeletePayConfigRow(ctx stdctx.Context, req *payment.DeletePayConfigRowReq) (*common.CommonResponse, error) {
+	if err := s.paymentService.DeletePayConfigRow(ctx, req.Id); err != nil {
 		return nil, bizerr.ToStatus(err)
 	}
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
+// ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
+func (s *server) ListActivePayMethods(ctx stdctx.Context, _ *payment.ListActivePayMethodsReq) (*payment.ListActivePayMethodsResp, error) {
+	return &payment.ListActivePayMethodsResp{Methods: s.paymentService.ListActivePayMethods(ctx)}, nil
+}
+
 // UploadPayCert 上传支付证书文件
-// 文件内容直接存入数据库，上传后立即热更新支付客户端
+// 文件内容直接存入对应配置行，上传后立即热更新支付客户端
 func (s *server) UploadPayCert(ctx stdctx.Context, req *payment.UploadPayCertReq) (*payment.UploadPayCertResp, error) {
 	if err := s.paymentService.UploadPayCert(ctx, req); err != nil {
 		return &payment.UploadPayCertResp{Success: false, Message: err.Error()}, nil
@@ -263,40 +278,28 @@ func (s *server) MarkPaymentPaid(ctx stdctx.Context, req *payment.MarkPaymentPai
 	return &common.CommonResponse{Code: 0, Message: "success"}, nil
 }
 
-// toPayConfig 将支付配置模型转换为 proto 结构
+// toPayConfigRow 将支付配置模型转换为 proto 结构
+// 就绪口径：启用 + 当前平台必填字段齐全（支付宝另要求密钥离线自检通过）
+//
 // 参数：
 //   - row: 支付配置模型
 //
 // 返回值：
-//   - *payment.PayConfig: proto 支付配置
-func (s *server) toPayConfig(row *model.PayConfig) *payment.PayConfig {
-	var channels []string
-	if row.EnabledChannels != "" {
-		_ = json.Unmarshal([]byte(row.EnabledChannels), &channels)
-	}
-	var wechatClientChannels []string
-	if row.WechatClientChannels != "" {
-		_ = json.Unmarshal([]byte(row.WechatClientChannels), &wechatClientChannels)
-	}
-	var alipayClientChannels []string
-	if row.AlipayClientChannels != "" {
-		_ = json.Unmarshal([]byte(row.AlipayClientChannels), &alipayClientChannels)
-	}
+//   - *payment.PayConfigRow: proto 支付配置行
+func (s *server) toPayConfigRow(row *model.PayConfig) *payment.PayConfigRow {
+		ready, readyMsg := false, ""
+		switch row.Platform {
+		case model.PayPlatformWechat:
+			ready, readyMsg = service.WechatConfigStatus(row)
+		case model.PayPlatformAlipay:
+			ready, readyMsg = service.AlipayConfigStatus(row)
+		}
+	return &payment.PayConfigRow{
+		Id:      row.ID,
+		Name:    row.Name,
+		Platform: row.Platform,
+		Enabled: row.Enabled,
 
-	wechat := config.WechatConfig{
-		AppID:        row.WechatAppID,
-		AppSecret:    row.WechatAppSecret,
-		MchID:        row.WechatMchID,
-		APIV3Key:     row.WechatAPIV3Key,
-		CertSerialNo: row.WechatCertSerialNo,
-		PrivateKey:   row.WechatPrivateKey,
-		NotifyURL:    row.WechatNotifyURL,
-	}
-	// 支付宝就绪口径与 C 端展示、下单可用性一致：字段齐全且密钥离线自检通过
-	alipayReady, alipayReadyMsg := service.AlipayConfigStatus(row)
-
-	return &payment.PayConfig{
-		EnabledChannels:    channels,
 		WechatAppId:        row.WechatAppID,
 		WechatAppSecret:    row.WechatAppSecret,
 		WechatMchId:        row.WechatMchID,
@@ -304,24 +307,22 @@ func (s *server) toPayConfig(row *model.PayConfig) *payment.PayConfig {
 		WechatCertSerialNo: row.WechatCertSerialNo,
 		WechatPrivateKey:   row.WechatPrivateKey,
 		WechatNotifyUrl:    row.WechatNotifyURL,
-		AlipayAppId:        row.AlipayAppID,
-		AlipayPrivateKey:   row.AlipayPrivateKey,
-		AlipayPublicKey:    row.AlipayPublicKey,
-		AlipayNotifyUrl:    row.AlipayNotifyURL,
-		AlipayReturnUrl:    row.AlipayReturnURL,
 		WechatCertUploaded: row.WechatPrivateKey != "",
-		AlipayCertUploaded: row.AlipayPrivateKey != "",
-		// 支付宝加签方式与三证书上传状态：证书内容不回传，仅回传标志供后台表单展示
+
+		AlipayAppId:              row.AlipayAppID,
+		AlipayPrivateKey:         row.AlipayPrivateKey,
+		AlipayPublicKey:          row.AlipayPublicKey,
+		AlipayNotifyUrl:          row.AlipayNotifyURL,
+		AlipayReturnUrl:          row.AlipayReturnURL,
 		AlipayMode:               row.AlipayMode,
+		AlipayGatewayUrl:         row.AlipayGatewayURL,
+		AlipayCertUploaded:       row.AlipayPrivateKey != "",
 		AlipayAppCertUploaded:    row.AlipayAppCert != "",
 		AlipayPublicCertUploaded: row.AlipayPublicCert != "",
 		AlipayRootCertUploaded:   row.AlipayRootCert != "",
-		UpdatedAt:                row.UpdatedAt,
-		WechatPaymentReady:       wechat.IsPaymentConfigured(),
-		AlipayReady:              alipayReady,
-		AlipayReadyMessage:       alipayReadyMsg,
-		AlipayGatewayUrl:         row.AlipayGatewayURL,
-		WechatClientChannels:     wechatClientChannels,
-		AlipayClientChannels:     alipayClientChannels,
+
+		UpdatedAt:   row.UpdatedAt,
+		Ready:       ready,
+		ReadyMessage: readyMsg,
 	}
 }

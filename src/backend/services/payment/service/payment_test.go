@@ -44,6 +44,10 @@ import (
 // testOrderIDBase 支付测试订单 ID 起始值（远超真实业务 ID 区间，清理依据）
 const testOrderIDBase = int64(990000001)
 
+// payConfigID 测试库中现金建单锁行（pay_config 占位行）的固定 ID
+// cashCreateLockTx 锁 pay_config 最小 id 行，测试库必须存在该行
+const payConfigID = int64(1)
+
 // stubOrderClient 订单服务桩：记录 UpdateOrderStatus 调用入参，不落真实订单
 // 嵌入接口后仅覆写 UpdateOrderStatus/GetOrder，避免实现全部方法
 type stubOrderClient struct {

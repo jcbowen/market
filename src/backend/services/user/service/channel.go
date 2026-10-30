@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +36,7 @@ func ToClientChannelInfo(c *model.ClientChannel) *user.ClientChannelInfo {
 		AppId:      c.AppID,
 		AppSecret:  c.AppSecret,
 		Enabled:    c.Enabled,
-		Sort:       c.Sort,
+		PayMethods: payMethodsToList(c.PayMethods),
 		Configured: c.IsConfigured(),
 		UpdatedAt:  c.UpdatedAt,
 	}
@@ -70,34 +72,63 @@ func NewChannelService(db *mysql.Instance) *ChannelService {
 	return &ChannelService{db: db}
 }
 
-// EnsureDefaultClientChannels 确保内置客户端渠道存在（幂等种子）
-// 表为空时写入 4 条内置渠道：小程序/公众号/App 默认停用待配置，h5 无需凭证默认启用
+// channelSeeds 内置渠道种子（幂等补种基准，顺序即固定展示顺序）
+// h5/pos 无需凭证默认启用；其余渠道默认停用待配置；
+// 默认支付方式绑定均为 ["cash"]（货到付款内置项），其余支付方式由管理员在渠道配置中绑定
+var channelSeeds = []struct {
+	Code       string
+	Name       string
+	Enabled    bool
+	PayMethods string
+}{
+	{Code: channel.H5, Name: "浏览器 H5", Enabled: true, PayMethods: `["cash"]`},
+	{Code: channel.GZH, Name: "微信公众号", Enabled: false, PayMethods: `[]`},
+	{Code: channel.MP, Name: "微信小程序", Enabled: false, PayMethods: `[]`},
+	{Code: channel.ALIMP, Name: "支付宝小程序", Enabled: false, PayMethods: `[]`},
+	{Code: channel.ANDROID, Name: "安卓 App", Enabled: false, PayMethods: `[]`},
+	{Code: channel.IOS, Name: "iOS App", Enabled: false, PayMethods: `[]`},
+	{Code: channel.POS, Name: "门店收银台", Enabled: true, PayMethods: `["cash"]`},
+}
+
+// EnsureDefaultClientChannels 确保内置客户端渠道存在（幂等补种）
+// 逐渠道补种缺失项（含历史 app 渠道拆分为 android/ios 后的缺口），
+// 并清理已下线的渠道行（如 app）；已存在的渠道不做任何覆写
 //
 // 返回值：
 //   - error: 初始化失败时返回错误
 func (s *ChannelService) EnsureDefaultClientChannels() error {
-	var count int64
-	if err := s.db.GetDb().Model(&model.ClientChannel{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("查询客户端渠道表失败: %w", err)
-	}
-	if count > 0 {
-		return nil
-	}
-
 	now := time.Now().Format("2006-01-02 15:04:05")
-	seeds := []*model.ClientChannel{
-		{Code: channel.MP, Name: "微信小程序", Enabled: false, Sort: 1, CreatedAt: now, UpdatedAt: now},
-		{Code: channel.GZH, Name: "微信公众号", Enabled: false, Sort: 2, CreatedAt: now, UpdatedAt: now},
-		{Code: channel.APP, Name: "App 应用", Enabled: false, Sort: 3, CreatedAt: now, UpdatedAt: now},
-		{Code: channel.H5, Name: "浏览器 H5", Enabled: true, Sort: 4, CreatedAt: now, UpdatedAt: now},
+	for _, seed := range channelSeeds {
+		var count int64
+		if err := s.db.GetDb().Model(&model.ClientChannel{}).
+			Where("code = ?", seed.Code).Count(&count).Error; err != nil {
+			return fmt.Errorf("查询客户端渠道失败: %w", err)
+		}
+		if count > 0 {
+			continue
+		}
+		row := &model.ClientChannel{
+			Code:       seed.Code,
+			Name:       seed.Name,
+			Enabled:    seed.Enabled,
+			PayMethods: seed.PayMethods,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		if err := s.db.GetDb().Create(row).Error; err != nil {
+			return fmt.Errorf("初始化内置客户端渠道 %s 失败: %w", seed.Code, err)
+		}
 	}
-	if err := s.db.GetDb().CreateInBatches(seeds, len(seeds)).Error; err != nil {
-		return fmt.Errorf("初始化内置客户端渠道失败: %w", err)
+	// 清理已下线的渠道（历史单 App 渠道已拆分为 android/ios，直接重建不留迁移）
+	if err := s.db.GetDb().
+		Where("code NOT IN ?", channel.All()).
+		Delete(&model.ClientChannel{}).Error; err != nil {
+		return fmt.Errorf("清理下线客户端渠道失败: %w", err)
 	}
 	return nil
 }
 
-// ListClientChannels 查询客户端渠道列表（按 sort 升序）
+// ListClientChannels 查询客户端渠道列表（按固定常用程度顺序，与 channel.OrderIndex 一致）
 //
 // 参数：
 //   - ctx: 上下文
@@ -112,8 +143,18 @@ func (s *ChannelService) ListClientChannels(ctx context.Context, onlyEnabled boo
 		db = db.Where("enabled = ?", true)
 	}
 	var list []*model.ClientChannel
-	if err := db.Order("sort ASC, id ASC").Find(&list).Error; err != nil {
+	if err := db.Find(&list).Error; err != nil {
 		return nil, fmt.Errorf("查询客户端渠道列表失败: %w", err)
+	}
+	// 排序功能已移除：按内置固定顺序（常用程度）返回，未知渠道排最后
+	order := make(map[string]int, len(list))
+	for _, row := range list {
+		order[row.Code] = channel.OrderIndex(row.Code)
+	}
+	for i := 1; i < len(list); i++ {
+		for j := i; j > 0 && order[list[j].Code] < order[list[j-1].Code]; j-- {
+			list[j], list[j-1] = list[j-1], list[j]
+		}
 	}
 	return list, nil
 }
@@ -142,8 +183,85 @@ func (s *ChannelService) GetClientChannel(ctx context.Context, code string) (*mo
 	return &row, nil
 }
 
-// SaveClientChannel 保存渠道配置（名称/凭证/启用/排序）
-// AppSecret 为空时保留原值，避免未重新输入时清空已保存内容；code 不可变更
+// payMethodCompatible 支付方式与渠道的平台兼容矩阵
+// wechat 配置可绑定 h5/gzh/mp/pos（pos 走 B 扫 C 付款码）；
+// alipay 配置可绑定 h5/alimp/pos；gzh 微信支付链路未开放，绑定允许但渲染时被能力判定过滤
+var payMethodCompatible = map[string]map[string]bool{
+	"wechat": {channel.H5: true, channel.GZH: true, channel.MP: true, channel.POS: true},
+	"alipay": {channel.H5: true, channel.ALIMP: true, channel.POS: true},
+}
+
+// validatePayMethods 校验并规整渠道绑定的支付方式列表
+// 每项为 "cash" 或 "<platform>:<config_id>"；cash 至多一条、同平台至多一条
+// （C 端支付方式按平台选择、POS 付款码按前缀自动识别渠道，同平台多条会产生歧义）；
+// 平台须与渠道兼容（payMethodCompatible）；返回规整后的 JSON 串
+//
+// 参数：
+//   - code: 渠道标识
+//   - methods: 待校验的支付方式列表
+//
+// 返回值：
+//   - string: 规整后的 JSON 数组串
+//   - error: 语法、平台或重复项不合法时返回业务错误
+func validatePayMethods(code string, methods []string) (string, error) {
+	seenPlatform := make(map[string]bool)
+	normalized := make([]string, 0, len(methods))
+	for _, raw := range methods {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		if entry == "cash" {
+			if seenPlatform["cash"] {
+				return "", bizerr.New(codes.InvalidArgument, "货到付款至多绑定一条")
+			}
+			seenPlatform["cash"] = true
+			normalized = append(normalized, entry)
+			continue
+		}
+		platform, idStr, found := strings.Cut(entry, ":")
+		platform = strings.TrimSpace(platform)
+		id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+		if !found || err != nil || id <= 0 || (platform != "wechat" && platform != "alipay") {
+			return "", bizerr.New(codes.InvalidArgument, fmt.Sprintf("支付方式 %q 不合法，应为 cash 或 平台:配置ID", entry))
+		}
+		if !payMethodCompatible[platform][code] {
+			return "", bizerr.New(codes.InvalidArgument, fmt.Sprintf("%s 平台支付配置不可绑定到渠道 %s", platform, code))
+		}
+		if seenPlatform[platform] {
+			return "", bizerr.New(codes.InvalidArgument, fmt.Sprintf("%s 平台至多绑定一条支付配置", platform))
+		}
+		seenPlatform[platform] = true
+		normalized = append(normalized, fmt.Sprintf("%s:%d", platform, id))
+	}
+	out, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("序列化支付方式列表失败: %w", err)
+	}
+	return string(out), nil
+}
+
+// payMethodsToList 将渠道存储的 pay_methods JSON 串解析为列表
+//
+// 参数：
+//   - raw: JSON 数组串
+//
+// 返回值：
+//   - []string: 支付方式列表，空串/解析失败返回 nil
+func payMethodsToList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil
+	}
+	return list
+}
+
+// SaveClientChannel 保存渠道配置（名称/凭证/启用/支付方式绑定）
+// AppSecret 为空时保留原值，避免未重新输入时清空已保存内容；code 不可变更；
+// pay_methods 做语法、平台兼容与去重校验（validatePayMethods）
 //
 // 参数：
 //   - ctx: 上下文
@@ -180,15 +298,25 @@ func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveCl
 		row.AppSecret = req.AppSecret
 	}
 	row.Enabled = req.Enabled
-	row.Sort = req.Sort
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
 
 	// 启用状态与凭证完整性一致性校验：防止凭证被清空/不全的渠道被置为启用
 	// （登录与支付链路按渠道现取凭证，启用但凭证不完整会直接报"未配置"）
 	// 注意：业务校验错误必须 bizerr（纯 fmt.Errorf 会被 ToStatus 归为 Internal，网关吞成 10002）
 	if row.Enabled && !row.IsConfigured() {
-		return nil, bizerr.New(codes.FailedPrecondition, "渠道凭证不完整（AppID/AppSecret），无法启用")
+		return nil, bizerr.New(codes.FailedPrecondition, "渠道凭证不完整，无法启用")
 	}
+	// 暂不支持渠道（android/ios）恒为禁用态：即使存量数据为启用也强制关闭
+	if row.Enabled && channel.IsDisabled(row.Code) {
+		return nil, bizerr.New(codes.FailedPrecondition, "该渠道暂不支持，无法启用")
+	}
+
+	// 支付方式绑定校验与落库（渠道侧决定启用哪些支付配置与收银台顺序）
+	methods, err := validatePayMethods(row.Code, req.PayMethods)
+	if err != nil {
+		return nil, err
+	}
+	row.PayMethods = methods
 
 	if err := s.db.GetDb().WithContext(ctx).Save(&row).Error; err != nil {
 		return nil, fmt.Errorf("保存客户端渠道失败: %w", err)

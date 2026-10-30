@@ -2,8 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"testing"
 
+	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
@@ -91,32 +96,35 @@ func TestNotifyChannelOf(t *testing.T) {
 	}
 }
 
-// TestCreatePaymentCodePayNotReady 渠道未就绪：付款码单创建被拦截
-// 就绪判定显式桩为 false：本地开发库可能已配置真实渠道（如 alipay），
-// 依赖「测试环境无支付配置」的隐含前提会让结果随环境漂移
-func TestCreatePaymentCodePayNotReady(t *testing.T) {
+// TestCreatePaymentCodePayPlaceholder 付款码占位单创建：建单发生在扫码前、平台未知，
+// 不携带 config_id 也不校验渠道就绪（就绪校验移至扫码后的 PayByAuthCode 与网关前置校验）
+func TestCreatePaymentCodePayPlaceholder(t *testing.T) {
 	s, _, cleanup := newPaymentTestEnv(t)
 	defer cleanup()
-
-	origWx, origAli := wechatPayReady, alipayPayReady
-	wechatPayReady = func(*PaymentService) bool { return false }
-	alipayPayReady = func(*PaymentService) bool { return false }
-	defer func() { wechatPayReady, alipayPayReady = origWx, origAli }()
+	ctx := context.Background()
 
 	for _, pt := range []int32{5, 6} {
-		_, _, err := s.CreatePayment(context.Background(), &payment.CreatePaymentReq{
+		resp, _, err := s.CreatePayment(ctx, &payment.CreatePaymentReq{
 			OrderId: testOrderIDBase + 40,
 			UserId:  0,
 			Amount:  10.00,
 			PayType: pt,
 		})
-		if err == nil {
-			t.Fatalf("pay_type=%d 渠道未就绪时应拒绝创建支付单", pt)
+		if err != nil {
+			t.Fatalf("pay_type=%d 占位单创建应成功（未绑配置不拦截建单）: %v", pt, err)
 		}
+		var p model.Payment
+		if err := s.db.GetDb().Where("payment_no = ?", resp.PaymentNo).First(&p).Error; err != nil {
+			t.Fatalf("查询占位支付单失败: %v", err)
+		}
+		if p.Status != 1 || p.ConfigID != 0 {
+			t.Errorf("占位单应待支付且 config_id=0, got status=%d config_id=%d", p.Status, p.ConfigID)
+		}
+		s.db.GetDb().Where("payment_no = ?", resp.PaymentNo).Delete(&model.Payment{})
 	}
 
 	// 0 元单拒收：渠道不受理 0 元交易
-	_, _, err := s.CreatePayment(context.Background(), &payment.CreatePaymentReq{
+	_, _, err := s.CreatePayment(ctx, &payment.CreatePaymentReq{
 		OrderId: testOrderIDBase + 41,
 		UserId:  0,
 		Amount:  0,
@@ -125,6 +133,49 @@ func TestCreatePaymentCodePayNotReady(t *testing.T) {
 	if err == nil {
 		t.Fatal("付款码 0 元单应被拒绝")
 	}
+}
+
+// seedActiveWechatPayConfig 在测试库播种一条启用且凭证齐全的微信支付配置行，返回配置 ID
+// 私钥用测试生成的真实 RSA PEM：wegopayment.NewClientE 构建时解析，假串会导致客户端构建失败、
+// resolveActivePayConfig 判未就绪
+func seedActiveWechatPayConfig(t *testing.T, s *PaymentService) int64 {
+	t.Helper()
+	pri, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("生成测试 RSA 私钥失败: %v", err)
+	}
+	priDER, err := x509.MarshalPKCS8PrivateKey(pri)
+	if err != nil {
+		t.Fatalf("序列化测试私钥失败: %v", err)
+	}
+	priPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: priDER}))
+	row := &model.PayConfig{
+		ID: payConfigID + 1, Name: "test-wechat", Platform: model.PayPlatformWechat, Enabled: true,
+		WechatAppID: "wx-test-app", WechatAppSecret: "test-secret", WechatMchID: "1900000001",
+		WechatAPIV3Key: "01234567890123456789012345678901", WechatCertSerialNo: "TESTSERIAL0001",
+		WechatPrivateKey: priPEM, WechatNotifyURL: "https://market.example.com/api/v1/payments/callback/wechat",
+	}
+	if err := s.db.GetDb().Where(model.PayConfig{ID: row.ID}).Assign(*row).FirstOrCreate(row).Error; err != nil {
+		t.Fatalf("播种微信支付配置行失败: %v", err)
+	}
+	t.Cleanup(func() { s.db.GetDb().Where("id = ?", row.ID).Delete(&model.PayConfig{}) })
+	return row.ID
+}
+
+// seedActiveAlipayPayConfig 在测试库播种一条启用且凭证齐全的支付宝支付配置行（公钥模式），返回配置 ID
+func seedActiveAlipayPayConfig(t *testing.T, s *PaymentService) int64 {
+	t.Helper()
+	priKey, pubKey := newTestAlipayKeys(t)
+	row := &model.PayConfig{
+		ID: payConfigID + 2, Name: "test-alipay", Platform: model.PayPlatformAlipay, Enabled: true,
+		AlipayAppID: testAlipayAppID, AlipayPrivateKey: priKey, AlipayPublicKey: pubKey,
+		AlipayMode: config.AlipayModePublic, AlipayNotifyURL: "https://market.example.com/api/v1/payments/callback/alipay",
+	}
+	if err := s.db.GetDb().Where(model.PayConfig{ID: row.ID}).Assign(*row).FirstOrCreate(row).Error; err != nil {
+		t.Fatalf("播种支付宝支付配置行失败: %v", err)
+	}
+	t.Cleanup(func() { s.db.GetDb().Where("id = ?", row.ID).Delete(&model.PayConfig{}) })
+	return row.ID
 }
 
 // TestPayByAuthCodeSuccess 扣款成功：支付单置已支付+线下来源+交易号，订单同步已支付
@@ -149,15 +200,10 @@ func TestPayByAuthCodeSuccess(t *testing.T) {
 	wechatAuthCodePay = func(ctx context.Context, s *PaymentService, p *model.Payment, authCode string) (*codePayResult, error) {
 		return &codePayResult{State: ChannelStatePaid, TransactionID: "WX-TX-CODE-001", Amount: p.Amount}, nil
 	}
-	// 测试环境无支付配置，就绪判定替换为真以放行到渠道扣款桩
-	origReady := wechatPayReady
-	wechatPayReady = func(*PaymentService) bool { return true }
-	defer func() {
-		wechatAuthCodePay = origPay
-		wechatPayReady = origReady
-	}()
+	configID := seedActiveWechatPayConfig(t, s)
+	defer func() { wechatAuthCodePay = origPay }()
 
-	resp, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-PAID", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9})
+	resp, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-PAID", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9, ConfigId: configID})
 	if err != nil {
 		t.Fatalf("付款码扣款失败: %v", err)
 	}
@@ -207,15 +253,10 @@ func TestPayByAuthCodeUserPaying(t *testing.T) {
 	alipayAuthCodePay = func(ctx context.Context, s *PaymentService, p *model.Payment, authCode string) (*codePayResult, error) {
 		return &codePayResult{State: ChannelStatePaying, Message: "用户支付中"}, nil
 	}
-	// 测试环境无支付配置，就绪判定替换为真以放行到渠道扣款桩
-	origReady := alipayPayReady
-	alipayPayReady = func(*PaymentService) bool { return true }
-	defer func() {
-		alipayAuthCodePay = origPay
-		alipayPayReady = origReady
-	}()
+	configID := seedActiveAlipayPayConfig(t, s)
+	defer func() { alipayAuthCodePay = origPay }()
 
-	resp, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-PAYING", OrderId: orderID, AuthCode: "2801234567890123456789012345", OperatorId: 9})
+	resp, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-PAYING", OrderId: orderID, AuthCode: "2801234567890123456789012345", OperatorId: 9, ConfigId: configID})
 	if err != nil {
 		t.Fatalf("付款码扣款失败: %v", err)
 	}
@@ -261,15 +302,10 @@ func TestPayByAuthCodeFailedRetry(t *testing.T) {
 		call++
 		return &codePayResult{State: r.state, TransactionID: r.txnID, Message: r.msg}, nil
 	}
-	// 测试环境无支付配置，就绪判定替换为真以放行到渠道扣款桩
-	origReady := wechatPayReady
-	wechatPayReady = func(*PaymentService) bool { return true }
-	defer func() {
-		wechatAuthCodePay = origPay
-		wechatPayReady = origReady
-	}()
+	configID := seedActiveWechatPayConfig(t, s)
+	defer func() { wechatAuthCodePay = origPay }()
 
-	req := &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-RETRY", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9}
+	req := &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-RETRY", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9, ConfigId: configID}
 
 	// 第一次：渠道拒绝（余额不足），支付单保持待支付
 	resp, err := s.PayByAuthCode(ctx, req)
@@ -361,7 +397,7 @@ func TestPayByAuthCodeGuard(t *testing.T) {
 		t.Error("支付单与订单不匹配应被拒绝")
 	}
 
-	// 渠道未配置（测试环境无支付配置）：扣款前拦截
+	// 支付配置缺失（req.ConfigId=0）：扣款前被 resolveActivePayConfig 拦截
 	insertPayment(t, s, &model.Payment{
 		PaymentNo: "PAYTEST-CODE-NOCH",
 		OrderID:   testOrderIDBase + 47,
@@ -373,7 +409,7 @@ func TestPayByAuthCodeGuard(t *testing.T) {
 		UpdatedAt: "2026-01-01 00:00:00",
 	})
 	if _, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-NOCH", OrderId: testOrderIDBase + 47, AuthCode: "1345235315201154982642655744", OperatorId: 9}); err == nil {
-		t.Error("微信渠道未配置应拒绝扣款")
+		t.Error("缺少支付配置应拒绝扣款")
 	}
 
 	// 参数错误：付款码缺失 / 长度不合法 / 支付单号缺失 / 订单 ID 缺失

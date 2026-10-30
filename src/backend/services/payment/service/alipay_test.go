@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
+	wegopayment "github.com/jcbowen/wego/payment"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 )
@@ -56,6 +58,7 @@ func notifySignContent(params map[string]string) string {
 }
 
 // newAlipayNotifyEnv 构造仅含支付宝配置的被测服务（不落库、不构建 SDK 客户端）
+// 多行制下回调按 app_id 从支付配置注册表路由：直接注入 registry 缓存（无 DB 时 getRegistryCached 回落缓存）
 // 参数：
 //   - t: 测试对象
 //   - appID: 配置中的商户 AppID
@@ -78,7 +81,14 @@ func newAlipayNotifyEnv(t *testing.T, appID, publicKey string) (*PaymentService,
 		publicKey = base64.StdEncoding.EncodeToString(der)
 	}
 	s := &PaymentService{cfg: &config.Config{}}
-	s.payCfg = &model.PayConfig{AlipayAppID: appID, AlipayPublicKey: publicKey}
+	s.registry = &payClientRegistry{
+		version: "test",
+		rows: map[int64]*model.PayConfig{
+			1: {ID: 1, Platform: model.PayPlatformAlipay, AlipayAppID: appID, AlipayPublicKey: publicKey},
+		},
+		wechat: map[int64]*wegopayment.Client{},
+		alipay: map[int64]*alipaysdk.GenericExecuteApi{},
+	}
 	return s, pri
 }
 
@@ -128,7 +138,7 @@ func successNotifyFields(appID string) map[string]string {
 // TestParseAlipayCallbackSuccess 合法成功通知：验签通过并解析出单号、交易号与金额
 func TestParseAlipayCallbackSuccess(t *testing.T) {
 	s, pri := newAlipayNotifyEnv(t, testAlipayAppID, "")
-	got, err := s.parseAlipayCallback(signedNotify(t, pri, successNotifyFields(testAlipayAppID)))
+	got, err := s.parseAlipayCallback(context.Background(), signedNotify(t, pri, successNotifyFields(testAlipayAppID)))
 	if err != nil {
 		t.Fatalf("合法通知被拒绝: %v", err)
 	}
@@ -146,7 +156,7 @@ func TestParseAlipayCallbackAtPrefixedValue(t *testing.T) {
 	s, pri := newAlipayNotifyEnv(t, testAlipayAppID, "")
 	fields := successNotifyFields(testAlipayAppID)
 	fields["body"] = "@团购订单"
-	if _, err := s.parseAlipayCallback(signedNotify(t, pri, fields)); err != nil {
+	if _, err := s.parseAlipayCallback(context.Background(), signedNotify(t, pri, fields)); err != nil {
 		t.Fatalf("含 @ 值的通知被拒绝: %v", err)
 	}
 }
@@ -238,7 +248,7 @@ func TestParseAlipayCallbackRejects(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got, err := s.parseAlipayCallback(c.params); err == nil {
+			if got, err := s.parseAlipayCallback(context.Background(), c.params); err == nil {
 				t.Fatalf("非法通知未被拒绝: %+v", got)
 			}
 		})
@@ -247,16 +257,22 @@ func TestParseAlipayCallbackRejects(t *testing.T) {
 
 // TestParseAlipayCallbackUnconfiguredKey 支付宝公钥或 AppID 未配置时拒绝受理通知
 func TestParseAlipayCallbackUnconfiguredKey(t *testing.T) {
-	// 公钥未配置
-	noKey, err := (&PaymentService{cfg: &config.Config{}, payCfg: &model.PayConfig{AlipayAppID: testAlipayAppID}}).
-		parseAlipayCallback(map[string]string{"sign": "abc"})
+	// 公钥未配置：app_id 命中配置行但行内支付宝公钥为空，验签前拒绝
+	noKey, err := (&PaymentService{cfg: &config.Config{}, registry: &payClientRegistry{
+		version: "test",
+		rows: map[int64]*model.PayConfig{
+			1: {ID: 1, Platform: model.PayPlatformAlipay, AlipayAppID: testAlipayAppID},
+		},
+		wechat: map[int64]*wegopayment.Client{},
+		alipay: map[int64]*alipaysdk.GenericExecuteApi{},
+	}}).parseAlipayCallback(context.Background(), map[string]string{"sign": "abc", "app_id": testAlipayAppID})
 	if err == nil || noKey != nil {
 		t.Fatalf("公钥未配置应拒绝: %+v err=%v", noKey, err)
 	}
 
 	// 公钥已配置但 AppID 缺失：验签通过后仍须拒绝（无法校验通知身份）
 	s, pri := newAlipayNotifyEnv(t, "", "")
-	got, err := s.parseAlipayCallback(signedNotify(t, pri, successNotifyFields(testAlipayAppID)))
+	got, err := s.parseAlipayCallback(context.Background(), signedNotify(t, pri, successNotifyFields(testAlipayAppID)))
 	if err == nil || got != nil {
 		t.Fatalf("AppID 未配置应拒绝: %+v err=%v", got, err)
 	}

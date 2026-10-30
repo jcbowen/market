@@ -29,8 +29,10 @@ const (
 	PaymentService_ProcessRefund_FullMethodName             = "/payment.PaymentService/ProcessRefund"
 	PaymentService_QueryRefundResult_FullMethodName         = "/payment.PaymentService/QueryRefundResult"
 	PaymentService_ResetRefundFlow_FullMethodName           = "/payment.PaymentService/ResetRefundFlow"
-	PaymentService_GetPayConfig_FullMethodName              = "/payment.PaymentService/GetPayConfig"
-	PaymentService_SavePayConfig_FullMethodName             = "/payment.PaymentService/SavePayConfig"
+	PaymentService_ListPayConfigs_FullMethodName            = "/payment.PaymentService/ListPayConfigs"
+	PaymentService_SavePayConfigRow_FullMethodName          = "/payment.PaymentService/SavePayConfigRow"
+	PaymentService_DeletePayConfigRow_FullMethodName        = "/payment.PaymentService/DeletePayConfigRow"
+	PaymentService_ListActivePayMethods_FullMethodName      = "/payment.PaymentService/ListActivePayMethods"
 	PaymentService_UploadPayCert_FullMethodName             = "/payment.PaymentService/UploadPayCert"
 	PaymentService_ClosePayments_FullMethodName             = "/payment.PaymentService/ClosePayments"
 	PaymentService_SyncPaymentFromChannel_FullMethodName    = "/payment.PaymentService/SyncPaymentFromChannel"
@@ -67,8 +69,14 @@ type PaymentServiceClient interface {
 	// 本方法把 retry_count/escalated 归零，让流水重新被查单任务看见，
 	// 只处理待退款(1)流水——已成功(2)/已失败(3)一律拒绝，避免对已出款流水重复触渠道
 	ResetRefundFlow(ctx context.Context, in *ResetRefundFlowReq, opts ...grpc.CallOption) (*ResetRefundFlowResp, error)
-	GetPayConfig(ctx context.Context, in *GetPayConfigReq, opts ...grpc.CallOption) (*PayConfig, error)
-	SavePayConfig(ctx context.Context, in *PayConfig, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// ListPayConfigs 支付配置列表（管理端，含凭证与就绪状态；网关负责脱敏）
+	ListPayConfigs(ctx context.Context, in *ListPayConfigsReq, opts ...grpc.CallOption) (*ListPayConfigsResp, error)
+	// SavePayConfigRow 新增（id=0）或更新一条支付配置；updated_at 乐观锁
+	SavePayConfigRow(ctx context.Context, in *PayConfigRow, opts ...grpc.CallOption) (*PayConfigRow, error)
+	// DeletePayConfigRow 删除一条支付配置（渠道引用校验由网关负责）
+	DeletePayConfigRow(ctx context.Context, in *DeletePayConfigRowReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
+	// ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
+	ListActivePayMethods(ctx context.Context, in *ListActivePayMethodsReq, opts ...grpc.CallOption) (*ListActivePayMethodsResp, error)
 	UploadPayCert(ctx context.Context, in *UploadPayCertReq, opts ...grpc.CallOption) (*UploadPayCertResp, error)
 	// 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
 	ClosePayments(ctx context.Context, in *ClosePaymentsReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
@@ -200,20 +208,40 @@ func (c *paymentServiceClient) ResetRefundFlow(ctx context.Context, in *ResetRef
 	return out, nil
 }
 
-func (c *paymentServiceClient) GetPayConfig(ctx context.Context, in *GetPayConfigReq, opts ...grpc.CallOption) (*PayConfig, error) {
+func (c *paymentServiceClient) ListPayConfigs(ctx context.Context, in *ListPayConfigsReq, opts ...grpc.CallOption) (*ListPayConfigsResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PayConfig)
-	err := c.cc.Invoke(ctx, PaymentService_GetPayConfig_FullMethodName, in, out, cOpts...)
+	out := new(ListPayConfigsResp)
+	err := c.cc.Invoke(ctx, PaymentService_ListPayConfigs_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *paymentServiceClient) SavePayConfig(ctx context.Context, in *PayConfig, opts ...grpc.CallOption) (*common.CommonResponse, error) {
+func (c *paymentServiceClient) SavePayConfigRow(ctx context.Context, in *PayConfigRow, opts ...grpc.CallOption) (*PayConfigRow, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PayConfigRow)
+	err := c.cc.Invoke(ctx, PaymentService_SavePayConfigRow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *paymentServiceClient) DeletePayConfigRow(ctx context.Context, in *DeletePayConfigRowReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.CommonResponse)
-	err := c.cc.Invoke(ctx, PaymentService_SavePayConfig_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, PaymentService_DeletePayConfigRow_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *paymentServiceClient) ListActivePayMethods(ctx context.Context, in *ListActivePayMethodsReq, opts ...grpc.CallOption) (*ListActivePayMethodsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListActivePayMethodsResp)
+	err := c.cc.Invoke(ctx, PaymentService_ListActivePayMethods_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -344,8 +372,14 @@ type PaymentServiceServer interface {
 	// 本方法把 retry_count/escalated 归零，让流水重新被查单任务看见，
 	// 只处理待退款(1)流水——已成功(2)/已失败(3)一律拒绝，避免对已出款流水重复触渠道
 	ResetRefundFlow(context.Context, *ResetRefundFlowReq) (*ResetRefundFlowResp, error)
-	GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error)
-	SavePayConfig(context.Context, *PayConfig) (*common.CommonResponse, error)
+	// ListPayConfigs 支付配置列表（管理端，含凭证与就绪状态；网关负责脱敏）
+	ListPayConfigs(context.Context, *ListPayConfigsReq) (*ListPayConfigsResp, error)
+	// SavePayConfigRow 新增（id=0）或更新一条支付配置；updated_at 乐观锁
+	SavePayConfigRow(context.Context, *PayConfigRow) (*PayConfigRow, error)
+	// DeletePayConfigRow 删除一条支付配置（渠道引用校验由网关负责）
+	DeletePayConfigRow(context.Context, *DeletePayConfigRowReq) (*common.CommonResponse, error)
+	// ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
+	ListActivePayMethods(context.Context, *ListActivePayMethodsReq) (*ListActivePayMethodsResp, error)
 	UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error)
 	// 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
 	ClosePayments(context.Context, *ClosePaymentsReq) (*common.CommonResponse, error)
@@ -414,11 +448,17 @@ func (UnimplementedPaymentServiceServer) QueryRefundResult(context.Context, *Que
 func (UnimplementedPaymentServiceServer) ResetRefundFlow(context.Context, *ResetRefundFlowReq) (*ResetRefundFlowResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResetRefundFlow not implemented")
 }
-func (UnimplementedPaymentServiceServer) GetPayConfig(context.Context, *GetPayConfigReq) (*PayConfig, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetPayConfig not implemented")
+func (UnimplementedPaymentServiceServer) ListPayConfigs(context.Context, *ListPayConfigsReq) (*ListPayConfigsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPayConfigs not implemented")
 }
-func (UnimplementedPaymentServiceServer) SavePayConfig(context.Context, *PayConfig) (*common.CommonResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SavePayConfig not implemented")
+func (UnimplementedPaymentServiceServer) SavePayConfigRow(context.Context, *PayConfigRow) (*PayConfigRow, error) {
+	return nil, status.Error(codes.Unimplemented, "method SavePayConfigRow not implemented")
+}
+func (UnimplementedPaymentServiceServer) DeletePayConfigRow(context.Context, *DeletePayConfigRowReq) (*common.CommonResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeletePayConfigRow not implemented")
+}
+func (UnimplementedPaymentServiceServer) ListActivePayMethods(context.Context, *ListActivePayMethodsReq) (*ListActivePayMethodsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListActivePayMethods not implemented")
 }
 func (UnimplementedPaymentServiceServer) UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method UploadPayCert not implemented")
@@ -633,38 +673,74 @@ func _PaymentService_ResetRefundFlow_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PaymentService_GetPayConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetPayConfigReq)
+func _PaymentService_ListPayConfigs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPayConfigsReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PaymentServiceServer).GetPayConfig(ctx, in)
+		return srv.(PaymentServiceServer).ListPayConfigs(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PaymentService_GetPayConfig_FullMethodName,
+		FullMethod: PaymentService_ListPayConfigs_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PaymentServiceServer).GetPayConfig(ctx, req.(*GetPayConfigReq))
+		return srv.(PaymentServiceServer).ListPayConfigs(ctx, req.(*ListPayConfigsReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PaymentService_SavePayConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PayConfig)
+func _PaymentService_SavePayConfigRow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PayConfigRow)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(PaymentServiceServer).SavePayConfig(ctx, in)
+		return srv.(PaymentServiceServer).SavePayConfigRow(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: PaymentService_SavePayConfig_FullMethodName,
+		FullMethod: PaymentService_SavePayConfigRow_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PaymentServiceServer).SavePayConfig(ctx, req.(*PayConfig))
+		return srv.(PaymentServiceServer).SavePayConfigRow(ctx, req.(*PayConfigRow))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PaymentService_DeletePayConfigRow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePayConfigRowReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).DeletePayConfigRow(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_DeletePayConfigRow_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).DeletePayConfigRow(ctx, req.(*DeletePayConfigRowReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PaymentService_ListActivePayMethods_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListActivePayMethodsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).ListActivePayMethods(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_ListActivePayMethods_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).ListActivePayMethods(ctx, req.(*ListActivePayMethodsReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -893,12 +969,20 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PaymentService_ResetRefundFlow_Handler,
 		},
 		{
-			MethodName: "GetPayConfig",
-			Handler:    _PaymentService_GetPayConfig_Handler,
+			MethodName: "ListPayConfigs",
+			Handler:    _PaymentService_ListPayConfigs_Handler,
 		},
 		{
-			MethodName: "SavePayConfig",
-			Handler:    _PaymentService_SavePayConfig_Handler,
+			MethodName: "SavePayConfigRow",
+			Handler:    _PaymentService_SavePayConfigRow_Handler,
+		},
+		{
+			MethodName: "DeletePayConfigRow",
+			Handler:    _PaymentService_DeletePayConfigRow_Handler,
+		},
+		{
+			MethodName: "ListActivePayMethods",
+			Handler:    _PaymentService_ListActivePayMethods_Handler,
 		},
 		{
 			MethodName: "UploadPayCert",

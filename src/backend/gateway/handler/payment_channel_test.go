@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/jcbowen/market/src/backend/common/channel"
-	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 )
 
@@ -29,8 +28,58 @@ func TestContainsString(t *testing.T) {
 	}
 }
 
+// TestParsePayMethodEntry 渠道绑定条目拆解
+// 覆盖：cash 内置项、platform:config_id、非法语法一律回退零值
+func TestParsePayMethodEntry(t *testing.T) {
+	cases := []struct {
+		name         string
+		entry        string
+		wantPlatform string
+		wantID       int64
+	}{
+		{"cash 内置项", "cash", "", 0},
+		{"cash 带空白", " cash ", "", 0},
+		{"微信配置", "wechat:3", "wechat", 3},
+		{"支付宝配置", "alipay:12", "alipay", 12},
+		{"非法：缺冒号", "wechat", "", 0},
+		{"非法：ID 非数字", "wechat:abc", "", 0},
+		{"非法：ID 为 0", "wechat:0", "", 0},
+		{"非法：ID 为负", "wechat:-1", "", 0},
+		{"非法：空串", "", "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			platform, id := parsePayMethodEntry(tc.entry)
+			if platform != tc.wantPlatform || id != tc.wantID {
+				t.Fatalf("parsePayMethodEntry(%q) = (%q, %d), want (%q, %d)", tc.entry, platform, id, tc.wantPlatform, tc.wantID)
+			}
+		})
+	}
+}
+
+// TestFirstConfigIDForPlatform 与 TestBindingHasCash 渠道绑定解析
+func TestBindingResolution(t *testing.T) {
+	methods := []string{"cash", "alipay:2", "wechat:5"}
+	if id := firstConfigIDForPlatform(methods, "wechat"); id != 5 {
+		t.Fatalf("wechat 配置 ID = %d, want 5", id)
+	}
+	if id := firstConfigIDForPlatform(methods, "alipay"); id != 2 {
+		t.Fatalf("alipay 配置 ID = %d, want 2", id)
+	}
+	if id := firstConfigIDForPlatform(methods, "unknown"); id != 0 {
+		t.Fatalf("未绑定平台应返回 0, got %d", id)
+	}
+	if !bindingHasCash(methods) {
+		t.Fatal("绑定含 cash 应返回 true")
+	}
+	if bindingHasCash([]string{"wechat:1"}) {
+		t.Fatal("绑定不含 cash 应返回 false")
+	}
+}
+
 // TestWechatPayReadyOnClient 微信支付按客户端渠道的能力就绪判定
-// 覆盖：mp 渠道启用+配置完整、mp 未启用/未配置、h5 恒就绪、gzh/app 链路未开放、未知渠道存量口径放行
+// 覆盖：mp 渠道启用+配置完整、mp 未启用/未配置、h5 恒就绪、
+// gzh/alimp/android/ios 链路未开放或生态不兼容
 func TestWechatPayReadyOnClient(t *testing.T) {
 	mpReady := &user.ClientChannelInfo{Code: channel.MP, Enabled: true, Configured: true}
 	mpDisabled := &user.ClientChannelInfo{Code: channel.MP, Enabled: false, Configured: true}
@@ -47,9 +96,10 @@ func TestWechatPayReadyOnClient(t *testing.T) {
 		{"mp 渠道未配置凭证", channel.MP, map[string]*user.ClientChannelInfo{channel.MP: mpNotConfigured}, false},
 		{"mp 渠道索引缺失（渠道服务异常降级）", channel.MP, nil, false},
 		{"h5 恒就绪", channel.H5, nil, true},
-		{"公众号链路未开放", channel.GZH, map[string]*user.ClientChannelInfo{channel.GZH: mpReady}, false},
-		{"App 链路未开放", channel.APP, nil, false},
-		{"未知渠道存量口径放行", "wx", nil, true},
+		{"公众号 OAuth 链路未接入", channel.GZH, nil, false},
+		{"支付宝小程序内无法唤起微信", channel.ALIMP, nil, false},
+		{"安卓 App 支付未接入", channel.ANDROID, nil, false},
+		{"iOS App 支付未接入", channel.IOS, nil, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,70 +111,66 @@ func TestWechatPayReadyOnClient(t *testing.T) {
 }
 
 // TestAlipayPayReadyOnClient 支付宝支付按客户端渠道的能力就绪判定
-// 覆盖：h5 手机网站支付恒就绪、微信生态渠道拒绝、App 链路未接入、未知渠道存量口径放行
+// 覆盖：h5 手机网站支付与 alimp 小程序支付恒就绪、微信生态渠道与 App 渠道拒绝
 func TestAlipayPayReadyOnClient(t *testing.T) {
-	mpReady := &user.ClientChannelInfo{Code: channel.MP, Enabled: true, Configured: true}
-
 	cases := []struct {
-		name     string
-		code     string
-		channels map[string]*user.ClientChannelInfo
-		want     bool
+		name string
+		code string
+		want bool
 	}{
-		{"h5 恒就绪", channel.H5, nil, true},
-		{"微信小程序内无法唤起", channel.MP, map[string]*user.ClientChannelInfo{channel.MP: mpReady}, false},
-		{"公众号链路无法唤起", channel.GZH, map[string]*user.ClientChannelInfo{channel.GZH: mpReady}, false},
-		{"App 支付未接入", channel.APP, nil, false},
-		{"未知渠道存量口径放行", "wx", nil, true},
+		{"h5 恒就绪", channel.H5, true},
+		{"支付宝小程序恒就绪", channel.ALIMP, true},
+		{"微信小程序内无法唤起", channel.MP, false},
+		{"公众号内无法唤起", channel.GZH, false},
+		{"安卓 App 支付未接入", channel.ANDROID, false},
+		{"iOS App 支付未接入", channel.IOS, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := alipayPayReadyOnClient(tc.code, tc.channels); got != tc.want {
+			if got := alipayPayReadyOnClient(tc.code); got != tc.want {
 				t.Fatalf("alipayPayReadyOnClient(%q) = %v, want %v", tc.code, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestIsChannelUsableOnClient 支付渠道在客户端渠道上的交集过滤
-// 覆盖：未带渠道头不过滤、勾选命中/未命中、空勾选=全渠道兼容、cash 恒可用、非法渠道头
-func TestIsChannelUsableOnClient(t *testing.T) {
-	cfg := &payment.PayConfig{
-		WechatClientChannels: []string{channel.MP},
-		AlipayClientChannels: []string{channel.H5},
-	}
+// TestResolveChannelPayBinding 渠道绑定解析：未带渠道头按 h5 兜底
+func TestResolveChannelPayBinding(t *testing.T) {
+	h5 := &user.ClientChannelInfo{Code: channel.H5, Enabled: true}
 	channels := map[string]*user.ClientChannelInfo{
-		channel.MP: {Code: channel.MP, Enabled: true, Configured: true},
+		channel.H5: h5,
 	}
+	if got := resolveChannelPayBinding("", channels); got != h5 {
+		t.Fatal("未带渠道头应按 h5 渠道解析")
+	}
+	if got := resolveChannelPayBinding(channel.H5, channels); got != h5 {
+		t.Fatal("显式 h5 应命中渠道表")
+	}
+	if got := resolveChannelPayBinding(channel.MP, channels); got != nil {
+		t.Fatal("渠道表中不存在的渠道应返回 nil")
+	}
+}
 
+// TestAuthCodePlatform 付款码前缀识别平台
+func TestAuthCodePlatform(t *testing.T) {
 	cases := []struct {
-		name       string
-		payChannel string
-		clientCode string
-		want       bool
+		code string
+		want string
 	}{
-		{"未带渠道头保持存量口径", "wechat", "", true},
-		{"非法渠道头不过滤", "wechat", "wx", true},
-		{"微信勾选命中 mp", "wechat", channel.MP, true},
-		{"微信勾选未命中 h5", "wechat", channel.H5, false},
-		{"现金渠道全客户端可用", "cash", channel.APP, true},
-		{"支付宝勾选命中 h5 且能力就绪", "alipay", channel.H5, true},
-		{"支付宝勾选命中但微信生态拒绝", "alipay", channel.MP, false},
+		{"10", payPlatformWechat},
+		{"15", payPlatformWechat},
+		{"1345678901234567", payPlatformWechat},
+		{"25", payPlatformAlipay},
+		{"30", payPlatformAlipay},
+		{"2834567890123456", payPlatformAlipay},
+		{"16", ""},
+		{"35", ""},
+		{"", ""},
+		{"9", ""},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isChannelUsableOnClient(tc.payChannel, tc.clientCode, cfg, channels); got != tc.want {
-				t.Fatalf("isChannelUsableOnClient(%q, %q) = %v, want %v", tc.payChannel, tc.clientCode, got, tc.want)
-			}
-		})
-	}
-
-	// 空勾选 = 全部客户端渠道可用（存量数据兼容口径）
-	emptyCfg := &payment.PayConfig{}
-	if !isChannelUsableOnClient("wechat", channel.H5, emptyCfg, channels) {
-		t.Fatalf("空勾选时应全渠道放行: wechat@h5 want true")
-	}
-	if !isChannelUsableOnClient("alipay", channel.H5, emptyCfg, channels) {
-		t.Fatalf("空勾选时应全渠道放行: alipay@h5 want true")
+		if got := authCodePlatform(tc.code); got != tc.want {
+			t.Fatalf("authCodePlatform(%q) = %q, want %q", tc.code, got, tc.want)
+		}
 	}
 }

@@ -175,8 +175,8 @@ func (f *fakeChannels) totalQueries() int {
 	return len(f.queries)
 }
 
-// query 渠道查询替身实现（签名与 defaultQueryWechatOrder 一致）
-func (f *fakeChannels) query(_ context.Context, _ *PaymentService, paymentNo string) (*channelPayResult, error) {
+// query 渠道查询替身实现（签名与 defaultQueryWechatOrder 一致，configID 为配置行 ID）
+func (f *fakeChannels) query(_ context.Context, _ *PaymentService, _ int64, paymentNo string) (*channelPayResult, error) {
 	f.mu.Lock()
 	f.queries = append(f.queries, paymentNo)
 	ans, ok := f.answers[paymentNo]
@@ -190,8 +190,8 @@ func (f *fakeChannels) query(_ context.Context, _ *PaymentService, paymentNo str
 	return ans.res, nil
 }
 
-// close 渠道关单替身实现
-func (f *fakeChannels) close(_ context.Context, _ *PaymentService, paymentNo string) error {
+// close 渠道关单替身实现（configID 为配置行 ID）
+func (f *fakeChannels) close(_ context.Context, _ *PaymentService, _ int64, paymentNo string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closes = append(f.closes, paymentNo)

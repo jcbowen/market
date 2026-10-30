@@ -23,14 +23,11 @@ import (
 	alipaymodel "github.com/jcbowen/alipay-sdk-go-all/model"
 )
 
-// 付款码渠道扣款与渠道就绪判定均以包级变量注入，单测直接替换，无需真实商户配置
+// 付款码渠道扣款以包级变量注入，单测直接替换，无需真实商户配置；
+// 渠道就绪判定已收敛到 resolveActivePayConfig（配置存在/启用/平台匹配/客户端就绪）
 var (
 	wechatAuthCodePay = defaultWechatAuthCodePay
 	alipayAuthCodePay = defaultAlipayAuthCodePay
-	// wechatPayReady 微信渠道是否就绪（默认读服务当前配置快照，非 nil 即字段齐全可用）
-	wechatPayReady = func(s *PaymentService) bool { return s.getWechatPayClient() != nil }
-	// alipayPayReady 支付宝渠道是否就绪（同上）
-	alipayPayReady = func(s *PaymentService) bool { return s.getAlipayExecutor() != nil }
 )
 
 // codePayResult 付款码扣款的归一化结果
@@ -46,36 +43,6 @@ type codePayResult struct {
 	TransactionID string
 	Amount        float64
 	Message       string
-}
-
-// ensureCodePayChannelReady 校验付款码支付对应渠道配置就绪
-// 占位 pay_type 由网关 ListPosPayMethods 按实际可用渠道动态下发（两渠道齐备以 5 占位、
-// 仅支付宝可用下发 6），故到达本方法时 payType 已具备真实渠道语义，必须按渠道精确校验：
-// 5=微信付款码校验微信客户端、6=支付宝付款码校验支付宝执行器，避免「仅支付宝可用时
-// 以 5 下单」漏检放行。客户端/执行器随支付配置热更新重建，非 nil 即代表该渠道字段齐全可用。
-// 未就绪时返回 FailedPrecondition，网关原样透传提示改用现金
-// 参数：
-//   - ctx: 上下文（用于刷新支付配置缓存）
-//   - payType: 支付方式（5=微信付款码 6=支付宝付款码）
-//
-// 返回值：
-//   - error: payType 非法或对应渠道未就绪时返回业务错误
-func (s *PaymentService) ensureCodePayChannelReady(ctx context.Context, payType int32) error {
-	s.getPayConfigCached(ctx)
-	switch payType {
-	case 5:
-		if wechatPayReady(s) {
-			return nil
-		}
-		return bizerr.New(codes.FailedPrecondition, "微信付款码收款未开启，请使用现金收款")
-	case 6:
-		if alipayPayReady(s) {
-			return nil
-		}
-		return bizerr.New(codes.FailedPrecondition, "支付宝付款码收款未开启，请使用现金收款")
-	default:
-		return bizerr.New(codes.InvalidArgument, "不支持的付款码支付方式")
-	}
 }
 
 // payTypeFromAuthCode 按付款码前缀识别渠道
@@ -149,16 +116,23 @@ func (s *PaymentService) PayByAuthCode(ctx context.Context, req *payment.PayByAu
 		return nil, bizerr.New(codes.FailedPrecondition, "支付单已关闭或已退款，无法收款")
 	}
 
-	// 扣款前刷新支付配置并按渠道精确校验就绪：未承接过下单的实例若沿用启动时的空配置，
-	// 会把可用渠道判为未配置；与下单校验（CreatePayment）同口径，渠道客户端/执行器热更新后非 nil 即可用
+	// 扣款前按前缀识别的平台路由到对应支付配置（网关已按 pos 渠道绑定解析出 req.ConfigId）：
+	// 配置不存在/停用/平台不匹配/凭证不齐均在此拦截，与下单校验同口径。
 	// 渠道由付款码前缀决定（决策②单一入口）：下单时渠道未知，支付单以 pay_type=5 占位创建，
-	// 此处按前缀识别并纠正——占位单尚未被任何渠道受理（status=1 待支付），原地切换无损
+	// 此处按前缀识别并纠正 pay_type 与 config_id——占位单尚未被任何渠道受理（status=1 待支付），原地切换无损
 	detected := payTypeFromAuthCode(authCode)
 	if detected == 0 {
 		if strings.HasPrefix(authCode, "62") {
 			return nil, bizerr.New(codes.FailedPrecondition, "暂不支持云闪付付款码，请让顾客出示微信/支付宝付款码")
 		}
 		return nil, bizerr.New(codes.FailedPrecondition, "无法识别的付款码，请让顾客出示微信/支付宝付款码")
+	}
+	platform := model.PayPlatformWechat
+	if detected == 6 {
+		platform = model.PayPlatformAlipay
+	}
+	if _, err := s.resolveActivePayConfig(ctx, req.ConfigId, platform); err != nil {
+		return nil, err
 	}
 	if p.PayType != detected {
 		if err := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
@@ -167,8 +141,12 @@ func (s *PaymentService) PayByAuthCode(ctx context.Context, req *payment.PayByAu
 		}
 		p.PayType = detected
 	}
-	if err := s.ensureCodePayChannelReady(ctx, p.PayType); err != nil {
-		return nil, err
+	if p.ConfigID != req.ConfigId {
+		if err := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
+			Where("id = ? AND status = 1", p.ID).Update("config_id", req.ConfigId).Error; err != nil {
+			return nil, bizerr.New(codes.Internal, "支付单配置切换失败，请重试")
+		}
+		p.ConfigID = req.ConfigId
 	}
 
 	var res *codePayResult
@@ -246,7 +224,7 @@ func (s *PaymentService) buildCodePayResp(p *model.Payment, res *codePayResult) 
 //   - *codePayResult: 归一化结果
 //   - error: 渠道请求异常（非业务拒绝），调用方按「状态未知可重试」处理
 func defaultWechatAuthCodePay(ctx context.Context, s *PaymentService, p *model.Payment, authCode string) (*codePayResult, error) {
-	client := s.getWechatPayClient()
+	client := s.getWechatPayClientFor(ctx, p.ConfigID)
 	if client == nil {
 		return nil, fmt.Errorf("微信支付未配置或配置不完整")
 	}
@@ -300,7 +278,7 @@ func defaultWechatAuthCodePay(ctx context.Context, s *PaymentService, p *model.P
 //   - *codePayResult: 归一化结果
 //   - error: 渠道请求异常（非业务拒绝），调用方按「状态未知可重试」处理
 func defaultAlipayAuthCodePay(ctx context.Context, s *PaymentService, p *model.Payment, authCode string) (*codePayResult, error) {
-	executor := s.getAlipayExecutor()
+	executor := s.getAlipayExecutorFor(ctx, p.ConfigID)
 	if executor == nil {
 		return nil, fmt.Errorf("支付宝支付未配置或配置不完整")
 	}

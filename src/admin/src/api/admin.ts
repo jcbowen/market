@@ -209,47 +209,68 @@ export function setCommunityPermissions(id: number, permissions: string[]) {
 }
 
 /**
- * 支付配置信息
+ * 支付配置行（pay_config 多行制）
+ * 同平台可建多条配置（如「支付宝-H5」「支付宝-小程序」），每条独立启停；
+ * 渠道按 "platform:id" 绑定使用哪一行（见 ClientChannel.pay_methods）
  */
-export interface PaymentSetting {
-  enabled_channels: string[]
-  wechat: WechatPayConfig
-  alipay: AlipayPayConfig
-  wechat_payment_ready: boolean
-  alipay_ready: boolean
-  /** 支付宝配置自检失败原因，空表示自检通过（就绪 = 字段齐全且自检通过）；仅服务端出参，保存载荷无需携带 */
-  alipay_ready_message?: string
-  /** 微信支付 V3 API 密钥是否已配置（密钥明文不回传，保存时留空即保留原值）；仅服务端出参 */
-  wechat_api_v3_configured?: boolean
+export interface PayConfigRow {
+  id: number
+  /** 展示名称（如「支付宝-H5」） */
+  name: string
+  /** 平台类型：wechat 微信 / alipay 支付宝；决定凭证字段组 */
+  platform: 'wechat' | 'alipay'
+  enabled: boolean
+  // —— 微信支付 V3 凭证（platform=wechat 时取用） ——
+  wechat_app_id: string
+  wechat_mch_id: string
+  /** V3 密钥明文不回传：出参为空，保存留空即保留原值；已配置状态看 wechat_api_v3_configured */
+  wechat_api_v3_key: string
+  wechat_cert_serial_no: string
+  /** 回调地址由部署域名派生，只读展示 */
+  wechat_notify_url: string
+  // —— 支付宝凭证（platform=alipay 时取用） ——
+  alipay_app_id: string
+  /** 加签方式，见 AlipaySignMode */
+  alipay_mode: AlipaySignMode
+  alipay_public_key: string
+  alipay_notify_url: string
+  alipay_return_url: string
+  /** 网关地址（仅协议+域名），空串=生产环境 openapi.alipay.com；填沙箱网关即切沙箱联调 */
+  alipay_gateway_url: string
+  // —— 上传状态（证书/私钥内容不回传，仅回传标志） ——
   wechat_cert_uploaded: boolean
   alipay_cert_uploaded: boolean
-  /** 支付宝证书模式三证书上传状态（证书内容不回传，仅回传标志）；仅服务端出参 */
-  alipay_app_cert_uploaded?: boolean
-  alipay_public_cert_uploaded?: boolean
-  alipay_root_cert_uploaded?: boolean
+  alipay_app_cert_uploaded: boolean
+  alipay_public_cert_uploaded: boolean
+  alipay_root_cert_uploaded: boolean
+  /** V3 密钥是否已配置（密钥明文不回传，保存时留空即保留原值）；仅服务端出参 */
+  wechat_api_v3_configured?: boolean
+  /** 就绪状态：启用 + 当前平台必填字段齐全（支付宝另要求密钥自检通过）；仅服务端出参 */
+  ready?: boolean
+  /** 未就绪原因；仅服务端出参 */
+  ready_message?: string
+  /** 乐观并发令牌：保存时回传，服务端版本不一致时拒绝覆写 */
   updated_at: string
-  suggested_urls: PaymentSuggestedURLs
-  /** 适用客户端渠道勾选（mp/gzh/app/h5；空数组=全部客户端渠道可用，存量兼容口径） */
-  wechat_client_channels: string[]
-  alipay_client_channels: string[]
 }
 
 /**
  * 客户端渠道（渠道管理）
- * 后台统一维护各客户端访问凭证（AppID/AppSecret）、启用开关与排序；
+ * 后台统一维护各客户端访问凭证（AppID/AppSecret）、启用开关与支付方式绑定；
  * 登录与支付链路按渠道取用凭证
  */
 export interface ClientChannel {
   id: number
-  /** 渠道标识：mp 微信小程序 / gzh 微信公众号 / app 开放平台App / h5 浏览器H5 */
+  /** 渠道标识：h5 / gzh 微信公众号 / mp 微信小程序 / alimp 支付宝小程序 / android / ios / pos 门店收银台 */
   code: string
   name: string
   app_id: string
   /** 服务端不回传明文，恒为空串；存量凭证以 configured 标志判断，保存空值时服务端保留原值 */
   app_secret: string
   enabled: boolean
-  sort: number
-  /** 凭证是否配置完整（h5 无需凭证恒为 true） */
+  /** 渠道绑定的支付方式（有序，顺序即收银台展示顺序）：
+   *  每项为 "cash" 或 "<platform>:<config_id>"（如 "wechat:3"） */
+  pay_methods: string[]
+  /** 凭证是否配置完整（h5/pos 恒为 true；alimp 仅需 AppID） */
   configured: boolean
   updated_at: string
 }
@@ -265,62 +286,62 @@ export interface PaymentSuggestedURLs {
 }
 
 /**
- * 微信支付配置
- */
-export interface WechatPayConfig {
-  app_id: string
-  app_secret: string
-  mch_id: string
-  api_v3_key: string
-  cert_serial_no: string
-  private_key: string
-  notify_url: string
-}
-
-/**
  * 支付宝加签方式
  * - public 公钥模式：AppID + 应用私钥 + 支付宝公钥
  * - cert 证书模式：AppID + 应用私钥 + 应用公钥证书 + 支付宝公钥证书 + 支付宝根证书
- * 与服务端 config.AlipayMode* 常量一致；存量数据为空串，前端按 public 处理
+ * 与服务端 config.AlipayMode* 常量一致
  */
 export type AlipaySignMode = 'public' | 'cert'
 
 /**
- * 支付宝支付配置
+ * 获取支付配置列表（多行制，含停用行）
+ * @returns 配置行列表与按部署域名派生的回调地址建议
  */
-export interface AlipayPayConfig {
-  app_id: string
-  private_key: string
-  /** 加签方式，见 AlipaySignMode */
-  mode: string
-  alipay_public_key: string
-  notify_url: string
-  return_url: string
-  /** 网关地址（仅协议+域名），空串=生产环境 openapi.alipay.com；填沙箱网关即切沙箱联调 */
-  gateway_url: string
-}
-
-/**
- * 获取支付配置
- * @returns 支付配置详情
- */
-export function getPaymentSetting() {
-  return request<ApiResult<PaymentSetting>>({
+export function getPaymentConfigs() {
+  return request<ApiResult<{ list: PayConfigRow[]; suggested_urls: PaymentSuggestedURLs }>>({
     url: '/api/v1/admin/settings/payment',
     method: 'GET',
   })
 }
 
 /**
- * 更新支付配置
- * @param data 支付配置数据
- * @returns 更新结果
+ * 新增支付配置行
+ * @param data 配置数据（不含 id）
+ * @returns 保存后的配置行（含 id/就绪状态）
  */
-export function updatePaymentSetting(data: PaymentSetting) {
-  return request<ApiResult<{ success: boolean }>>({
+export function createPayConfig(data: Omit<PayConfigRow, 'id' | 'updated_at'>) {
+  return request<ApiResult<PayConfigRow>>({
     url: '/api/v1/admin/settings/payment',
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 更新支付配置行
+ * 私钥/V3 密钥空值提交时服务端保留原值；updated_at 不一致时服务端拒绝覆写
+ * @param id 配置行 ID
+ * @param data 配置数据
+ * @returns 保存后的配置行
+ */
+export function updatePayConfig(id: number, data: Partial<PayConfigRow>) {
+  return request<ApiResult<PayConfigRow>>({
+    url: `/api/v1/admin/settings/payment/${id}`,
     method: 'PUT',
     data,
+  })
+}
+
+/**
+ * 删除支付配置行
+ * 被渠道绑定引用时服务端拒绝删除
+ * @param id 配置行 ID
+ * @returns 删除结果
+ */
+export function deletePayConfig(id: number) {
+  return request<ApiResult<{ success: boolean }>>({
+    url: `/api/v1/admin/settings/payment/${id}`,
+    method: 'DELETE',
   })
 }
 
@@ -328,16 +349,16 @@ export function updatePaymentSetting(data: PaymentSetting) {
  * 上传支付证书文件
  * 文件内容存入数据库，上传后支付配置即时热更新；
  * 后台「粘贴内容写入」入口复用本函数（前端把文本包成 .pem File 提交，服务端校验口径一致）
- * @param channel 支付渠道：wechat / alipay
- * @param certType 证书类型：private_key（应用私钥）、app_cert（应用公钥证书）、
+ * @param configId 支付配置行 ID
+ * @param certType 证书类型：private_key（商户/应用私钥）、app_cert（应用公钥证书）、
  *                 alipay_public_cert（支付宝公钥证书）、root_cert（支付宝根证书），
  *                 后三类仅支付宝证书模式使用
  * @param file 证书文件（.pem/.crt/.key/.txt）
  * @returns 上传结果
  */
-export function uploadPaymentCert(channel: string, certType: string, file: File) {
+export function uploadPaymentCert(configId: number, certType: string, file: File) {
   const formData = new FormData()
-  formData.append('channel', channel)
+  formData.append('config_id', String(configId))
   formData.append('cert_type', certType)
   formData.append('file', file)
   return request<ApiResult<{ success: boolean; message: string }>>({
@@ -366,7 +387,10 @@ export function getClientChannels() {
  * @param data 渠道配置数据
  * @returns 更新后的渠道信息
  */
-export function updateClientChannel(id: number, data: Pick<ClientChannel, 'code' | 'name' | 'app_id' | 'app_secret' | 'enabled' | 'sort'>) {
+export function updateClientChannel(
+  id: number,
+  data: Pick<ClientChannel, 'code' | 'name' | 'app_id' | 'app_secret' | 'enabled'> & { pay_methods?: string[] },
+) {
   return request<ApiResult<ClientChannel>>({
     url: `/api/v1/admin/settings/channels/${id}`,
     method: 'PUT',
