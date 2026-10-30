@@ -285,6 +285,13 @@ function silentRefresh(): Promise<boolean> {
 }
 
 /**
+ * 全局 loading 延迟显示阈值（毫秒）
+ * 请求在阈值内完成则完全不显示 loading，消除快速请求「闪一下」的弹窗；
+ * 超过阈值仍未完成才显示，此时用户确实在等待，弹窗才有意义
+ */
+const LOADING_DELAY = 300
+
+/**
  * 全局 loading 引用计数
  * uni.showLoading/hideLoading 是单例：并发请求时先返回的那个 hideLoading
  * 会把仍在进行的请求的 loading 关掉（界面看起来「已加载完」但数据还没到）。
@@ -293,22 +300,42 @@ function silentRefresh(): Promise<boolean> {
 let loadingRefCount = 0
 
 /**
- * 显示全局 loading（首个请求触发，后续请求仅计数）
+ * 全局 loading 句柄
+ * 请求发起时创建，请求结束时必须调用 done() 配对收口（含取消/隐藏两种语义）
  */
-function showGlobalLoading() {
-  loadingRefCount++
-  if (loadingRefCount === 1) {
-    uni.showLoading({ title: '加载中', mask: true })
-  }
+interface LoadingHandle {
+  done: () => void
 }
 
 /**
- * 隐藏全局 loading（计数归零才真正隐藏）
+ * 创建全局 loading 句柄（延迟 LOADING_DELAY 后才真正显示，快速请求不闪弹窗）
+ * 首个到期的请求触发 uni.showLoading，后续到期请求仅计数（引用计数防并发早隐藏）
+ * 使用示例：
+ *   const loading = createGlobalLoading()
+ *   try { await doRequest() } finally { loading.done() }
+ * @returns loading 句柄，请求结束时必须调用 done()
  */
-function hideGlobalLoading() {
-  loadingRefCount = Math.max(0, loadingRefCount - 1)
-  if (loadingRefCount === 0) {
-    uni.hideLoading()
+function createGlobalLoading(): LoadingHandle {
+  let shown = false
+  const timer = setTimeout(() => {
+    shown = true
+    loadingRefCount++
+    if (loadingRefCount === 1) {
+      uni.showLoading({ title: '加载中', mask: true })
+    }
+  }, LOADING_DELAY)
+  return {
+    done: () => {
+      if (!shown) {
+        // 请求在延迟期内已完成：取消定时器，loading 全程不出现
+        clearTimeout(timer)
+        return
+      }
+      loadingRefCount = Math.max(0, loadingRefCount - 1)
+      if (loadingRefCount === 0) {
+        uni.hideLoading()
+      }
+    },
   }
 }
 
@@ -349,9 +376,9 @@ function requestOnce<T = unknown>(
   Object.assign(header, buildVersionHeaders())
 
   // #ifndef H5
-  if (!hideLoading) {
-    showGlobalLoading()
-  }
+  // 延迟显示的全局 loading：请求结束时必须 done() 配对（取消或隐藏），
+  // 401 重放会再次调用本函数，各自创建独立句柄，计数天然配对不泄漏
+  const loading = hideLoading ? null : createGlobalLoading()
   // #endif
 
   return new Promise((resolve, reject) => {
@@ -386,9 +413,7 @@ function requestOnce<T = unknown>(
       },
       complete: () => {
         // #ifndef H5
-        if (!hideLoading) {
-          hideGlobalLoading()
-        }
+        loading?.done()
         // #endif
       },
     })
