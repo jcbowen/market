@@ -22,7 +22,7 @@
             </div>
             <div class="card-status">
               <span v-if="isDisabledChannel(ch.code)" class="status-text muted">暂不支持</span>
-              <span v-else-if="ch.code === 'h5' || ch.code === 'pos'" class="status-text ok">无需配置凭证</span>
+              <span v-else-if="(ch.code === 'h5' || ch.code === 'pos') && !bindsWechatPay(ch.pay_methods)" class="status-text ok">无需配置凭证</span>
               <span v-else class="status-text" :class="ch.configured ? 'ok' : 'warn'">
                 {{ ch.configured ? '已配置' : '未配置' }}
               </span>
@@ -41,12 +41,15 @@
               </n-tag>
               <span v-if="!ch.pay_methods?.length" class="pm-empty">未绑定支付方式</span>
             </div>
+            <n-text v-if="!ch.configured && bindsWechatPay(ch.pay_methods)" depth="3" class="form-hint">
+              绑定微信支付需填写本渠道 AppID，且该 AppID 须已在支付配置对应的商户号下完成关联
+            </n-text>
             <div class="card-ops">
               <span class="switch-holder" @click.stop>
                 <n-switch
                   size="small"
                   :value="ch.enabled"
-                  :disabled="isDisabledChannel(ch.code) || (ch.code !== 'h5' && ch.code !== 'pos' && !ch.configured && !ch.enabled)"
+                  :disabled="isDisabledChannel(ch.code) || (!ch.configured && !ch.enabled)"
                   @update:value="(on: boolean) => onToggle(ch, on)"
                 />
               </span>
@@ -96,7 +99,7 @@
       <n-modal v-model:show="showConfigModal" preset="card" :title="`配置 - ${modalChannel?.name ?? ''}`" style="width: 600px; max-width: 92vw;">
         <template v-if="modalChannel">
           <n-alert v-if="modalChannel.code === 'h5'" type="success" style="margin-bottom: 16px;">
-            浏览器 H5 渠道无需配置凭证，仅需控制启用状态与支付方式绑定。
+            浏览器 H5 渠道无登录凭证；绑定微信支付时需填写本渠道的微信 AppID（下单渠道身份），其余只需控制启用状态与支付方式绑定。
           </n-alert>
           <n-alert v-else-if="modalChannel.code === 'alimp'" type="success" style="margin-bottom: 16px;">
             支付宝小程序仅需配置 AppID：登录为手机号表单登录，支付的服务端签名凭证复用支付配置，无需在此录入密钥。
@@ -109,6 +112,10 @@
             <template v-if="needsAppID(modalChannel.code)">
               <n-form-item label="AppID">
                 <n-input v-model:value="modalChannel.app_id" :placeholder="appIDPlaceholder(modalChannel.code)" />
+                <n-text v-if="modalChannel.code === 'h5' || modalChannel.code === 'pos'" depth="3" class="form-hint">
+                  微信 AppID 按渠道填写（一个商户号可关联多个 AppID）：绑定微信支付时必填，
+                  且该 AppID 须已在商户号下完成关联，否则下单会被微信拒绝。
+                </n-text>
               </n-form-item>
             </template>
             <template v-if="needsAppSecret(modalChannel.code)">
@@ -228,9 +235,9 @@ function isDisabledChannel(code: string): boolean {
   return code === 'android' || code === 'ios'
 }
 
-/** 渠道是否需要配置 AppID（h5/pos 无凭证；android/ios 禁用态不可配置） */
+/** 渠道是否需要展示 AppID 输入（仅 android/ios 禁用态不可配置；h5/pos 无登录凭证，绑定微信支付时才必填） */
 function needsAppID(code: string): boolean {
-  return !['h5', 'pos', 'android', 'ios'].includes(code)
+  return !['android', 'ios'].includes(code)
 }
 
 /** 渠道是否需要配置 AppSecret（仅微信系渠道；alimp 签名私钥复用支付配置） */
@@ -245,7 +252,8 @@ function needsAppSecret(code: string): boolean {
 const hasCredential = computed(() => {
   const ch = modalChannel.value
   if (!ch) return false
-  if (ch.code === 'h5' || ch.code === 'pos') return true
+  // h5/pos 无登录凭证，只有绑定微信支付时才需要 AppID（与服务端 IsConfigured 口径一致）
+  if (ch.code === 'h5' || ch.code === 'pos') return !bindsWechatPay(ch.pay_methods) || Boolean(ch.app_id)
   if (ch.code === 'alimp') return ch.configured || Boolean(ch.app_id)
   return ch.configured || Boolean(ch.app_id && ch.app_secret)
 })
@@ -291,7 +299,7 @@ function codeTagType(code: string): 'default' | 'info' | 'success' | 'warning' {
  */
 function channelDesc(code: string): string {
   const map: Record<string, string> = {
-    h5: '微信外浏览器访问，无需凭证',
+    h5: '微信外浏览器访问，绑定微信支付需本端 AppID',
     gzh: '网页授权 + 微信内 JSAPI 支付（授权链路暂未开放）',
     mp: 'Code2Session 登录 + 小程序内 JSAPI 支付',
     alimp: '手机号登录 + 小程序内支付宝支付，仅需 AppID',
@@ -308,6 +316,7 @@ function channelDesc(code: string): string {
  */
 function appIDPlaceholder(code: string): string {
   if (code === 'alimp') return '支付宝开放平台小程序 AppID'
+  if (code === 'h5' || code === 'pos') return '微信 AppID（绑定微信支付时必填）'
   return '微信 AppID'
 }
 
@@ -352,6 +361,14 @@ function payMethodLabel(entry: string): string {
 /** 绑定条目的平台标识（cash 返回空串） */
 function pmPlatform(entry: string): string {
   return entry === 'cash' ? '' : entry.split(':')[0]
+}
+
+/**
+ * 绑定列表是否含微信支付
+ * @param methods 渠道绑定的支付方式列表（cash 或 platform:config_id）
+ */
+function bindsWechatPay(methods: string[] | undefined): boolean {
+  return (methods ?? []).some((m) => pmPlatform(m) === 'wechat')
 }
 
 /** 绑定条目引用的配置是否就绪（cash 恒就绪；配置不存在按未就绪处理） */

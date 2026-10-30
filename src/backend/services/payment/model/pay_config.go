@@ -30,7 +30,11 @@ type PayConfig struct {
 	Enabled bool `gorm:"column:enabled;comment:是否启用" json:"enabled"`
 
 	// 微信支付 V3 凭证（platform=wechat 时取用）
-	WechatAppID        string `gorm:"column:wechat_app_id;type:varchar(64);comment:微信支付 AppID" json:"wechat_app_id"`
+	// 注意：本表刻意不存微信 AppID。微信的 AppID 是「渠道身份」（同一商户号可关联小程序、
+	// H5 等多个 AppID，各自对应一个客户端渠道），放进配置行就会强迫一个商户号建多份配置；
+	// 支付宝相反，其 AppID 是「签名身份」（一个 AppID 一套密钥对），必须留在配置行（AlipayAppID）。
+	// 两边字段归属不对称是有意的，不是待统一的不一致。
+	// 下单 AppID 由 client_channels.app_id 提供、随建单快照进 payments.app_id，回调归属按后者校验
 	WechatAppSecret    string `gorm:"column:wechat_app_secret;type:varchar(128);comment:微信 AppSecret" json:"wechat_app_secret"`
 	WechatMchID        string `gorm:"column:wechat_mch_id;type:varchar(32);comment:微信支付商户号" json:"wechat_mch_id"`
 	WechatAPIV3Key     string `gorm:"column:wechat_api_v3_key;type:varchar(64);comment:微信支付 APIv3 密钥" json:"wechat_api_v3_key"`

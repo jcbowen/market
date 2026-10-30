@@ -145,9 +145,9 @@ type UserServiceClient interface {
 	ListFulfillers(ctx context.Context, in *ListFulfillersReq, opts ...grpc.CallOption) (*ListFulfillersResp, error)
 	// 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
 	CheckFulfiller(ctx context.Context, in *CheckFulfillerReq, opts ...grpc.CallOption) (*CheckFulfillerResp, error)
-	// --- 客户端渠道管理（微信小程序/公众号/App/浏览器 H5） ---
-	// 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
-	// 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+	// --- 客户端渠道管理（微信小程序/公众号/支付宝小程序/浏览器 H5/收银台） ---
+	// 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与支付方式绑定（pay_methods）；
+	// 登录与支付链路按渠道取用凭证与绑定，C 端收银台按绑定渲染支付方式
 	ListClientChannels(ctx context.Context, in *ListClientChannelsReq, opts ...grpc.CallOption) (*ListClientChannelsResp, error)
 	GetClientChannel(ctx context.Context, in *GetClientChannelReq, opts ...grpc.CallOption) (*ClientChannelInfo, error)
 	SaveClientChannel(ctx context.Context, in *SaveClientChannelReq, opts ...grpc.CallOption) (*ClientChannelInfo, error)
@@ -769,9 +769,9 @@ type UserServiceServer interface {
 	ListFulfillers(context.Context, *ListFulfillersReq) (*ListFulfillersResp, error)
 	// 校验用户在某社区是否履约人员（C 端工作台入口判断 + gateway 鉴权）
 	CheckFulfiller(context.Context, *CheckFulfillerReq) (*CheckFulfillerResp, error)
-	// --- 客户端渠道管理（微信小程序/公众号/App/浏览器 H5） ---
-	// 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与排序；
-	// 登录与支付链路按渠道取用凭证，支付配置按渠道勾选适用范围
+	// --- 客户端渠道管理（微信小程序/公众号/支付宝小程序/浏览器 H5/收银台） ---
+	// 渠道主数据：各端访问凭证（AppID/AppSecret）、启用开关与支付方式绑定（pay_methods）；
+	// 登录与支付链路按渠道取用凭证与绑定，C 端收银台按绑定渲染支付方式
 	ListClientChannels(context.Context, *ListClientChannelsReq) (*ListClientChannelsResp, error)
 	GetClientChannel(context.Context, *GetClientChannelReq) (*ClientChannelInfo, error)
 	SaveClientChannel(context.Context, *SaveClientChannelReq) (*ClientChannelInfo, error)

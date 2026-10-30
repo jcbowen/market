@@ -148,6 +148,21 @@ func (s *PaymentService) PayByAuthCode(ctx context.Context, req *payment.PayByAu
 		}
 		p.ConfigID = req.ConfigId
 	}
+	// 微信付款码必须有渠道 AppID（支付配置行不再持有 AppID，见 model.PayConfig 注释）：
+	// 网关按 pos 渠道解析后随扣款请求带入，与在线支付同样快照进支付单，
+	// 一是让「这笔钱用了哪个渠道身份」可追溯，二是超时取消时的渠道撤销要按此列取用。
+	// 缺配即拒绝而非静默发空 appid：渠道会拒，收银员只会看到一句无法理解的失败
+	appID := strings.TrimSpace(req.AppId)
+	if detected == 5 && appID == "" {
+		return nil, bizerr.New(codes.FailedPrecondition, "当前收银台渠道未配置微信 AppID，无法扫码收款，请在渠道管理中补全")
+	}
+	if p.AppID != appID {
+		if err := s.db.GetDb().WithContext(ctx).Model(&model.Payment{}).
+			Where("id = ? AND status = 1", p.ID).Update("app_id", appID).Error; err != nil {
+			return nil, bizerr.New(codes.Internal, "支付单渠道身份写入失败，请重试")
+		}
+		p.AppID = appID
+	}
 
 	var res *codePayResult
 	var err error
@@ -229,6 +244,8 @@ func defaultWechatAuthCodePay(ctx context.Context, s *PaymentService, p *model.P
 		return nil, fmt.Errorf("微信支付未配置或配置不完整")
 	}
 	order, err := client.CodePay(ctx, &wegopayment.CodePayRequest{
+		// AppID 取支付单快照（渠道身份，由网关按 pos 渠道解析带入）：配置行不再持有 AppID
+		AppID:       p.AppID,
 		Description: "社区商超订单",
 		OutTradeNo:  p.PaymentNo,
 		Amount:      wegopayment.Amount{Total: yuanToFen(p.Amount), Currency: "CNY"},

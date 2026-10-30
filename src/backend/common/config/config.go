@@ -224,12 +224,13 @@ func (w *WechatConfig) IsMiniprogramConfigured() bool {
 
 // IsPaymentConfigured 判断微信支付 V3 配置是否完整
 // 缺少任一必要字段则 C 端不展示微信支付选项
+// AppID 不在必填之列：它是渠道身份（client_channels.app_id），由网关按渠道解析后随下单传入，
+// 一个商户号可服务多个渠道，配置行不持有、也就无需为每个渠道重复建一份配置
 //
 // 返回：
 //   - bool: 配置完整返回 true
 func (w *WechatConfig) IsPaymentConfigured() bool {
-	return w.AppID != "" &&
-		w.MchID != "" &&
+	return w.MchID != "" &&
 		w.APIV3Key != "" &&
 		w.CertSerialNo != "" &&
 		w.PrivateKey != "" &&

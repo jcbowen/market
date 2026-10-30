@@ -786,13 +786,15 @@ message ClientChannelInfo {
   // android 安卓App / ios iOS App / pos 门店收银台
   string code = 2;
   string name = 3;
+  // 渠道 AppID：微信为下单渠道身份（绑定微信支付的渠道必填），
+  // 支付宝小程序仅需此项（服务端签名私钥复用支付配置）
   string app_id = 4;
   string app_secret = 5;
   bool enabled = 6;
   // 渠道绑定的支付方式列表（有序，顺序即收银台展示顺序）：
   // 每项为 "cash" 或 "<platform>:<config_id>"（如 "wechat:3"）
   repeated string pay_methods = 10;
-  // 凭证是否配置完整（h5/pos 恒真；alimp 仅需 AppID；其余需 AppID+AppSecret）
+  // 凭证是否配置完整（h5/pos 仅需「绑定微信支付时必须有 AppID」；alimp 仅需 AppID；其余需 AppID+AppSecret）
   bool configured = 8;
   string updated_at = 9;
 }
@@ -815,6 +817,7 @@ message SaveClientChannelReq {
   // 渠道标识由服务端按内置渠道固定，请求中的 code 仅作校验
   string code = 2;
   string name = 3;
+  // 渠道 AppID：绑定微信支付的渠道必填（微信 AppID 属渠道身份，支付配置行不再持有）
   string app_id = 4;
   // 为空时保留原值，避免未重新输入时清空已保存的 Secret
   string app_secret = 5;

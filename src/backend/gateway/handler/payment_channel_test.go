@@ -78,12 +78,16 @@ func TestBindingResolution(t *testing.T) {
 }
 
 // TestWechatPayReadyOnClient 微信支付按客户端渠道的能力就绪判定
-// 覆盖：mp 渠道启用+配置完整、mp 未启用/未配置、h5 恒就绪、
+// 覆盖：mp 渠道启用+配置完整、mp 未启用/未配置、
+// h5 以渠道 AppID 为准（微信 AppID 属渠道身份，支付配置行不再持有）、
 // gzh/alimp/android/ios 链路未开放或生态不兼容
 func TestWechatPayReadyOnClient(t *testing.T) {
 	mpReady := &user.ClientChannelInfo{Code: channel.MP, Enabled: true, Configured: true}
 	mpDisabled := &user.ClientChannelInfo{Code: channel.MP, Enabled: false, Configured: true}
 	mpNotConfigured := &user.ClientChannelInfo{Code: channel.MP, Enabled: true, Configured: false}
+	h5WithAppID := &user.ClientChannelInfo{Code: channel.H5, AppId: "wx-h5-app"}
+	h5BlankAppID := &user.ClientChannelInfo{Code: channel.H5, AppId: "   "}
+	h5NoAppID := &user.ClientChannelInfo{Code: channel.H5}
 
 	cases := []struct {
 		name     string
@@ -95,7 +99,10 @@ func TestWechatPayReadyOnClient(t *testing.T) {
 		{"mp 渠道停用", channel.MP, map[string]*user.ClientChannelInfo{channel.MP: mpDisabled}, false},
 		{"mp 渠道未配置凭证", channel.MP, map[string]*user.ClientChannelInfo{channel.MP: mpNotConfigured}, false},
 		{"mp 渠道索引缺失（渠道服务异常降级）", channel.MP, nil, false},
-		{"h5 恒就绪", channel.H5, nil, true},
+		{"h5 已配 AppID 就绪", channel.H5, map[string]*user.ClientChannelInfo{channel.H5: h5WithAppID}, true},
+		{"h5 未配 AppID 未就绪（下单会被渠道以 appid 必填拒绝）", channel.H5, map[string]*user.ClientChannelInfo{channel.H5: h5NoAppID}, false},
+		{"h5 AppID 全空白视为未配", channel.H5, map[string]*user.ClientChannelInfo{channel.H5: h5BlankAppID}, false},
+		{"h5 渠道索引缺失", channel.H5, nil, false},
 		{"公众号 OAuth 链路未接入", channel.GZH, nil, false},
 		{"支付宝小程序内无法唤起微信", channel.ALIMP, nil, false},
 		{"安卓 App 支付未接入", channel.ANDROID, nil, false},

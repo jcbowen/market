@@ -156,6 +156,7 @@ func (s *PaymentService) GetPayConfigRow(ctx context.Context, id int64) (*model.
 
 // SavePayConfigRow 新增（ID=0）或更新一条支付配置
 // 更新走 updated_at 乐观锁（调用方携带读取时版本，冲突即拒绝整行覆写）；
+// 保存前校验「行身份键」在同平台内不重复（见 checkPayConfigIdentity）；
 // 保存后本实例立即热重建，其余实例在下次支付调用时按版本号自动刷新
 //
 // 参数：
@@ -193,12 +194,11 @@ func (s *PaymentService) SavePayConfigRow(ctx context.Context, in *payment.PayCo
 	row.Enabled = in.Enabled
 
 	if in.Platform == model.PayPlatformWechat {
-		row.WechatAppID = in.WechatAppId
 		// Secret/密钥/私钥网关查询已脱敏不回传明文：空值保留原值，避免前端回传空串时误清空
 		if in.WechatAppSecret != "" {
 			row.WechatAppSecret = in.WechatAppSecret
 		}
-		row.WechatMchID = in.WechatMchId
+		row.WechatMchID = strings.TrimSpace(in.WechatMchId)
 		if in.WechatApiV3Key != "" {
 			row.WechatAPIV3Key = in.WechatApiV3Key
 		}
@@ -211,7 +211,7 @@ func (s *PaymentService) SavePayConfigRow(ctx context.Context, in *payment.PayCo
 			return nil, err
 		}
 	} else {
-		row.AlipayAppID = in.AlipayAppId
+		row.AlipayAppID = strings.TrimSpace(in.AlipayAppId)
 		if in.AlipayPrivateKey != "" {
 			row.AlipayPrivateKey = in.AlipayPrivateKey
 		}
@@ -230,6 +230,10 @@ func (s *PaymentService) SavePayConfigRow(ctx context.Context, in *payment.PayCo
 		}
 	}
 
+	if err := s.checkPayConfigIdentity(ctx, &row); err != nil {
+		return nil, err
+	}
+
 	now := time.Now().Format("2006-01-02 15:04:05")
 	row.UpdatedAt = now
 	if row.CreatedAt == "" {
@@ -243,6 +247,51 @@ func (s *PaymentService) SavePayConfigRow(ctx context.Context, in *payment.PayCo
 	// 本实例立即刷新，其余实例在下次支付调用时按版本号自动刷新
 	s.getRegistryCached(ctx)
 	return &row, nil
+}
+
+// checkPayConfigIdentity 校验配置行的「身份键」在同平台内唯一
+// 微信按商户号唯一、支付宝按 AppID 唯一，两个渠道口径不对称是有意为之（见 model.PayConfig 注释）：
+//   - 微信的 AppID 是渠道身份（同一商户号可关联小程序、H5 等多个 AppID），商户号才是配置行的身份；
+//     允许同商户号建多行时，各行共用 APIv3 密钥与平台证书，回调验签会在多行间随机命中错配行，
+//     已付款的订单因归属校验被拒而永不入账——本校验从模型层消除这一歧义来源
+//   - 支付宝的 AppID 是签名身份（一个 AppID 一套密钥对），重复建行的两份密钥必有一份是错的
+//
+// 只做应用层校验、不建库级唯一索引：唯一性条件依赖 platform（同列在两平台间语义不同），
+// MySQL 无部分索引可表达，且凭证未填齐的行（占位行）该列为空串，会被唯一索引误伤
+//
+// 参数：
+//   - ctx: 上下文
+//   - row: 待保存的配置行（ID=0 表示新增）
+//
+// 返回值：
+//   - error: 身份键与同平台其他行重复时返回 AlreadyExists，查询失败返回内部错误
+func (s *PaymentService) checkPayConfigIdentity(ctx context.Context, row *model.PayConfig) error {
+	var column, identity string
+	switch row.Platform {
+	case model.PayPlatformWechat:
+		column, identity = "wechat_mch_id", row.WechatMchID
+	case model.PayPlatformAlipay:
+		column, identity = "alipay_app_id", row.AlipayAppID
+	}
+	if identity == "" {
+		// 身份键尚未填写（凭证未配齐、不参与下单），无需校验
+		return nil
+	}
+	var conflict int64
+	if err := s.db.GetDb().WithContext(ctx).Model(&model.PayConfig{}).
+		Where("platform = ? AND "+column+" = ? AND id <> ?", row.Platform, identity, row.ID).
+		Count(&conflict).Error; err != nil {
+		return fmt.Errorf("校验支付配置唯一性失败: %w", err)
+	}
+	if conflict == 0 {
+		return nil
+	}
+	if row.Platform == model.PayPlatformWechat {
+		return bizerr.New(codes.AlreadyExists,
+			fmt.Sprintf("商户号 %s 已有支付配置：一个商户号只建一条微信配置，小程序/H5 等各渠道的 AppID 请到渠道管理分别配置", identity))
+	}
+	return bizerr.New(codes.AlreadyExists,
+		fmt.Sprintf("支付宝 AppID %s 已有支付配置：一个 AppID 对应一套密钥，请勿重复创建", identity))
 }
 
 // DeletePayConfigRow 删除一条支付配置
@@ -404,9 +453,9 @@ func (s *PaymentService) applyPayConfig(rows []*model.PayConfig) {
 			if !wechat.IsPaymentConfigured() {
 				continue
 			}
-			// NewClientE 在配置异常时返回错误，失败时跳过该行，C 端渲染会相应隐藏微信支付
+			// NewClientE 在配置异常时返回错误，失败时跳过该行，C 端渲染会相应隐藏微信支付。
+			// 不传 AppID：微信 AppID 属渠道身份，下单时按请求级入参传入（见 buildWechatPayParams）
 			client, err := wegopayment.NewClientE(&wegopayment.Config{
-				AppID:        wechat.AppID,
 				MchID:        wechat.MchID,
 				APIV3Key:     wechat.APIV3Key,
 				CertSerialNo: wechat.CertSerialNo,
@@ -462,27 +511,9 @@ func (s *PaymentService) ListActivePayMethods(ctx context.Context) []*payment.Ac
 		methods = append(methods, &payment.ActivePayMethod{
 			ConfigId: id,
 			Platform: row.Platform,
-			AppId:    payConfigAppID(row),
 		})
 	}
 	return methods
-}
-
-// payConfigAppID 返回配置行的下单 AppID
-//
-// 参数：
-//   - row: 配置行，可为 nil
-//
-// 返回值：
-//   - string: AppID，行不存在时为空串
-func payConfigAppID(row *model.PayConfig) string {
-	if row == nil {
-		return ""
-	}
-	if row.Platform == model.PayPlatformAlipay {
-		return row.AlipayAppID
-	}
-	return row.WechatAppID
 }
 
 // resolveActivePayConfig 校验配置 ID 对应平台且启用就绪，返回配置行
@@ -564,7 +595,7 @@ func (s *PaymentService) getAlipayExecutorFor(ctx context.Context, configID int6
 	return reg.alipay[configID]
 }
 
-// getWechatConfigFor 获取指定配置的微信支付配置载体（回调归属校验、本地签名用）
+// getWechatConfigFor 获取指定配置的微信支付配置载体（H5 主页地址推导、回调商户号比对用）
 //
 // 参数：
 //   - ctx: 上下文
@@ -630,6 +661,8 @@ func (s *PaymentService) allWechatClients(ctx context.Context) map[int64]*wegopa
 }
 
 // alipayConfigByAppID 按支付宝 AppID 定位配置（回调验签路由用）
+// 同 AppID 命中多行时取 ID 最小的一行：map 遍历序随机，不加这层确定性就会让
+// 「用哪行的公钥验签」成为不确定事件（保存时已按 AppID 唯一拦截，此处是历史脏行与并发的兜底）
 //
 // 参数：
 //   - ctx: 上下文
@@ -648,15 +681,24 @@ func (s *PaymentService) alipayConfigByAppID(ctx context.Context, appID string) 
 	}
 	s.payMu.RLock()
 	defer s.payMu.RUnlock()
+	var best *model.PayConfig
 	for _, row := range reg.rows {
-		if row.Platform == model.PayPlatformAlipay && row.AlipayAppID == appID {
-			return alipayConfigOf(row), true
+		if row.Platform != model.PayPlatformAlipay || row.AlipayAppID != appID {
+			continue
+		}
+		if best == nil || row.ID < best.ID {
+			best = row
 		}
 	}
-	return config.AlipayConfig{}, false
+	if best == nil {
+		return config.AlipayConfig{}, false
+	}
+	return alipayConfigOf(best), true
 }
 
 // wechatConfigOf 将支付配置行转换为微信支付配置载体
+// AppID 有意不填：微信 AppID 属渠道身份（client_channels.app_id），配置行不再持有，
+// 下单由请求级入参带入、回调按支付单快照校验，载体里的 AppID 对本渠道恒为空
 //
 // 参数：
 //   - cfg: 支付配置行，可为 nil
@@ -668,7 +710,6 @@ func wechatConfigOf(cfg *model.PayConfig) config.WechatConfig {
 		return config.WechatConfig{}
 	}
 	return config.WechatConfig{
-		AppID:        cfg.WechatAppID,
 		AppSecret:    cfg.WechatAppSecret,
 		MchID:        cfg.WechatMchID,
 		APIV3Key:     cfg.WechatAPIV3Key,
@@ -690,7 +731,7 @@ func wechatConfigOf(cfg *model.PayConfig) config.WechatConfig {
 func WechatConfigStatus(cfg *model.PayConfig) (bool, string) {
 	wechat := wechatConfigOf(cfg)
 	if !wechat.IsPaymentConfigured() {
-		return false, "微信支付必填配置不完整（AppID、商户号、APIv3 密钥、证书序列号、商户私钥、异步通知地址均为必填）"
+		return false, "微信支付必填配置不完整（商户号、APIv3 密钥、证书序列号、商户私钥、异步通知地址均为必填；AppID 属渠道身份，请到渠道管理配置）"
 	}
 	return true, ""
 }

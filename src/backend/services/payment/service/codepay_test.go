@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"strings"
 	"testing"
 
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -27,7 +28,7 @@ import (
  *   - TestPayByAuthCodeUserPaying      USERPAYING 在途：支付单保持待支付
  *   - TestPayByAuthCodeFailedRetry     扣款失败重试：复用同一支付单，重扫后成功
  *   - TestPayByAuthCodeIdempotent      已支付单重复提交：幂等回 PAID，不再调渠道
- *   - TestPayByAuthCodeGuard           守卫：非付款码单/订单绑定不匹配/渠道未配置/参数错误
+ *   - TestPayByAuthCodeGuard           守卫：非付款码单/订单绑定不匹配/渠道未配置/微信缺 AppID/参数错误
  *   - TestProcessRefundCodePay         退款渠道映射：5→微信 / 6→支付宝
  *
  * 渠道扣款以包级变量注入桩，无需真实商户配置；测试数据用 testOrderIDBase 起始 ID，结束即清理。
@@ -135,6 +136,10 @@ func TestCreatePaymentCodePayPlaceholder(t *testing.T) {
 	}
 }
 
+// testWechatAppID 测试用微信渠道 AppID（真实来源是 client_channels.app_id，
+// 由网关按 pos 渠道解析后随扣款请求带入，支付配置行不再持有 AppID）
+const testWechatAppID = "wx-test-app"
+
 // seedActiveWechatPayConfig 在测试库播种一条启用且凭证齐全的微信支付配置行，返回配置 ID
 // 私钥用测试生成的真实 RSA PEM：wegopayment.NewClientE 构建时解析，假串会导致客户端构建失败、
 // resolveActivePayConfig 判未就绪
@@ -151,7 +156,7 @@ func seedActiveWechatPayConfig(t *testing.T, s *PaymentService) int64 {
 	priPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: priDER}))
 	row := &model.PayConfig{
 		ID: payConfigID + 1, Name: "test-wechat", Platform: model.PayPlatformWechat, Enabled: true,
-		WechatAppID: "wx-test-app", WechatAppSecret: "test-secret", WechatMchID: "1900000001",
+		WechatAppSecret: "test-secret", WechatMchID: "1900000001",
 		WechatAPIV3Key: "01234567890123456789012345678901", WechatCertSerialNo: "TESTSERIAL0001",
 		WechatPrivateKey: priPEM, WechatNotifyURL: "https://market.example.com/api/v1/payments/callback/wechat",
 	}
@@ -203,7 +208,7 @@ func TestPayByAuthCodeSuccess(t *testing.T) {
 	configID := seedActiveWechatPayConfig(t, s)
 	defer func() { wechatAuthCodePay = origPay }()
 
-	resp, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-PAID", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9, ConfigId: configID})
+	resp, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-PAID", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9, ConfigId: configID, AppId: testWechatAppID})
 	if err != nil {
 		t.Fatalf("付款码扣款失败: %v", err)
 	}
@@ -217,6 +222,10 @@ func TestPayByAuthCodeSuccess(t *testing.T) {
 	}
 	if p.Status != 2 || p.TransactionID != "WX-TX-CODE-001" {
 		t.Errorf("支付单应置已支付并记录交易号, got status=%d tx=%s", p.Status, p.TransactionID)
+	}
+	// 微信 AppID 随扣款快照落库：回调/撤销都要按这一列定位渠道身份，不能只信当前渠道配置
+	if p.AppID != testWechatAppID {
+		t.Errorf("支付单应记录下单使用的 AppID 快照, got %q want %q", p.AppID, testWechatAppID)
 	}
 	if p.ConfirmSource != model.ConfirmSourceOffline || p.ConfirmRef != "codepay:9" {
 		t.Errorf("确认来源应为线下并记录收银员, got source=%d ref=%s", p.ConfirmSource, p.ConfirmRef)
@@ -305,7 +314,7 @@ func TestPayByAuthCodeFailedRetry(t *testing.T) {
 	configID := seedActiveWechatPayConfig(t, s)
 	defer func() { wechatAuthCodePay = origPay }()
 
-	req := &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-RETRY", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9, ConfigId: configID}
+	req := &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-RETRY", OrderId: orderID, AuthCode: "1345235315201154982642655744", OperatorId: 9, ConfigId: configID, AppId: testWechatAppID}
 
 	// 第一次：渠道拒绝（余额不足），支付单保持待支付
 	resp, err := s.PayByAuthCode(ctx, req)
@@ -410,6 +419,23 @@ func TestPayByAuthCodeGuard(t *testing.T) {
 	})
 	if _, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-NOCH", OrderId: testOrderIDBase + 47, AuthCode: "1345235315201154982642655744", OperatorId: 9}); err == nil {
 		t.Error("缺少支付配置应拒绝扣款")
+	}
+
+	// 微信付款码缺渠道 AppID：支付配置行不再持有 AppID，缺配必须拒绝而非静默发空 appid
+	insertPayment(t, s, &model.Payment{
+		PaymentNo: "PAYTEST-CODE-NOAPP",
+		OrderID:   testOrderIDBase + 48,
+		UserID:    0,
+		PayType:   5,
+		Amount:    8.00,
+		Status:    1,
+		CreatedAt: "2026-01-01 00:00:00",
+		UpdatedAt: "2026-01-01 00:00:00",
+	})
+	noAppCfg := seedActiveWechatPayConfig(t, s)
+	_, err := s.PayByAuthCode(ctx, &payment.PayByAuthCodeReq{PaymentNo: "PAYTEST-CODE-NOAPP", OrderId: testOrderIDBase + 48, AuthCode: "1345235315201154982642655744", OperatorId: 9, ConfigId: noAppCfg})
+	if err == nil || !strings.Contains(err.Error(), "AppID") {
+		t.Errorf("微信付款码缺 AppID 应拒绝并给出可读原因, got %v", err)
 	}
 
 	// 参数错误：付款码缺失 / 长度不合法 / 支付单号缺失 / 订单 ID 缺失

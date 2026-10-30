@@ -205,6 +205,8 @@ func (h *AdminHandler) CreatePosOrder(c *gin.Context) {
 		UserId:      req.UserID,
 		PayType:     req.PayType,
 		Amount:      resp.PayAmount,
+		// 客户端渠道快照：收银台固定为 pos，用于按端统计收款与待支付单复用判定
+		ClientChannel: channel.POS,
 	})
 	if err != nil {
 		log.Printf("收银台创建支付单失败 order_id=%d pay_type=%d: %v", resp.Id, req.PayType, err)
@@ -281,7 +283,7 @@ func (h *AdminHandler) cancelOrphanPosOrder(c *gin.Context, orderID int64, commu
 // 返回值：
 //   - error: 对应渠道不可用或 payType 非法时返回带提示的错误
 func (h *AdminHandler) ensurePosCodePayReady(ctx context.Context, payType int32) error {
-	bound, err := h.posBoundPayMethods(ctx)
+	ch, err := h.posChannelInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("支付配置读取失败，请改用现金收款")
 	}
@@ -294,7 +296,7 @@ func (h *AdminHandler) ensurePosCodePayReady(ctx context.Context, payType int32)
 	default:
 		return fmt.Errorf("该支付方式暂未开通，请选择现金收款")
 	}
-	if _, ok := h.posReadyConfig(ctx, bound, plat); !ok {
+	if _, ok := h.posReadyConfig(ctx, ch, plat); !ok {
 		return fmt.Errorf("%s付款码收款未开启，请使用现金收款", posPlatformLabel(plat))
 	}
 	return nil
@@ -308,39 +310,58 @@ func posPlatformLabel(platform string) string {
 	return "微信"
 }
 
-// posBoundPayMethods 读取 POS 收银台渠道绑定的支付方式列表
-// POS 为特殊渠道：无登录凭证、恒启用，仅参与支付方式绑定
+// wechatAppIDOfChannel 取渠道的微信 AppID（非微信平台恒为空串）
+// 微信的 AppID 是渠道身份、随建单快照进支付单；支付宝的 AppID 是签名身份、
+// 已由 config_id 定位到配置行，故不走本函数
+//
+// 参数：
+//   - ch: 渠道信息，可为 nil
+//   - platform: 本次扣款识别到的平台
+//
+// 返回值：
+//   - string: 微信平台时返回渠道 AppID（已去空白），其余平台为空串
+func wechatAppIDOfChannel(ch *user.ClientChannelInfo, platform string) string {
+	if ch == nil || platform != payPlatformWechat {
+		return ""
+	}
+	return strings.TrimSpace(ch.AppId)
+}
+
+// posChannelInfo 读取 POS 收银台渠道配置（支付方式绑定 + 渠道 AppID）
+// POS 为特殊渠道：无登录凭证、恒启用，仅参与支付方式绑定；
+// 微信 AppID 属渠道身份（支付配置行不再持有），付款码扣款须由本渠道提供
 //
 // 参数：
 //   - ctx: 上下文
 //
 // 返回值：
-//   - []string: 渠道绑定的支付方式列表（"cash" 或 "<platform>:<config_id>"）
+//   - *user.ClientChannelInfo: POS 渠道信息，渠道不存在时为 nil
 //   - error: 渠道查询失败错误
-func (h *AdminHandler) posBoundPayMethods(ctx context.Context) ([]string, error) {
-	resp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.POS})
-	if err != nil {
-		return nil, err
-	}
-	if resp == nil {
-		return nil, nil
-	}
-	return resp.PayMethods, nil
+func (h *AdminHandler) posChannelInfo(ctx context.Context) (*user.ClientChannelInfo, error) {
+	return h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.POS})
 }
 
-// posReadyConfig 从 POS 绑定与就绪集合中解析指定平台的可用支付配置
+// posReadyConfig 从 POS 渠道绑定与就绪集合中解析指定平台的可用支付配置
 // POS 付款码按前缀自动识别平台，故每平台至多绑定一条配置（保存时校验）
+// 微信另要求渠道已配置 AppID：支付配置行不再持有 AppID，缺失时该渠道根本无法发起扣款，
+// 与其在扫码后报「渠道未配置 AppID」不如在方式列表里就不下发（支付宝的 AppID 是签名身份，随配置行定位，无此项要求）
 //
 // 参数：
 //   - ctx: 上下文
-//   - methods: POS 渠道绑定的支付方式列表
+//   - ch: POS 渠道信息，可为 nil
 //   - platform: 平台标识（wechat/alipay）
 //
 // 返回值：
 //   - int64: 可用支付配置 ID，不可用时为 0
 //   - bool: 是否存在启用且就绪的绑定配置
-func (h *AdminHandler) posReadyConfig(ctx context.Context, methods []string, platform string) (int64, bool) {
-	configID := firstConfigIDForPlatform(methods, platform)
+func (h *AdminHandler) posReadyConfig(ctx context.Context, ch *user.ClientChannelInfo, platform string) (int64, bool) {
+	if ch == nil {
+		return 0, false
+	}
+	if platform == payPlatformWechat && strings.TrimSpace(ch.AppId) == "" {
+		return 0, false
+	}
+	configID := firstConfigIDForPlatform(ch.PayMethods, platform)
 	if configID == 0 {
 		return 0, false
 	}
@@ -389,9 +410,9 @@ func authCodePlatform(authCode string) string {
 //   - c: gin 上下文
 func (h *AdminHandler) ListPosPayMethods(c *gin.Context) {
 	methods := []gin.H{{"pay_type": posPayTypeCash, "label": "现金"}}
-	if bound, err := h.posBoundPayMethods(c.Request.Context()); err == nil {
-		_, wechatReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformWechat)
-		_, alipayReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformAlipay)
+	if ch, err := h.posChannelInfo(c.Request.Context()); err == nil {
+		_, wechatReady := h.posReadyConfig(c.Request.Context(), ch, payPlatformWechat)
+		_, alipayReady := h.posReadyConfig(c.Request.Context(), ch, payPlatformAlipay)
 		switch {
 		case wechatReady && alipayReady:
 			methods = append(methods, gin.H{"pay_type": posPayTypeWechatCode, "label": "付款码支付"})
@@ -448,12 +469,12 @@ func (h *AdminHandler) PayPosOrderByCode(c *gin.Context) {
 		response.Error(c, errcode.ParamError, "无法识别付款码类型，请确认扫描的是微信/支付宝付款码")
 		return
 	}
-	bound, err := h.posBoundPayMethods(c.Request.Context())
+	posChannel, err := h.posChannelInfo(c.Request.Context())
 	if err != nil {
 		response.Error(c, errcode.InternalServerError, "支付配置读取失败，请改用现金收款")
 		return
 	}
-	configID, ok := h.posReadyConfig(c.Request.Context(), bound, plat)
+	configID, ok := h.posReadyConfig(c.Request.Context(), posChannel, plat)
 	if !ok {
 		response.Error(c, errcode.OperationNotAllowed, fmt.Sprintf("%s付款码收款未开启，请使用现金收款", posPlatformLabel(plat)))
 		return
@@ -467,6 +488,9 @@ func (h *AdminHandler) PayPosOrderByCode(c *gin.Context) {
 		OrderId: id,
 		// 支付配置：按 POS 渠道绑定解析（付款码前缀识别平台后取对应配置）
 		ConfigId: configID,
+		// 微信 AppID：渠道身份，随扣款请求带入并快照进支付单（支付宝留空，其 AppID 随配置行定位）
+		// posReadyConfig 已保证微信场景下本项非空
+		AppId: wechatAppIDOfChannel(posChannel, plat),
 	})
 	if err != nil {
 		response.GRPCError(c, err)
@@ -699,6 +723,8 @@ func (h *AdminHandler) PayPosOrderByCash(c *gin.Context) {
 		UserId:      o.UserId,
 		PayType:     posPayTypeCash,
 		Amount:      o.PayAmount,
+		// 客户端渠道快照：收银台固定为 pos
+		ClientChannel: channel.POS,
 	}); err != nil {
 		log.Printf("收银台现金收款创建支付单失败 order_id=%d: %v", id, err)
 		response.GRPCError(c, err)
@@ -736,13 +762,13 @@ func (h *AdminHandler) EnsurePosCodePaySession(c *gin.Context) {
 	// 占位 pay_type 与 ListPosPayMethods 下发口径一致：两渠道齐备以 5 占位（渠道按码前缀识别）、
 	// 仅支付宝可用下发 6。此处按 POS 渠道绑定与配置就绪情况选占位值，渠道未绑定时报错提示改现金
 	codePayType := posPayTypeWechatCode
-	bound, err := h.posBoundPayMethods(c.Request.Context())
+	ch, err := h.posChannelInfo(c.Request.Context())
 	if err != nil {
 		response.Error(c, errcode.InternalServerError, "支付配置读取失败，请改用现金收款")
 		return
 	}
-	_, wechatReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformWechat)
-	_, alipayReady := h.posReadyConfig(c.Request.Context(), bound, payPlatformAlipay)
+	_, wechatReady := h.posReadyConfig(c.Request.Context(), ch, payPlatformWechat)
+	_, alipayReady := h.posReadyConfig(c.Request.Context(), ch, payPlatformAlipay)
 	if !wechatReady {
 		if !alipayReady {
 			response.Error(c, errcode.OperationNotAllowed, "付款码收款未开启，请使用现金收款")
@@ -758,6 +784,8 @@ func (h *AdminHandler) EnsurePosCodePaySession(c *gin.Context) {
 		UserId:      o.UserId,
 		PayType:     codePayType,
 		Amount:      o.PayAmount,
+		// 客户端渠道快照：收银台固定为 pos
+		ClientChannel: channel.POS,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

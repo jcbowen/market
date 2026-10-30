@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/jcbowen/market/src/backend/common/appcontext"
+	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
@@ -80,8 +81,15 @@ func (s *stubPosUserClient) GetClientChannel(ctx context.Context, in *user.GetCl
 }
 
 // posChannelOf 构造 POS 渠道信息（绑定 pay_methods）
+// AppID 恒带测试值：微信 AppID 属渠道身份（支付配置行不再持有），
+// 绑定微信支付的渠道缺它即判未就绪，缺配场景另用 posChannelAppIDOf 构造
 func posChannelOf(methods ...string) *user.ClientChannelInfo {
-	return &user.ClientChannelInfo{Code: "pos", Name: "门店收银台", Enabled: true, Configured: true, PayMethods: methods}
+	return posChannelAppIDOf("wx-pos-app", methods...)
+}
+
+// posChannelAppIDOf 构造指定 AppID 的 POS 渠道信息（缺配/异常场景用）
+func posChannelAppIDOf(appID string, methods ...string) *user.ClientChannelInfo {
+	return &user.ClientChannelInfo{Code: "pos", Name: "门店收银台", AppId: appID, Enabled: true, Configured: true, PayMethods: methods}
 }
 
 // stubPosPaymentClient 收银台链路支付服务桩（多行制：就绪配置以 ListActivePayMethods 提供）
@@ -93,6 +101,12 @@ type stubPosPaymentClient struct {
 	closeCalled  bool
 	closeReq     *payment.ClosePaymentsReq
 	closeErr     error
+	codePayReq   *payment.PayByAuthCodeReq
+}
+
+func (s *stubPosPaymentClient) PayByAuthCode(ctx context.Context, in *payment.PayByAuthCodeReq, opts ...grpc.CallOption) (*payment.PayByAuthCodeResp, error) {
+	s.codePayReq = in
+	return &payment.PayByAuthCodeResp{State: "PAID", PaymentNo: in.PaymentNo, OrderId: in.OrderId, TransactionId: "TX-POS"}, nil
 }
 
 func (s *stubPosPaymentClient) ListActivePayMethods(ctx context.Context, in *payment.ListActivePayMethodsReq, opts ...grpc.CallOption) (*payment.ListActivePayMethodsResp, error) {
@@ -160,7 +174,7 @@ func TestPosCodePayChecksChannelBeforeCreateOrder(t *testing.T) {
 	// 未就绪：POS 仅绑现金；就绪：绑定 wechat:1 且该配置启用就绪
 	notReadyUser := &stubPosUserClient{posChannel: posChannelOf("cash")}
 	readyUser := &stubPosUserClient{posChannel: posChannelOf("wechat:1", "cash")}
-	readyPay := &stubPosPaymentClient{active: []*payment.ActivePayMethod{{ConfigId: 1, Platform: "wechat", AppId: "wx1"}}}
+	readyPay := &stubPosPaymentClient{active: []*payment.ActivePayMethod{{ConfigId: 1, Platform: "wechat"}}}
 
 	t.Run("渠道未就绪时不建单", func(t *testing.T) {
 		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
@@ -207,9 +221,38 @@ func TestPosCodePayChecksChannelBeforeCreateOrder(t *testing.T) {
 		if payStub.createReq.GetConfigId() != 0 {
 			t.Errorf("付款码占位单不应携带 config_id，got %d", payStub.createReq.GetConfigId())
 		}
+		// 客户端渠道快照：收银台固定 pos（按端统计收款与待支付单复用判定依据）
+		if payStub.createReq.GetClientChannel() != channel.POS {
+			t.Errorf("建单应带 client_channel=pos，got %q", payStub.createReq.GetClientChannel())
+		}
+		// AppID 在扫码扣款时才落库：占位阶段平台未知，提前落微信 AppID 会让扫支付宝码时
+		// 出现「单上有微信身份」的错配快照
+		if payStub.createReq.GetAppId() != "" {
+			t.Errorf("付款码占位单不应携带 app_id，got %q", payStub.createReq.GetAppId())
+		}
 		// 两步化第一步：仅建待支付单，扫码扣款后才确认收款
 		if paid, _ := resp.Data["paid"].(bool); paid {
 			t.Error("付款码下单应为待支付（paid=false）")
+		}
+	})
+
+	t.Run("渠道绑定微信但未配 AppID 时不建单", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{shift: &order.PosShiftInfo{Id: 1}}
+		payStub := &stubPosPaymentClient{active: []*payment.ActivePayMethod{{ConfigId: 1, Platform: "wechat"}}}
+		// 微信 AppID 属渠道身份（支付配置行不再持有），缺它无法向渠道下单：
+		// 就绪判定必须一并校验，避免建单后扫码才失败
+		noAppUser := &stubPosUserClient{posChannel: posChannelAppIDOf("", "wechat:1", "cash")}
+		h := newPosTestHandlerWithUser(orderStub, noAppUser, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders", body)
+		h.CreatePosOrder(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.OperationNotAllowed {
+			t.Fatalf("渠道缺微信 AppID 应判未就绪并拒单，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if orderStub.createCalled || payStub.createCalled {
+			t.Fatal("缺 AppID 时不得建订单/支付单")
 		}
 	})
 
@@ -387,6 +430,71 @@ func TestPayPosOrderByCash(t *testing.T) {
 	})
 }
 
+// TestPayPosOrderByCodeCarriesChannelAppID 付款码扣款请求携带渠道身份（P1-1 全链路）
+// 微信的 AppID 是渠道身份（支付配置行不再持有），必须由网关按 pos 渠道带入并快照进支付单；
+// 支付宝的 AppID 是签名身份、随 config_id 定位到配置行，请求侧恒留空
+func TestPayPosOrderByCodeCarriesChannelAppID(t *testing.T) {
+	cases := []struct {
+		name         string
+		authCode     string
+		wantConfigID int64
+		wantAppID    string
+	}{
+		{"微信码带渠道 AppID", "1345235315201154982642655744", 1, "wx-pos-app"},
+		{"支付宝码不带 AppID", "2801234567890123456789012345", 2, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 500, OrderNo: "POSTEST-K", CommunityId: 1, Status: 1, Source: 2, PayAmount: 6}}
+			payStub := &stubPosPaymentClient{active: []*payment.ActivePayMethod{
+				{ConfigId: 1, Platform: "wechat"},
+				{ConfigId: 2, Platform: "alipay"},
+			}}
+			userStub := &stubPosUserClient{posChannel: posChannelOf("wechat:1", "alipay:2", "cash")}
+			h := newPosTestHandlerWithUser(orderStub, userStub, payStub)
+
+			c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/500/pay-code",
+				[]byte(`{"payment_no":"ZFPOS-500","auth_code":"`+tc.authCode+`"}`))
+			c.Params = gin.Params{{Key: "id", Value: "500"}}
+			h.PayPosOrderByCode(c)
+
+			resp := decodeRefreshResp(t, recorder)
+			if resp.Code != errcode.Success {
+				t.Fatalf("付款码扣款应成功，code = %d(%s)", resp.Code, resp.Message)
+			}
+			if payStub.codePayReq == nil {
+				t.Fatal("应调用 PayByAuthCode")
+			}
+			if payStub.codePayReq.GetConfigId() != tc.wantConfigID {
+				t.Errorf("config_id = %d, want %d", payStub.codePayReq.GetConfigId(), tc.wantConfigID)
+			}
+			if payStub.codePayReq.GetAppId() != tc.wantAppID {
+				t.Errorf("app_id = %q, want %q", payStub.codePayReq.GetAppId(), tc.wantAppID)
+			}
+		})
+	}
+
+	t.Run("渠道缺微信 AppID 时不发起扣款", func(t *testing.T) {
+		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 501, OrderNo: "POSTEST-L", CommunityId: 1, Status: 1, Source: 2, PayAmount: 6}}
+		payStub := &stubPosPaymentClient{active: []*payment.ActivePayMethod{{ConfigId: 1, Platform: "wechat"}}}
+		userStub := &stubPosUserClient{posChannel: posChannelAppIDOf("", "wechat:1", "cash")}
+		h := newPosTestHandlerWithUser(orderStub, userStub, payStub)
+
+		c, recorder := newPosTestContext(http.MethodPost, "/api/v1/admin/pos/orders/501/pay-code",
+			[]byte(`{"payment_no":"ZFPOS-501","auth_code":"1345235315201154982642655744"}`))
+		c.Params = gin.Params{{Key: "id", Value: "501"}}
+		h.PayPosOrderByCode(c)
+
+		resp := decodeRefreshResp(t, recorder)
+		if resp.Code != errcode.OperationNotAllowed {
+			t.Fatalf("渠道缺微信 AppID 应判未就绪并拒绝扣款，code = %d(%s)", resp.Code, resp.Message)
+		}
+		if payStub.codePayReq != nil {
+			t.Fatal("未就绪时不得向支付服务发起扣款")
+		}
+	})
+}
+
 // TestEnsurePosCodePaySession 待支付订单重建付款码收款会话（订单查询「继续收款」入口）
 func TestEnsurePosCodePaySession(t *testing.T) {
 	t.Run("两渠道均未绑定时拒绝", func(t *testing.T) {
@@ -411,8 +519,8 @@ func TestEnsurePosCodePaySession(t *testing.T) {
 		orderStub := &stubPosOrderClient{orderInfo: &order.OrderInfo{Id: 400, OrderNo: "POSTEST-S", CommunityId: 1, Status: 1, Source: 2, PayAmount: 8}}
 		userStub := &stubPosUserClient{posChannel: posChannelOf("wechat:1", "alipay:2", "cash")}
 		payStub := &stubPosPaymentClient{active: []*payment.ActivePayMethod{
-			{ConfigId: 1, Platform: "wechat", AppId: "wx1"},
-			{ConfigId: 2, Platform: "alipay", AppId: "2021"},
+			{ConfigId: 1, Platform: "wechat"},
+			{ConfigId: 2, Platform: "alipay"},
 		}}
 		h := newPosTestHandlerWithUser(orderStub, userStub, payStub)
 

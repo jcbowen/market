@@ -48,6 +48,9 @@ var (
 	// errWechatOpenidUnavailable 渠道身份缺失/查询异常：拒绝支付而非静默降级——
 	// 空 openid 会被支付服务误判为 H5 通道下单，小程序内无法调起 h5_url，表现为支付必失败
 	errWechatOpenidUnavailable = errors.New("微信支付身份缺失，请重新登录小程序后重试")
+	// errWechatClientAppIDMissing 渠道未填微信 AppID：AppID 属渠道身份（支付配置行不再持有），
+	// 带着空值下单只会被微信以「appid 必填」拒绝，把失败前移成一句可执行的提示
+	errWechatClientAppIDMissing = errors.New("当前客户端未配置微信支付 AppID，请到后台渠道管理中补全")
 )
 
 // PaymentHandler 支付接口处理器
@@ -195,7 +198,8 @@ func bindingHasCash(methods []string) bool {
 }
 
 // wechatPayReadyOnClient 判断微信支付在指定客户端渠道上的能力是否就绪
-// mp 需要 mp 渠道已启用且凭证完整（JSAPI）；h5 走微信 H5 支付恒就绪；
+// mp 需要 mp 渠道已启用且凭证完整（JSAPI）；h5 走微信 H5 支付，须已配置渠道 AppID
+// （AppID 属渠道身份，支付配置行不再持有，缺失时下单必被渠道拒绝）；
 // gzh 需公众号 OAuth 授权链路（未接入）、alimp 处于支付宝生态内无法唤起微信、
 // android/ios 需 App 支付 SDK（未接入），均视为未就绪
 // 参数：
@@ -210,7 +214,11 @@ func wechatPayReadyOnClient(clientCode string, clientChannels map[string]*user.C
 		ch := clientChannels[channel.MP]
 		return ch != nil && ch.Enabled && ch.Configured
 	case channel.H5:
-		return true
+		// H5 支付无 openid；统一下单 AppID 取 h5 渠道自身配置：微信 AppID 属渠道身份
+		// （支付配置行不再持有）。此前借用 mp 渠道 AppID，mp 未配置时只能带着空值下单，
+		// 被渠道以「appid 必填」拒绝——缺失在这里就判未就绪，支付方式列表不会下发微信支付
+		ch := clientChannels[channel.H5]
+		return ch != nil && strings.TrimSpace(ch.AppId) != ""
 	default:
 		// gzh/alimp/android/ios 均无可用微信支付链路
 		return false
@@ -391,11 +399,14 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 }
 
 // resolveWechatPayIdentity 按客户端渠道解析微信支付所需的 openid 与 AppID
+// 微信 AppID 是渠道身份（一个商户号可关联小程序/H5 等多个 AppID），一律取自渠道配置，
+// 支付配置行不再持有 AppID；解析不到即拒绝下单，不回落任何默认值
 // 渠道语义：
 //   - mp：openid 取渠道身份表（mp 渠道回落存量 users.openid），AppID 取 mp 渠道配置（JSAPI）
-//   - h5：无 openid 走 H5 支付；AppID 优先取 mp 渠道 AppID（须与商户号绑定），缺省回落支付配置默认值
+//   - h5：无 openid 走微信 H5 支付，AppID 取 h5 渠道自身配置
 //   - gzh/app：公众号 OAuth 与 App 支付链路未开放，直接拒绝（渠道列表接口已隐藏）
-//   - 空/未知：存量口径（users.openid + 支付配置默认 AppID），兼容未升级客户端
+//   - 空/未知：按 h5 兜底渠道口径处理（openid 取存量 users.openid），
+//     微信支付在 wechatPayReadyOnClient 处已按渠道 AppID 拦截，此处只保证不回落默认值
 //
 // 参数：
 //   - ctx: 上下文
@@ -404,8 +415,8 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 //
 // 返回值：
 //   - string: 微信 openid（H5 场景为空串）
-//   - string: 下单 AppID（空串时 payment 服务回落配置默认值）
-//   - error: 渠道不可用等业务错误
+//   - string: 下单 AppID（支付服务随建单快照落库，供回调归属校验与撤销取用）
+//   - error: 渠道不可用或未配置 AppID 等业务错误
 func (h *PaymentHandler) resolveWechatPayIdentity(ctx context.Context, userID int64, clientCode string) (string, string, error) {
 	switch clientCode {
 	case channel.MP:
@@ -431,12 +442,22 @@ func (h *PaymentHandler) resolveWechatPayIdentity(ctx context.Context, userID in
 		}
 		return openidResp.Openid, chResp.AppId, nil
 	case channel.H5:
-		// H5 支付无 openid；统一下单 AppID 取 mp 渠道 AppID（任一与商户绑定的 AppID 均可）
-		if chResp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.MP}); err == nil &&
-			chResp != nil && chResp.Enabled && chResp.Configured {
-			return "", chResp.AppId, nil
+		// H5 支付无 openid；统一下单 AppID 取本渠道自身配置（微信 AppID 属渠道身份，
+		// 支付配置行不再持有）：缺失即拒绝，不再借用 mp 渠道 AppID——mp 未必配置，
+		// 借来的 AppID 也与本端入口无关，回调归属校验按支付单快照比对时会误判
+		chResp, err := h.userClient.GetClientChannel(ctx, &user.GetClientChannelReq{Code: channel.H5})
+		if err != nil {
+			log.Printf("查询 H5 渠道配置失败: %v", err)
+			return "", "", errWechatClientAppIDMissing
 		}
-		return "", "", nil
+		if chResp == nil || !chResp.Enabled {
+			return "", "", errWechatClientAppIDMissing
+		}
+		appID := strings.TrimSpace(chResp.AppId)
+		if appID == "" {
+			return "", "", errWechatClientAppIDMissing
+		}
+		return "", appID, nil
 	case channel.GZH:
 		// 公众号 OAuth 支付链路未接入（渠道列表接口已隐藏该组合），直接拒绝
 		return "", "", errWechatGzhNotOpen

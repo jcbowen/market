@@ -114,7 +114,9 @@ message CreatePaymentReq {
   int32 pay_type = 3;       // 1微信 2支付宝 3现金 4门店现金 5微信付款码 6支付宝付款码
   double amount = 4;
   string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
-  string app_id = 6;        // 微信下单使用的 AppID（JSAPI/H5），由网关按客户端渠道解析后传入；为空回落支付配置默认 AppID
+  // 微信下单使用的 AppID（JSAPI/H5），由网关按客户端渠道解析后传入：AppID 属渠道身份，
+  // 支付配置行不再持有，为空即拒绝下单；同时作为支付单快照落库，供回调归属校验与撤销取用
+  string app_id = 6;
   // 订单所属社区：由网关从订单详情取，支付服务落库后据此按社区隔离支付异常队列。
   // 下单入口均先查订单再创建支付单，社区随订单带入，不由前端提交
   int64 community_id = 7;
@@ -128,8 +130,9 @@ message CreatePaymentReq {
   // pay_type 1/2/5/6 必填，服务端校验配置存在、启用、平台匹配且凭证就绪；
   // 现金/货到付款（3/4）不填
   int64 config_id = 10;
-  // 客户端渠道 code（X-Channel-Code）：支付宝按它分流下单方式
-  // （alimp → alipay.trade.create 小程序内支付，其余 → 手机网站支付）；其余渠道暂未使用
+  // 客户端渠道 code（X-Channel-Code，网关已归一化）：随建单落库为 payments.client_channel。
+  // 用途有三：支付宝据此分流下单方式（alimp → trade.create 小程序内支付，其余 → 手机网站支付）、
+  // 按端统计收款与历史追溯、以及回调/排障时还原「这笔单是从哪个端下的」
   string client_channel = 11;
 }
 
@@ -156,6 +159,9 @@ message PayByAuthCodeReq {
   int64 order_id = 4;
   // 支付配置 ID：网关按 pos 渠道绑定解析（付款码前缀识别平台后取对应配置），必填
   int64 config_id = 5;
+  // 微信 AppID：网关按 pos 渠道解析后传入，微信付款码扣款必填（支付配置行不再持有 AppID）；
+  // 支付宝付款码留空——支付宝的 AppID 是签名身份，随 config_id 定位到配置行
+  string app_id = 6;
 }
 
 // PayByAuthCodeResp 付款码扣款结果（归一化）
@@ -273,7 +279,10 @@ message PayConfigRow {
   string platform = 3;
   bool enabled = 4;
   // 微信支付 V3 凭证（platform=wechat 时取用）
-  string wechat_app_id = 10;
+  // 10 曾为 wechat_app_id：微信 AppID 属渠道身份（client_channels.app_id），
+  // 一条配置可服务小程序/H5 多个渠道，落在配置行会强迫一个商户号建多份配置，故移除
+  reserved 10;
+  reserved "wechat_app_id";
   string wechat_app_secret = 11;
   string wechat_mch_id = 12;
   string wechat_api_v3_key = 13;
@@ -320,8 +329,10 @@ message ActivePayMethod {
   int64 config_id = 1;
   // 平台类型：wechat / alipay
   string platform = 2;
-  // 下单 AppID（微信 JSAPI 与渠道 AppID 一致性校验用）
-  string app_id = 3;
+  // 3 曾为 app_id：微信 AppID 属渠道身份，由渠道管理提供、建单时随请求传入，
+  // 不再由支付配置摘要回传
+  reserved 3;
+  reserved "app_id";
 }
 
 message ListActivePayMethodsResp {

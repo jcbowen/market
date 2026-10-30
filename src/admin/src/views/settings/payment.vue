@@ -92,11 +92,9 @@
           <!-- 微信支付凭证 -->
           <template v-if="form.platform === 'wechat'">
             <n-divider title-placement="left" style="margin: 8px 0 16px;">微信支付凭证</n-divider>
-            <n-form-item label="AppID">
-              <n-input v-model:value="form.wechat_app_id" :disabled="!canUpdate" placeholder="小程序/公众号 AppID（须与商户号绑定）" />
-            </n-form-item>
             <n-form-item label="商户号 MchID">
               <n-input v-model:value="form.wechat_mch_id" :disabled="!canUpdate" placeholder="微信支付商户号" />
+              <n-text depth="3" class="form-hint">一个商户号一条配置即可；AppID 请到渠道管理按渠道填写，并在商户号下完成 AppID 关联</n-text>
             </n-form-item>
             <n-form-item label="API V3 密钥">
               <n-input
@@ -383,7 +381,6 @@ function emptyRow(): PayConfigRow {
     name: '',
     platform: 'wechat',
     enabled: true,
-    wechat_app_id: '',
     wechat_mch_id: '',
     wechat_api_v3_key: '',
     wechat_cert_serial_no: '',
@@ -424,7 +421,7 @@ const certUploaded = computed<Record<string, boolean>>(() => ({
  */
 function rowDesc(row: PayConfigRow): string {
   if (row.platform === 'wechat') {
-    return [row.wechat_app_id, row.wechat_mch_id].filter(Boolean).join(' · ') || '未填写商户凭证'
+    return row.wechat_mch_id ? `商户号 ${row.wechat_mch_id}` : '未填写商户号'
   }
   const sandbox = row.alipay_gateway_url.includes('openapi-sandbox.')
   return [row.alipay_app_id, sandbox ? '沙箱网关' : ''].filter(Boolean).join(' · ') || '未填写商户凭证'
@@ -470,7 +467,7 @@ function snapshotOf(): string {
   return JSON.stringify({
     name: form.name,
     enabled: form.enabled,
-    wechat: [form.wechat_app_id, form.wechat_mch_id, form.wechat_api_v3_key, form.wechat_cert_serial_no],
+    wechat: [form.wechat_mch_id, form.wechat_api_v3_key, form.wechat_cert_serial_no],
     alipay: [form.alipay_app_id, form.alipay_mode, form.alipay_public_key, form.alipay_gateway_url],
   })
 }
@@ -550,7 +547,6 @@ function buildPayload(): Omit<PayConfigRow, 'id' | 'updated_at' | 'ready' | 'rea
     name: form.name.trim(),
     platform: form.platform,
     enabled: form.enabled,
-    wechat_app_id: form.wechat_app_id.trim(),
     wechat_mch_id: form.wechat_mch_id.trim(),
     wechat_api_v3_key: form.wechat_api_v3_key,
     wechat_cert_serial_no: form.wechat_cert_serial_no.trim(),

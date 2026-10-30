@@ -18,12 +18,12 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jcbowen/alipay-sdk-go-all v0.0.8
 	github.com/jcbowen/jcbaseGo v0.17.6
-	github.com/jcbowen/wego v0.2.0
+	github.com/jcbowen/wego v1.0.0-alpha
 	github.com/oschwald/geoip2-golang/v2 v2.5.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
-	golang.org/x/net v0.61.0
-	google.golang.org/grpc v1.84.0
+	golang.org/x/net v0.62.0
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	gorm.io/gorm v1.31.2
 )

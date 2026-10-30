@@ -268,37 +268,35 @@ func (s *PaymentService) closeChannelOrder(ctx context.Context, p *model.Payment
 	case 2, 6:
 		return closeAlipayOrder(ctx, s, p.ConfigID, p.PaymentNo)
 	case 5:
-		return closeWechatCodeOrder(ctx, s, p.ConfigID, p.PaymentNo)
+		return closeWechatCodeOrder(ctx, s, p.ConfigID, p.PaymentNo, p.AppID)
 	default:
 		return fmt.Errorf("支付方式 %d 无渠道关单能力", p.PayType)
 	}
 }
 
 // closeWechatCodeOrder 撤销微信付款码交易（V3 reverse，包级变量便于单测替换）
-// 参数：
-//   - ctx: 上下文
-//   - s: 支付服务
-//   - paymentNo: 商户订单号（本系统支付单号）
-//
-// 返回值：
-//   - error: 渠道调用或配置错误
+// 参数与返回值语义见 defaultCloseWechatCodeOrder
 var closeWechatCodeOrder = defaultCloseWechatCodeOrder
 
 // defaultCloseWechatCodeOrder 撤销微信付款码交易（V3 /v3/pay/transactions/out-trade-no/{}/reverse）
+// appid 为必填参数且属渠道身份：取支付单下单时落库的快照（付款码扣款前已随 PayByAuthCode 写入），
+// 配置行不再持有 AppID；快照为空的单从未成功提交过扣款，渠道侧也就没有可撤销的交易，
+// 此时 wego 直接报「AppID 未指定」而不发出请求（避免静默带空 appid 被微信拒绝）
 // 参数：
 //   - ctx: 上下文
 //   - s: 支付服务
 //   - configID: 支付配置行 ID
 //   - paymentNo: 商户订单号（本系统支付单号）
+//   - appID: 下单使用的微信 AppID 快照
 //
 // 返回值：
 //   - error: 渠道调用或配置错误
-func defaultCloseWechatCodeOrder(ctx context.Context, s *PaymentService, configID int64, paymentNo string) error {
+func defaultCloseWechatCodeOrder(ctx context.Context, s *PaymentService, configID int64, paymentNo, appID string) error {
 	client := s.getWechatPayClientFor(ctx, configID)
 	if client == nil {
 		return fmt.Errorf("微信支付未配置或配置不完整")
 	}
-	return client.ReverseOrder(ctx, paymentNo)
+	return client.ReverseOrder(ctx, appID, paymentNo)
 }
 
 // isWechatOrderNotExist 判断微信查询错误是否为「订单不存在」
