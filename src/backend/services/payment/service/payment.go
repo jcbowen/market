@@ -92,6 +92,13 @@ func (s *PaymentService) reloadPayConfig() {
 // 全平台单行配置表，行由建单事务内 get-or-create 兜底，不依赖启动初始化
 const siteConfigLockID = int64(1)
 
+// siteConfigLockRow 现金建单串行点锚定行的最小查询载体（仅取主键）
+// 不直接复用用户服务的 SiteConfig 模型：支付服务只借该行做行锁，不关心站点配置语义，
+// 避免跨服务模型依赖随站点字段演进被牵连
+type siteConfigLockRow struct {
+	ID int64 `gorm:"column:id"`
+}
+
 // cashCreateLockTx 现金/货到付款建单的库级串行点：锁站点设置固定行
 // 现金单「创建即已支付」，不置 pending_flag（唯一索引只保护待支付态），
 // 「查重 → 插入」在并发双击下非原子，同订单可落两笔已支付现金流水（交班营业额双计）。
@@ -110,11 +117,14 @@ const siteConfigLockID = int64(1)
 func cashCreateLockTx(tx *gorm.DB) error {
 	// get-or-create：行不存在时插入占位行（仅 id 与创建时间，无业务含义），再对同一行加锁。
 	// 插入与加锁都在建单事务内完成：并发首单下唯一主键保证只有一个事务插入成功，
-	// 其余事务阻塞到该事务提交后读到新行并加锁，串行语义不受影响
+	// 其余事务阻塞到该事务提交后读到新行并加锁，串行语义不受影响。
+	// 查询目的对象必须是可解析出 schema 的结构体：dest 为 map 时 GORM 解析不到主键列，
+	// First 拼 ORDER BY 主键会直接报 model value required（v1.31 实测），现金建单全量失败
+	var anchor siteConfigLockRow
 	res := tx.Table("site_configs").
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("id = ?", siteConfigLockID).
-		First(&map[string]any{})
+		Take(&anchor)
 	if res.Error == nil {
 		return nil
 	}
@@ -135,7 +145,7 @@ func cashCreateLockTx(tx *gorm.DB) error {
 	if err := tx.Table("site_configs").
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("id = ?", siteConfigLockID).
-		First(&map[string]any{}).Error; err != nil {
+		Take(&anchor).Error; err != nil {
 		return fmt.Errorf("锁定现金建单串行点失败: %w", err)
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 	wegopayment "github.com/jcbowen/wego/payment"
 
@@ -118,6 +119,45 @@ func registryVersion(rows []*model.PayConfig) string {
 	return b.String()
 }
 
+// nextPayConfigVersion 生成严格大于当前值的乐观锁版本号（「Y-m-d H:i:s」形态）
+// updated_at 列只有秒精度，同一秒内的连续保存会得到相同版本号，两处后果都不能接受：
+//   - 乐观锁失效：旧版本请求与库中版本相同，覆盖不会被拒（双击开关、上传证书后紧接保存都落在同一秒）
+//   - 注册表不重建：registryVersion 按各行 updated_at 拼串比对，版本没变即视为配置未变，
+//     所有实例继续沿用旧渠道客户端（如刚上传的新私钥不生效、启停开关静默无效）
+//
+// 故新版本取 max(当前时间, 旧版本 + 1 秒)，不依赖「墙钟必然前进」这一假设
+//
+// 参数：
+//   - prev: 当前版本号（规范化形态，新增行为空串）
+//
+// 返回值：
+//   - string: 新版本号
+func nextPayConfigVersion(prev string) string {
+	// 先截断到秒再比较：now 的亚秒部分会让「同一秒」被判成 After，
+	// 格式化后又退回同一版本号
+	now := time.Now().Truncate(time.Second)
+	if prevTime, err := time.ParseInLocation("2006-01-02 15:04:05", prev, time.Local); err == nil && !now.After(prevTime) {
+		now = prevTime.Add(time.Second)
+	}
+	return now.Format("2006-01-02 15:04:05")
+}
+
+// normalizePayConfigRow 把配置行的 datetime 列归一化为「Y-m-d H:i:s」形态
+// parseTime DSN 下字符串字段读回的是 RFC3339 字面量（如 2026-10-31T00:44:51+08:00），
+// 而写入侧统一是「Y-m-d H:i:s」；updated_at 兼作乐观锁版本号，读写两侧形态不一致时，
+// 刚保存成功紧接着再保存会被误判为版本冲突（上传证书后随后的保存同样会被拒），故读取即归一化
+//
+// 参数：
+//   - row: 配置行（原地修改）
+//
+// 返回值：
+//   - *model.PayConfig: 同一行对象，便于链式返回
+func normalizePayConfigRow(row *model.PayConfig) *model.PayConfig {
+	row.CreatedAt = timeutil.NormalizeRFC3339(row.CreatedAt)
+	row.UpdatedAt = timeutil.NormalizeRFC3339(row.UpdatedAt)
+	return row
+}
+
 // GetPayConfigs 查询全部支付配置行（按 id 升序）
 //
 // 参数：
@@ -136,6 +176,9 @@ func (s *PaymentService) GetPayConfigs(ctx context.Context) ([]*model.PayConfig,
 	if err := s.db.GetDb().WithContext(ctx).Order("id ASC").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("读取支付配置失败: %w", err)
 	}
+	for _, row := range rows {
+		normalizePayConfigRow(row)
+	}
 	return rows, nil
 }
 
@@ -153,7 +196,7 @@ func (s *PaymentService) GetPayConfigRow(ctx context.Context, id int64) (*model.
 	if err := s.db.GetDb().WithContext(ctx).First(&row, id).Error; err != nil {
 		return nil, fmt.Errorf("读取支付配置失败: %w", err)
 	}
-	return &row, nil
+	return normalizePayConfigRow(&row), nil
 }
 
 // SavePayConfigRow 新增（ID=0）或更新一条支付配置
@@ -237,7 +280,7 @@ func (s *PaymentService) SavePayConfigRow(ctx context.Context, in *payment.PayCo
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
-	row.UpdatedAt = now
+	row.UpdatedAt = nextPayConfigVersion(row.UpdatedAt)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
 	}
@@ -384,7 +427,7 @@ func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadP
 	default:
 		return nil, fmt.Errorf("该配置平台不支持上传 %s 类型证书", req.CertType)
 	}
-	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	row.UpdatedAt = nextPayConfigVersion(row.UpdatedAt)
 
 	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
 		return nil, fmt.Errorf("保存证书失败: %w", err)
@@ -420,6 +463,7 @@ func (s *PaymentService) SetPayConfigEnabled(ctx context.Context, req *payment.S
 		}
 		return nil, fmt.Errorf("读取支付配置失败: %w", err)
 	}
+	normalizePayConfigRow(&row)
 	if req.UpdatedAt != "" && req.UpdatedAt != row.UpdatedAt {
 		log.Printf("支付配置启停冲突：调用方版本 %s，当前版本 %s", req.UpdatedAt, row.UpdatedAt)
 		return nil, bizerr.New(codes.Aborted, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
@@ -430,7 +474,7 @@ func (s *PaymentService) SetPayConfigEnabled(ctx context.Context, req *payment.S
 	res := s.db.GetDb().WithContext(ctx).Model(&row).
 		Updates(map[string]any{
 			"enabled":    req.Enabled,
-			"updated_at": time.Now().Format("2006-01-02 15:04:05"),
+			"updated_at": nextPayConfigVersion(row.UpdatedAt),
 		})
 	if res.Error != nil {
 		return nil, fmt.Errorf("更新支付配置状态失败: %w", res.Error)
@@ -454,7 +498,7 @@ func (s *PaymentService) reloadPayConfigRow(ctx context.Context, id int64) (*mod
 	if err := s.db.GetDb().WithContext(ctx).First(&row, id).Error; err != nil {
 		return nil, fmt.Errorf("读取支付配置失败: %w", err)
 	}
-	return &row, nil
+	return normalizePayConfigRow(&row), nil
 }
 
 // getRegistryCached 获取支付配置注册表（进程内缓存 + 每次调用按版本核对）
