@@ -28,7 +28,8 @@ func TestIsPhoneOpenid(t *testing.T) {
 }
 
 // TestClientChannelIsConfigured 渠道凭证完整性判定
-// 覆盖：h5/pos 无需凭证恒为已配置；alimp 仅需 AppID（签名私钥复用支付配置）；
+// 覆盖：h5/pos 无登录凭证，但绑定微信支付时必须有 AppID（AppID 属渠道身份，
+// 支付配置行不再持有）；alimp 仅需 AppID（签名私钥复用支付配置）；
 // 微信系渠道 AppID/AppSecret 需成对非空
 func TestClientChannelIsConfigured(t *testing.T) {
 	cases := []struct {
@@ -36,8 +37,12 @@ func TestClientChannelIsConfigured(t *testing.T) {
 		ch   model.ClientChannel
 		want bool
 	}{
-		{"h5 无凭证视为已配置", model.ClientChannel{Code: channel.H5}, true},
-		{"pos 无凭证视为已配置", model.ClientChannel{Code: channel.POS}, true},
+		{"h5 未绑微信支付、无凭证视为已配置", model.ClientChannel{Code: channel.H5, PayMethods: `["cash"]`}, true},
+		{"h5 绑微信支付缺 AppID", model.ClientChannel{Code: channel.H5, PayMethods: `["wechat:3"]`}, false},
+		{"h5 绑微信支付有 AppID", model.ClientChannel{Code: channel.H5, AppID: "wxh5", PayMethods: `["wechat:3"]`}, true},
+		{"pos 未绑微信支付、无凭证视为已配置", model.ClientChannel{Code: channel.POS, PayMethods: `["cash"]`}, true},
+		{"pos 绑微信支付缺 AppID", model.ClientChannel{Code: channel.POS, PayMethods: `["cash","wechat:1"]`}, false},
+		{"pos 仅绑支付宝不需 AppID", model.ClientChannel{Code: channel.POS, PayMethods: `["cash","alipay:2"]`}, true},
 		{"支付宝小程序仅 AppID", model.ClientChannel{Code: channel.ALIMP, AppID: "20210001"}, true},
 		{"支付宝小程序缺 AppID", model.ClientChannel{Code: channel.ALIMP}, false},
 		{"小程序凭证完整", model.ClientChannel{Code: channel.MP, AppID: "wx123", AppSecret: "sec"}, true},
@@ -73,7 +78,7 @@ func TestToClientChannelInfo(t *testing.T) {
 	}
 }
 
-// TestPayMethodsToList 绑定 JSON 解析：非法 JSON/空串回退为空列表
+// TestPayMethodsToList 绑定 JSON 解析（model.ClientChannel.PayMethodsList）：非法 JSON/空串回退为空列表
 func TestPayMethodsToList(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -87,8 +92,9 @@ func TestPayMethodsToList(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := payMethodsToList(tc.raw); len(got) != tc.wantN {
-				t.Fatalf("payMethodsToList(%q) 长度 = %d, want %d (%v)", tc.raw, len(got), tc.wantN, got)
+			ch := &model.ClientChannel{PayMethods: tc.raw}
+			if got := ch.PayMethodsList(); len(got) != tc.wantN {
+				t.Fatalf("PayMethodsList(%q) 长度 = %d, want %d (%v)", tc.raw, len(got), tc.wantN, got)
 			}
 		})
 	}

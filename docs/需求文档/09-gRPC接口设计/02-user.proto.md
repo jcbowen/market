@@ -773,7 +773,7 @@ message CheckFulfillerResp {
   rpc UpsertUserChannelIdentity(UpsertUserChannelIdentityReq) returns (common.CommonResponse);
 ```
 
-- `ListClientChannels(only_enabled)` / `GetClientChannel(code)` / `SaveClientChannel`：客户端渠道主数据（client_channels 表，2026-10-30 重构为 7 个内置渠道：h5 浏览器H5 / gzh 微信公众号 / mp 微信小程序 / alimp 支付宝小程序 / android 安卓App / ios iOS App / pos 门店收银台，删除 app；列表按固定常用顺序返回 h5 → gzh → mp → alimp → android → ios，pos 恒在末位，**无 sort 排序字段**）的查询与维护；`SaveClientChannel` 的 AppSecret 留空保留原值，code 不可变更，返回 `ClientChannelInfo`（含 `configured` 凭证完整性：h5/pos 恒 true，alimp 仅需 AppID，其余需 AppID+AppSecret）。
+- `ListClientChannels(only_enabled)` / `GetClientChannel(code)` / `SaveClientChannel`：客户端渠道主数据（client_channels 表，2026-10-30 重构为 7 个内置渠道：h5 浏览器H5 / gzh 微信公众号 / mp 微信小程序 / alimp 支付宝小程序 / android 安卓App / ios iOS App / pos 门店收银台，删除 app；列表按固定常用顺序返回 h5 → gzh → mp → alimp → android → ios，pos 恒在末位，**无 sort 排序字段**）的查询与维护；`SaveClientChannel` 的 AppSecret 留空保留原值，code 不可变更，返回 `ClientChannelInfo`（含 `configured` 凭证完整性：h5/pos 仅在绑定了微信支付时要求 AppID、否则无登录凭证恒 true，alimp 仅需 AppID，其余需 AppID+AppSecret）。保存时「绑定微信支付但渠道 AppID 为空」直接以 `FailedPrecondition` 拒绝（不以启用为前提）：微信的 AppID 是**渠道身份**（一个商户号可关联小程序/H5 等多个 AppID，支付配置行因此不再持有该字段），下单、撤销与回调归属校验都只能用它；渠道 AppID 还须已在商户号下完成关联，该校验在微信侧、系统内无法预检。
 - `GetUserChannelOpenid(user_id, channel_code)`：查询用户在指定渠道的微信 openid/unionid；渠道身份表（user_channel_identities）优先，mp 渠道回落存量 `users.openid`（排除 phone_ 占位），零迁移兼容。
 - `UpsertUserChannelIdentity(user_id, channel_code, openid, unionid)`：登录成功后幂等写入/更新用户渠道身份；内容一致时跳过写入，并发唯一索引冲突视为已存在。
 
@@ -791,7 +791,8 @@ message ClientChannelInfo {
   // 渠道绑定的支付方式列表（有序，顺序即收银台展示顺序）：
   // 每项为 "cash" 或 "<platform>:<config_id>"（如 "wechat:3"）
   repeated string pay_methods = 10;
-  // 凭证是否配置完整（h5/pos 恒真；alimp 仅需 AppID；其余需 AppID+AppSecret）
+  // 凭证是否配置完整（h5/pos 仅在绑定微信支付时要求 AppID，否则无登录凭证恒真；
+  // alimp 仅需 AppID；其余需 AppID+AppSecret）
   bool configured = 8;
   string updated_at = 9;
 }

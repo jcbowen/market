@@ -119,7 +119,9 @@ message CreatePaymentReq {
   int32 pay_type = 3;       // 1微信 2支付宝 3现金 4门店现金 5微信付款码 6支付宝付款码
   double amount = 4;
   string openid = 5;        // 微信 JSAPI 需要，由网关从用户资料解析后传入；为空走微信 H5 支付
-  string app_id = 6;        // 微信下单使用的 AppID（JSAPI/H5），由网关按客户端渠道解析后传入；为空回落支付配置默认 AppID
+  string app_id = 6;        // 微信下单使用的 AppID（JSAPI/H5），由网关按客户端渠道解析后传入；
+                            // 微信 AppID 属渠道身份（pay_config 不含该字段），为空即拒绝下单，不回落任何默认值；
+                            // 同时作为支付单快照落库（payments.app_id），供回调归属校验与撤销取用
   // 订单所属社区：由网关从订单详情取，支付服务落库后据此按社区隔离支付异常队列。
   // 下单入口均先查订单再创建支付单，社区随订单带入，不由前端提交
   int64 community_id = 7;
@@ -161,6 +163,9 @@ message PayByAuthCodeReq {
   int64 order_id = 4;
   // 支付配置 ID：网关按 pos 渠道绑定解析（付款码前缀识别平台后取对应配置），必填
   int64 config_id = 5;
+  // 微信 AppID：网关按 pos 渠道解析后传入，微信付款码扣款必填（支付配置行不再持有 AppID）；
+  // 支付宝付款码留空——支付宝的 AppID 是签名身份，随 config_id 定位到配置行
+  string app_id = 6;
 }
 
 // PayByAuthCodeResp 付款码扣款结果（归一化）
@@ -278,7 +283,10 @@ message PayConfigRow {
   string platform = 3;
   bool enabled = 4;
   // 微信支付 V3 凭证（platform=wechat 时取用）
-  string wechat_app_id = 10;
+  // 10 曾为 wechat_app_id：微信 AppID 属渠道身份（client_channels.app_id），
+  // 一条配置可服务小程序/H5 多个渠道，落在配置行会强迫一个商户号建多份配置，故移除
+  reserved 10;
+  reserved "wechat_app_id";
   string wechat_app_secret = 11;
   string wechat_mch_id = 12;
   string wechat_api_v3_key = 13;
@@ -325,8 +333,10 @@ message ActivePayMethod {
   int64 config_id = 1;
   // 平台类型：wechat / alipay
   string platform = 2;
-  // 下单 AppID（微信 JSAPI 与渠道 AppID 一致性校验用）
-  string app_id = 3;
+  // 3 曾为 app_id：微信 AppID 属渠道身份，由渠道管理提供、建单时随请求传入，
+  // 不再由支付配置摘要回传
+  reserved 3;
+  reserved "app_id";
 }
 
 message ListActivePayMethodsResp {
@@ -454,7 +464,7 @@ message MarkPaymentPaidReq {
 
 ### 配置管理说明
 
-支付配置存储于数据库 pay_config 表（**多行**，2026-10-30 重构：每行 `name + platform(wechat/alipay) + enabled + 凭证`，同平台可多条、独立启停），由 payment 服务统一管理，gateway 通过 `ListPayConfigs/SavePayConfigRow/DeletePayConfigRow/UploadPayCert(config_id)` 读写，不直接访问数据库。「哪个客户端渠道启用哪些配置」由 user 服务 `client_channels.pay_methods` 绑定表达（见 02-user.proto.md），本表无渠道勾选；`ListActivePayMethods` 返回启用且就绪的配置摘要（config_id/platform/app_id），供网关在 C 端渲染过滤与下单/扣款解析 config_id 时使用。
+支付配置存储于数据库 pay_config 表（**多行**，2026-10-30 重构：每行 `name + platform(wechat/alipay) + enabled + 凭证`，同平台可多条、独立启停），由 payment 服务统一管理，gateway 通过 `ListPayConfigs/SavePayConfigRow/DeletePayConfigRow/UploadPayCert(config_id)` 读写，不直接访问数据库。「哪个客户端渠道启用哪些配置」由 user 服务 `client_channels.pay_methods` 绑定表达（见 02-user.proto.md），本表无渠道勾选；`ListActivePayMethods` 返回启用且就绪的配置摘要（config_id/platform；AppID 已随微信 AppID 归属渠道一并从摘要中移除），供网关在 C 端渲染过滤与下单/扣款解析 config_id 时使用。
 
 热更新机制：payment 服务进程内缓存全部配置行（`payClientRegistry`：version = 行数 + 各行 updated_at 拼接），每次支付链路调用时对比版本号——版本一致时直接复用已构建的微信/支付宝客户端（零重建开销），版本变更时才刷新缓存并重建客户端；数据库查询异常时降级使用缓存，不阻断支付。后台保存配置后即时生效，无需重启。
 
@@ -492,10 +502,10 @@ message MarkPaymentPaidReq {
 ### 渠道绑定与下单解析（2026-10-30 重构，替代原「客户端渠道相关字段」）
 
 - **绑定关系反转**：原 `PayConfig.wechat_client_channels`/`alipay_client_channels`（适用客户端渠道勾选，19/20 号字段）与 `enabled_channels`（1 号字段）已随单行配置一并删除。「哪个客户端渠道用哪些支付配置」改由 user 服务 `client_channels.pay_methods` 表达（有序数组：`cash` 或 `<platform>:<config_id>`，见 02-user.proto.md「客户端渠道管理」），渠道内置渠道集合为 h5/gzh/mp/alimp/android/ios/pos（删除 app）。
-- **下单解析链路**：网关按 `X-Channel-Code`（未携带按 h5 兑底）取渠道绑定，解析出 `pay_type` 对应平台的 `config_id`，经 `ListActivePayMethods` 的启用集校验后随 `CreatePaymentReq` 传入：`config_id`（10 号字段，pay_type 1/2 必填、付款码占位单 5/6 建单时免填——平台未知，扫码后由 `PayByAuthCode` 回填）与 `client_channel`（11 号字段，支付宝按它分流 alimp→`alipay.trade.create`、其余→手机网站支付）。
-- **付款码扣款**：`PayByAuthCodeReq` 新增 `config_id`（5 号字段）：网关按 pos 渠道绑定 + 付款码前缀识别平台后解析传入，服务端校验配置存在、启用、平台匹配。渠道按付款码前缀识别（微信 10-15→5，支付宝 25-30→6，占位单原地纠正），结果归一化 PAID/PAYING/FAILED，失败重试复用同一支付单（out_trade_no 不变），云闪付（62 开头）明确拒绝；退款/查单/关单/对账调度器/SyncPaymentFromChannel 全链路按 5→微信、6→支付宝映射（微信付款码关单走撤销 reverse）。
+- **下单解析链路**：网关按 `X-Channel-Code`（未携带按 h5 兜底）取渠道绑定，解析出 `pay_type` 对应平台的 `config_id`，经 `ListActivePayMethods` 的启用集校验后随 `CreatePaymentReq` 传入：`config_id`（10 号字段，pay_type 1/2 必填、付款码占位单 5/6 建单时免填——平台未知，扫码后由 `PayByAuthCode` 回填）与 `client_channel`（11 号字段，支付宝按它分流 alimp→`alipay.trade.create`、其余→手机网站支付）。微信系下单还须带 `app_id`（6 号字段）：它取自渠道管理（不再来自支付配置），网关按渠道解析后传入，缺失即在建单前拒绝并提示「该渠道未配置微信 AppID」，不做任何默认值回落。
+- **付款码扣款**：`PayByAuthCodeReq` 新增 `config_id`（5 号字段）与 `app_id`（6 号字段）：前者由网关按 pos 渠道绑定 + 付款码前缀识别平台后解析传入，服务端校验配置存在、启用、平台匹配；后者仅在微信付款码扣款时必填（`ReverseOrder` 撤销同样按它传参），支付宝留空、由 `config_id` 定位到配置行的签名身份。渠道按付款码前缀识别（微信 10-15→5，支付宝 25-30→6，占位单原地纠正），结果归一化 PAID/PAYING/FAILED，失败重试复用同一支付单（out_trade_no 不变），云闪付（62 开头）明确拒绝；退款/查单/关单/对账调度器/SyncPaymentFromChannel 全链路按 5→微信、6→支付宝映射（微信付款码关单走撤销 reverse）。
 - **C 端渲染**：`GET /payments/channels` 按渠道绑定 ∩ `ListActivePayMethods` 过滤返回，顺序即绑定顺序；运行时就绪门槛（如微信仅 mp/h5 放行、支付宝仅 h5/alimp 放行）由网关把控。
-- 历史：`CreatePaymentReq.app_id`（6 号字段）仍为微信下单 AppID（小程序=渠道管理的 mp AppID）；wego `JSAPIPay/H5Pay` 支持请求级 AppID 覆盖，无需多客户端实例。`community_id`（7 号字段）与 `order_no`（8 号字段）语义不变：payment 服务不查 orders 表，社区隔离与异常流水展示所依赖的订单事实只能在创建支付单时随订单带入并落库。
+- 历史（2026-10-30 定案）：`CreatePaymentReq.app_id`（6 号字段）仍为微信下单 AppID，但**归属从支付配置改为渠道**——微信的 AppID 是渠道身份（一个商户号可关联小程序/H5 等多个 AppID），留在配置行会强迫同一商户号按端建多份配置，故 `PayConfigRow` 的 10 号字段与 `ActivePayMethod` 的 3 号字段一并 `reserved` 删除，下单/撤销/回调归属校验用的 AppID 全部来自 `client_channels.app_id` 并随建单快照落 `payments.app_id`。调起参数由 wego `BuildJSAPIPayParams(appID, prepayID)` 生成（请求级 AppID 覆盖），market 不再自建签名实现。`community_id`（7 号字段）与 `order_no`（8 号字段）语义不变：payment 服务不查 orders 表，社区隔离与异常流水展示所依赖的订单事实只能在创建支付单时随订单带入并落库。
 
 ### 支付状态查询与收银台链接换取（2026-10-23 新增，免登录公开口径）
 

@@ -5788,7 +5788,8 @@ type PayConfigView struct {
 	Enabled  bool   `json:"enabled"`
 
 	// 微信支付 V3 凭证（platform=wechat 时取用）
-	WechatAppID        string `json:"wechat_app_id"`
+	// 无 AppID 字段：微信 AppID 是渠道身份（一商户号可关联小程序/H5 多个 AppID），
+	// 在渠道管理按端配置，支付配置只存商户号与密钥
 	WechatMchID        string `json:"wechat_mch_id"`
 	WechatAPIV3Key     string `json:"wechat_api_v3_key"`
 	WechatCertSerialNo string `json:"wechat_cert_serial_no"`
@@ -5837,7 +5838,6 @@ func payConfigViewOf(row *payment.PayConfigRow) PayConfigView {
 		Platform: row.Platform,
 		Enabled:  row.Enabled,
 
-		WechatAppID:        row.WechatAppId,
 		WechatMchID:        row.WechatMchId,
 		WechatCertSerialNo: row.WechatCertSerialNo,
 		WechatNotifyURL:    row.WechatNotifyUrl,
@@ -5880,7 +5880,6 @@ func payConfigRowOf(v PayConfigView, wechatNotify, alipayNotify, alipayReturn st
 		Platform: v.Platform,
 		Enabled:  v.Enabled,
 
-		WechatAppId:        v.WechatAppID,
 		WechatAppSecret:    "",
 		WechatMchId:        v.WechatMchID,
 		WechatApiV3Key:     v.WechatAPIV3Key,

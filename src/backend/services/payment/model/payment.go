@@ -36,6 +36,15 @@ type Payment struct {
 	// 回调路由（多配置验签/验签公钥）、退款、查单、关单均按本列取对应配置的渠道客户端；
 	// 现金/货到付款（3/4）无渠道交互恒为 0
 	ConfigID  int64   `gorm:"column:config_id;type:bigint;not null;default:0;index;comment:支付配置 ID，0=线下/未关联" json:"config_id"`
+	// ClientChannel 下单入口的客户端渠道 code（h5/mp/alimp/pos…，由网关归一化渠道头后带入）：
+	// 与 config_id 合成「这笔钱走的是哪个端的哪条配置」的可追溯快照，按端统计收款、
+	// 渠道绑定变更后的历史核对只能读这里（payment 服务不查 client_channels 表）
+	ClientChannel string `gorm:"column:client_channel;type:varchar(32);not null;default:'';comment:客户端渠道 code（h5/mp/alimp/pos），空=未知" json:"client_channel"`
+	// AppID 本次微信下单实际使用的 AppID 快照（渠道身份，由网关按客户端渠道解析后带入）：
+	// 回调归属校验的依据取本列而非回调时反查渠道——支付服务不跨服务读 client_channels，
+	// 且渠道 AppID 后续被改动也不应影响在途单的回调判定。
+	// 支付宝的 AppID 是签名身份、随 config_id 定位到配置行，故支付宝单本列留空
+	AppID     string  `gorm:"column:app_id;type:varchar(64);not null;default:'';comment:微信下单使用的 AppID 快照，回调归属校验依据；支付宝/线下为空" json:"app_id"`
 	Amount    float64 `gorm:"column:amount;type:decimal(10,2);not null;comment:支付金额" json:"amount"`
 	Status      int32   `gorm:"column:status;type:tinyint;default:1;index:idx_payments_status_created,priority:1;index:idx_payments_status_reconciled,priority:1;comment:1待支付 2支付成功 3支付失败 4已退款 5已关闭" json:"status"`
 	// TransactionID 渠道交易号（支付宝 trade_no / 微信 transaction_id），渠道无关同列存放。

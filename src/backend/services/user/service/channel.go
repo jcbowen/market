@@ -36,7 +36,7 @@ func ToClientChannelInfo(c *model.ClientChannel) *user.ClientChannelInfo {
 		AppId:      c.AppID,
 		AppSecret:  c.AppSecret,
 		Enabled:    c.Enabled,
-		PayMethods: payMethodsToList(c.PayMethods),
+		PayMethods: c.PayMethodsList(),
 		Configured: c.IsConfigured(),
 		UpdatedAt:  c.UpdatedAt,
 	}
@@ -241,27 +241,10 @@ func validatePayMethods(code string, methods []string) (string, error) {
 	return string(out), nil
 }
 
-// payMethodsToList 将渠道存储的 pay_methods JSON 串解析为列表
-//
-// 参数：
-//   - raw: JSON 数组串
-//
-// 返回值：
-//   - []string: 支付方式列表，空串/解析失败返回 nil
-func payMethodsToList(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	var list []string
-	if err := json.Unmarshal([]byte(raw), &list); err != nil {
-		return nil
-	}
-	return list
-}
-
 // SaveClientChannel 保存渠道配置（名称/凭证/启用/支付方式绑定）
 // AppSecret 为空时保留原值，避免未重新输入时清空已保存内容；code 不可变更；
-// pay_methods 做语法、平台兼容与去重校验（validatePayMethods）
+// pay_methods 做语法、平台兼容与去重校验（validatePayMethods），
+// 绑定微信支付的渠道另要求 AppID（微信 AppID 属渠道身份，见 model.ClientChannel.IsConfigured）
 //
 // 参数：
 //   - ctx: 上下文
@@ -293,13 +276,27 @@ func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveCl
 	}
 
 	row.Name = req.Name
-	row.AppID = req.AppId
+	row.AppID = strings.TrimSpace(req.AppId)
 	if req.AppSecret != "" {
 		row.AppSecret = req.AppSecret
 	}
 	row.Enabled = req.Enabled
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
 
+	// 支付方式绑定校验与落库（渠道侧决定启用哪些支付配置与收银台顺序）
+	// 先于启用校验：微信 AppID 属渠道身份，是否必填取决于本次绑定的支付方式
+	methods, err := validatePayMethods(row.Code, req.PayMethods)
+	if err != nil {
+		return nil, err
+	}
+	row.PayMethods = methods
+
+	// 绑定微信支付即要求渠道 AppID（不以启用为前提）：
+	// 支付配置行不再持有微信 AppID，缺失时下单只能带着空 appid 被渠道拒绝，
+	// 在保存时就拦下比让用户在收银台看到一句无法理解的失败更可修
+	if row.BindsWechatPay() && row.AppID == "" {
+		return nil, bizerr.New(codes.FailedPrecondition, "绑定微信支付需先填写渠道 AppID（微信支付商户号下须已完成该 AppID 关联）")
+	}
 	// 启用状态与凭证完整性一致性校验：防止凭证被清空/不全的渠道被置为启用
 	// （登录与支付链路按渠道现取凭证，启用但凭证不完整会直接报"未配置"）
 	// 注意：业务校验错误必须 bizerr（纯 fmt.Errorf 会被 ToStatus 归为 Internal，网关吞成 10002）
@@ -310,13 +307,6 @@ func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveCl
 	if row.Enabled && channel.IsDisabled(row.Code) {
 		return nil, bizerr.New(codes.FailedPrecondition, "该渠道暂不支持，无法启用")
 	}
-
-	// 支付方式绑定校验与落库（渠道侧决定启用哪些支付配置与收银台顺序）
-	methods, err := validatePayMethods(row.Code, req.PayMethods)
-	if err != nil {
-		return nil, err
-	}
-	row.PayMethods = methods
 
 	if err := s.db.GetDb().WithContext(ctx).Save(&row).Error; err != nil {
 		return nil, fmt.Errorf("保存客户端渠道失败: %w", err)

@@ -220,12 +220,20 @@ func TestCreatePaymentCash(t *testing.T) {
 		UserId:  0, // 收银台散客单允许无会员
 		Amount:  58.50,
 		PayType: 4,
+		// 客户端渠道随建单落库：回调归属校验、按端统计与排障都依赖这笔快照
+		ClientChannel: "pos",
 	})
 	if err != nil {
 		t.Fatalf("现金收款创建支付单失败: %v", err)
 	}
 	if p.Status != 2 {
 		t.Errorf("现金收款支付单状态 = %d, want 2（直接已支付）", p.Status)
+	}
+	if p.ClientChannel != "pos" {
+		t.Errorf("支付单客户端渠道快照 = %q, want pos", p.ClientChannel)
+	}
+	if p.ConfigID != 0 {
+		t.Errorf("现金收款不应绑定支付配置行, got config_id=%d", p.ConfigID)
 	}
 	if params != "" {
 		t.Errorf("现金收款不应产生第三方调起参数, got %q", params)

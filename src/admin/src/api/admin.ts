@@ -221,7 +221,8 @@ export interface PayConfigRow {
   platform: 'wechat' | 'alipay'
   enabled: boolean
   // —— 微信支付 V3 凭证（platform=wechat 时取用） ——
-  wechat_app_id: string
+  // 不含 AppID：微信 AppID 是渠道身份（小程序/公众号各自一个），一个商户号可关联多个 AppID，
+  // 由渠道管理按渠道维护并在下单时带入；落在配置行会强迫一个商户号建多份配置
   wechat_mch_id: string
   /** V3 密钥明文不回传：出参为空，保存留空即保留原值；已配置状态看 wechat_api_v3_configured */
   wechat_api_v3_key: string
@@ -263,6 +264,7 @@ export interface ClientChannel {
   /** 渠道标识：h5 / gzh 微信公众号 / mp 微信小程序 / alimp 支付宝小程序 / android / ios / pos 门店收银台 */
   code: string
   name: string
+  /** 渠道 AppID：微信系渠道为下单/登录身份（绑定微信支付的渠道必填），支付宝小程序仅需此项 */
   app_id: string
   /** 服务端不回传明文，恒为空串；存量凭证以 configured 标志判断，保存空值时服务端保留原值 */
   app_secret: string
@@ -270,7 +272,7 @@ export interface ClientChannel {
   /** 渠道绑定的支付方式（有序，顺序即收银台展示顺序）：
    *  每项为 "cash" 或 "<platform>:<config_id>"（如 "wechat:3"） */
   pay_methods: string[]
-  /** 凭证是否配置完整（h5/pos 恒为 true；alimp 仅需 AppID） */
+  /** 凭证是否配置完整（alimp 仅需 AppID；h5/pos 仅在绑定微信支付时要求 AppID；微信系渠道需 AppID+AppSecret） */
   configured: boolean
   updated_at: string
 }

@@ -194,16 +194,20 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		CommunityID: req.CommunityId,
 		PayType:     req.PayType,
 		ConfigID:    req.ConfigId,
-		Amount:      req.Amount,
-		Status:      1,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		// 下单入口与微信 AppID 一并落库：前者是可追溯的渠道快照，后者是回调归属校验的依据
+		// （建单时定死的身份，回调/撤销都按它核对，不再反查渠道当前配置），见 model.Payment
+		ClientChannel: req.ClientChannel,
+		AppID:         req.AppId,
+		Amount:        req.Amount,
+		Status:        1,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	var payParams string
 	switch req.PayType {
 	case 1:
-		payParams, err = s.buildWechatPayParams(ctx, p, req.Openid, req.AppId)
+		payParams, err = s.buildWechatPayParams(ctx, p, req.Openid)
 	case 2:
 		// 支付宝按客户端渠道分流：支付宝小程序（alimp）走 V3 trade.create 预下单，
 		// C 端 my.tradePay 唤起；其余（当前仅 h5）走手机网站支付跳转收银台
@@ -390,10 +394,12 @@ func (s *PaymentService) findReusablePendingPayment(ctx context.Context, req *pa
 	}
 
 	var pending model.Payment
-	// 仅同配置行绑定才可复用：期间配置被换绑（同平台换配置）时旧待支付单
-	// 应走关闭重建流程，避免退款/回调路由到已废弃的配置
+	// 仅同配置行 + 同渠道身份绑定才可复用：期间配置被换绑（同平台换配置）或下单入口变化
+	// （不同渠道的 AppID/openid 不同，已生成的调起参数不再适用）时，旧待支付单
+	// 应走关闭重建流程，避免退款/回调路由到已废弃的配置或按错 AppID 归属校验失败
 	err := s.db.GetDb().WithContext(ctx).
-		Where("order_id = ? AND pay_type = ? AND config_id = ? AND amount = ? AND status = ?", req.OrderId, req.PayType, req.ConfigId, req.Amount, 1).
+		Where("order_id = ? AND pay_type = ? AND config_id = ? AND client_channel = ? AND app_id = ? AND amount = ? AND status = ?",
+			req.OrderId, req.PayType, req.ConfigId, req.ClientChannel, req.AppId, req.Amount, 1).
 		Order("id desc").First(&pending).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

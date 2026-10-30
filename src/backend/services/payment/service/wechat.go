@@ -2,63 +2,46 @@ package service
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"math"
-	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"google.golang.org/grpc/peer"
+	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/services/payment/model"
 	wegopayment "github.com/jcbowen/wego/payment"
 )
 
-// wechatPayParams 微信支付 JSAPI 调起参数结构
-// 前端使用此对象调起微信支付 SDK
-type wechatPayParams struct {
-	AppID     string `json:"appId"`
-	TimeStamp string `json:"timeStamp"`
-	NonceStr  string `json:"nonceStr"`
-	Package   string `json:"package"`
-	SignType  string `json:"signType"`
-	PaySign   string `json:"paySign"`
-}
-
 // buildWechatPayParams 构造微信支付调起参数
 // 根据 openid 是否为空自动选择 JSAPI 或 H5 支付方式；
-// appID 由网关按客户端渠道解析后传入（小程序=小程序 AppID，H5=商户绑定任一 AppID），
-// 为空时回落支付配置默认 AppID（wego 客户端请求级覆盖）
+// AppID 是渠道身份（一个商户号可关联小程序/H5 等多个 AppID），由网关按客户端渠道解析后
+// 随建单落库到 p.AppID，支付配置行不再持有 AppID；为空即拒绝下单而非回落配置默认值——
+// 空/错配 AppID 会被微信以「appid 与 openid 不同源」拒绝，静默降级只会把失败推迟到用户按下支付之后
 // 参数：
 //   - ctx: 上下文
-//   - p: 支付记录模型
+//   - p: 支付记录模型（AppID 快照取 p.AppID）
 //   - openid: 用户微信 openid，为空则走 H5 支付
-//   - appID: 本次下单使用的 AppID，可为空
 //
 // 返回值：
 //   - string: 调起参数 JSON 字符串（JSAPI）或包含 h5_url 的 JSON（H5）
 //   - error: 错误信息
-func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Payment, openid, appID string) (string, error) {
+func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Payment, openid string) (string, error) {
 	// 客户端与配置均按支付单绑定的配置行获取（内部含版本热刷新）
 	client := s.getWechatPayClientFor(ctx, p.ConfigID)
 	if client == nil {
 		return "", fmt.Errorf("微信支付未配置或配置不完整")
 	}
 	cfg := s.getWechatConfigFor(ctx, p.ConfigID)
-	// 请求级 AppID 优先，为空回落配置默认值；JSAPI 签名必须使用与 openid 同源的 AppID
-	if appID == "" {
-		appID = cfg.AppID
+	if p.AppID == "" {
+		return "", fmt.Errorf("当前客户端渠道未配置微信 AppID，无法发起支付，请在渠道管理中补全")
 	}
 	description := "社区商超订单"
 	amountTotal := yuanToFen(p.Amount)
@@ -74,7 +57,7 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 
 	if openid != "" {
 		resp, err := client.JSAPIPay(ctx, &wegopayment.JSAPIRequest{
-			AppID:       appID,
+			AppID:       p.AppID,
 			Description: description,
 			OutTradeNo:  p.PaymentNo,
 			Amount: wegopayment.Amount{
@@ -89,18 +72,12 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 			return "", fmt.Errorf("微信统一下单失败: %w", err)
 		}
 
-		params := wechatPayParams{
-			AppID:     appID,
-			TimeStamp: fmt.Sprintf("%d", time.Now().Unix()),
-			NonceStr:  randomNonceStr(32),
-			Package:   "prepay_id=" + resp.PrepayID,
-			SignType:  "RSA",
-		}
-		paySign, err := signWechatPayParams(params, cfg.PrivateKey)
+		// 调起参数由 SDK 生成：签名串 appId\ntimeStamp\nnonceStr\npackage\n 与商户私钥都在库里，
+		// 业务层不再自行签名（AppID 走请求级入参，与 openid 同源）
+		params, err := client.BuildJSAPIPayParams(p.AppID, resp.PrepayID)
 		if err != nil {
 			return "", fmt.Errorf("生成支付签名失败: %w", err)
 		}
-		params.PaySign = paySign
 
 		data, err := json.Marshal(params)
 		if err != nil {
@@ -110,7 +87,7 @@ func (s *PaymentService) buildWechatPayParams(ctx context.Context, p *model.Paym
 	}
 
 	resp, err := client.H5Pay(ctx, &wegopayment.H5Request{
-		AppID:       appID,
+		AppID:       p.AppID,
 		Description: description,
 		OutTradeNo:  p.PaymentNo,
 		Amount: wegopayment.Amount{
@@ -234,15 +211,17 @@ type wechatTransactionNotification struct {
 	} `json:"amount"`
 }
 
-// verifyWechatCallbackIdentity 校验通知归属：商户号、AppID 必须与当前配置一致，币种必须为 CNY
+// verifyWechatCallbackIdentity 校验通知归属：商户号、AppID 必须与这笔支付的实际身份一致，币种必须为 CNY
 // 验签通过只证明「报文由微信发出」，不证明「这笔交易属于本商户」：平台证书/APIv3 密钥
 // 曾在多商户间复用、或密钥泄露被代入他人通知时，不核对就会按别人的交易入账。
-// 配置项为空表示本实例未启用对应校验（未配置微信支付时也不会走到这里）。
+// 依据取自支付单快照：商户号是 config_id 对应配置行的值，AppID 是下单时落库的渠道身份
+// （微信的 AppID 属渠道而非配置行，一条配置可服务多个渠道，只有单上的快照才能唯一确定这笔交易用了哪个）。
+// 空值表示该项无可比依据（未配置微信支付、或该单是线下/存量单），跳过比对而非拒绝。
 //
 // 参数：
 //   - n: 解密后的通知资源
-//   - wantMchID: 本商户号（配置值）
-//   - wantAppID: 本 AppID（配置值）
+//   - wantMchID: 本商户号（支付单 config_id 对应配置行的值）
+//   - wantAppID: 本笔下单使用的 AppID（支付单快照）
 //
 // 返回值：
 //   - error: 归属或币种不符时返回错误
@@ -260,11 +239,15 @@ func verifyWechatCallbackIdentity(n *wechatTransactionNotification, wantMchID, w
 }
 
 // parseWechatCallback 解析微信支付回调报文
-// 多配置下回调报文不携带可用的明文路由信息（V3 通知全文加密，平台证书序列号
-// 在多商户配置间无区分度），采用遍历策略：逐个就绪配置的客户端尝试验签解密，
-// 首个成功者即回调归属的配置行，再用该配置的商户号/AppID 做归属校验
+// 归属判定以「支付单快照」为准，而不是由验签命中的配置行决定：V3 通知全文加密，
+// 解密之前没有任何可用的路由信息，而同一商户号下的多条配置共用 APIv3 密钥与平台证书，
+// 任意一行都能解密成功——「首个验签成功即认定归属」会把归属判给随机命中的错配行，
+// 随后的归属校验必然拒绝，已付款的订单因此永不入账（多配置改造引入的核心风险）。
+// 现在的口径：遍历（按配置 ID 升序，结果确定）只为拿到明文与商户订单号，
+// 再反查支付单，用 payments.config_id 对应行的商户号 + payments.app_id 的 AppID 快照做归属校验；
+// AppID 属渠道身份、下单时已随单落库，回调时不反查渠道当前配置，渠道后续改动也不影响在途单。
 // 参数：
-//   - s: 支付服务实例，用于获取 wego 客户端
+//   - s: 支付服务实例，用于获取 wego 客户端与支付单
 //   - ctx: 调用方上下文（回调处理链路），内部再套验签时限
 //   - body: 回调请求体
 //   - headers: 回调请求头
@@ -283,28 +266,33 @@ func parseWechatCallback(s *PaymentService, ctx context.Context, body []byte, he
 
 	verifyCtx, cancel := context.WithTimeout(ctx, wechatVerifyTimeout)
 	defer cancel()
-	var matchedConfigID int64
-	var notification *wegopayment.Notification
-	var plainBytes []byte
-	var lastErr error
-	for id, client := range clients {
-		notification, plainBytes, lastErr = client.VerifyNotification(verifyCtx, headers, body)
-		if lastErr == nil {
-			matchedConfigID = id
-			break
-		}
-	}
-	if matchedConfigID == 0 {
-		return nil, fmt.Errorf("微信支付回调验签解密失败: %w", lastErr)
-	}
 
-	// 仅处理支付成功通知，避免退款等其他通知被误处理为支付成功
-	// notification 可能为 nil（VerifyNotification 对未知资源类型返回空指针），须先判空再取字段
-	if notification == nil {
-		return nil, fmt.Errorf("%w: 通知内容为空", errNotSuccessNotification)
+	// 首次解密：候选按配置 ID 升序尝试验签解密，成功者提供明文
+	// （同商户号多行共用密钥时明文一致，取哪一行都不影响下面的归属判定）
+	var (
+		plainBytes []byte
+		verifiedID int64
+		lastErr    error
+	)
+	for _, id := range slices.Sorted(maps.Keys(clients)) {
+		notification, plain, err := clients[id].VerifyNotification(verifyCtx, headers, body)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		// 仅处理支付成功通知，避免退款等其他通知被误处理为支付成功
+		// notification 可能为 nil（VerifyNotification 对未知资源类型返回空指针），须先判空再取字段
+		if notification == nil {
+			return nil, fmt.Errorf("%w: 通知内容为空", errNotSuccessNotification)
+		}
+		if notification.EventType != "TRANSACTION.SUCCESS" {
+			return nil, fmt.Errorf("%w: %s", errNotSuccessNotification, notification.EventType)
+		}
+		plainBytes, verifiedID = plain, id
+		break
 	}
-	if notification.EventType != "TRANSACTION.SUCCESS" {
-		return nil, fmt.Errorf("%w: %s", errNotSuccessNotification, notification.EventType)
+	if verifiedID == 0 {
+		return nil, fmt.Errorf("微信支付回调验签解密失败: %w", lastErr)
 	}
 
 	var result wechatTransactionNotification
@@ -315,8 +303,25 @@ func parseWechatCallback(s *PaymentService, ctx context.Context, body []byte, he
 	if result.OutTradeNo == "" || result.TransactionID == "" {
 		return nil, fmt.Errorf("微信支付回调参数缺失")
 	}
-	wechatCfg := s.getWechatConfigFor(ctx, matchedConfigID)
-	if err := verifyWechatCallbackIdentity(&result, wechatCfg.MchID, wechatCfg.AppID); err != nil {
+
+	// 归属依据切换：查到支付单即按单上快照校验；查不到是本系统无此单的孤儿通知，
+	// 只能沿用解密命中的那一行做商户号校验，入账仍会被 handlePaySuccess 拒绝并落异常流水
+	attributionID := verifiedID
+	var wantAppID string
+	var p model.Payment
+	switch err := s.db.GetDb().WithContext(ctx).
+		Where("payment_no = ?", result.OutTradeNo).First(&p).Error; {
+	case err == nil:
+		attributionID, wantAppID = p.ConfigID, p.AppID
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		log.Printf("[WechatCallback] 通知单号 %s 无对应支付单，按解密命中配置行 %d 校验归属", result.OutTradeNo, verifiedID)
+	default:
+		// 查询异常时拒绝：归属无法确认就不能放行资金入账，回 FAIL 由微信按策略重推
+		return nil, fmt.Errorf("微信支付回调归属查询失败: %w", err)
+	}
+
+	wechatCfg := s.getWechatConfigFor(ctx, attributionID)
+	if err := verifyWechatCallbackIdentity(&result, wechatCfg.MchID, wantAppID); err != nil {
 		return nil, err
 	}
 
@@ -325,78 +330,6 @@ func parseWechatCallback(s *PaymentService, ctx context.Context, body []byte, he
 		TransactionID: result.TransactionID,
 		Amount:        float64(result.Amount.Total) / 100,
 	}, nil
-}
-
-// signWechatPayParams 生成微信 JSAPI 调起支付 RSA 签名
-// 签名串格式：appId\ntimeStamp\nnonceStr\npackage\n
-// 参数：
-//   - params: 前端调起参数
-//   - privateKeyPEM: 微信支付商户私钥 PEM
-//
-// 返回值：
-//   - string: Base64 编码的签名
-//   - error: 签名失败时返回错误
-func signWechatPayParams(params wechatPayParams, privateKeyPEM string) (string, error) {
-	message := params.AppID + "\n" + params.TimeStamp + "\n" + params.NonceStr + "\n" + params.Package + "\n"
-	hash := sha256.Sum256([]byte(message))
-
-	privateKey, err := parseRSAPrivateKey(privateKeyPEM)
-	if err != nil {
-		return "", err
-	}
-
-	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hash[:])
-	if err != nil {
-		return "", fmt.Errorf("RSA 签名失败: %w", err)
-	}
-
-	return base64.StdEncoding.EncodeToString(signature), nil
-}
-
-// parseRSAPrivateKey 解析 RSA 私钥 PEM
-// 支持 PKCS#1 与 PKCS#8 格式
-// 参数：
-//   - privateKeyPEM: PEM 格式私钥字符串
-//
-// 返回值：
-//   - *rsa.PrivateKey: 解析后的私钥
-//   - error: 解析失败时返回错误
-func parseRSAPrivateKey(privateKeyPEM string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(privateKeyPEM))
-	if block == nil {
-		return nil, fmt.Errorf("无法解析私钥 PEM")
-	}
-
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		key, err = x509.ParsePKCS1PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("解析私钥失败: %w", err)
-		}
-	}
-
-	rsaKey, ok := key.(*rsa.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("私钥类型不是 RSA")
-	}
-
-	return rsaKey, nil
-}
-
-// randomNonceStr 生成指定长度的随机字符串
-// 参数：
-//   - length: 字符串长度
-//
-// 返回值：
-//   - string: 随机字符串
-func randomNonceStr(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, length)
-	for i := range b {
-		randInt, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-		b[i] = charset[randInt.Int64()]
-	}
-	return string(b)
 }
 
 // yuanToFen 将元转换为分

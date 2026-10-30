@@ -300,7 +300,6 @@ func (s *server) toPayConfigRow(row *model.PayConfig) *payment.PayConfigRow {
 		Platform: row.Platform,
 		Enabled: row.Enabled,
 
-		WechatAppId:        row.WechatAppID,
 		WechatAppSecret:    row.WechatAppSecret,
 		WechatMchId:        row.WechatMchID,
 		WechatApiV3Key:     row.WechatAPIV3Key,
