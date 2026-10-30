@@ -348,6 +348,22 @@ export function deletePayConfig(id: number) {
 }
 
 /**
+ * 单独启停一条支付配置（窄口径，列表开关专用）
+ * 仅更新 enabled，不做整行覆写；updated_at 不一致时服务端拒绝
+ * @param id 配置行 ID
+ * @param enabled 目标状态
+ * @param updatedAt 读取时的版本号（乐观锁）
+ * @returns 启停后的配置行（含新版本号）
+ */
+export function setPayConfigEnabled(id: number, enabled: boolean, updatedAt: string) {
+  return request<ApiResult<PayConfigRow>>({
+    url: `/api/v1/admin/settings/payment/${id}/enabled`,
+    method: 'PUT',
+    data: { enabled, updated_at: updatedAt },
+  })
+}
+
+/**
  * 上传支付证书文件
  * 文件内容存入数据库，上传后支付配置即时热更新；
  * 后台「粘贴内容写入」入口复用本函数（前端把文本包成 .pem File 提交，服务端校验口径一致）
@@ -356,14 +372,15 @@ export function deletePayConfig(id: number) {
  *                 alipay_public_cert（支付宝公钥证书）、root_cert（支付宝根证书），
  *                 后三类仅支付宝证书模式使用
  * @param file 证书文件（.pem/.crt/.key/.txt）
- * @returns 上传结果
+ * @returns 上传后的最新配置行：上传推进了乐观锁版本，前端以返回行更新表单
+ *          （版本号 + 上传状态位），随后的保存不再被「已被其他操作更新」拒绝
  */
 export function uploadPaymentCert(configId: number, certType: string, file: File) {
   const formData = new FormData()
   formData.append('config_id', String(configId))
   formData.append('cert_type', certType)
   formData.append('file', file)
-  return request<ApiResult<{ success: boolean; message: string }>>({
+  return request<ApiResult<PayConfigRow>>({
     url: '/api/v1/admin/settings/payment/cert',
     method: 'POST',
     data: formData,

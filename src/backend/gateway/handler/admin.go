@@ -6044,7 +6044,8 @@ func (h *AdminHandler) DeletePaymentConfig(c *gin.Context) {
 }
 
 // UploadPaymentCert 上传支付证书文件
-// 接收 multipart 文件，按支付配置行 ID 转发给 payment 服务存入数据库
+// 接收 multipart 文件，按支付配置行 ID 转发给 payment 服务存入数据库；
+// 成功时返回脱敏后的最新配置行（含新 updated_at 与上传状态位），前端直接渲染表单
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
@@ -6093,7 +6094,45 @@ func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, gin.H{"success": true, "message": resp.Message})
+	// 回传脱敏后的最新配置行：上传推进了乐观锁版本（updated_at），
+	// 前端用返回行直接更新表单（版本号 + 上传状态位），随后的保存不再被「已被其他操作更新」拒绝
+	response.Success(c, payConfigViewOf(resp.Row))
+}
+
+// SetPaymentConfigEnabled 单独启停一条支付配置（窄口径：仅更新 enabled，不做整行覆写）
+// 列表开关专用：开关场景只持有 enabled + 版本号，走全量保存会因名称必填被拒；
+// 返回脱敏后的最新配置行供前端渲染
+//
+// 接口: PUT /api/v1/admin/settings/payment/:id/enabled
+//
+// 参数：
+//   - c: gin 上下文
+func (h *AdminHandler) SetPaymentConfigEnabled(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+	var req struct {
+		Enabled   bool   `json:"enabled"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errcode.ParamError)
+		return
+	}
+
+	row, err := h.paymentClient.SetPayConfigEnabled(c.Request.Context(), &payment.SetPayConfigEnabledReq{
+		Id:        id,
+		Enabled:   req.Enabled,
+		UpdatedAt: req.UpdatedAt,
+	})
+	if err != nil {
+		log.Printf("更新支付配置启停状态失败 id=%d: %v", id, err)
+		response.GRPCError(c, err)
+		return
+	}
+	response.Success(c, payConfigViewOf(row))
 }
 
 // buildSuggestedURLs 生成支付平台回调地址建议值

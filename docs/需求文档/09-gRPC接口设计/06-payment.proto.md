@@ -41,6 +41,10 @@ service PaymentService {
   // ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
   rpc ListActivePayMethods(ListActivePayMethodsReq) returns (ListActivePayMethodsResp);
   rpc UploadPayCert(UploadPayCertReq) returns (UploadPayCertResp);
+  // SetPayConfigEnabled 单独启停一条支付配置：仅更新 enabled，不做整行覆写。
+  // 列表开关若走全量保存接口，需要把整行字段都带上（名称等缺一即被必填校验拒绝），
+  // 且整行覆写会把编辑会话中尚未同步的改动一并提交，故提供专用窄口径接口
+  rpc SetPayConfigEnabled(SetPayConfigEnabledReq) returns (PayConfigRow);
   // 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
   rpc ClosePayments(ClosePaymentsReq) returns (common.CommonResponse);
   // SyncPaymentFromChannel 主动向渠道查询收款结果并在已收款时补同步
@@ -352,9 +356,22 @@ message UploadPayCertReq {
   bytes content = 4;     // 证书文件内容
 }
 
+// UploadPayCertResp 上传结果：成功时回传最新配置行（含新 updated_at 与上传状态位），
+// 前端直接渲染表单即可继续保存，不再依赖整表刷新——
+// 否则上传推进的乐观锁版本会使随后的保存被「已被其他操作更新」拒绝
 message UploadPayCertResp {
   bool success = 1;
   string message = 2;
+  // 最新配置行：仅成功时有值；凭证明文由网关脱敏后下发
+  PayConfigRow row = 3;
+}
+
+// SetPayConfigEnabledReq 单条配置启停入参：updated_at 乐观锁，
+// 与读取时版本不一致说明期间已被改写，拒绝静默覆写
+message SetPayConfigEnabledReq {
+  int64 id = 1;          // 支付配置行 ID
+  bool enabled = 2;      // 目标状态
+  string updated_at = 3; // 读取时版本号
 }
 
 // SyncPaymentReq 渠道查询入参：order_id 与 payment_no 二选一

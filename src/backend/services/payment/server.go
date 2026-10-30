@@ -213,12 +213,25 @@ func (s *server) ListActivePayMethods(ctx stdctx.Context, _ *payment.ListActiveP
 }
 
 // UploadPayCert 上传支付证书文件
-// 文件内容直接存入对应配置行，上传后立即热更新支付客户端
+// 文件内容直接存入对应配置行，上传后立即热更新支付客户端；
+// 成功时回传最新配置行（含新 updated_at 与上传状态位）：
+// 上传推进了乐观锁版本，调用方同步新版本后才能继续保存该行而不被乐观锁拒绝
 func (s *server) UploadPayCert(ctx stdctx.Context, req *payment.UploadPayCertReq) (*payment.UploadPayCertResp, error) {
-	if err := s.paymentService.UploadPayCert(ctx, req); err != nil {
+	row, err := s.paymentService.UploadPayCert(ctx, req)
+	if err != nil {
 		return &payment.UploadPayCertResp{Success: false, Message: err.Error()}, nil
 	}
-	return &payment.UploadPayCertResp{Success: true, Message: "上传成功"}, nil
+	return &payment.UploadPayCertResp{Success: true, Message: "上传成功", Row: s.toPayConfigRow(row)}, nil
+}
+
+// SetPayConfigEnabled 单独启停一条支付配置（窄口径：仅更新 enabled，不做整行覆写）
+// 列表开关专用：开关场景只持有 enabled + 版本号，走全量保存会因名称必填被拒
+func (s *server) SetPayConfigEnabled(ctx stdctx.Context, req *payment.SetPayConfigEnabledReq) (*payment.PayConfigRow, error) {
+	row, err := s.paymentService.SetPayConfigEnabled(ctx, req)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return s.toPayConfigRow(row), nil
 }
 
 // SyncPaymentFromChannel 向渠道核实收款结果，已收款则补同步

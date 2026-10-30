@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -25,11 +28,6 @@ const payCertMaxSize = 64 * 1024
 
 // payCertAllowedExts 证书文件允许的扩展名
 var payCertAllowedExts = map[string]bool{".pem": true, ".key": true, ".txt": true, ".crt": true}
-
-// defaultPayConfigName 空表时初始化的占位配置行名称
-// 占位行仅承载现金建单的库级串行点（见 cashCreateLockTx），默认停用，
-// 管理员创建真实配置后可删除
-const defaultPayConfigName = "默认配置"
 
 // checkNotifyURL 校验异步通知地址格式：允许空（未配置，就绪判定自然为未就绪），
 // 非空时必须是带域名的 http(s) 绝对地址。
@@ -90,36 +88,6 @@ func alipayCredentialsReady(a config.AlipayConfig) bool {
 		return a.AppCert != "" && a.AlipayPublicCert != "" && a.AlipayRootCert != ""
 	}
 	return a.AlipayPublicKey != ""
-}
-
-// EnsureDefaultPayConfig 确保支付配置表至少存在一行
-// 空表时写入一条停用的占位配置：现金建单的库级串行点（cashCreateLockTx）依赖表内至少一行；
-// 占位行默认停用不参与渲染与下单，管理员创建真实配置后可删除
-//
-// 返回值：
-//   - error: 初始化失败时返回错误
-func (s *PaymentService) EnsureDefaultPayConfig() error {
-	var count int64
-	if err := s.db.GetDb().Model(&model.PayConfig{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("查询支付配置表失败: %w", err)
-	}
-	if count > 0 {
-		return nil
-	}
-
-	now := time.Now().Format("2006-01-02 15:04:05")
-	row := &model.PayConfig{
-		Name:      defaultPayConfigName,
-		Platform:  model.PayPlatformWechat,
-		Enabled:   false,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := s.db.GetDb().Create(row).Error; err != nil {
-		return fmt.Errorf("初始化默认支付配置失败: %w", err)
-	}
-	log.Printf("已初始化占位支付配置（pay_config id=%d，默认停用）", row.ID)
-	return nil
 }
 
 // payClientRegistry 支付配置内存注册表
@@ -352,22 +320,25 @@ func (s *PaymentService) DeletePayConfigRow(ctx context.Context, id int64) error
 
 // UploadPayCert 上传支付证书文件到指定配置行
 // 校验扩展名与大小后，将文件内容写入对应平台的证书字段
+// 成功后回传最新配置行：上传推进了乐观锁版本（updated_at），调用方若不同步新版本，
+// 编辑会话随后的保存会被「已被其他操作更新」拒绝——返回行让前端直接渲染，乐观锁机制原样保留
 //
 // 参数：
 //   - ctx: 上下文
 //   - req: 上传请求（config_id 定位配置行，cert_type 决定写入字段）
 //
 // 返回值：
+//   - *model.PayConfig: 上传后的最新配置行
 //   - error: 校验或保存失败时返回错误
-func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadPayCertReq) error {
+func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadPayCertReq) (*model.PayConfig, error) {
 	if req.ConfigId <= 0 {
-		return fmt.Errorf("缺少支付配置 ID")
+		return nil, fmt.Errorf("缺少支付配置 ID")
 	}
 	if len(req.Content) == 0 {
-		return fmt.Errorf("证书文件内容为空")
+		return nil, fmt.Errorf("证书文件内容为空")
 	}
 	if len(req.Content) > payCertMaxSize {
-		return fmt.Errorf("证书文件超过大小限制（最大 %dKB）", payCertMaxSize/1024)
+		return nil, fmt.Errorf("证书文件超过大小限制（最大 %dKB）", payCertMaxSize/1024)
 	}
 	ext := strings.ToLower(req.Filename)
 	if idx := strings.LastIndex(ext, "."); idx >= 0 {
@@ -376,12 +347,12 @@ func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadP
 		ext = ""
 	}
 	if !payCertAllowedExts[ext] {
-		return fmt.Errorf("仅支持上传 %v 格式的证书文件", allowedExtList())
+		return nil, fmt.Errorf("仅支持上传 %v 格式的证书文件", allowedExtList())
 	}
 
 	row, err := s.GetPayConfigRow(ctx, req.ConfigId)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	content := string(req.Content)
@@ -391,36 +362,99 @@ func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadP
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "private_key":
 		// 支付宝证书内容可解析性校验：FailedPrecondition 使网关原样透传具体原因，便于定位传错的文件
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
-			return bizerr.New(codes.FailedPrecondition, msg)
+			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
 		row.AlipayPrivateKey = content
 	// 证书模式三证书：内容与私钥同类处理，仅此处写入，保存请求不触碰
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "app_cert":
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
-			return bizerr.New(codes.FailedPrecondition, msg)
+			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
 		row.AlipayAppCert = content
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "alipay_public_cert":
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
-			return bizerr.New(codes.FailedPrecondition, msg)
+			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
 		row.AlipayPublicCert = content
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "root_cert":
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
-			return bizerr.New(codes.FailedPrecondition, msg)
+			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
 		row.AlipayRootCert = content
 	default:
-		return fmt.Errorf("该配置平台不支持上传 %s 类型证书", req.CertType)
+		return nil, fmt.Errorf("该配置平台不支持上传 %s 类型证书", req.CertType)
 	}
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
 
 	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
-		return fmt.Errorf("保存证书失败: %w", err)
+		return nil, fmt.Errorf("保存证书失败: %w", err)
 	}
 
 	s.getRegistryCached(ctx)
-	return nil
+	return row, nil
+}
+
+// SetPayConfigEnabled 单独启停一条支付配置：仅更新 enabled 字段，不做整行覆写
+// 列表开关走本接口而非全量保存：开关场景只持有 enabled + 版本号，
+// 全量保存会因名称等必填字段缺失被拒（「配置名称不能为空」），
+// 即便补齐也会把编辑会话中尚未同步的改动一并提交
+// updated_at 乐观锁：与库中版本不一致说明期间已被改写，拒绝静默覆写；
+// 启停同样推进版本号，成功后回传最新行供前端渲染
+//
+// 参数：
+//   - ctx: 上下文
+//   - req: 启停入参（id 定位配置行，enabled 为目标状态，updated_at 为读取时版本）
+//
+// 返回值：
+//   - *model.PayConfig: 启停后的最新配置行
+//   - error: 配置不存在、版本冲突或保存失败时返回业务错误
+func (s *PaymentService) SetPayConfigEnabled(ctx context.Context, req *payment.SetPayConfigEnabledReq) (*model.PayConfig, error) {
+	if req.Id <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "缺少支付配置 ID")
+	}
+
+	var row model.PayConfig
+	if err := s.db.GetDb().WithContext(ctx).First(&row, req.Id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bizerr.New(codes.NotFound, "支付配置不存在")
+		}
+		return nil, fmt.Errorf("读取支付配置失败: %w", err)
+	}
+	if req.UpdatedAt != "" && req.UpdatedAt != row.UpdatedAt {
+		log.Printf("支付配置启停冲突：调用方版本 %s，当前版本 %s", req.UpdatedAt, row.UpdatedAt)
+		return nil, bizerr.New(codes.Aborted, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
+	}
+
+	// 条件更新代替整行 Save：只动 enabled 与乐观锁版本，
+	// 上传/保存等并发操作推进的其余字段不会被本接口回写覆盖
+	res := s.db.GetDb().WithContext(ctx).Model(&row).
+		Updates(map[string]any{
+			"enabled":    req.Enabled,
+			"updated_at": time.Now().Format("2006-01-02 15:04:05"),
+		})
+	if res.Error != nil {
+		return nil, fmt.Errorf("更新支付配置状态失败: %w", res.Error)
+	}
+
+	s.getRegistryCached(ctx)
+	return s.reloadPayConfigRow(ctx, req.Id)
+}
+
+// reloadPayConfigRow 按 ID 重新读取配置行（启停条件更新后回传最新版本用）
+//
+// 参数：
+//   - ctx: 上下文
+//   - id: 配置行 ID
+//
+// 返回值：
+//   - *model.PayConfig: 最新配置行
+//   - error: 读取失败时返回错误
+func (s *PaymentService) reloadPayConfigRow(ctx context.Context, id int64) (*model.PayConfig, error) {
+	var row model.PayConfig
+	if err := s.db.GetDb().WithContext(ctx).First(&row, id).Error; err != nil {
+		return nil, fmt.Errorf("读取支付配置失败: %w", err)
+	}
+	return &row, nil
 }
 
 // getRegistryCached 获取支付配置注册表（进程内缓存 + 每次调用按版本核对）

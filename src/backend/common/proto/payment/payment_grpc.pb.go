@@ -34,6 +34,7 @@ const (
 	PaymentService_DeletePayConfigRow_FullMethodName        = "/payment.PaymentService/DeletePayConfigRow"
 	PaymentService_ListActivePayMethods_FullMethodName      = "/payment.PaymentService/ListActivePayMethods"
 	PaymentService_UploadPayCert_FullMethodName             = "/payment.PaymentService/UploadPayCert"
+	PaymentService_SetPayConfigEnabled_FullMethodName       = "/payment.PaymentService/SetPayConfigEnabled"
 	PaymentService_ClosePayments_FullMethodName             = "/payment.PaymentService/ClosePayments"
 	PaymentService_SyncPaymentFromChannel_FullMethodName    = "/payment.PaymentService/SyncPaymentFromChannel"
 	PaymentService_ListOrderPayments_FullMethodName         = "/payment.PaymentService/ListOrderPayments"
@@ -78,6 +79,10 @@ type PaymentServiceClient interface {
 	// ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
 	ListActivePayMethods(ctx context.Context, in *ListActivePayMethodsReq, opts ...grpc.CallOption) (*ListActivePayMethodsResp, error)
 	UploadPayCert(ctx context.Context, in *UploadPayCertReq, opts ...grpc.CallOption) (*UploadPayCertResp, error)
+	// SetPayConfigEnabled 单独启停一条支付配置：仅更新 enabled，不做整行覆写。
+	// 列表开关若走全量保存接口，需要把整行字段都带上（名称等缺一即被必填校验拒绝），
+	// 且整行覆写会把编辑会话中尚未同步的改动一并提交，故提供专用窄口径接口
+	SetPayConfigEnabled(ctx context.Context, in *SetPayConfigEnabledReq, opts ...grpc.CallOption) (*PayConfigRow, error)
 	// 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
 	ClosePayments(ctx context.Context, in *ClosePaymentsReq, opts ...grpc.CallOption) (*common.CommonResponse, error)
 	// SyncPaymentFromChannel 主动向渠道查询收款结果并在已收款时补同步
@@ -258,6 +263,16 @@ func (c *paymentServiceClient) UploadPayCert(ctx context.Context, in *UploadPayC
 	return out, nil
 }
 
+func (c *paymentServiceClient) SetPayConfigEnabled(ctx context.Context, in *SetPayConfigEnabledReq, opts ...grpc.CallOption) (*PayConfigRow, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PayConfigRow)
+	err := c.cc.Invoke(ctx, PaymentService_SetPayConfigEnabled_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *paymentServiceClient) ClosePayments(ctx context.Context, in *ClosePaymentsReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.CommonResponse)
@@ -381,6 +396,10 @@ type PaymentServiceServer interface {
 	// ListActivePayMethods 启用且就绪的支付配置清单（C 端渲染过滤与下单解析用）
 	ListActivePayMethods(context.Context, *ListActivePayMethodsReq) (*ListActivePayMethodsResp, error)
 	UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error)
+	// SetPayConfigEnabled 单独启停一条支付配置：仅更新 enabled，不做整行覆写。
+	// 列表开关若走全量保存接口，需要把整行字段都带上（名称等缺一即被必填校验拒绝），
+	// 且整行覆写会把编辑会话中尚未同步的改动一并提交，故提供专用窄口径接口
+	SetPayConfigEnabled(context.Context, *SetPayConfigEnabledReq) (*PayConfigRow, error)
 	// 关闭订单的全部待支付支付单（订单取消/超时取消后调用，防迟到回调误置已支付）
 	ClosePayments(context.Context, *ClosePaymentsReq) (*common.CommonResponse, error)
 	// SyncPaymentFromChannel 主动向渠道查询收款结果并在已收款时补同步
@@ -462,6 +481,9 @@ func (UnimplementedPaymentServiceServer) ListActivePayMethods(context.Context, *
 }
 func (UnimplementedPaymentServiceServer) UploadPayCert(context.Context, *UploadPayCertReq) (*UploadPayCertResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method UploadPayCert not implemented")
+}
+func (UnimplementedPaymentServiceServer) SetPayConfigEnabled(context.Context, *SetPayConfigEnabledReq) (*PayConfigRow, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetPayConfigEnabled not implemented")
 }
 func (UnimplementedPaymentServiceServer) ClosePayments(context.Context, *ClosePaymentsReq) (*common.CommonResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClosePayments not implemented")
@@ -763,6 +785,24 @@ func _PaymentService_UploadPayCert_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PaymentService_SetPayConfigEnabled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetPayConfigEnabledReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).SetPayConfigEnabled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_SetPayConfigEnabled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).SetPayConfigEnabled(ctx, req.(*SetPayConfigEnabledReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PaymentService_ClosePayments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ClosePaymentsReq)
 	if err := dec(in); err != nil {
@@ -987,6 +1027,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UploadPayCert",
 			Handler:    _PaymentService_UploadPayCert_Handler,
+		},
+		{
+			MethodName: "SetPayConfigEnabled",
+			Handler:    _PaymentService_SetPayConfigEnabled_Handler,
 		},
 		{
 			MethodName: "ClosePayments",

@@ -115,27 +115,27 @@
                   <n-upload
                     :show-file-list="false"
                     accept=".pem,.key,.txt,.crt"
-                    :disabled="!canUpdate || form.id === 0"
+                    :disabled="!canUpdate"
                     :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('private_key', options)"
                   >
-                    <n-button type="primary" secondary :disabled="!canUpdate || form.id === 0" :loading="certUploading['private_key']">上传证书文件</n-button>
+                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['private_key']">上传证书文件</n-button>
                   </n-upload>
                   <n-tag v-if="form.wechat_cert_uploaded" type="success" size="small">已上传商户私钥</n-tag>
+                  <n-tag v-else-if="certPending['private_key']" type="info" size="small">已暂存，保存后自动上传</n-tag>
                   <n-tag v-else type="warning" size="small">未上传</n-tag>
-                  <n-text v-if="form.id === 0" depth="3" class="form-hint">新增配置请先保存，再上传证书</n-text>
                 </div>
                 <div class="cert-paste-row">
                   <n-input
                     v-model:value="certDraft['private_key']"
                     type="textarea"
                     :rows="2"
-                    :disabled="!canUpdate || form.id === 0"
+                    :disabled="!canUpdate"
                     placeholder="或粘贴证书内容（含 BEGIN/END 行），留空表示不修改"
                   />
                   <n-button
                     size="small"
                     secondary
-                    :disabled="!canUpdate || form.id === 0 || !certDraft['private_key'].trim()"
+                    :disabled="!canUpdate || !certDraft['private_key'].trim()"
                     :loading="certUploading['private_key']"
                     @click="saveCertDraft('private_key', '商户私钥证书')"
                   >写入粘贴内容</n-button>
@@ -199,14 +199,15 @@
                     <n-upload
                       :show-file-list="false"
                       accept=".pem,.crt,.key,.txt"
-                      :disabled="!canUpdate || form.id === 0"
+                      :disabled="!canUpdate"
                       :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload(cert.type, options)"
                     >
-                      <n-button type="primary" secondary :disabled="!canUpdate || form.id === 0" :loading="certUploading[cert.type]">
+                      <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading[cert.type]">
                         上传{{ cert.label }}
                       </n-button>
                     </n-upload>
                     <n-tag v-if="certUploaded[cert.key]" type="success" size="small">已上传</n-tag>
+                    <n-tag v-else-if="certPending[cert.type]" type="info" size="small">已暂存，保存后自动上传</n-tag>
                     <n-tag v-else type="warning" size="small">未上传</n-tag>
                     <n-text depth="3" class="form-hint">{{ cert.hint }}</n-text>
                   </div>
@@ -215,13 +216,13 @@
                       v-model:value="certDraft[cert.type]"
                       type="textarea"
                       :rows="2"
-                      :disabled="!canUpdate || form.id === 0"
+                      :disabled="!canUpdate"
                       placeholder="或粘贴证书内容（含 BEGIN/END 行），留空表示不修改"
                     />
                     <n-button
                       size="small"
                       secondary
-                      :disabled="!canUpdate || form.id === 0 || !certDraft[cert.type].trim()"
+                      :disabled="!canUpdate || !certDraft[cert.type].trim()"
                       :loading="certUploading[cert.type]"
                       @click="saveCertDraft(cert.type, cert.label)"
                     >写入粘贴内容</n-button>
@@ -235,27 +236,27 @@
                   <n-upload
                     :show-file-list="false"
                     accept=".pem,.key,.txt,.crt"
-                    :disabled="!canUpdate || form.id === 0"
+                    :disabled="!canUpdate"
                     :custom-request="(options: UploadCustomRequestOptions) => handleCertUpload('private_key', options)"
                   >
-                    <n-button type="primary" secondary :disabled="!canUpdate || form.id === 0" :loading="certUploading['private_key']">上传私钥文件</n-button>
+                    <n-button type="primary" secondary :disabled="!canUpdate" :loading="certUploading['private_key']">上传私钥文件</n-button>
                   </n-upload>
                   <n-tag v-if="form.alipay_cert_uploaded" type="success" size="small">已上传应用私钥</n-tag>
+                  <n-tag v-else-if="certPending['private_key']" type="info" size="small">已暂存，保存后自动上传</n-tag>
                   <n-tag v-else type="warning" size="small">未上传</n-tag>
-                  <n-text v-if="form.id === 0" depth="3" class="form-hint">新增配置请先保存，再上传私钥</n-text>
                 </div>
                 <div class="cert-paste-row">
                   <n-input
                     v-model:value="certDraft['private_key']"
                     type="textarea"
                     :rows="2"
-                    :disabled="!canUpdate || form.id === 0"
+                    :disabled="!canUpdate"
                     placeholder="或粘贴私钥内容（含 BEGIN/END 行），留空表示不修改"
                   />
                   <n-button
                     size="small"
                     secondary
-                    :disabled="!canUpdate || form.id === 0 || !certDraft['private_key'].trim()"
+                    :disabled="!canUpdate || !certDraft['private_key'].trim()"
                     :loading="certUploading['private_key']"
                     @click="saveCertDraft('private_key', '应用私钥')"
                   >写入粘贴内容</n-button>
@@ -299,6 +300,7 @@ import {
   updatePayConfig,
   deletePayConfig,
   uploadPaymentCert,
+  setPayConfigEnabled,
 } from '@/api/admin'
 import type { PayConfigRow, PaymentSuggestedURLs } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
@@ -364,6 +366,14 @@ const NO_DEPLOY_BASE_HINT = '未配置部署域名，回调地址无法派生（
 /** 证书上传中状态，键为证书类型，使各上传按钮独立展示 loading */
 const certUploading = reactive<Record<string, boolean>>({})
 
+/**
+ * 新增模式下暂存的证书待传项（certType → 文件），保存建行后自动依次上传；
+ * 同类型重复选择即覆盖。上传接口按配置行 ID 定位落库，新增行（id=0）无库记录可挂，
+ * 故先暂存前端内存，保存拿到 ID 后再走现有上传接口（服务端扩展名/大小/内容校验全保留）；
+ * 单项上传失败时保留在暂存中，再次点击「保存配置」即可重试，已填内容不丢
+ */
+const certPending = reactive<Record<string, File>>({})
+
 /** 证书/私钥「粘贴内容」草稿，键为证书类型；证书内容不回传明文，草稿框仅作写入入口 */
 const certDraft = reactive<Record<string, string>>({
   private_key: '',
@@ -413,7 +423,7 @@ function emptyRow(): PayConfigRow {
   }
 }
 
-/** 是否新增（id=0）：新增行需先保存才能上传证书（上传接口按配置行 ID 定位） */
+/** 是否新增（id=0）：新增模式下证书先暂存内存，保存建行后自动上传 */
 const isNewRow = computed(() => form.id === 0)
 
 const modalTitle = computed(() => (isNewRow.value ? '新增支付配置' : `编辑支付配置 - ${form.name}`))
@@ -459,6 +469,7 @@ async function loadRows(showLoading = true) {
  */
 function openCreate() {
   Object.assign(form, emptyRow())
+  clearCertPending()
   formSnapshot.value = snapshotOf()
   showModal.value = true
 }
@@ -469,12 +480,14 @@ function openCreate() {
  */
 function openEdit(row: PayConfigRow) {
   Object.assign(form, emptyRow(), JSON.parse(JSON.stringify(row)))
+  clearCertPending()
   formSnapshot.value = snapshotOf()
   showModal.value = true
 }
 
 /**
- * 采集弹窗表单快照（凭证字段组 + 名称与启用状态），用于脏表单判断
+ * 采集弹窗表单快照（凭证字段组 + 名称与启用状态 + 暂存证书），用于脏表单判断：
+ * 暂存了证书但放弃保存时暂存随之丢弃，故纳入快照一并提示
  */
 function snapshotOf(): string {
   return JSON.stringify({
@@ -482,7 +495,17 @@ function snapshotOf(): string {
     enabled: form.enabled,
     wechat: [form.wechat_mch_id, form.wechat_api_v3_key, form.wechat_cert_serial_no],
     alipay: [form.alipay_app_id, form.alipay_mode, form.alipay_public_key, form.alipay_gateway_url],
+    pendingCerts: Object.keys(certPending).sort(),
   })
+}
+
+/**
+ * 清空暂存证书（打开弹窗时重置；放弃保存时随表单一并丢弃）
+ */
+function clearCertPending() {
+  for (const key of Object.keys(certPending)) {
+    delete certPending[key]
+  }
 }
 
 /**
@@ -509,6 +532,7 @@ function requestCloseModal() {
       negativeText: '继续编辑',
       onPositiveClick: () => {
         showModal.value = false
+        clearCertPending()
         loadRows(false)
       },
     })
@@ -579,8 +603,10 @@ function buildPayload(): Omit<PayConfigRow, 'id' | 'updated_at' | 'ready' | 'rea
 }
 
 /**
- * 保存配置行（新增/更新），成功后刷新列表并关闭弹窗
+ * 保存配置行（新增/更新），成功后同步返回行并关闭弹窗
  * 私钥/V3 密钥空值提交时服务端保留原值；版本冲突由服务端拒绝后整份重拉
+ * 新增建行成功后自动上传暂存证书：上传接口按配置行 ID 定位，建行前无库记录可挂；
+ * 上传/保存都会推进乐观锁版本，全程以服务端返回的最新行同步表单，不再依赖整表刷新
  */
 async function saveRow() {
   if (!form.name.trim()) {
@@ -590,12 +616,21 @@ async function saveRow() {
   paymentSaving.value = true
   try {
     if (isNewRow.value) {
-      await createPayConfig(buildPayload())
-      message.success('支付配置已创建，如需上传证书请重新打开本配置')
+      const res = await createPayConfig(buildPayload())
+      applyFreshRow(res.data.data)
     } else {
-      await updatePayConfig(form.id, { ...buildPayload(), updated_at: form.updated_at })
-      message.success('支付配置已保存')
+      const res = await updatePayConfig(form.id, { ...buildPayload(), updated_at: form.updated_at })
+      applyFreshRow(res.data.data)
     }
+    // 暂存证书自动上传（新增建行后首轮 / 重试续传），单项失败保留在暂存中
+    if (Object.keys(certPending).length > 0) {
+      await uploadPendingCerts()
+    }
+    if (Object.keys(certPending).length > 0) {
+      message.warning('部分证书上传失败，已填内容已保留，修正后再次点击「保存配置」即可重试')
+      return
+    }
+    message.success('支付配置已保存')
     showModal.value = false
     await loadRows()
   } finally {
@@ -604,17 +639,62 @@ async function saveRow() {
 }
 
 /**
- * 卡片启停开关：仅提交启用状态（携带版本号做乐观锁）
+ * 依次上传暂存证书（新增建行后自动上传 / 失败重试续传）
+ * 顺序上传而非并发：每项成功都会推进乐观锁版本，顺序执行保证表单版本号始终取自最后一次返回；
+ * 单项失败不中断后续项，失败项保留在暂存中供重试
+ */
+async function uploadPendingCerts() {
+  for (const [certType, file] of Object.entries(certPending)) {
+    certUploading[certType] = true
+    try {
+      const res = await uploadPaymentCert(form.id, certType, file)
+      delete certPending[certType]
+      applyFreshRow(res.data.data)
+    } catch {
+      // 失败原因已由请求层提示，保留暂存供重试
+    } finally {
+      certUploading[certType] = false
+    }
+  }
+}
+
+/**
+ * 用服务端返回的最新行同步弹窗表单与列表
+ * 上传/保存/启停都会推进乐观锁版本，只同步服务端维护的字段（版本号/上传状态位/就绪状态），
+ * 不覆盖弹窗内尚未保存的编辑内容；列表项整行原位替换，免去整表刷新
+ * @param fresh 服务端返回的最新配置行（脱敏视图）
+ */
+function applyFreshRow(fresh: PayConfigRow) {
+  form.id = fresh.id
+  form.updated_at = fresh.updated_at
+  form.wechat_cert_uploaded = fresh.wechat_cert_uploaded
+  form.alipay_cert_uploaded = fresh.alipay_cert_uploaded
+  form.alipay_app_cert_uploaded = fresh.alipay_app_cert_uploaded
+  form.alipay_public_cert_uploaded = fresh.alipay_public_cert_uploaded
+  form.alipay_root_cert_uploaded = fresh.alipay_root_cert_uploaded
+  form.wechat_api_v3_configured = fresh.wechat_api_v3_configured
+  form.ready = fresh.ready
+  form.ready_message = fresh.ready_message
+  const idx = rows.value.findIndex((r) => r.id === fresh.id)
+  if (idx >= 0) {
+    rows.value[idx] = fresh
+  }
+}
+
+/**
+ * 卡片启停开关：走专用窄口径接口（仅更新 enabled，不做整行覆写）
+ * 全量保存接口要求名称等必填字段齐全，开关场景只持有 enabled + 版本号，必然被拒
  * @param row 配置行
  * @param on 是否启用
  */
 async function onToggle(row: PayConfigRow, on: boolean) {
   try {
-    await updatePayConfig(row.id, { enabled: on, updated_at: row.updated_at })
+    const res = await setPayConfigEnabled(row.id, on, row.updated_at)
     message.success(on ? '配置已启用' : '配置已停用')
+    // 用返回的最新行原位更新列表（含新版本号），免去整表刷新
+    applyFreshRow(res.data.data)
   } catch {
-    // 失败原因已由请求层提示，回滚到服务端状态
-  } finally {
+    // 失败原因已由请求层提示（版本冲突/权限不足等），重拉列表让开关回到服务端真实状态
     await loadRows(false)
   }
 }
@@ -639,6 +719,8 @@ function onDelete(row: PayConfigRow) {
 
 /**
  * 上传支付证书文件（按当前编辑的配置行 ID 定位）
+ * 新增模式（id=0）无库记录可挂：暂存内存，保存建行后自动上传（见 saveRow/uploadPendingCerts）；
+ * 已有行上传成功后用返回的最新行同步表单（版本号 + 上传状态位），随后的保存不再被乐观锁拒绝
  * @param certType 证书类型：private_key、app_cert、alipay_public_cert、root_cert
  * @param options naive-ui 自定义上传请求参数
  */
@@ -647,22 +729,20 @@ async function handleCertUpload(certType: string, options: UploadCustomRequestOp
   if (!file) {
     return
   }
+  if (isNewRow.value) {
+    certPending[certType] = file
+    message.info('证书已暂存，点击「保存配置」后自动上传')
+    options.onFinish()
+    return
+  }
   const loadingKey = certType
   certUploading[loadingKey] = true
   try {
     const res = await uploadPaymentCert(form.id, certType, file)
-    message.success(res.data.message || '证书上传成功')
+    message.success('证书上传成功')
+    // 用返回的最新行同步表单版本号与上传状态位，随后的保存不再被乐观锁拒绝
+    applyFreshRow(res.data.data)
     options.onFinish()
-    // 上传即时落库：只刷新上传状态位，不覆盖弹窗内未保存的编辑
-    await loadRows(false)
-    const fresh = rows.value.find((r) => r.id === form.id)
-    if (fresh) {
-      form.wechat_cert_uploaded = fresh.wechat_cert_uploaded
-      form.alipay_cert_uploaded = fresh.alipay_cert_uploaded
-      form.alipay_app_cert_uploaded = fresh.alipay_app_cert_uploaded
-      form.alipay_public_cert_uploaded = fresh.alipay_public_cert_uploaded
-      form.alipay_root_cert_uploaded = fresh.alipay_root_cert_uploaded
-    }
   } catch {
     options.onError()
   } finally {
@@ -672,6 +752,8 @@ async function handleCertUpload(certType: string, options: UploadCustomRequestOp
 
 /**
  * 以粘贴内容写入支付证书/私钥（复用上传接口，服务端校验口径一致）
+ * 新增模式（id=0）无库记录可挂：草稿打包暂存内存，保存建行后自动上传（见 saveRow/uploadPendingCerts）；
+ * 已有行写入成功后用返回的最新行同步表单（版本号 + 上传状态位），随后的保存不再被乐观锁拒绝
  * @param certType 证书类型
  * @param label 字段名称，用于提示文案
  */
@@ -682,21 +764,20 @@ async function saveCertDraft(certType: string, label: string) {
     message.warning(`请先粘贴${label}内容`)
     return
   }
+  if (isNewRow.value) {
+    certPending[certType] = new File([content], `${certType}.pem`, { type: 'application/x-pem-file' })
+    certDraft[key] = ''
+    message.info(`${label}已暂存，点击「保存配置」后自动上传`)
+    return
+  }
   certUploading[key] = true
   try {
     const file = new File([content], `${certType}.pem`, { type: 'application/x-pem-file' })
     const res = await uploadPaymentCert(form.id, certType, file)
-    message.success(res.data.message || `${label}已保存`)
+    message.success(`${label}已保存`)
+    // 用返回的最新行同步表单版本号与上传状态位，随后的保存不再被乐观锁拒绝
+    applyFreshRow(res.data.data)
     certDraft[key] = ''
-    await loadRows(false)
-    const fresh = rows.value.find((r) => r.id === form.id)
-    if (fresh) {
-      form.wechat_cert_uploaded = fresh.wechat_cert_uploaded
-      form.alipay_cert_uploaded = fresh.alipay_cert_uploaded
-      form.alipay_app_cert_uploaded = fresh.alipay_app_cert_uploaded
-      form.alipay_public_cert_uploaded = fresh.alipay_public_cert_uploaded
-      form.alipay_root_cert_uploaded = fresh.alipay_root_cert_uploaded
-    }
   } catch {
     // 失败原因已由请求层提示，此处仅保留草稿内容
   } finally {

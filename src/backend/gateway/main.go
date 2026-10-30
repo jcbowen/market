@@ -573,6 +573,7 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentConfigs)
 			authAdmin.POST("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.SavePaymentConfig)
 			authAdmin.PUT("/settings/payment/:id", gwMiddleware.RequirePermission("settings:update"), adminHandler.SavePaymentConfig)
+			authAdmin.PUT("/settings/payment/:id/enabled", gwMiddleware.RequirePermission("settings:update"), adminHandler.SetPaymentConfigEnabled)
 			authAdmin.DELETE("/settings/payment/:id", gwMiddleware.RequirePermission("settings:update"), adminHandler.DeletePaymentConfig)
 			authAdmin.POST("/settings/payment/cert", gwMiddleware.RequirePermission("settings:update"), adminHandler.UploadPaymentCert)
 

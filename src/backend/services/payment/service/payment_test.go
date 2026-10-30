@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -10,13 +11,16 @@ import (
 	"github.com/jcbowen/jcbaseGo"
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/order"
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
+	usermodel "github.com/jcbowen/market/src/backend/services/user/model"
 )
 
 /**
@@ -43,10 +47,6 @@ import (
 
 // testOrderIDBase 支付测试订单 ID 起始值（远超真实业务 ID 区间，清理依据）
 const testOrderIDBase = int64(990000001)
-
-// payConfigID 测试库中现金建单锁行（pay_config 占位行）的固定 ID
-// cashCreateLockTx 锁 pay_config 最小 id 行，测试库必须存在该行
-const payConfigID = int64(1)
 
 // stubOrderClient 订单服务桩：记录 UpdateOrderStatus 调用入参，不落真实订单
 // 嵌入接口后仅覆写 UpdateOrderStatus/GetOrder，避免实现全部方法
@@ -123,16 +123,12 @@ func newPaymentTestEnv(t *testing.T) (*PaymentService, *stubOrderClient, func())
 	if err != nil {
 		t.Fatalf("连接测试数据库失败: %v", err)
 	}
-	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}, &model.NotifyLog{}, &model.SchedulerFailure{}, &model.PayConfig{}); err != nil {
+	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}, &model.NotifyLog{}, &model.SchedulerFailure{}, &model.PayConfig{}, &usermodel.SiteConfig{}); err != nil {
 		t.Fatalf("迁移支付测试表失败: %v", err)
 	}
 
-	// 现金/货到付款建单走 cashCreateLockTx 锁 pay_config 固定单行（id=1），测试库必须存在该行；
-	// 渠道字段全部留空，微信/支付宝仍走「未配置」失败路径，与原测试语义一致
-	if err := dbInst.GetDb().Where(model.PayConfig{ID: payConfigID}).
-		FirstOrCreate(&model.PayConfig{ID: payConfigID}).Error; err != nil {
-		t.Fatalf("初始化支付配置行失败: %v", err)
-	}
+	// 现金/货到付款建单走 cashCreateLockTx 锁 site_configs 固定单行（id=1），
+	// 该行由锁函数事务内 get-or-create 自行兜底，此处无需预置支付配置行
 
 	// 直接构造服务实例，微信/支付宝渠道保持未配置状态，便于测渠道失败路径
 	s := &PaymentService{db: dbInst, cfg: &config.Config{}}
@@ -746,5 +742,120 @@ func TestGetPaymentRefundedVisible(t *testing.T) {
 	// 待支付订单：GetPayment 查不到
 	if _, err := s.GetPayment(ctx, pendingOrderID); err == nil {
 		t.Fatal("待支付单不应被 GetPayment 命中")
+	}
+}
+
+// TestSetPayConfigEnabled 专用启停接口：仅更新 enabled 不覆写整行，乐观锁拒绝旧版本
+// 回归背景：列表开关曾走全量保存接口，只传 enabled + 版本号被「配置名称不能为空」拒绝（参数错误）
+func TestSetPayConfigEnabled(t *testing.T) {
+	s, _, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	created, err := s.SavePayConfigRow(ctx, &payment.PayConfigRow{
+		Name:            "TEST-开关-微信",
+		Platform:        model.PayPlatformWechat,
+		Enabled:         true,
+		WechatMchId:     "TEST_MCH_TOGGLE",
+		WechatApiV3Key:  "test-toggle-api-v3-key",
+		WechatNotifyUrl: "https://example.com/notify/wechat",
+	})
+	if err != nil {
+		t.Fatalf("创建测试配置行失败: %v", err)
+	}
+	defer func() { _ = s.DeletePayConfigRow(ctx, created.ID) }()
+
+	// 窄口径启停：仅携带 enabled + 读取时版本号
+	updated, err := s.SetPayConfigEnabled(ctx, &payment.SetPayConfigEnabledReq{
+		Id:        created.ID,
+		Enabled:   false,
+		UpdatedAt: created.UpdatedAt,
+	})
+	if err != nil {
+		t.Fatalf("停用配置行失败: %v", err)
+	}
+	if updated.Enabled {
+		t.Error("配置行应已停用")
+	}
+	if updated.UpdatedAt == created.UpdatedAt {
+		t.Error("启停应推进乐观锁版本号")
+	}
+	// 窄口径语义：其余字段不被整行覆写
+	if updated.Name != created.Name || updated.WechatMchID != created.WechatMchID {
+		t.Errorf("启停不应改写其它字段: name=%q mch=%q", updated.Name, updated.WechatMchID)
+	}
+
+	// 旧版本启停被乐观锁拒绝（Aborted）
+	if _, err := s.SetPayConfigEnabled(ctx, &payment.SetPayConfigEnabledReq{
+		Id:        created.ID,
+		Enabled:   true,
+		UpdatedAt: created.UpdatedAt, // 停用前的版本
+	}); err == nil {
+		t.Fatal("携带旧版本启停应被乐观锁拒绝")
+	} else {
+		var be *bizerr.Error
+		if !errors.As(err, &be) || be.Code() != codes.Aborted {
+			t.Fatalf("旧版本启停应返回 Aborted 业务错误, got %v", err)
+		}
+	}
+
+	// 不存在的配置行返回 NotFound
+	if _, err := s.SetPayConfigEnabled(ctx, &payment.SetPayConfigEnabledReq{
+		Id:        created.ID + 9999,
+		Enabled:   true,
+		UpdatedAt: "",
+	}); err == nil {
+		t.Fatal("启停不存在的配置行应报错")
+	} else {
+		var be *bizerr.Error
+		if !errors.As(err, &be) || be.Code() != codes.NotFound {
+			t.Fatalf("启停不存在的配置行应返回 NotFound, got %v", err)
+		}
+	}
+}
+
+// TestSavePayConfigRowKeepsSecrets 密钥空值保留：编辑配置不重输密钥时保存成功且原值不变
+// 回归背景：曾怀疑「密钥不回传导致保存失败」，实际空值口径为保留原值，此处固化防退化
+func TestSavePayConfigRowKeepsSecrets(t *testing.T) {
+	s, _, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	created, err := s.SavePayConfigRow(ctx, &payment.PayConfigRow{
+		Name:               "TEST-密钥保留-微信",
+		Platform:           model.PayPlatformWechat,
+		Enabled:            true,
+		WechatMchId:        "TEST_MCH_SECRET",
+		WechatAppSecret:    "test-app-secret",
+		WechatApiV3Key:     "test-api-v3-key",
+		WechatCertSerialNo: "TEST_SERIAL",
+		WechatPrivateKey:   "test-private-key",
+		WechatNotifyUrl:    "https://example.com/notify/wechat",
+	})
+	if err != nil {
+		t.Fatalf("创建测试配置行失败: %v", err)
+	}
+	defer func() { _ = s.DeletePayConfigRow(ctx, created.ID) }()
+
+	// 密钥字段全空、只改名称再保存：应成功且密钥保持原值
+	updated, err := s.SavePayConfigRow(ctx, &payment.PayConfigRow{
+		Id:          created.ID,
+		Name:        "TEST-密钥保留-微信-改名",
+		Platform:    model.PayPlatformWechat,
+		Enabled:     true,
+		WechatMchId: created.WechatMchID,
+		UpdatedAt:   created.UpdatedAt,
+	})
+	if err != nil {
+		t.Fatalf("不重输密钥保存应成功: %v", err)
+	}
+	if updated.Name != "TEST-密钥保留-微信-改名" {
+		t.Errorf("名称应已更新, got %q", updated.Name)
+	}
+	if updated.WechatAppSecret != created.WechatAppSecret ||
+		updated.WechatAPIV3Key != created.WechatAPIV3Key ||
+		updated.WechatPrivateKey != created.WechatPrivateKey {
+		t.Errorf("密钥空值应保留原值: app_secret=%q api_v3=%q private_key=%q",
+			updated.WechatAppSecret, updated.WechatAPIV3Key, updated.WechatPrivateKey)
 	}
 }

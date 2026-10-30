@@ -140,6 +140,11 @@ func TestCreatePaymentCodePayPlaceholder(t *testing.T) {
 // 由网关按 pos 渠道解析后随扣款请求带入，支付配置行不再持有 AppID）
 const testWechatAppID = "wx-test-app"
 
+// testPayConfigIDBase 测试播种配置行的固定 ID 基准（远低真实业务自增区间，清理依据）
+// 现金建单锁行已改锚 site_configs（见 cashCreateLockTx），配置行 ID 不再承载锁语义，
+// 仅作为播种固定行便于 FirstOrCreate 幂等复用
+const testPayConfigIDBase = int64(1)
+
 // seedActiveWechatPayConfig 在测试库播种一条启用且凭证齐全的微信支付配置行，返回配置 ID
 // 私钥用测试生成的真实 RSA PEM：wegopayment.NewClientE 构建时解析，假串会导致客户端构建失败、
 // resolveActivePayConfig 判未就绪
@@ -155,7 +160,7 @@ func seedActiveWechatPayConfig(t *testing.T, s *PaymentService) int64 {
 	}
 	priPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: priDER}))
 	row := &model.PayConfig{
-		ID: payConfigID + 1, Name: "test-wechat", Platform: model.PayPlatformWechat, Enabled: true,
+		ID: testPayConfigIDBase + 1, Name: "test-wechat", Platform: model.PayPlatformWechat, Enabled: true,
 		WechatAppSecret: "test-secret", WechatMchID: "1900000001",
 		WechatAPIV3Key: "01234567890123456789012345678901", WechatCertSerialNo: "TESTSERIAL0001",
 		WechatPrivateKey: priPEM, WechatNotifyURL: "https://market.example.com/api/v1/payments/callback/wechat",
@@ -172,7 +177,7 @@ func seedActiveAlipayPayConfig(t *testing.T, s *PaymentService) int64 {
 	t.Helper()
 	priKey, pubKey := newTestAlipayKeys(t)
 	row := &model.PayConfig{
-		ID: payConfigID + 2, Name: "test-alipay", Platform: model.PayPlatformAlipay, Enabled: true,
+		ID: testPayConfigIDBase + 2, Name: "test-alipay", Platform: model.PayPlatformAlipay, Enabled: true,
 		AlipayAppID: testAlipayAppID, AlipayPrivateKey: priKey, AlipayPublicKey: pubKey,
 		AlipayMode: config.AlipayModePublic, AlipayNotifyURL: "https://market.example.com/api/v1/payments/callback/alipay",
 	}
