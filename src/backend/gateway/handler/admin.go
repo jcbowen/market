@@ -5910,15 +5910,21 @@ type PaymentSuggestedURLs struct {
 }
 
 // payCallbackURLsFor 按部署域名派生支付回调地址
+// base 为空（未配置显式部署域名）时三项一律返回空串而非拼出相对路径：
+// 回调地址为只读派生字段，落库的空值由支付服务的必填判定自然判为未就绪（C 端不展示、建单被拦），
+// 而相对路径既过不了 checkNotifyURL 兜底校验，也等于把「未配置」伪装成「配了但填错」
 //
 // 参数：
-//   - base: 部署域名基址，形如 https://host
+//   - base: 部署域名基址，形如 https://host，空串表示未配置显式域名
 //
 // 返回值：
 //   - string: 微信异步通知地址
 //   - string: 支付宝异步通知地址
 //   - string: 支付宝支付完成回跳地址
 func payCallbackURLsFor(base string) (string, string, string) {
+	if base == "" {
+		return "", "", ""
+	}
 	return base + wechatPayCallbackPath, base + alipayPayCallbackPath, base + h5PayResultHashURL
 }
 
@@ -5975,8 +5981,10 @@ func (h *AdminHandler) SavePaymentConfig(c *gin.Context) {
 		req.ID = 0
 	}
 
-	// 回调地址不接受前端入参：一律按部署域名派生后落库，与只读展示口径一致
-	saveWechatNotify, saveAlipayNotify, saveAlipayReturn := payCallbackURLsFor(platformBaseURL(c))
+	// 回调地址不接受前端入参：一律按部署域名派生后落库，与只读展示口径一致。
+	// 派生源只认显式配置域名：按请求现推的临时域名落库会把「谁先保存谁固化」写进配置，
+	// 换域名或本地保存一次即留下打不到网关的错地址（表现为用户已付款、订单未支付）
+	saveWechatNotify, saveAlipayNotify, saveAlipayReturn := payCallbackURLsFor(explicitBaseURL(c.Request.Context()))
 	saved, err := h.paymentClient.SavePayConfigRow(c.Request.Context(), payConfigRowOf(req, saveWechatNotify, saveAlipayNotify, saveAlipayReturn))
 	if err != nil {
 		log.Printf("保存支付配置失败: %v", err)
@@ -6088,18 +6096,21 @@ func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
 	response.Success(c, gin.H{"success": true, "message": resp.Message})
 }
 
-// buildSuggestedURLs 生成支付平台回调地址
-// 基址取站点设置的部署域名（未配置时回落按当前请求现推），回调路径固定在网关路由上
+// buildSuggestedURLs 生成支付平台回调地址建议值
+// 回调路径固定在网关路由上；基址与落库同源取显式部署域名（见 explicitBaseURL），
+// 未配置显式域名时返回空串——建议值一旦按请求现推域名给出，管理员会照着它去商户平台配置，
+// 而落库的地址其实是空的，两者不一致比直接显示空更害事
 // 参数：
 //   - c: gin 上下文
 //
 // 返回值：
 //   - PaymentSuggestedURLs: 回调地址
 func buildSuggestedURLs(c *gin.Context) PaymentSuggestedURLs {
-	base := platformBaseURL(c)
+	base := explicitBaseURL(c.Request.Context())
+	wechatNotify, alipayNotify, _ := payCallbackURLsFor(base)
 	return PaymentSuggestedURLs{
 		BaseURL:         base,
-		WechatNotifyURL: base + wechatPayCallbackPath,
-		AlipayNotifyURL: base + alipayPayCallbackPath,
+		WechatNotifyURL: wechatNotify,
+		AlipayNotifyURL: alipayNotify,
 	}
 }

@@ -58,6 +58,40 @@ func checkNotifyURL(label, raw string) error {
 	return nil
 }
 
+// missingDeployBaseReason 凭证齐全、仅缺异步通知地址时的未就绪原因
+// 通知地址是只读的部署域名派生字段（回调路径固定在网关路由上，不接受人工填写），
+// 未配置显式部署域名时必然为空；若仍回「必填配置不完整」，管理员会对着一个不可编辑的字段无从下手，
+// 故单独指向真正该改的地方
+const missingDeployBaseReason = "缺少异步通知地址：该地址由部署域名派生，请在站点设置填写域名，或部署时设置 SITE_BASE_URL 环境变量"
+
+// wechatCredentialsReady 微信支付凭证齐全度（不含由部署域名派生的异步通知地址）
+//
+// 参数：
+//   - w: 微信支付配置载体
+//
+// 返回值：
+//   - bool: 除通知地址外全部必填项齐全返回 true
+func wechatCredentialsReady(w config.WechatConfig) bool {
+	return w.MchID != "" && w.APIV3Key != "" && w.CertSerialNo != "" && w.PrivateKey != ""
+}
+
+// alipayCredentialsReady 支付宝凭证齐全度（按加签方式取对应必填集，不含异步通知地址）
+//
+// 参数：
+//   - a: 支付宝配置载体
+//
+// 返回值：
+//   - bool: 除通知地址外全部必填项齐全返回 true
+func alipayCredentialsReady(a config.AlipayConfig) bool {
+	if a.AppID == "" || a.PrivateKey == "" {
+		return false
+	}
+	if a.IsCertMode() {
+		return a.AppCert != "" && a.AlipayPublicCert != "" && a.AlipayRootCert != ""
+	}
+	return a.AlipayPublicKey != ""
+}
+
 // EnsureDefaultPayConfig 确保支付配置表至少存在一行
 // 空表时写入一条停用的占位配置：现金建单的库级串行点（cashCreateLockTx）依赖表内至少一行；
 // 占位行默认停用不参与渲染与下单，管理员创建真实配置后可删除
@@ -731,6 +765,9 @@ func wechatConfigOf(cfg *model.PayConfig) config.WechatConfig {
 func WechatConfigStatus(cfg *model.PayConfig) (bool, string) {
 	wechat := wechatConfigOf(cfg)
 	if !wechat.IsPaymentConfigured() {
+		if wechatCredentialsReady(wechat) {
+			return false, missingDeployBaseReason
+		}
 		return false, "微信支付必填配置不完整（商户号、APIv3 密钥、证书序列号、商户私钥、异步通知地址均为必填；AppID 属渠道身份，请到渠道管理配置）"
 	}
 	return true, ""

@@ -144,8 +144,9 @@
             </n-form-item>
             <n-form-item label="异步通知地址">
               <div class="url-guide-row">
-                <n-text code>{{ form.wechat_notify_url || suggestedURLs.wechat_notify_url }}</n-text>
-                <n-button size="small" type="primary" secondary @click="copyURL(form.wechat_notify_url || suggestedURLs.wechat_notify_url)">复制</n-button>
+                <n-text v-if="wechatNotifyDisplay" code>{{ wechatNotifyDisplay }}</n-text>
+                <n-text v-else type="warning">{{ NO_DEPLOY_BASE_HINT }}</n-text>
+                <n-button size="small" type="primary" secondary :disabled="!wechatNotifyDisplay" @click="copyURL(wechatNotifyDisplay)">复制</n-button>
               </div>
               <n-text depth="3" class="form-hint">
                 由「站点设置」的部署域名自动派生并在保存时写入，请将其配置到微信商户平台（API 安全 → 支付通知 URL）
@@ -263,8 +264,9 @@
             </n-form-item>
             <n-form-item label="异步通知地址">
               <div class="url-guide-row">
-                <n-text code>{{ form.alipay_notify_url || suggestedURLs.alipay_notify_url }}</n-text>
-                <n-button size="small" type="primary" secondary @click="copyURL(form.alipay_notify_url || suggestedURLs.alipay_notify_url)">复制</n-button>
+                <n-text v-if="alipayNotifyDisplay" code>{{ alipayNotifyDisplay }}</n-text>
+                <n-text v-else type="warning">{{ NO_DEPLOY_BASE_HINT }}</n-text>
+                <n-button size="small" type="primary" secondary :disabled="!alipayNotifyDisplay" @click="copyURL(alipayNotifyDisplay)">复制</n-button>
               </div>
               <n-text depth="3" class="form-hint">
                 由「站点设置」的部署域名派生并随下单逐笔携带，无需在开放平台配置；改域名请到站点设置页
@@ -347,6 +349,17 @@ const paymentSaving = ref(false)
 const rows = ref<PayConfigRow[]>([])
 /** 按部署域名派生的回调地址建议 */
 const suggestedURLs = ref<PaymentSuggestedURLs>({ base_url: '', wechat_notify_url: '', alipay_notify_url: '' })
+
+/**
+ * 异步通知地址展示值：已落库的行取库值，新建行取按显式部署域名的建议值。
+ * 两者皆空说明未配置显式部署域名（站点设置 base_url 与 SITE_BASE_URL 都为空）——
+ * 此时派生地址为空、该支付方式判未就绪，不能拿按访问域名现推的临时地址充数，
+ * 否则管理员会照着它去商户平台配置，而落库的其实是空值
+ */
+const wechatNotifyDisplay = computed(() => form.wechat_notify_url || suggestedURLs.value.wechat_notify_url || '')
+const alipayNotifyDisplay = computed(() => form.alipay_notify_url || suggestedURLs.value.alipay_notify_url || '')
+/** 未配置部署域名的提示文案，两处通知地址展示位共用 */
+const NO_DEPLOY_BASE_HINT = '未配置部署域名，回调地址无法派生（请到站点设置填写域名，正式部署也可用 SITE_BASE_URL 环境变量）；该支付方式将判为未就绪'
 
 /** 证书上传中状态，键为证书类型，使各上传按钮独立展示 loading */
 const certUploading = reactive<Record<string, boolean>>({})

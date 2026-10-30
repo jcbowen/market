@@ -1,6 +1,7 @@
 package response
 
 import (
+	"log"
 	"net/http"
 	"regexp"
 
@@ -72,11 +73,21 @@ func TranslateGRPCError(err error) (int, string) {
 }
 
 // GRPCError 返回 gRPC 错误对应的统一错误响应
+// 兜底为 10002 时按请求记一条 WARN：10002 不透传原始文案，调用方与日志都无从定位，
+// 未映射的状态码（如 Unknown，服务侧忘了做错误归一）尤其容易在此静默成一团
+// 原始 code 与文案只进日志、不进响应，保持内部细节不外泄的口径不变
 // 参数：
 //   - c: gin 上下文
 //   - err: gRPC 调用返回的错误
 func GRPCError(c *gin.Context, err error) {
 	code, msg := TranslateGRPCError(err)
+	if code == errcode.InternalServerError {
+		rpcCode := codes.Unknown
+		if st, ok := status.FromError(err); ok {
+			rpcCode = st.Code()
+		}
+		log.Printf("[WARN] %s %s 降级为 10002（gRPC code=%s）: %v", c.Request.Method, c.Request.URL.Path, rpcCode, err)
+	}
 	c.JSON(http.StatusOK, Response{
 		Code:    code,
 		Message: msg,

@@ -197,7 +197,32 @@ if (PULL_DEPS) {
   console.log('');
 }
 
+// 编译前格式闸门：gofmt -l 有输出即终止构建并列出待格式化文件。
+// 放这里而非 git hook：三台开发机（win10 / macOS / win11）的 hook 需各自安装、
+// core.hooksPath 与 --no-verify 都能绕过，而 build.mjs 是所有人都必经的编译入口，
+// CI 的 backend job 也走它，闸门放在唯一入口才有约束力
+async function checkGofmt() {
+  const { stdout, stderr } = await new Promise((resolve, reject) => {
+    execFile('gofmt', ['-l', '.'], { cwd: BACKEND_DIR, env: { ...process.env, ...ctx.goEnv } }, (err, stdout, stderr) =>
+      err ? reject(err) : resolve({ stdout, stderr }),
+    );
+  }).catch((err) => {
+    console.error(`错误: gofmt 检查执行失败（go 工具链自带该命令，请确认 go 在 PATH 中）: ${err.message}`);
+    process.exit(1);
+  });
+  const bad = stdout.trim().split('\n').filter(Boolean);
+  if (bad.length) {
+    console.error(`错误: ${bad.length} 个 Go 文件格式不符合 gofmt（请在 src/backend 执行 gofmt -w .）:`);
+    for (const f of bad) console.error(`  - ${f}`);
+    process.exit(1);
+  }
+  if (stderr.trim()) console.error(`gofmt 提示: ${stderr.trim()}`);
+}
+
 // 编译前预检 Go 模块依赖（本地 replace 路径、go.mod/go.sum 一致性）
+console.log('==> 预检 Go 代码格式...');
+await checkGofmt();
+
 console.log('==> 预检 Go 模块依赖...');
 await preflightGoModules(ctx);
 

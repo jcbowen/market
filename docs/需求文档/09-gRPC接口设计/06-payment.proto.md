@@ -311,6 +311,8 @@ message PayConfigRow {
   bool alipay_public_cert_uploaded = 29;
   bool alipay_root_cert_uploaded = 30;
   // 版本与就绪状态（仅查询回传；就绪 = 启用 + 字段齐全 + 自检通过）
+  // 注：异步通知地址属「字段齐全」口径，且只由显式部署域名派生；未配置域名时为空 → 该行未就绪，
+  // ready_message 给出「缺少异步通知地址…请在站点设置填写域名或设置 SITE_BASE_URL」的可读原因
   string updated_at = 40;
   bool ready = 41;
   string ready_message = 42;

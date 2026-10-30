@@ -9,13 +9,14 @@ import { autoName, uniqueSuffix } from '../helpers/data';
  *   - 免登录公开接口 /api/v1/site-info：只回非敏感品牌字段
  *   - HTML 品牌注入：/b/ 与 /s/ 入口的 <title>、meta 取自站点设置，后台入口带 noindex、C 端入口带 og 标签
  *   - 服务端兜底：部署域名缺协议/带路径、站点名超长、logo 非法外链整行拒绝且不落库
- *   - 部署域名唯一来源：三条支付回调地址一律按生效域名派生；支付配置页提交伪造 notify_url 被忽略，
- *     站点域名保存后网关会把派生值回写全部支付配置行（handler/site.go syncPayCallbackURLs）
+ *   - 部署域名唯一来源：三条支付回调地址一律按**显式**部署域名（站点设置 base_url / SITE_BASE_URL）派生；
+ *     支付配置页提交伪造 notify_url 被忽略，站点域名保存后网关把派生值回写全部支付配置行，
+ *     域名清空时同进退回收为空串（handler/site.go syncPayCallbackURLs + explicitBaseURL）
  *   - 仅超管可读写：settings:* 是系统级权限点，不进社区权限上限，社区角色勾了也会在解析时被剥离，
  *     非超管读与写一律 11005
  * 环境说明：用例把 base_url 设为独立测试域名，期间附件外链与支付回调地址随之派生；
- *           afterAll 无条件恢复原值，回调地址由站点保存的联动回写自动退回按请求域名派生的本机口径，
- *           不把测试域名留在库里；
+ *           afterAll 无条件恢复原值，回调地址由站点保存的联动回写自动退回当前域名来源的口径
+ *           （本机未设 SITE_BASE_URL，恢复空域名后即回收为空串），不把测试域名留在库里；
  *           站点域名保存的联动补写会把空的附件「访问域名」写成测试域名（图片出库地址前缀随之改变，
  *           跨模块共享同一单行），故 afterAll 同时恢复附件配置快照，回读期望值按当前访问域名现算
  */
@@ -90,23 +91,6 @@ async function readPayConfigs(): Promise<PayConfigListResp> {
   return assertOk(body, '读取支付配置');
 }
 
-/**
- * 逐行原样重存支付配置，使落库回调地址重新按当前生效域名派生
- * 站点域名清空后网关不会再回写（只认显式配置域名），库中会留着上一次派生出的测试域名，
- * 而下单时通知地址直接取库值——恢复现场时主动重存一次，不把测试域名留在库里
- * 每次写入都会推进版本号，故逐行重取最新 updated_at 再提交
- */
-async function resavePayConfigs(): Promise<void> {
-  const { list } = await readPayConfigs();
-  for (const row of list) {
-    const fresh = ((await readPayConfigs()).list ?? []).find((r) => r.id === row.id);
-    if (!fresh) continue;
-    const resp = (await (
-      await adminApi.put(`/api/v1/admin/settings/payment/${fresh.id}`, { data: fresh })
-    ).json()) as ApiResponse;
-    if (resp.code !== 0) console.log(`[站点设置] 重存支付配置行 ${fresh.id} 失败 code=${resp.code} message=${resp.message}`);
-  }
-}
 /** 进入模块时的原值，afterAll 无条件恢复 */
 let original: SiteSetting | null = null;
 /**
@@ -136,9 +120,8 @@ test.afterAll(async () => {
         await adminApi.put('/api/v1/admin/settings/site', { data: { ...original, version: latest.version } })
       ).json()) as ApiResponse;
       if (back.code !== 0) console.log(`[站点设置] 恢复原值失败 code=${back.code} message=${back.message}`);
-
-      // 站点域名恢复为空后网关不再回写回调地址，逐行重存把派生值退回按请求域名口径的本机地址
-      await resavePayConfigs();
+      // 回调地址无需在此手工复原：站点设置保存时网关按当前显式域名逐行覆写，
+      // 原值 base_url 为空即回收为空串，测试域名不会留在库里（用例 10 已单独断言该口径）
     }
     // 附件访问域名放在最后恢复：站点域名与回调地址的回写都可能再次触发联动补写
     if (originalAttachment) {
@@ -440,6 +423,47 @@ test.describe.serial('站点设置读写与品牌注入', () => {
       await empCtx.dispose();
       await adminApi.delete(`/api/v1/admin/admins/${emp.id}`);
       await adminApi.delete(`/api/v1/admin/roles/${role.id}`);
+    }
+  });
+
+  test('10. 清空部署域名后回调地址同进退回收为空，残留旧域名不得留在配置里', async () => {
+    // 用例 7/8 已把测试域名派生值逐行落库，此处清空域名验证「同进同退」
+    const body = await saveSite({ base_url: '' });
+    expect(body.code, `清空部署域名失败: ${body.message}`).toBe(0);
+
+    const site = await readSite();
+    if (site.base_url_source !== 'request') {
+      test.skip(true, `部署侧显式配置了域名（来源 ${site.base_url_source}），无法验证未配置域名的回收口径`);
+    }
+    // 出参展示仍按当前访问域名现推，来源标记就是给管理员看的「这是临时值」
+    expect(site.effective_base_url, '展示用生效域名不应为空').toBeTruthy();
+    expect(site.wechat_notify_url, '展示地址按访问域名现推').toBe(`${site.effective_base_url}${WECHAT_PATH}`);
+
+    const pay = await readPayConfigs();
+    // 建议值与落库同源：未配置显式域名时给空，避免管理员照着一条不会落库的地址去商户平台配置
+    expect(pay.suggested_urls?.base_url ?? '', '建议基址应为空').toBe('');
+    expect(pay.suggested_urls?.wechat_notify_url ?? '', '建议的微信通知地址应为空').toBe('');
+    expect(pay.suggested_urls?.alipay_notify_url ?? '', '建议的支付宝通知地址应为空').toBe('');
+    for (const row of pay.list ?? []) {
+      if (row.platform === 'wechat') {
+        expect(row.wechat_notify_url ?? '', `微信行 ${row.id} 的残留派生地址应被回收为空`).toBe('');
+      }
+      if (row.platform === 'alipay') {
+        expect(row.alipay_notify_url ?? '', `支付宝行 ${row.id} 的通知地址应被回收为空`).toBe('');
+        expect(row.alipay_return_url ?? '', `支付宝行 ${row.id} 的回跳地址应被回收为空`).toBe('');
+      }
+    }
+
+    // 回收后再保存某一行，落库仍必须是空——防止保存路径回落到按请求现推的临时域名
+    const target = (pay.list ?? [])[0];
+    if (target) {
+      const saved = (await (
+        await adminApi.put(`/api/v1/admin/settings/payment/${target.id}`, { data: target })
+      ).json()) as ApiResponse;
+      expect(saved.code, `无显式域名时保存配置行失败: ${saved.message}`).toBe(0);
+      const after = ((await readPayConfigs()).list ?? []).find((r) => r.id === target.id);
+      const field = target.platform === 'wechat' ? 'wechat_notify_url' : 'alipay_notify_url';
+      expect((after?.[field] as string) ?? '', `保存后 ${field} 仍应为空，不得回落请求域名`).toBe('');
     }
   });
 });

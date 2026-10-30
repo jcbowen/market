@@ -49,19 +49,19 @@ type SiteSetting struct {
 	AlipayReturnURL string `json:"alipay_return_url"`
 }
 
-// platformBaseURL 获取当前生效的部署域名基址
-// 优先级：站点设置 base_url > SITE_BASE_URL 环境变量（兜底默认值） > 按请求现推（均未配置时）
+// explicitBaseURL 取显式配置的部署域名基址（站点设置 base_url > SITE_BASE_URL 环境变量）
+// 凡要把域名写进库的调用方必须用它——请求现推域名（见 requestBaseURL）是「谁先访问谁是谁」的
+// 兜底展示值，落库即把临时兜底固化成配置（附件 visit_domain 同口径，见 syncAttachmentVisitDomainBy）；
+// brand 快照在 request 来源时 BaseURL 恒为空串，故无需再判 BaseURLSource。
+// 出参展示口径：快照为空时由调用方按 requestBaseURL 现推，并在响应里用 base_url_source 标明来源
 //
 // 参数：
-//   - c: gin 上下文
+//   - ctx: 请求上下文
 //
 // 返回值：
-//   - string: 形如 https://host 的基址，末尾不含斜杠
-func platformBaseURL(c *gin.Context) string {
-	if snap := brand.Get(c.Request.Context()); snap.BaseURL != "" {
-		return snap.BaseURL
-	}
-	return requestBaseURL(c)
+//   - string: 显式部署域名基址，形如 https://host，末尾不含斜杠；未配置时为空串
+func explicitBaseURL(ctx context.Context) string {
+	return brand.Get(ctx).BaseURL
 }
 
 // requestBaseURL 按当前请求推导部署域名基址
@@ -163,9 +163,10 @@ func (h *AdminHandler) UpdateSiteSetting(c *gin.Context) {
 	// 数据库已变更，同步刷新网关快照：域名与品牌无需等待 TTL，
 	// 且紧随其后的回调地址回写/附件域名补写必须读到刚保存的域名（异步失效会读到旧值）
 	snap := brand.Refresh(c.Request.Context())
-	if snap.BaseURL != "" {
-		h.syncPayCallbackURLs(c.Request.Context(), snap.BaseURL)
-	}
+	// 回调地址与显式部署域名同进同退：有域名则覆写为派生值，域名清空或未配置则回收为空串。
+	// 无条件调用是关键——留着上一个域名是「看着配好了、回调却永远打不到网关」的错地址，
+	// 表现为用户已付款而订单未支付；空值由支付服务的必填判定自然判未就绪，属安全降级
+	h.syncPayCallbackURLs(c.Request.Context(), snap.BaseURL)
 	// 附件访问域名联动：本地存储且未配置访问域名时补写为生效部署域名（详见 syncAttachmentVisitDomain）。
 	// 仅认显式配置来源（db 站点设置 / env SITE_BASE_URL）；base 为请求现推（request）时
 	// 首访者是谁域名就是谁，写库会把临时兜底固化成错误配置（如局域网被 localhost 抢占），
@@ -228,13 +229,15 @@ func (h *AdminHandler) GetPublicSiteInfo(c *gin.Context) {
 	})
 }
 
-// syncPayCallbackURLs 把站点域名派生的回调地址回写全部支付配置行
+// syncPayCallbackURLs 把显式部署域名派生的回调地址回写全部支付配置行
 // pay_config 为多行制：逐行按平台覆写对应回调字段，已是派生值的行跳过，
 // 避免每次读取配置都产生无意义更新；并发下版本冲突仅记日志（下次保存自愈）
+// baseURL 为空（未配置站点域名与 SITE_BASE_URL）时把回调字段回收为空串，
+// 调用方必须用 explicitBaseURL/显式域名快照取值，不能传按请求现推的临时域名
 //
 // 参数：
 //   - ctx: 上下文
-//   - baseURL: 生效的部署域名基址
+//   - baseURL: 显式配置的部署域名基址（形如 https://host），空串表示未配置
 func (h *AdminHandler) syncPayCallbackURLs(ctx context.Context, baseURL string) {
 	resp, err := h.paymentClient.ListPayConfigs(ctx, &payment.ListPayConfigsReq{})
 	if err != nil {

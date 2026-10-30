@@ -116,6 +116,22 @@ async function readChannel(code: string): Promise<ClientChannelRow> {
   return row;
 }
 
+/**
+ * 读取显式部署域名（支付回调地址的唯一派生源）
+ * 站点设置 base_url 或 SITE_BASE_URL 任一有值即返回该基址；两者都空时来源标记为 request，
+ * 按请求现推的域名只作页面展示、不落库，回调地址口径为空串（该行由就绪判定自然判未就绪）
+ * - 函数名: readExplicitBaseURL
+ * - 返回值: Promise<string> 形如 https://host，未配置显式部署域名时为空串
+ * - 使用示例: const base = await readExplicitBaseURL()
+ */
+async function readExplicitBaseURL(): Promise<string> {
+  const body = (await (
+    await adminApi.get('/api/v1/admin/settings/site')
+  ).json()) as ApiResponse<{ base_url_source?: string; effective_base_url?: string }>;
+  const data = assertOk(body, '读取站点设置');
+  return data.base_url_source === 'db' || data.base_url_source === 'env' ? data.effective_base_url ?? '' : '';
+}
+
 test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright);
   adminApi = admin.api;
@@ -219,8 +235,12 @@ test.describe.serial('支付配置多行制与渠道绑定', () => {
     const temp = list.find((r) => r.id === alipayRowID);
     expect(temp, '前置：临时支付宝配置行应在列表中').toBeTruthy();
     expect(temp?.platform, '临时行平台应为 alipay').toBe('alipay');
-    expect(suggested.alipay_notify_url ?? '', '应回传按部署域名派生的支付宝通知地址')
-      .toContain('/api/v1/payments/callback/alipay');
+    // 建议值与落库同源：只按显式部署域名派生，未配置时为空（不给管理员一个不会落库的地址）
+    const base = await readExplicitBaseURL();
+    expect(
+      suggested.alipay_notify_url ?? '',
+      `支付宝通知地址应按显式部署域名派生（当前域名来源为 ${base ? '已配置' : '未配置'}）`,
+    ).toBe(base === '' ? '' : `${base}/api/v1/payments/callback/alipay`);
   });
 
   test('6. 渠道绑定支付宝：绑定持久化保留，C 端下发与否取决于就绪状态', async ({ request }) => {
@@ -338,12 +358,13 @@ test.describe.serial('支付宝加签方式与通知地址（按配置行读写�
     }
   });
 
-  // 站点设置落地后，回调地址唯一来源是部署域名派生：前端入参（含伪造的非法地址）不参与落库，
+  // 站点设置落地后，回调地址唯一来源是显式部署域名：前端入参（含伪造的非法地址）不参与落库，
   // payment 侧的格式兜底校验只对 gRPC 直连调用生效，管理端不再提供手填入口
   test('11. 异步通知地址为派生值，前端入参不被采信', async () => {
+    const base = await readExplicitBaseURL();
+    const derived = base === '' ? '' : `${base}/api/v1/payments/callback/alipay`;
     const { suggested } = await readPaymentConfigs();
-    const derived = suggested.alipay_notify_url ?? '';
-    expect(derived, '读取接口应返回派生的支付宝通知地址').toContain('/api/v1/payments/callback/alipay');
+    expect(suggested.alipay_notify_url ?? '', '建议值应与显式部署域名派生口径一致').toBe(derived);
 
     const current = await readRow();
     const resp = (await (

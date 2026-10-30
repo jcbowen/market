@@ -92,6 +92,9 @@ func checkAlipayKeys(cfg config.AlipayConfig) string {
 func AlipayConfigStatus(cfg *model.PayConfig) (bool, string) {
 	alipay := alipayConfigOf(cfg)
 	if !alipay.IsConfigured() {
+		if alipayCredentialsReady(alipay) {
+			return false, missingDeployBaseReason
+		}
 		if alipay.IsCertMode() {
 			return false, "支付宝公钥证书模式必填配置不完整（AppID、应用私钥、应用公钥证书、支付宝公钥证书、支付宝根证书、异步通知地址均为必填）"
 		}
