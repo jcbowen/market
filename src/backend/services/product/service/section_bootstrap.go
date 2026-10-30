@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
-	"github.com/jcbowen/market/src/backend/common/pwdpolicy"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
+	"github.com/jcbowen/market/src/backend/common/pwdpolicy"
 	userModel "github.com/jcbowen/market/src/backend/services/user/model"
 	userService "github.com/jcbowen/market/src/backend/services/user/service"
 )
