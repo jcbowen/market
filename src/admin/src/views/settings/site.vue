@@ -80,6 +80,71 @@
               保存设置
             </n-button>
           </n-space>
+
+          <n-divider title-placement="left">平台验证文件</n-divider>
+          <n-alert type="default" :show-icon="false" class="mb-16" style="font-size: 12px">
+            微信公众号配置「JS接口安全域名 / 网页授权域名」与小程序配置「业务域名」时，需把平台下发的
+            校验文件放到站点域名根目录。将下载的 .txt 文件用文本编辑器打开，把文件名与内容分别填入下方保存，
+            即可通过 https://域名/文件名.txt 访问（内容原样下发）。支付宝小程序无需验证文件；
+            部署容器重建后文件会丢失，重新保存一次即可。
+          </n-alert>
+          <n-form-item label="文件名">
+            <n-input
+              v-model:value="verifyForm.name"
+              placeholder="如 MP_verify_xxx，不带后缀"
+              :disabled="!isSuperAdmin"
+              clearable
+            >
+              <template #suffix>
+                <span style="color: var(--n-text-color-disabled, #999); font-size: 13px">.txt</span>
+              </template>
+            </n-input>
+          </n-form-item>
+          <n-form-item label="文件内容">
+            <n-input
+              v-model:value="verifyForm.content"
+              type="textarea"
+              :autosize="{ minRows: 3, maxRows: 6 }"
+              maxlength="65536"
+              :disabled="!isSuperAdmin"
+              placeholder="粘贴校验文件的全部内容，原样复制不要改动"
+            />
+          </n-form-item>
+          <n-space justify="end" class="mb-16">
+            <n-button :disabled="!isSuperAdmin" @click="resetVerifyForm">重置</n-button>
+            <n-button type="primary" :loading="verifySaving" :disabled="!isSuperAdmin" @click="saveVerify">
+              保存验证文件
+            </n-button>
+          </n-space>
+          <n-table v-if="verifyFiles.length" size="small" :single-line="false">
+            <thead>
+              <tr>
+                <th>文件名（点击查看）</th>
+                <th style="width: 90px">大小</th>
+                <th style="width: 170px">更新时间</th>
+                <th style="width: 150px">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="f in verifyFiles" :key="f.name">
+                <td>
+                  <n-a :href="verifyFileURL(f.path)" target="_blank" rel="noopener" style="word-break: break-all">
+                    {{ f.name }}
+                  </n-a>
+                </td>
+                <td>{{ f.size }} B</td>
+                <td>{{ f.mod_time }}</td>
+                <td>
+                  <n-space size="small">
+                    <n-button text size="tiny" type="primary" @click="fillVerifyName(f)">填入表单</n-button>
+                    <n-button text size="tiny" type="error" :disabled="!isSuperAdmin" @click="removeVerify(f)">
+                      删除
+                    </n-button>
+                  </n-space>
+                </td>
+              </tr>
+            </tbody>
+          </n-table>
         </n-form>
       </div>
     </n-spin>
@@ -91,9 +156,9 @@
 defineOptions({ name: 'SiteSetting' })
 import { computed, onMounted, reactive, ref } from 'vue'
 import { refreshOnActivated } from '@/utils/activateRefresh'
-import { useMessage } from 'naive-ui'
-import { getSiteSetting, updateSiteSetting } from '@/api/admin'
-import type { SiteSetting } from '@/api/admin'
+import { useDialog, useMessage } from 'naive-ui'
+import { getSiteSetting, updateSiteSetting, listVerifyFiles, saveVerifyFile, deleteVerifyFile } from '@/api/admin'
+import type { SiteSetting, VerifyFileInfo } from '@/api/admin'
 import { CODE_DATA_CONFLICT } from '@/api/request'
 import type { BizError } from '@/api/request'
 import ImageUploadInput from '@/components/ImageUploadInput.vue'
@@ -234,8 +299,103 @@ async function save() {
 
 // keep-alive 缓存下切回本页不重新挂载，需重新拉取：
 // 带着旧表单值整份 PUT 会覆盖他人刚改的配置，未保存的本地编辑以最新值为准丢弃
-onMounted(load)
-refreshOnActivated(load)
+onMounted(loadPage)
+refreshOnActivated(loadPage)
+
+/**
+ * 页面进入/切回时的全量刷新：站点设置与平台验证文件列表
+ */
+function loadPage() {
+  load()
+  loadVerifyFiles()
+}
+
+// ---------------- 平台验证文件 ----------------
+// 微信域名归属校验文件（公众号 MP_verify_xxx.txt 纯文本 / 小程序业务域名 JSON 校验文件），
+// 保存后落盘网关 verify/ 目录，按站点根路径伪静态下发，零查库
+const dialog = useDialog()
+
+const verifyFiles = ref<VerifyFileInfo[]>([])
+const verifySaving = ref(false)
+const verifyForm = reactive({ name: '', content: '' })
+
+/** 站点根目录下的完整访问地址（后台与 C 端同域名部署） */
+function verifyFileURL(path: string) {
+  return `${window.location.origin}${path}`
+}
+
+/**
+ * 加载验证文件列表
+ */
+async function loadVerifyFiles() {
+  try {
+    const res = await listVerifyFiles()
+    if (res.data.code === 0) {
+      verifyFiles.value = res.data.data?.list ?? []
+    }
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  }
+}
+
+/**
+ * 重置验证文件表单
+ */
+function resetVerifyForm() {
+  verifyForm.name = ''
+  verifyForm.content = ''
+}
+
+/**
+ * 保存验证文件（同主体名覆盖更新，后端强制补 .txt 后缀）
+ */
+async function saveVerify() {
+  if (!verifyForm.name.trim() || !verifyForm.content) {
+    message.warning('请填写文件名与文件内容')
+    return
+  }
+  verifySaving.value = true
+  try {
+    const res = await saveVerifyFile({ file_name: verifyForm.name, content: verifyForm.content })
+    message.success(`验证文件 ${res.data.data?.name} 已保存，可通过站点根路径访问`)
+    resetVerifyForm()
+    await loadVerifyFiles()
+  } catch {
+    // 错误提示由请求拦截器统一弹出
+  } finally {
+    verifySaving.value = false
+  }
+}
+
+/**
+ * 把已生成文件的文件名主体填回表单（内容不从服务端回读，需从平台后台重新复制）
+ */
+function fillVerifyName(f: VerifyFileInfo) {
+  verifyForm.name = f.base_name
+  verifyForm.content = ''
+  message.info('已填入文件名，内容请从平台后台重新复制后保存')
+}
+
+/**
+ * 删除验证文件：删除后对应域名校验立即失效，需确认
+ */
+function removeVerify(f: VerifyFileInfo) {
+  dialog.warning({
+    title: '删除验证文件',
+    content: `确定删除 ${f.name} 吗？删除后该文件对应的域名校验将立即失效。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await deleteVerifyFile(f.name)
+        message.success('验证文件已删除')
+        await loadVerifyFiles()
+      } catch {
+        // 错误提示由请求拦截器统一弹出
+      }
+    },
+  })
+}
 </script>
 
 <style scoped>

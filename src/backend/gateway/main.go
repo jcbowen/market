@@ -28,6 +28,7 @@ import (
 	"github.com/jcbowen/market/src/backend/gateway/client"
 	"github.com/jcbowen/market/src/backend/gateway/handler"
 	gwMiddleware "github.com/jcbowen/market/src/backend/gateway/middleware"
+	"github.com/jcbowen/market/src/backend/gateway/verifyfs"
 	"github.com/jcbowen/market/src/backend/gateway/ws"
 )
 
@@ -569,6 +570,10 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 
 			authAdmin.GET("/settings/site", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetSiteSetting)
 			authAdmin.PUT("/settings/site", gwMiddleware.RequirePermission("settings:update"), adminHandler.UpdateSiteSetting)
+			// 平台验证文件（微信域名归属校验）：落盘 verify/ 目录伪静态下发，零查库；写入仅超管（handler 内 IsSuperAdmin 双闸）
+			authAdmin.GET("/settings/verify-files", gwMiddleware.RequirePermission("settings:view"), adminHandler.ListVerifyFiles)
+			authAdmin.POST("/settings/verify-files", gwMiddleware.RequirePermission("settings:update"), adminHandler.SaveVerifyFile)
+			authAdmin.DELETE("/settings/verify-files/:name", gwMiddleware.RequirePermission("settings:update"), adminHandler.DeleteVerifyFile)
 			// 支付配置（pay_config 多行制）：同平台可配多行，渠道按 "platform:id" 绑定使用哪一行
 			authAdmin.GET("/settings/payment", gwMiddleware.RequirePermission("settings:view"), adminHandler.GetPaymentConfigs)
 			authAdmin.POST("/settings/payment", gwMiddleware.RequirePermission("settings:update"), adminHandler.SavePaymentConfig)
@@ -667,6 +672,11 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 	registerUploads(r, resolveSeedDir(), filepath.Join(getBinDir(), localDir), localDir)
 
 	r.NoRoute(func(c *gin.Context) {
+		// 平台验证文件伪静态：微信域名归属校验要求 https://域名/xxx.txt 可访问，
+		// 命中 verify/ 内文件即按纯文本原样下发（零查库）；未命中走原 404/SPA fallback
+		if serveVerifyFile(c) {
+			return
+		}
 		if strings.HasPrefix(c.Request.URL.Path, "/b/") {
 			c.File(filepath.Join(adminPath, "index.html"))
 			return
@@ -688,6 +698,40 @@ func shutdown(srv *http.Server) {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("Gateway 关闭异常: %v", err)
 	}
+}
+
+// verifyFileDir 平台验证文件目录：网关运行目录下 verify/（包级变量以便测试注入临时目录）
+var verifyFileDir = verifyfs.DefaultDir()
+
+// serveVerifyFile 平台验证文件伪静态下发（微信域名归属校验等场景）
+// 仅响应根目录单段文件名的 GET/HEAD（如 /MP_verify_xxx.txt）：verifyfs 白名单已排除
+// 路径分隔符与空白字符，穿越形态一律不命中。固定 text/plain + nosniff——校验文件
+// 是字节级原样转发的纯文本，禁止 MIME 嗅探可确保浏览器把内容当文本展示而非执行
+//
+// 参数：
+//   - c: gin 上下文
+//
+// 返回值：
+//   - bool: 是否命中并已下发（调用方命中时应终止后续处理）
+func serveVerifyFile(c *gin.Context) bool {
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+		return false
+	}
+	p := path.Clean(c.Request.URL.Path)
+	// 单段判定：Clean 后形如 /name.txt 才是验证文件请求，带子路径的交给原 404/SPA fallback
+	if !strings.HasPrefix(p, "/") || strings.Contains(p[1:], "/") {
+		return false
+	}
+	fp, ok := verifyfs.Lookup(verifyFileDir, p[1:])
+	if !ok {
+		return false
+	}
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.Header("X-Content-Type-Options", "nosniff")
+	// 文件可被覆盖更新，禁止缓存，避免微信/浏览器拿到旧内容
+	c.Header("Cache-Control", "no-cache")
+	c.File(fp)
+	return true
 }
 
 // resolveAttachmentLocalDir 启动时经 product 服务读取附件本地存储目录名（local_dir）

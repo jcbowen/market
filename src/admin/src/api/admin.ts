@@ -465,3 +465,51 @@ export function updateSiteSetting(
     data,
   })
 }
+
+/** 平台验证文件条目（微信域名归属校验） */
+export interface VerifyFileInfo {
+  /** 完整文件名（含 .txt 后缀），即对外可访问的 URL 路径段 */
+  name: string
+  /** 文件名主体（不含后缀），供编辑回填 */
+  base_name: string
+  /** 字节数 */
+  size: number
+  /** 最后写入时间 */
+  mod_time: string
+  /** 对外可访问路径（站点根目录下） */
+  path: string
+}
+
+/**
+ * 列出平台验证文件
+ * @returns 验证文件清单（按文件名排序）
+ */
+export function listVerifyFiles() {
+  return request<ApiResult<{ list: VerifyFileInfo[] }>>({
+    url: '/api/v1/admin/settings/verify-files',
+    method: 'GET',
+  })
+}
+
+/**
+ * 保存平台验证文件（同主体名覆盖更新）
+ * @param data file_name 文件名主体（不含后缀，后端强制补 .txt）；content 平台校验文件原文
+ */
+export function saveVerifyFile(data: { file_name: string; content: string }) {
+  return request<ApiResult<{ name: string; path: string }>>({
+    url: '/api/v1/admin/settings/verify-files',
+    method: 'POST',
+    data,
+  })
+}
+
+/**
+ * 删除平台验证文件
+ * @param name 完整文件名（含 .txt 后缀）
+ */
+export function deleteVerifyFile(name: string) {
+  return request<ApiResult<{ success: boolean }>>({
+    url: `/api/v1/admin/settings/verify-files/${encodeURIComponent(name)}`,
+    method: 'DELETE',
+  })
+}
