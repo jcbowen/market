@@ -2,8 +2,8 @@
     "name" : "社区商超",
     "appid" : "__UNI__ECFCD0E",
     "description" : "社区商超多端小程序",
-    "versionName" : "0.8.14",
-    "versionCode" : "54",
+    "versionName" : "0.8.15",
+    "versionCode" : "55",
     "transformPx" : false,
     /* 5+App特有相关 */
     "app-plus" : {
