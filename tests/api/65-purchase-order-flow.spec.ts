@@ -182,9 +182,8 @@ test.beforeAll(async ({ playwright }) => {
     skuB = b.skuId;
     skuC = c.skuId;
   } catch (e) {
-    console.warn(`[65] 造数失败，用例将跳过：${e instanceof Error ? e.message : e}`);
-    supplierId = 0;
-    skuA = 0;
+    // 假绿收敛：栈已起时造数失败即回归，显式失败而非静默 skip
+    throw new Error(`[65] 造数失败：${e instanceof Error ? e.message : e}`);
   }
 });
 

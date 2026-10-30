@@ -12,6 +12,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/pageparam"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -278,6 +279,8 @@ func (s *CommunityService) UpdateCommunity(ctx context.Context, req *user.Update
 	c.EnableDelivery = req.EnableDelivery
 	c.Sort = req.Sort
 	c.Status = req.Status
+	c.CreatedAt = timeutil.NormalizeRFC3339(c.CreatedAt)
+	c.UpdatedAt = timeutil.NormalizeRFC3339(c.UpdatedAt)
 	if err := s.db.GetDb().WithContext(ctx).Save(c).Error; err != nil {
 		return nil, err
 	}

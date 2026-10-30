@@ -491,7 +491,10 @@ func (s *OrderService) createOrderTransaction(ctx context.Context, orderModel *m
 		if len(stockItems) > 0 {
 			if _, err := grpcclient.ProductClient.BatchDeductStock(ctx, &product.BatchDeductStockReq{
 				OrderId: orderModel.ID,
-				Items:   stockItems,
+				// 幂等业务号传订单号：扣减侧 op-log 记录 biz_no，与文档 05 biz_no 口径一致，
+				// 也为未来分次扣减预留分片能力
+				BizNo: orderModel.OrderNo,
+				Items: stockItems,
 			}); err != nil {
 				return fmt.Errorf("扣减库存失败: %w", err)
 			}

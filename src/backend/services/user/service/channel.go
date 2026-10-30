@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/channel"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
@@ -318,6 +319,8 @@ func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveCl
 	}
 	row.PayMethods = methods
 
+	row.CreatedAt = timeutil.NormalizeRFC3339(row.CreatedAt)
+	row.UpdatedAt = timeutil.NormalizeRFC3339(row.UpdatedAt)
 	if err := s.db.GetDb().WithContext(ctx).Save(&row).Error; err != nil {
 		return nil, fmt.Errorf("保存客户端渠道失败: %w", err)
 	}

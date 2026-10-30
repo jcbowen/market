@@ -167,7 +167,13 @@ export function createPurchaseOrder(data: {
  */
 export function updatePurchaseOrder(
   id: number,
-  data: { supplier_id: number; remark?: string; items: Array<{ sku_id: number; quantity: number; purchase_price: number }> },
+  data: {
+    supplier_id: number
+    remark?: string
+    /** 乐观锁版本号：载入详情时的 updated_at，冲突返回 10007 */
+    updated_at?: string
+    items: Array<{ sku_id: number; quantity: number; purchase_price: number }>
+  },
 ) {
   return request<ApiResult<PurchaseOrderDetail>>({
     url: `/api/v1/admin/inventory/purchase-orders/${id}`,
@@ -205,6 +211,8 @@ export function createStockInOrder(data: {
   supplier_id?: number
   purchase_order_id?: number
   remark?: string
+  /** 幂等业务号：客户端 UUID，同号重复提交不重复入库 */
+  biz_no?: string
   items: Array<{
     sku_id: number
     quantity: number
@@ -250,6 +258,8 @@ export function getStockInOrderDetail(id: number) {
 export function createStockOutOrder(data: {
   type: number
   remark?: string
+  /** 幂等业务号：客户端 UUID，同号重复提交不重复出库 */
+  biz_no?: string
   items: Array<{ sku_id: number; quantity: number }>
 }) {
   return request<ApiResult<StockOutOrderDetail>>({

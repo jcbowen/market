@@ -312,6 +312,9 @@ const originSale = ref<{ status: number; onSaleAt: string }>({ status: 1, onSale
 /** 编辑态分类名兜底：分类列表未就绪或分类已删除时，CategoryPicker 用它回显 */
 const categoryNameFallback = ref('')
 
+// 乐观锁版本号：编辑模式载入详情时记录 updated_at，保存时原样回传（并发冲突返回 10007）
+const versionUpdatedAt = ref('')
+
 /** 单规格默认 SKU（编辑时回填 id 以更新而非新建） */
 const singleSku = reactive({
   id: 0,
@@ -450,6 +453,8 @@ async function loadDetail(): Promise<void> {
   const p = detail.product
   originSale.value = { status: p.status, onSaleAt: p.on_sale_at ?? '' }
   categoryNameFallback.value = p.category_name ?? ''
+  // 乐观锁版本号：保存时原样回传，期间被他人修改则服务端拒绝（10007）
+  versionUpdatedAt.value = p.updated_at || ''
   Object.assign(form, {
     name: p.name,
     category_id: p.category_id,
@@ -605,6 +610,8 @@ function buildPayload(): ProductSavePayload | null {
     form.sale_mode === 'now'
       ? { status: 1 }
       : {}),
+    // 乐观锁版本号：仅编辑模式携带，防止两人同时编辑静默互相覆盖
+    ...(isEdit.value ? { updated_at: versionUpdatedAt.value } : {}),
     specs: [],
     sku_items: [],
   }

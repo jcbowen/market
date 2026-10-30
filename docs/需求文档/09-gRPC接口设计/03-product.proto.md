@@ -303,7 +303,8 @@ message UpdateProductReq {
   string cover_image = 5;
   repeated string images = 6;
   string unit = 7;
-  int32 sort = 8;
+  // 排序：optional 三态（不传=不改动，传 0=真的置 0）；非 optional 时 0 无法与「未传」区分
+  optional int32 sort = 8;
   int32 status = 9;
   int32 min_buy = 10;
   bool is_multi_spec = 11;
@@ -313,11 +314,13 @@ message UpdateProductReq {
   int32 virtual_sales = 15; // 虚拟销量（展示口径=真实销量+虚拟销量）
   // 操作者社区语境：>0 时服务端强校验商品归属，防止跨社区修改（超管传 0 放行）
   int64 community_id = 16;
-  // 定时上架时间（"2006-01-02 15:04:05"）：非空且为未来时间时置为下架+预约；
-  // 显式传空串表示取消定时（配合 status 决定立即上架或保持下架）
-  string on_sale_at = 17;
+  // 定时上架时间（"2006-01-02 15:04:05"）：optional 三态——
+  // 不传=维持原预约不变；显式传未来时间=置为下架+预约；显式传空串=取消定时（配合 status 决定立即上架或保持下架）
+  optional string on_sale_at = 17;
   // 商品富文本详情（服务端白名单消毒后的 HTML；admin 全量提交，直接覆盖）
   string content = 18;
+  // 乐观锁版本号（2026-10-30 新增）：取详情接口返回的 updated_at 原样提交，服务端不一致时返回 10007（数据已被他人修改）
+  string updated_at = 19;
 
 }
 
@@ -368,7 +371,8 @@ message ProductInfo {
   int32 virtual_sales = 21;   // 虚拟销量（展示口径=真实销量+虚拟销量）
   string on_sale_at = 22;     // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
   string content = 23;        // 商品富文本详情（服务端已消毒的 HTML，C 端 rich-text 渲染）
-
+  int32 sku_total = 24;       // 启用 SKU 数（仅 BatchGetProducts 批量回填，其余出口为 0）
+  string updated_at = 25;     // 更新时间，兼作编辑保存的乐观锁版本号（UpdateProductReq.updated_at 回传比对）
 }
 
 message ProductDetail {
@@ -590,6 +594,9 @@ message DeductStockReq {
   int64 sku_id = 1;
   int32 quantity = 2;
   int64 order_id = 3;
+  // 幂等业务号：与 stock_op_logs.biz_no 同口径（整单扣减传订单号），
+  // 为未来分次扣减预留分片能力；空串时幂等键退化为 (order_id, sku_id, op_type, '')
+  string biz_no = 4;
 }
 
 message DeductStockResp {
@@ -618,6 +625,8 @@ message StockItemQty {
 message BatchDeductStockReq {
   int64 order_id = 1;
   repeated StockItemQty items = 2;
+  // 幂等业务号：整单扣减传订单号，同一单据内所有行共用（2026-10-30 新增，多笔部分退款各自独立 biz_no）
+  string biz_no = 3;
 }
 
 message BatchDeductStockResp {
@@ -815,6 +824,8 @@ message UpdatePurchaseOrderReq {
   int64 supplier_id = 3;
   string remark = 4;
   repeated PurchaseOrderItemReq items = 5; // 全量替换，仅草稿态可改
+  // 乐观锁版本号（2026-10-30 新增）：取详情接口返回的 updated_at 原样提交，服务端不一致时返回 10007
+  string updated_at = 6;
 }
 
 message SubmitPurchaseOrderReq {
@@ -891,6 +902,8 @@ message CreateStockInOrderReq {
   int64 operator_id = 4;
   string remark = 5;
   repeated StockInOrderItemReq items = 6;
+  // 幂等业务号（2026-10-30 新增）：客户端生成 UUID，同一 biz_no 重复提交不重复入库（防网络重试/双击重复加库存）
+  string biz_no = 7;
 }
 
 message StockInOrderInfo {
@@ -958,6 +971,8 @@ message CreateStockOutOrderReq {
   int64 operator_id = 3;
   string remark = 4;
   repeated StockOutOrderItemReq items = 5;
+  // 幂等业务号（2026-10-30 新增）：客户端生成 UUID，同一 biz_no 重复提交不重复出库
+  string biz_no = 6;
 }
 
 message StockOutOrderInfo {
@@ -1837,6 +1852,10 @@ message AttachmentMigrateDeleteBatchResp {
 rpc ListDataPackages(ListDataPackagesReq) returns (ListDataPackagesResp);
 rpc PreviewDataImport(DataImportPreviewReq) returns (DataImportPreviewResp);
 rpc ImportDataPackage(DataImportReq) returns (DataImportResp);
+
+// 数据清理（应用中心；实现见 service/datacleanup.go，初期仅超管）
+rpc PreviewDataCleanup(DataCleanupPreviewReq) returns (DataCleanupPreviewResp);
+rpc RunDataCleanup(DataCleanupRunReq) returns (DataCleanupRunResp);
 ```
 
 ```protobuf
@@ -1925,3 +1944,62 @@ message DataImportResp {
 | GET | /api/v1/admin/data-import/packages | `product:create` + 仅超管 |
 | POST | /api/v1/admin/data-import/preview | `product:create` + 仅超管 |
 | POST | /api/v1/admin/data-import/import | `product:create` + 仅超管 |
+
+## 数据清理（应用中心；实现见 service/datacleanup.go，初期仅超管）
+
+```protobuf
+// --- 数据清理（应用中心；保留支付配置/附件配置/站点设置/系统骨架/演示种子图片） ---
+// DataCleanupSectionInfo 预检返回的单个数据域（行数统计 + 附件域的文件数统计）
+message DataCleanupSectionInfo {
+  string key = 1;         // 域标识：refunds / orders / payments / inventory / user_assets / marketing / catalog / attachments / users
+  string name = 2;        // 展示名
+  string description = 3; // 覆盖范围说明（含保留项提示）
+  int64 row_count = 4;    // 将清理的记录行数
+  int64 file_count = 5;   // 将删除的文件数（仅 attachments 域：本地文件/OSS 对象）
+}
+
+message DataCleanupPreviewReq {
+  int64 community_id = 1; // 预留（清理为全库口径，当前未按社区过滤）
+}
+
+message DataCleanupPreviewResp {
+  repeated DataCleanupSectionInfo sections = 1;
+}
+
+// DataCleanupItem 执行结果明细（域级 + 附件文件级）
+// status: cleaned=已清理 failed=失败
+message DataCleanupItem {
+  string section_key = 1;
+  string name = 2;     // 域展示名（域级）或文件相对路径（附件文件级）
+  string status = 3;
+  string message = 4;  // 失败原因等补充
+  int64 rows = 5;      // 该域删除的记录行数（文件级条目为 0）
+}
+
+message DataCleanupRunReq {
+  // confirm_text 强确认文案：必须与后端约定文案完全一致才执行（防误触，操作不可逆）
+  string confirm_text = 1;
+}
+
+message DataCleanupRunResp {
+  int32 sections_total = 1;   // 参与清理的域数
+  int32 sections_failed = 2;  // 失败域数（单域失败不阻断后续域）
+  int64 rows_deleted = 3;     // 删除记录总行数
+  int64 files_deleted = 4;    // 文件删除成功数
+  int64 files_failed = 5;     // 文件删除失败数（明细见 details）
+  repeated DataCleanupItem details = 6;
+}
+```
+
+接口语义说明：
+
+- `PreviewDataCleanup`：只读预检，逐域统计将清理的记录行数（附件域额外统计本地文件/OSS 对象数），供执行前二次确认页展示。
+- `RunDataCleanup`：`confirm_text` 与后端约定文案完全一致才执行（不一致返回 10001）；按域逐个独立事务清理，单域失败记录 `message` 后继续，不阻断后续域；保留支付配置/附件配置/站点设置/系统骨架与演示种子图片。
+- 执行后建议整库层面重启服务栈（盘点/订单等状态由各域自行收敛，无历史脏数据迁移承诺）。
+
+对应网关路由（admin，需 JWT + 超管双闸，见 06-接口设计/03 的「数据清理模块」）：
+
+| 方法 | 路径 | 权限 |
+|------|------|------|
+| GET | /api/v1/admin/data-cleanup/preview | `product:create` + 仅超管 |
+| POST | /api/v1/admin/data-cleanup/run | `product:create` + 仅超管 |

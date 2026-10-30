@@ -118,6 +118,10 @@ func (s *CategoryService) UpdateCategory(ctx context.Context, req *product.Updat
 	// status 由管理端全量提交（编辑表单显式传值），直接赋值以支持启用/禁用双向切换；
 	// 旧逻辑 `if req.Status != 0` 会把 0（禁用）当作未传，导致分类永远无法禁用
 	c.Status = req.Status
+	// parseTime=true 下从 DB 读回的 created_at/updated_at 是 RFC3339 形态，
+	// 整行 Save 原样回写会被严格模式拒绝（Error 1292），写库前规范化
+	c.CreatedAt = dbTimeString(c.CreatedAt)
+	c.UpdatedAt = dbTimeString(c.UpdatedAt)
 	if err := s.db.GetDb().WithContext(ctx).Save(c).Error; err != nil {
 		return nil, err
 	}

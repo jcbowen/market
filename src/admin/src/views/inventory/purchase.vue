@@ -20,8 +20,8 @@
             clearable
             style="width: 180px"
           />
-          <n-button type="primary" :loading="orderLoading" @click="loadOrders">查询</n-button>
-          <n-button type="primary" @click="router.push('/stock/purchase/create')">新建采购单</n-button>
+          <n-button type="primary" :loading="orderLoading" @click="searchOrders">查询</n-button>
+          <n-button v-if="canCreate" type="primary" @click="router.push('/stock/purchase/create')">新建采购单</n-button>
         </n-space>
         <n-data-table
           :columns="orderColumns"
@@ -44,7 +44,7 @@
             @keyup.enter="onSupplierSearch"
           />
           <n-button type="primary" :loading="supplierLoading" @click="onSupplierSearch">查询</n-button>
-          <n-button type="primary" @click="openSupplierForm()">新增供应商</n-button>
+          <n-button v-if="canCreate" type="primary" @click="openSupplierForm()">新增供应商</n-button>
         </n-space>
         <n-data-table :columns="supplierColumns" :data="supplierList" :loading="supplierLoading" :pagination="supplierPagination" remote @update:page="onSupplierPageChange" />
       </n-tab-pane>
@@ -88,12 +88,13 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockPurchase' })
-import { h, ref, onActivated } from 'vue'
+import { h, ref, computed, onActivated } from 'vue'
 import { formatAmount } from '@/utils/format'
 import { useRouter, useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns, FormInst, FormRules } from 'naive-ui'
+import { useAuthStore } from '@/stores/auth'
 import {
   getPurchaseOrderList,
   submitPurchaseOrder,
@@ -115,6 +116,10 @@ const router = useRouter()
 const route = useRoute()
 const message = useMessage()
 const dialog = useDialog()
+// 按钮级权限：与网关 RequirePermission 同码（采购/供应商写操作 = inventory:create/update）
+const authStore = useAuthStore()
+const canCreate = computed(() => authStore.hasPermission('inventory:create'))
+const canUpdate = computed(() => authStore.hasPermission('inventory:update'))
 const activeTab = ref('orders')
 
 // ---------- 采购单 ----------
@@ -173,15 +178,23 @@ const orderColumns: DataTableColumns<PurchaseOrder> = [
         h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => router.push(`/stock/purchase/${row.id}`) }, { default: () => '详情' }),
       ]
       if (row.status === 1) {
+        if (canUpdate.value) {
+          actions.push(
+            h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => router.push(`/stock/purchase/edit/${row.id}`) }, { default: () => '编辑' }),
+            h(NButton, { size: 'small', type: 'info', quaternary: true, onClick: () => onSubmitOrder(row) }, { default: () => '提交' }),
+          )
+        }
         actions.push(
-          h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => router.push(`/stock/purchase/edit/${row.id}`) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', type: 'info', quaternary: true, onClick: () => onSubmitOrder(row) }, { default: () => '提交' }),
-          h(NButton, { size: 'small', type: 'error', quaternary: true, onClick: () => onCancelOrder(row) }, { default: () => '取消' }),
+          h(NButton, { size: 'small', type: 'error', quaternary: true, disabled: !canUpdate.value, onClick: () => onCancelOrder(row) }, { default: () => '取消' }),
         )
       } else if (row.status === 2 || row.status === 3) {
+        if (canCreate.value) {
+          actions.push(
+            h(NButton, { size: 'small', type: 'success', quaternary: true, onClick: () => router.push(`/stock/in/create?purchase_id=${row.id}`) }, { default: () => '去入库' }),
+          )
+        }
         actions.push(
-          h(NButton, { size: 'small', type: 'success', quaternary: true, onClick: () => router.push(`/stock/in/create?purchase_id=${row.id}`) }, { default: () => '去入库' }),
-          h(NButton, { size: 'small', type: 'error', quaternary: true, onClick: () => onCancelOrder(row) }, { default: () => '取消' }),
+          h(NButton, { size: 'small', type: 'error', quaternary: true, disabled: !canUpdate.value, onClick: () => onCancelOrder(row) }, { default: () => '取消' }),
         )
       }
       return h('span', {}, { default: () => actions })
@@ -284,8 +297,8 @@ const supplierColumns: DataTableColumns<Supplier> = [
     render(row) {
       return h('span', {}, {
         default: () => [
-          h(NButton, { size: 'small', type: 'primary', quaternary: true, onClick: () => openSupplierForm(row) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', type: 'error', quaternary: true, onClick: () => onDeleteSupplier(row) }, { default: () => '删除' }),
+          h(NButton, { size: 'small', type: 'primary', quaternary: true, disabled: !canUpdate.value, onClick: () => openSupplierForm(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', type: 'error', quaternary: true, disabled: !canUpdate.value, onClick: () => onDeleteSupplier(row) }, { default: () => '删除' }),
         ],
       })
     },
@@ -303,10 +316,24 @@ async function loadSuppliers() {
     if (res.data.code === 0) {
       supplierList.value = res.data.data.list
       supplierPagination.value.itemCount = res.data.data.total
-      supplierFilterOptions.value = supplierList.value.map((s) => ({ label: s.name, value: s.id }))
     }
   } finally {
     supplierLoading.value = false
+  }
+}
+
+/**
+ * 供应商筛选下拉：独立拉取全量供应商（网关 pageSize 封顶 100），
+ * 不跟随供应商页签的分页与关键词，否则筛选下拉只会包含当前页的 20 条
+ */
+async function loadSupplierFilterOptions() {
+  try {
+    const res = await getSupplierList({ page: 1, page_size: 100 })
+    if (res.data.code === 0) {
+      supplierFilterOptions.value = (res.data.data.list ?? []).map((s) => ({ label: s.name, value: s.id }))
+    }
+  } catch {
+    // 下拉数据源失败不阻塞列表，拦截器已统一弹错
   }
 }
 
@@ -415,5 +442,7 @@ onActivated(() => {
     return
   }
   loadOrders()
+  // 筛选下拉独立于分页列表，新增供应商后也要能筛到，激活时一并刷新
+  loadSupplierFilterOptions()
 })
 </script>

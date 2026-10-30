@@ -331,6 +331,14 @@ func (s *SkuService) CreateSku(ctx context.Context, req *product.CreateSkuReq) (
 	if err := EnsureScope(req.CommunityId, prod.CommunityID, "商品"); err != nil {
 		return nil, err
 	}
+	// 与商品保存链路（spec.go）同口径的价格校验：
+	// 负成本会直接污染毛利报表（ReportService 按 cost_price 计成本），价格必须为正
+	if req.Price <= 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "SKU 价格必须大于 0")
+	}
+	if req.CostPrice < 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "SKU 成本价不能为负数")
+	}
 	sku := &model.Sku{
 		ProductID:   prod.ID,
 		CommunityID: prod.CommunityID,
@@ -402,8 +410,15 @@ func (s *SkuService) UpdateSku(ctx context.Context, req *product.UpdateSkuReq) (
 	if req.Price > 0 {
 		sku.Price = req.Price
 	}
+	// 负值直接拒绝而非静默忽略：调用方会误以为已生效，负成本还会污染毛利报表
+	if req.Price < 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "SKU 价格不能为负数")
+	}
 	if req.CostPrice > 0 {
 		sku.CostPrice = req.CostPrice
+	}
+	if req.CostPrice < 0 {
+		return nil, bizerr.New(codes.InvalidArgument, "SKU 成本价不能为负数")
 	}
 	if req.SafetyStock > 0 {
 		sku.SafetyStock = req.SafetyStock
@@ -434,6 +449,10 @@ func (s *SkuService) UpdateSku(ctx context.Context, req *product.UpdateSkuReq) (
 			}
 			sku.Barcode = barcode
 		}
+		// parseTime=true 下从 DB 读回的 created_at/updated_at 是 RFC3339 形态，
+		// 整行 Save 原样回写会被严格模式拒绝（Error 1292），写库前规范化
+		sku.CreatedAt = dbTimeString(sku.CreatedAt)
+		sku.UpdatedAt = dbTimeString(sku.UpdatedAt)
 		if err := tx.Save(sku).Error; err != nil {
 			return err
 		}

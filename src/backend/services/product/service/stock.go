@@ -25,6 +25,8 @@ const (
 	stockOpTypeRelease      int8 = 2 // 主库存释放（取消/退款/超时）
 	stockOpTypeFlashDeduct  int8 = 3 // 秒杀库存扣减
 	stockOpTypeFlashRelease int8 = 4 // 秒杀库存释放
+	stockOpTypeBillIn       int8 = 5 // 入库单幂等（order_id 恒为 0，biz_no=客户端 UUID）
+	stockOpTypeBillOut      int8 = 6 // 出库单幂等（同上）
 )
 
 // StockService 库存业务服务
@@ -150,7 +152,8 @@ func deductSkuLocked(tx *gorm.DB, sku *model.Sku, quantity int32, orderID int64,
 		return bizerr.New(codes.ResourceExhausted, fmt.Sprintf("商品 %s 库存不足", sku.SkuCode))
 	}
 	before := sku.Stock
-	takes, err := deductBatches(tx, sku, quantity, now)
+	// 销售扣减排除已过期批次：无可用（未过期）批次时 deductBatches 返回定向错误
+	takes, err := deductBatches(tx, sku, quantity, now, true)
 	if err != nil {
 		return err
 	}
@@ -174,8 +177,9 @@ func deductSkuLocked(tx *gorm.DB, sku *model.Sku, quantity int32, orderID int64,
 			AfterStock:     running,
 			BatchID:        t.Batch.ID,
 			BatchNo:        t.Batch.BatchNo,
-			ProductionDate: t.Batch.ProductionDate,
-			ExpireDate:     t.Batch.ExpireDate,
+			// 批次日期从 DB 读回是 RFC3339 形态（parseTime=true），必须规范化后才能写回 DATE 列
+			ProductionDate: datePtr(t.Batch.ProductionDate),
+			ExpireDate:     datePtr(t.Batch.ExpireDate),
 			RelatedOrderID: orderID,
 			CreatedAt:      now,
 		}
@@ -222,6 +226,7 @@ func (s *StockService) DeductStock(ctx context.Context, req *product.DeductStock
 			SkuID:     req.SkuId,
 			OpType:    stockOpTypeDeduct,
 			Quantity:  req.Quantity,
+			BizNo:     req.BizNo,
 			CreatedAt: now,
 		}})
 		if err != nil {
@@ -290,6 +295,7 @@ func (s *StockService) BatchDeductStock(ctx context.Context, req *product.BatchD
 				SkuID:     id,
 				OpType:    stockOpTypeDeduct,
 				Quantity:  qtyBySku[id],
+				BizNo:     req.BizNo,
 				CreatedAt: now,
 			})
 		}
@@ -795,16 +801,20 @@ func lockFlashSaleItemForRelease(tx *gorm.DB, skuID int64, now time.Time) (*mode
 }
 
 // deductBatches 按 FEFO 从批次扣减数量并同步 SKU 汇总库存（调用方须已锁 SKU 行）
+// 入口先做批次合计与汇总库存的双向对账，任何方向的单边漂移立即报错，
+// 避免 product_skus.stock 与 Σ批次 长期失真且无告警。
 // 参数：
 //   - tx: 事务
 //   - sku: SKU 模型（行锁持有中，函数内更新其 Stock 汇总）
 //   - quantity: 扣减数量（正数）
-//   - now: 当前时间字符串（updated_at 用）
+//   - now: 当前时间字符串（updated_at 与过期判定用）
+//   - excludeExpired: 是否排除已过期批次（销售扣减传 true，防止过期商品被优先售出；
+//     报损/领用/调整/盘亏等消耗路径传 false，保留消耗过期批次的能力）
 //
 // 返回值：
 //   - []batchTake: 各批次扣减明细
-//   - error: 批次合计与汇总不一致或更新失败
-func deductBatches(tx *gorm.DB, sku *model.Sku, quantity int32, now string) ([]batchTake, error) {
+//   - error: 批次合计与汇总不一致、无可用（未过期）批次或更新失败
+func deductBatches(tx *gorm.DB, sku *model.Sku, quantity int32, now string, excludeExpired bool) ([]batchTake, error) {
 	var batches []model.StockBatch
 	// FEFO：有有效期批次按过期日期升序先出，无有效期批次排最后按创建顺序
 	if err := tx.Clauses(lockClause()).
@@ -814,11 +824,26 @@ func deductBatches(tx *gorm.DB, sku *model.Sku, quantity int32, now string) ([]b
 		return nil, err
 	}
 
+	// 双向对账：批次合计必须等于汇总库存（加载未过滤，两个方向都能覆盖）
+	var batchTotal int32
+	for i := range batches {
+		batchTotal += batches[i].Quantity
+	}
+	if batchTotal != sku.Stock {
+		return nil, bizerr.New(codes.Internal,
+			fmt.Sprintf("SKU %s 批次合计 %d 与汇总库存 %d 不一致，请核对库存数据", sku.SkuCode, batchTotal, sku.Stock))
+	}
+
+	today := now[:10]
 	remaining := quantity
 	takes := make([]batchTake, 0, len(batches))
 	for _, b := range batches {
 		if remaining <= 0 {
 			break
+		}
+		// 销售扣减跳过已过期批次（expire_date < 当天；datePtr 截断后字符串比较对 ISO 日期成立）
+		if excludeExpired && b.ExpireDate != nil && *datePtr(b.ExpireDate) < today {
+			continue
 		}
 		take := b.Quantity
 		if take > remaining {
@@ -828,7 +853,12 @@ func deductBatches(tx *gorm.DB, sku *model.Sku, quantity int32, now string) ([]b
 		remaining -= take
 	}
 	if remaining > 0 {
-		return nil, fmt.Errorf("SKU %s 批次库存不一致：汇总 %d 大于批次合计", sku.SkuCode, sku.Stock)
+		if excludeExpired {
+			return nil, bizerr.New(codes.ResourceExhausted,
+				fmt.Sprintf("商品 %s 无可用（未过期）批次库存", sku.SkuCode))
+		}
+		return nil, bizerr.New(codes.Internal,
+			fmt.Sprintf("SKU %s 批次库存不一致：汇总 %d 大于批次合计", sku.SkuCode, sku.Stock))
 	}
 
 	for i := range takes {
@@ -1155,6 +1185,52 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// datePtr 规范化日期指针为 "YYYY-MM-DD"（截取前 10 位）
+// DATE 列在 DSN parseTime=true 时被驱动解析为 time.Time，扫入模型的 *string 字段
+// 得到 RFC3339 形态（如 "2026-11-29T00:00:00+08:00"）；该形态直接回写 DATE 列
+// 会被 MySQL 严格模式拒绝（Error 1292），导致带有效期的批次一旦被扣减、
+// stock_records 落流水即失败。所有「从 DB 读回的批次日期 → 写回日期列」的赋值
+// 都必须经本助手规范化。
+//
+// 参数：
+//   - v: 原始日期字符串指针（可能为 nil 或 RFC3339 形态）
+//
+// 返回值：
+//   - *string: "YYYY-MM-DD" 形态的日期指针；入参为 nil 时返回 nil
+//
+// 使用示例：
+//
+//	record := &model.StockRecord{ExpireDate: datePtr(batch.ExpireDate)}
+func datePtr(v *string) *string {
+	if v == nil || len(*v) < 10 {
+		return v
+	}
+	d := (*v)[:10]
+	return &d
+}
+
+// dbTimeString 规范化 datetime 文本为 "2006-01-02 15:04:05"
+// DSN parseTime=true 时 datetime 列读回 *string 是 RFC3339 形态（如
+// "2026-10-30T15:01:22+08:00"），「从 DB 读回的整行模型再 Save/Updates 回写」时
+// 该形态会被 MySQL 严格模式拒绝（Error 1292）。整行保存路径（如 UpdateSku 的
+// tx.Save）写库前必须先经本助手规范化 created_at/updated_at。
+//
+// 参数：
+//   - s: 时间字符串（RFC3339 或 datetime 文本均可）
+//
+// 返回值：
+//   - string: "2006-01-02 15:04:05" 形态；解析失败时原样返回
+//
+// 使用示例：
+//
+//	sku.CreatedAt = dbTimeString(sku.CreatedAt)
+func dbTimeString(s string) string {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.Local().Format("2006-01-02 15:04:05")
+	}
+	return s
 }
 
 // invalidArg 构造用户输入/业务规则类错误（gRPC InvalidArgument）

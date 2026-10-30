@@ -621,7 +621,7 @@ func syncSkuStockBatches(tx *gorm.DB, communityID int64, old *model.Sku, newStoc
 	} else {
 		// 调小库存：按 FEFO 扣回批次（扣减数量为正）
 		sku := &model.Sku{ID: old.ID, SkuCode: old.SkuCode, Stock: old.Stock}
-		takes, err := deductBatches(tx, sku, -delta, now)
+		takes, err := deductBatches(tx, sku, -delta, now, false)
 		if err != nil {
 			return fmt.Errorf("库存需调低 %d，批次扣减失败（可改通过出库单或盘点调整库存）：%w", -delta, err)
 		}

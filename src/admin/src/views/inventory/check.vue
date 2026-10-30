@@ -28,7 +28,7 @@ defineOptions({ name: 'StockCheck' })
 import { ref, onMounted, h, computed } from 'vue'
 import { refreshOnActivated } from '@/utils/activateRefresh'
 import { useRouter } from 'vue-router'
-import { NButton } from 'naive-ui'
+import { NButton, NTag } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { createInventoryCheck, getInventoryCheckList } from '@/api/inventory'
 import type { InventoryCheck } from '@/api/types'
@@ -55,7 +55,12 @@ const columns: DataTableColumns<InventoryCheck> = [
   { title: '盘点单号', key: 'check_no' },
   { title: '品项数', key: 'total_items' },
   { title: '差异数', key: 'diff_items' },
-  { title: '状态', key: 'status' },
+  {
+    title: '状态',
+    key: 'status',
+    width: 90,
+    render: (row) => h(NTag, { type: row.status === 1 ? 'warning' : 'success', size: 'small' }, { default: () => (row.status === 1 ? '待提交' : '已提交') }),
+  },
   { title: '备注', key: 'remark' },
   { title: '创建时间', key: 'created_at', render: (row) => formatDateTime(row.created_at) },
   {

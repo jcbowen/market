@@ -3,7 +3,7 @@
     <n-space vertical :size="12">
       <n-space align="center" justify="space-between">
         <n-text depth="3">按住行首图标拖拽可调整顺序，拖完自动保存；新增/编辑在弹窗中进行</n-text>
-        <n-button type="primary" @click="openCreate">新增分类</n-button>
+        <n-button v-if="canCreate" type="primary" @click="openCreate">新增分类</n-button>
       </n-space>
 
       <table class="cat-table">
@@ -23,7 +23,7 @@
           item-key="id"
           handle=".drag-handle"
           animation="150"
-          :disabled="saving"
+          :disabled="saving || !canUpdate"
           @end="onDragEnd"
         >
           <template #item="{ element }">
@@ -44,13 +44,14 @@
                   size="small"
                   :value="element.status === 1"
                   :loading="element.__switching"
+                  :disabled="!canUpdate"
                   @update:value="(v: boolean) => toggleStatus(element, v)"
                 />
               </td>
               <td class="cat-table__action-col">
                 <n-space :size="6">
-                  <n-button size="small" @click="openEdit(element)">编辑</n-button>
-                  <n-button size="small" type="error" @click="remove(element)">删除</n-button>
+                  <n-button v-if="canUpdate" size="small" @click="openEdit(element)">编辑</n-button>
+                  <n-button v-if="canDelete" size="small" type="error" @click="remove(element)">删除</n-button>
                 </n-space>
               </td>
             </tr>
@@ -77,13 +78,14 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'ProductCategories' })
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { refreshOnActivated } from '@/utils/activateRefresh'
 import { NButton, NIcon, NModal, NSpace, NSwitch, NTag, NText, createDiscreteApi } from 'naive-ui'
 import { ReorderTwoOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import { getCategoryList, createCategory, updateCategory, deleteCategory, batchSortCategories } from '@/api/product'
 import type { Category } from '@/api/types'
+import { useAuthStore } from '@/stores/auth'
 
 /**
  * 商品分类管理页面
@@ -96,6 +98,12 @@ import type { Category } from '@/api/types'
 type CategoryRow = Category & { __switching?: boolean }
 
 const { message, dialog } = createDiscreteApi(['message', 'dialog'])
+
+// 按钮级权限：与网关 RequirePermission 同码（分类写操作 = product:create/update/delete）
+const authStore = useAuthStore()
+const canCreate = computed(() => authStore.hasPermission('product:create'))
+const canUpdate = computed(() => authStore.hasPermission('product:update'))
+const canDelete = computed(() => authStore.hasPermission('product:delete'))
 
 const list = ref<CategoryRow[]>([])
 const loading = ref(false)

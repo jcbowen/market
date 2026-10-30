@@ -9,6 +9,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -236,6 +237,8 @@ func (s *AddressService) UpdateAddress(ctx context.Context, req *user.UpdateAddr
 				return err
 			}
 		}
+		addr.CreatedAt = timeutil.NormalizeRFC3339(addr.CreatedAt)
+		addr.UpdatedAt = timeutil.NormalizeRFC3339(addr.UpdatedAt)
 		return tx.Save(addr).Error
 	}); err != nil {
 		return nil, err

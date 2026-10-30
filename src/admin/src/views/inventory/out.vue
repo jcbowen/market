@@ -3,7 +3,7 @@
     <n-space style="margin-bottom: 12px">
       <n-select v-model:value="outType" :options="typeOptions" placeholder="出库类型" clearable style="width: 140px" />
       <n-date-picker v-model:value="dateRange" type="daterange" clearable />
-      <n-button type="primary" :loading="loading" @click="loadData">查询</n-button>
+      <n-button type="primary" :loading="loading" @click="onSearch">查询</n-button>
       <n-button v-if="canCreate" type="primary" @click="router.push('/stock/out/create')">新建出库单</n-button>
     </n-space>
     <n-data-table :columns="columns" :data="list" :loading="loading" :pagination="pagination" remote @update:page="onPageChange" />
@@ -107,6 +107,12 @@ async function loadData() {
 
 function onPageChange(page: number) {
   pagination.value.page = page
+  loadData()
+}
+
+// 查询按钮：改筛选条件后必须把页码归 1，否则旧页码会打到空页或跳过前几页
+function onSearch() {
+  pagination.value.page = 1
   loadData()
 }
 

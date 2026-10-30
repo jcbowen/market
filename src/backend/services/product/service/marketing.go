@@ -11,6 +11,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/pageparam"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
 	"github.com/jcbowen/market/src/backend/services/product/model"
 )
@@ -29,6 +30,51 @@ type MarketingService struct {
 //   - *MarketingService: 营销业务服务实例
 func NewMarketingService(db *mysql.Instance) *MarketingService {
 	return &MarketingService{db: db}
+}
+
+// normPtrTime 归一化可空时间字符串指针（nil 透传）：parseTime DSN 读回的 RFC3339
+// 字面量整行回写 DATETIME 列，MySQL 8.0.19+ 可解析、5.7 直接 1292
+// （与 sku/category/user 服务同库同源问题，2026-10-30 接口测试暴露）
+func normPtrTime(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	n := timeutil.NormalizeRFC3339(*p)
+	return &n
+}
+
+// normCouponScannedTimes 优惠券整行 Save 前归一化全部时间字段（含可空窗口字段）
+func normCouponScannedTimes(c *model.Coupon) {
+	c.CreatedAt = timeutil.NormalizeRFC3339(c.CreatedAt)
+	c.UpdatedAt = timeutil.NormalizeRFC3339(c.UpdatedAt)
+	c.StartTime = normPtrTime(c.StartTime)
+	c.EndTime = normPtrTime(c.EndTime)
+	c.UseStartTime = normPtrTime(c.UseStartTime)
+	c.UseEndTime = normPtrTime(c.UseEndTime)
+}
+
+// normFlashSaleScannedTimes 秒杀活动整行 Save 前归一化时间字段
+func normFlashSaleScannedTimes(fs *model.FlashSale) {
+	fs.CreatedAt = timeutil.NormalizeRFC3339(fs.CreatedAt)
+	fs.UpdatedAt = timeutil.NormalizeRFC3339(fs.UpdatedAt)
+	fs.StartTime = timeutil.NormalizeRFC3339(fs.StartTime)
+	fs.EndTime = timeutil.NormalizeRFC3339(fs.EndTime)
+}
+
+// normFullReductionScannedTimes 满减活动整行 Save 前归一化时间字段
+func normFullReductionScannedTimes(fr *model.FullReduction) {
+	fr.CreatedAt = timeutil.NormalizeRFC3339(fr.CreatedAt)
+	fr.UpdatedAt = timeutil.NormalizeRFC3339(fr.UpdatedAt)
+	fr.StartTime = normPtrTime(fr.StartTime)
+	fr.EndTime = normPtrTime(fr.EndTime)
+}
+
+// normFreeShippingScannedTimes 免邮活动整行 Save 前归一化时间字段
+func normFreeShippingScannedTimes(a *model.FreeShippingActivity) {
+	a.CreatedAt = timeutil.NormalizeRFC3339(a.CreatedAt)
+	a.UpdatedAt = timeutil.NormalizeRFC3339(a.UpdatedAt)
+	a.StartTime = normPtrTime(a.StartTime)
+	a.EndTime = normPtrTime(a.EndTime)
 }
 
 // ==================== 优惠券 ====================
@@ -267,6 +313,7 @@ func (s *MarketingService) UpdateCoupon(ctx context.Context, req *product.Update
 		c.RuleText = req.RuleText
 	}
 	c.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	normCouponScannedTimes(&c) // 整行 Save 前归一化读回时间（含未编辑的可空窗口字段）
 
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&c).Error; err != nil {
@@ -465,6 +512,7 @@ func (s *MarketingService) grantToUserTx(tx *gorm.DB, c *model.Coupon, userID in
 
 	c.ReceivedCount++
 	c.UpdatedAt = nowStr
+	normCouponScannedTimes(c)
 	return tx.Save(c).Error
 }
 
@@ -640,6 +688,7 @@ func (s *MarketingService) ReleaseCoupon(ctx context.Context, req *product.Relea
 			c.UsedCount--
 		}
 		c.UpdatedAt = now
+		normCouponScannedTimes(&c)
 		return tx.Save(&c).Error
 	})
 }
@@ -780,6 +829,7 @@ func (s *MarketingService) UpdateFlashSale(ctx context.Context, req *product.Upd
 		fs.Status = req.Status
 	}
 	fs.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	normFlashSaleScannedTimes(&fs)
 	if err := s.db.GetDb().WithContext(ctx).Save(&fs).Error; err != nil {
 		return nil, err
 	}
@@ -868,6 +918,7 @@ func (s *MarketingService) UpdateFullReduction(ctx context.Context, req *product
 		fr.Status = req.Status
 	}
 	fr.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	normFullReductionScannedTimes(&fr)
 	if err := s.db.GetDb().WithContext(ctx).Save(&fr).Error; err != nil {
 		return nil, err
 	}
@@ -990,6 +1041,7 @@ func (s *MarketingService) UpdateFreeShipping(ctx context.Context, req *product.
 		activity.Status = req.Status
 	}
 	activity.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	normFreeShippingScannedTimes(&activity)
 
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&activity).Error; err != nil {

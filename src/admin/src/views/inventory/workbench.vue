@@ -6,7 +6,7 @@
         <n-space style="margin-bottom: 12px">
           <n-input v-model:value="stockKeyword" placeholder="商品名 / SKU 编码" style="width: 220px" clearable @keyup.enter="onStockSearch" />
           <n-button type="primary" @click="onStockSearch">查询</n-button>
-          <n-button @click="goPurchase">去补货</n-button>
+          <n-button v-if="canCreate" @click="goPurchase">去补货</n-button>
         </n-space>
         <n-data-table
           :columns="stockColumns"
@@ -25,7 +25,7 @@
             低库存与临期批次预警；可勾选部分低库存项后「一键补货」，未勾选则按全部低库存项生成（临期项不参与补货）。
           </n-text>
           <n-space>
-            <n-button type="primary" :loading="replenishing" @click="replenish">一键补货（生成采购单）</n-button>
+            <n-button v-if="canCreate" type="primary" :loading="replenishing" @click="replenish">一键补货（生成采购单）</n-button>
             <n-button @click="loadWarnings">刷新</n-button>
           </n-space>
         </n-space>
@@ -78,10 +78,11 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'StockWorkbench' })
-import { h, ref, onActivated } from 'vue'
+import { h, ref, computed, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NTag, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
+import { useAuthStore } from '@/stores/auth'
 import {
   getInventoryLogList,
   getSkuStockList,
@@ -99,6 +100,9 @@ import { formatDateTime } from '@/utils/datetime'
 const router = useRouter()
 const route = useRoute()
 const message = useMessage()
+// 按钮级权限：补货生成采购单与网关 RequirePermission 同码（inventory:create）
+const authStore = useAuthStore()
+const canCreate = computed(() => authStore.hasPermission('inventory:create'))
 const activeTab = ref('stock')
 
 // ---------- 库存列表 ----------
@@ -408,7 +412,12 @@ loadStocks()
 // 支持 ?tab=warnings/records/batches 深链（如仪表盘库存预警入口）：定位页签并触发懒加载
 // keep-alive 缓存下再次进入时 onMounted 不触发，重读 query 必须放在 onActivated，
 // 否则跳转命中缓存会让页签停留在上一次位置（与 order/list.vue、order/refunds.vue 同口径）
+// 深链之外每次激活都无条件刷新库存概览：从新建入库单/出库单/采购单返回工作台时，
+// 库存、预警、流水、批次若停留在旧快照会误导操作（与 in.vue/out.vue 的 onActivated(loadData) 同口径）
 onActivated(() => {
+  loadStocks()
+  // 当前停留的非概览页签同步刷新，保持「看到的即最新」
+  onTabChange(activeTab.value)
   const tab = route.query.tab
   if (typeof tab === 'string' && ['warnings', 'records', 'batches'].includes(tab)) {
     activeTab.value = tab

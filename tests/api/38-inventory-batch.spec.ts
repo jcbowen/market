@@ -135,7 +135,8 @@ test.describe.serial('库存批次进阶', () => {
       },
     });
     const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `超库存出库应被拒绝: ${body.message}`).not.toBe(0);
+    // 假绿收敛：与 10 号用例同口径，精确断言库存不足 12002（ResourceExhausted 的映射码）
+    expect(body.code, `超库存出库应返回 12002: ${body.message}`).toBe(12002);
     expect(await skuStock(sku.id, sku.product_id), '被拒后库存不变').toBe(before);
   });
 });

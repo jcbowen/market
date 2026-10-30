@@ -52,6 +52,8 @@ func (s *StockCheckService) CreateStockCheck(ctx context.Context, req *product.C
 }
 
 // SubmitStockCheck 提交盘点单
+// 空明细直接拒绝（与网关层、文档 05「空明细直接拒绝」口径一致）：
+// 内部 gRPC 直连可绕过网关校验，否则会造出无差异的已提交空盘点单。
 // 参数：
 //   - ctx: 上下文
 //   - req: 提交请求
@@ -59,6 +61,9 @@ func (s *StockCheckService) CreateStockCheck(ctx context.Context, req *product.C
 // 返回值：
 //   - error: 错误信息
 func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.SubmitStockCheckReq) error {
+	if len(req.Items) == 0 {
+		return invalidArg("盘点明细不能为空")
+	}
 	return s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 单头加行锁（与采购/出入库同口径）：不加锁时两个并发提交都能通过 status=1 校验，
 		// 各建一份盘点明细并复写单据汇总
@@ -109,8 +114,8 @@ func (s *StockCheckService) SubmitStockCheck(ctx context.Context, req *product.S
 			if diff != 0 {
 				diffItems++
 				if diff < 0 {
-					// 盘亏：按 FEFO 扣减批次
-					takes, err := deductBatches(tx, sku, -diff, now)
+					// 盘亏：按 FEFO 扣减批次（非销售路径，保留消耗过期批次的能力）
+					takes, err := deductBatches(tx, sku, -diff, now, false)
 					if err != nil {
 						return err
 					}

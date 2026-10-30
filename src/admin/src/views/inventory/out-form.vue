@@ -148,6 +148,8 @@ async function submit() {
     const res = await createStockOutOrder({
       type: form.value.type,
       remark: form.value.remark,
+      // 幂等业务号：防网络重试/双击重复出库（服务端同 biz_no 直接返回原单）
+      biz_no: crypto.randomUUID(),
       items: form.value.items.map((item) => ({ sku_id: item.sku_id as number, quantity: item.quantity })),
     })
     if (res.data.code === 0) {

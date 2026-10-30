@@ -17,20 +17,21 @@
             <n-button type="primary" @click="addItem">添加</n-button>
           </n-space>
         </n-card>
-        <n-button type="primary" :loading="submitting" @click="submit">提交盘点结果</n-button>
+        <n-button v-if="canUpdate" type="primary" :loading="submitting" @click="submit">提交盘点结果</n-button>
       </n-space>
     </n-space>
   </n-card>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, h } from 'vue'
+import { ref, computed, onMounted, h } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NInputNumber, createDiscreteApi } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { getInventoryCheckDetail, submitInventoryCheck } from '@/api/inventory'
 import SkuPicker from './components/SkuPicker.vue'
 import { useTabsStore } from '@/stores/tabs'
+import { useAuthStore } from '@/stores/auth'
 import type { Sku, StockCheckDetail, StockCheckItem } from '@/api/types'
 
 /**
@@ -39,6 +40,9 @@ import type { Sku, StockCheckDetail, StockCheckItem } from '@/api/types'
  */
 const route = useRoute()
 const tabsStore = useTabsStore()
+// 按钮级权限：提交盘点与网关 RequirePermission 同码（inventory:update）
+const authStore = useAuthStore()
+const canUpdate = computed(() => authStore.hasPermission('inventory:update'))
 const { message, dialog } = createDiscreteApi(['message', 'dialog'])
 const id = Number(route.params.id)
 const detail = ref<StockCheckDetail | null>(null)
@@ -114,6 +118,12 @@ function addItem() {
   if (!addSkuId.value || addActualStock.value === undefined) return
   if (!detail.value) return
 
+  // 同单重复 SKU 会被服务端整单拒绝且无法定位是哪一行，添加时就拦下
+  if (detail.value.items.some((item) => item.sku_id === addSkuId.value)) {
+    message.warning('该 SKU 已在盘点列表中，请直接修改其实盘数')
+    return
+  }
+
   const sku = addSkuMap.value[addSkuId.value]
   const systemStock = sku?.stock || 0
   detail.value.items.push({
@@ -170,6 +180,16 @@ async function doSubmit() {
     const res = await submitInventoryCheck(id, items)
     if (res.data.code === 0) {
       window.history.back()
+    }
+  } catch (err) {
+    // 并发提交冲突（10004：另一端已提交）或 17003（盘点单已提交）：
+    // 定向提示并刷新详情，让用户看到最新状态，避免反复重试撞同一堵墙
+    const code = (err as { code?: number })?.code
+    if (code === 10004 || code === 17003) {
+      message.warning('盘点单已被提交或状态已变更，正在刷新最新状态')
+      await loadDetail()
+    } else {
+      throw err
     }
   } finally {
     submitting.value = false

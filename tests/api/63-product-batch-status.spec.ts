@@ -81,8 +81,8 @@ test.beforeAll(async ({ playwright }) => {
       productIds.push(id);
     }
   } catch (e) {
-    console.warn(`[63] 造数失败，用例将跳过：${e instanceof Error ? e.message : e}`);
-    productIds.length = 0;
+    // 假绿收敛：栈已起时造数失败即回归，显式失败而非静默 skip
+    throw new Error(`[63] 造数失败：${e instanceof Error ? e.message : e}`);
   }
 });
 

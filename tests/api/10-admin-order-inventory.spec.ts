@@ -198,18 +198,18 @@ test.describe.serial('库存管理', () => {
     expect(body.code).toBe(0);
   });
 
-  test('盘点：创建成功且列表可查（空单提交不做强断言）', async () => {
+  test('盘点：创建成功且列表可查（空单提交被网关拒绝）', async () => {
     test.skip(!targetSku, '环境无 SKU');
     const create = (await (
       await api.post('/api/v1/admin/inventory/checks', { data: { remark: 'AUTO-TEST 盘点' } })
     ).json()) as ApiResponse<{ id: number }>;
     expect(create.code).toBe(0);
 
-    // 空盘点单提交：部分实现要求先填明细（无明细时报 10001 属正常业务约束，仅记录）
+    // 空盘点单提交：网关与服务层均硬拒（参数错误 10001），不再只记录不断言（假绿收敛）
     const submit = (await (
       await api.post(`/api/v1/admin/inventory/checks/${create.data!.id}/submit`)
     ).json()) as ApiResponse;
-    console.log(`[盘点] 空单提交结果 code=${submit.code} message=${submit.message}`);
+    expect(submit.code).toBe(10001);
 
     const list = (await (
       await api.get('/api/v1/admin/inventory/checks', { params: { page: 1, page_size: 10 } })

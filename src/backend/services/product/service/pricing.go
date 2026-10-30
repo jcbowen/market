@@ -52,6 +52,10 @@ func (s *PricingService) SetCommunityPricing(ctx context.Context, req *product.S
 	}
 
 	p.Price = req.Price
+	// parseTime=true 下从 DB 读回的 created_at/updated_at 是 RFC3339 形态，
+	// 整行 Save 原样回写会被严格模式拒绝（Error 1292），写库前规范化
+	p.CreatedAt = dbTimeString(p.CreatedAt)
+	p.UpdatedAt = dbTimeString(p.UpdatedAt)
 	return s.db.GetDb().WithContext(ctx).Save(&p).Error
 }
 

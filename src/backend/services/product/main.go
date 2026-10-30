@@ -148,6 +148,14 @@ func ensureSkuBarcodeUniqueIndex(db *mysql.Instance) error {
 			if strings.Contains(err.Error(), "Duplicate key name") || strings.Contains(err.Error(), "1061") {
 				return dropLegacySkuBarcodeIndex(db)
 			}
+			// 1064 = 当前 MySQL 不支持函数式索引（需 8.0.13+，如 5.7 测试环境）。
+			// 不阻断启动：条码唯一第一道防线在应用层（spec.go 社区查重），
+			// 库级兜底索引仅在 8.0.13+ 实例上生效（同下方 1062 的非阻断哲学）
+			if strings.Contains(err.Error(), "1064") {
+				log.Printf("警告: SKU 条码唯一索引 %s 创建失败（当前 MySQL 版本不支持函数式索引，需 8.0.13+），"+
+					"跳过库级兜底，应用层同社区查重继续生效: %v", skuBarcodeIndexName, err)
+				return nil
+			}
 			// 1062 = 存量「启用行」里已有同社区重复条码（查后写窗口的历史产物）。
 			// 不阻断启动：条码唯一第一道防线在应用层（spec.go 社区查重），
 			// 库级索引待按下方指引清洗后重启自动补建

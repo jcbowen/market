@@ -182,7 +182,8 @@ test.describe.serial('盘点提交闭环', () => {
       data: { items: [{ sku_id: skuId, actual_stock: 999 }] },
     });
     const body = (await resp.json()) as ApiResponse;
-    expect(body.code, '已提交盘点单不应可重复提交').not.toBe(0);
+    // 假绿收敛：精确断言并发/状态守卫错误码 10004（文档 06 曾误写 10001，以代码 errcode.go 为准）
+    expect(body.code, `已提交盘点单不应可重复提交: ${body.message}`).toBe(10004);
     expect(await currentStock(), '重复提交不应改动库存').toBe(stockBefore - DIFF);
   });
 });

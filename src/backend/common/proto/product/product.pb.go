@@ -1990,7 +1990,9 @@ type UpdateProductReq struct {
 	// 不传=维持原预约不变；显式传未来时间=置为下架+预约；显式传空串=取消定时（配合 status 决定立即上架或保持下架）
 	OnSaleAt *string `protobuf:"bytes,17,opt,name=on_sale_at,json=onSaleAt,proto3,oneof" json:"on_sale_at,omitempty"`
 	// 商品富文本详情（服务端白名单消毒后的 HTML；admin 全量提交，直接覆盖）
-	Content       string `protobuf:"bytes,18,opt,name=content,proto3" json:"content,omitempty"`
+	Content string `protobuf:"bytes,18,opt,name=content,proto3" json:"content,omitempty"`
+	// 乐观锁版本号：取详情接口返回的 updated_at 原样提交，服务端不一致时返回 10007（数据已被他人修改）
+	UpdatedAt     string `protobuf:"bytes,19,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2147,6 +2149,13 @@ func (x *UpdateProductReq) GetOnSaleAt() string {
 func (x *UpdateProductReq) GetContent() string {
 	if x != nil {
 		return x.Content
+	}
+	return ""
+}
+
+func (x *UpdateProductReq) GetUpdatedAt() string {
+	if x != nil {
+		return x.UpdatedAt
 	}
 	return ""
 }
@@ -2553,6 +2562,7 @@ type ProductInfo struct {
 	OnSaleAt      string                 `protobuf:"bytes,22,opt,name=on_sale_at,json=onSaleAt,proto3" json:"on_sale_at,omitempty"`                // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
 	Content       string                 `protobuf:"bytes,23,opt,name=content,proto3" json:"content,omitempty"`                                    // 商品富文本详情（服务端已消毒的 HTML，C 端 rich-text 渲染）
 	SkuTotal      int32                  `protobuf:"varint,24,opt,name=sku_total,json=skuTotal,proto3" json:"sku_total,omitempty"`                 // 启用 SKU 数（仅 BatchGetProducts 批量回填，其余出口为 0）
+	UpdatedAt     string                 `protobuf:"bytes,25,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`               // 更新时间，兼作编辑保存的乐观锁版本号（UpdateProductReq.updated_at 回传比对）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2753,6 +2763,13 @@ func (x *ProductInfo) GetSkuTotal() int32 {
 		return x.SkuTotal
 	}
 	return 0
+}
+
+func (x *ProductInfo) GetUpdatedAt() string {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return ""
 }
 
 type ProductDetail struct {
@@ -4279,10 +4296,13 @@ func (x *BatchGetProductsResp) GetList() []*ProductInfo {
 
 // --- 库存 ---
 type DeductStockReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SkuId         int64                  `protobuf:"varint,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
-	Quantity      int32                  `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
-	OrderId       int64                  `protobuf:"varint,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	SkuId    int64                  `protobuf:"varint,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	Quantity int32                  `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	OrderId  int64                  `protobuf:"varint,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 幂等业务号：与 stock_op_logs.biz_no 同口径（整单扣减传订单号），
+	// 为未来分次扣减预留分片能力；空串时幂等键退化为 (order_id, sku_id, op_type, '')
+	BizNo         string `protobuf:"bytes,4,opt,name=biz_no,json=bizNo,proto3" json:"biz_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4336,6 +4356,13 @@ func (x *DeductStockReq) GetOrderId() int64 {
 		return x.OrderId
 	}
 	return 0
+}
+
+func (x *DeductStockReq) GetBizNo() string {
+	if x != nil {
+		return x.BizNo
+	}
+	return ""
 }
 
 // StockItemQty 库存操作明细项
@@ -4394,9 +4421,11 @@ func (x *StockItemQty) GetQuantity() int32 {
 // BatchDeductStockReq 批量扣减库存：整单明细在同一事务内按 SKU 主键升序加锁扣减，
 // 幂等键仍为 order_id + sku_id + op_type（+ biz_no），整单要么全扣要么全不扣
 type BatchDeductStockReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrderId       int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	Items         []*StockItemQty        `protobuf:"bytes,2,rep,name=items,proto3" json:"items,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	OrderId int64                  `protobuf:"varint,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	Items   []*StockItemQty        `protobuf:"bytes,2,rep,name=items,proto3" json:"items,omitempty"`
+	// 幂等业务号：整单扣减传订单号，同一单据内所有行共用，与文档 05 biz_no 口径一致
+	BizNo         string `protobuf:"bytes,3,opt,name=biz_no,json=bizNo,proto3" json:"biz_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4443,6 +4472,13 @@ func (x *BatchDeductStockReq) GetItems() []*StockItemQty {
 		return x.Items
 	}
 	return nil
+}
+
+func (x *BatchDeductStockReq) GetBizNo() string {
+	if x != nil {
+		return x.BizNo
+	}
+	return ""
 }
 
 type BatchDeductStockResp struct {
@@ -6295,12 +6331,14 @@ func (x *CreatePurchaseOrderReq) GetItems() []*PurchaseOrderItemReq {
 }
 
 type UpdatePurchaseOrderReq struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Id            int64                   `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	CommunityId   int64                   `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	SupplierId    int64                   `protobuf:"varint,3,opt,name=supplier_id,json=supplierId,proto3" json:"supplier_id,omitempty"`
-	Remark        string                  `protobuf:"bytes,4,opt,name=remark,proto3" json:"remark,omitempty"`
-	Items         []*PurchaseOrderItemReq `protobuf:"bytes,5,rep,name=items,proto3" json:"items,omitempty"` // 全量替换，仅草稿态可改
+	state       protoimpl.MessageState  `protogen:"open.v1"`
+	Id          int64                   `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	CommunityId int64                   `protobuf:"varint,2,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	SupplierId  int64                   `protobuf:"varint,3,opt,name=supplier_id,json=supplierId,proto3" json:"supplier_id,omitempty"`
+	Remark      string                  `protobuf:"bytes,4,opt,name=remark,proto3" json:"remark,omitempty"`
+	Items       []*PurchaseOrderItemReq `protobuf:"bytes,5,rep,name=items,proto3" json:"items,omitempty"` // 全量替换，仅草稿态可改
+	// 乐观锁版本号：取详情接口返回的 updated_at 原样提交，服务端不一致时返回 10007
+	UpdatedAt     string `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6368,6 +6406,13 @@ func (x *UpdatePurchaseOrderReq) GetItems() []*PurchaseOrderItemReq {
 		return x.Items
 	}
 	return nil
+}
+
+func (x *UpdatePurchaseOrderReq) GetUpdatedAt() string {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return ""
 }
 
 type SubmitPurchaseOrderReq struct {
@@ -7015,8 +7060,10 @@ type CreateStockInOrderReq struct {
 	OperatorId      int64                  `protobuf:"varint,4,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
 	Remark          string                 `protobuf:"bytes,5,opt,name=remark,proto3" json:"remark,omitempty"`
 	Items           []*StockInOrderItemReq `protobuf:"bytes,6,rep,name=items,proto3" json:"items,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// 幂等业务号：客户端生成 UUID，同一 biz_no 重复提交不重复入库（防止网络重试/双击造成重复加库存）
+	BizNo         string `protobuf:"bytes,7,opt,name=biz_no,json=bizNo,proto3" json:"biz_no,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateStockInOrderReq) Reset() {
@@ -7089,6 +7136,13 @@ func (x *CreateStockInOrderReq) GetItems() []*StockInOrderItemReq {
 		return x.Items
 	}
 	return nil
+}
+
+func (x *CreateStockInOrderReq) GetBizNo() string {
+	if x != nil {
+		return x.BizNo
+	}
+	return ""
 }
 
 type StockInOrderInfo struct {
@@ -7634,12 +7688,14 @@ func (x *StockOutOrderItemReq) GetQuantity() int32 {
 }
 
 type CreateStockOutOrderReq struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	CommunityId   int64                   `protobuf:"varint,1,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
-	Type          int32                   `protobuf:"varint,2,opt,name=type,proto3" json:"type,omitempty"` // 1报损 2领用 3调整出库
-	OperatorId    int64                   `protobuf:"varint,3,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
-	Remark        string                  `protobuf:"bytes,4,opt,name=remark,proto3" json:"remark,omitempty"`
-	Items         []*StockOutOrderItemReq `protobuf:"bytes,5,rep,name=items,proto3" json:"items,omitempty"`
+	state       protoimpl.MessageState  `protogen:"open.v1"`
+	CommunityId int64                   `protobuf:"varint,1,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
+	Type        int32                   `protobuf:"varint,2,opt,name=type,proto3" json:"type,omitempty"` // 1报损 2领用 3调整出库
+	OperatorId  int64                   `protobuf:"varint,3,opt,name=operator_id,json=operatorId,proto3" json:"operator_id,omitempty"`
+	Remark      string                  `protobuf:"bytes,4,opt,name=remark,proto3" json:"remark,omitempty"`
+	Items       []*StockOutOrderItemReq `protobuf:"bytes,5,rep,name=items,proto3" json:"items,omitempty"`
+	// 幂等业务号：客户端生成 UUID，同一 biz_no 重复提交不重复出库
+	BizNo         string `protobuf:"bytes,6,opt,name=biz_no,json=bizNo,proto3" json:"biz_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7707,6 +7763,13 @@ func (x *CreateStockOutOrderReq) GetItems() []*StockOutOrderItemReq {
 		return x.Items
 	}
 	return nil
+}
+
+func (x *CreateStockOutOrderReq) GetBizNo() string {
+	if x != nil {
+		return x.BizNo
+	}
+	return ""
 }
 
 type StockOutOrderInfo struct {
@@ -15030,7 +15093,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\n" +
 	"on_sale_at\x18\x10 \x01(\tR\bonSaleAt\x12\x18\n" +
 	"\acontent\x18\x11 \x01(\tR\acontentJ\x04\b\n" +
-	"\x10\v\"\xca\x04\n" +
+	"\x10\v\"\xe9\x04\n" +
 	"\x10UpdateProductReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\vcategory_id\x18\x02 \x01(\x03R\n" +
@@ -15054,7 +15117,9 @@ const file_product_product_proto_rawDesc = "" +
 	"\fcommunity_id\x18\x10 \x01(\x03R\vcommunityId\x12!\n" +
 	"\n" +
 	"on_sale_at\x18\x11 \x01(\tH\x01R\bonSaleAt\x88\x01\x01\x12\x18\n" +
-	"\acontent\x18\x12 \x01(\tR\acontentB\a\n" +
+	"\acontent\x18\x12 \x01(\tR\acontent\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\x13 \x01(\tR\tupdatedAtB\a\n" +
 	"\x05_sortB\r\n" +
 	"\v_on_sale_at\"E\n" +
 	"\x10DeleteProductReq\x12\x0e\n" +
@@ -15082,7 +15147,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\x14UpdateProductNameReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
-	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\"\xb9\x05\n" +
+	"\fcommunity_id\x18\x03 \x01(\x03R\vcommunityId\"\xd8\x05\n" +
 	"\vProductInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12\x1f\n" +
@@ -15113,7 +15178,9 @@ const file_product_product_proto_rawDesc = "" +
 	"\n" +
 	"on_sale_at\x18\x16 \x01(\tR\bonSaleAt\x12\x18\n" +
 	"\acontent\x18\x17 \x01(\tR\acontent\x12\x1b\n" +
-	"\tsku_total\x18\x18 \x01(\x05R\bskuTotal\"\x8e\x01\n" +
+	"\tsku_total\x18\x18 \x01(\x05R\bskuTotal\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\x19 \x01(\tR\tupdatedAt\"\x8e\x01\n" +
 	"\rProductDetail\x12.\n" +
 	"\aproduct\x18\x01 \x01(\v2\x14.product.ProductInfoR\aproduct\x12$\n" +
 	"\x04skus\x18\x02 \x03(\v2\x10.product.SkuInfoR\x04skus\x12'\n" +
@@ -15247,17 +15314,19 @@ const file_product_product_proto_rawDesc = "" +
 	"\x10require_sellable\x18\x03 \x01(\bR\x0frequireSellable\x12)\n" +
 	"\x10tolerate_missing\x18\x04 \x01(\bR\x0ftolerateMissing\"@\n" +
 	"\x14BatchGetProductsResp\x12(\n" +
-	"\x04list\x18\x01 \x03(\v2\x14.product.ProductInfoR\x04list\"^\n" +
+	"\x04list\x18\x01 \x03(\v2\x14.product.ProductInfoR\x04list\"u\n" +
 	"\x0eDeductStockReq\x12\x15\n" +
 	"\x06sku_id\x18\x01 \x01(\x03R\x05skuId\x12\x1a\n" +
 	"\bquantity\x18\x02 \x01(\x05R\bquantity\x12\x19\n" +
-	"\border_id\x18\x03 \x01(\x03R\aorderId\"A\n" +
+	"\border_id\x18\x03 \x01(\x03R\aorderId\x12\x15\n" +
+	"\x06biz_no\x18\x04 \x01(\tR\x05bizNo\"A\n" +
 	"\fStockItemQty\x12\x15\n" +
 	"\x06sku_id\x18\x01 \x01(\x03R\x05skuId\x12\x1a\n" +
-	"\bquantity\x18\x02 \x01(\x05R\bquantity\"]\n" +
+	"\bquantity\x18\x02 \x01(\x05R\bquantity\"t\n" +
 	"\x13BatchDeductStockReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x03R\aorderId\x12+\n" +
-	"\x05items\x18\x02 \x03(\v2\x15.product.StockItemQtyR\x05items\"0\n" +
+	"\x05items\x18\x02 \x03(\v2\x15.product.StockItemQtyR\x05items\x12\x15\n" +
+	"\x06biz_no\x18\x03 \x01(\tR\x05bizNo\"0\n" +
 	"\x14BatchDeductStockResp\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"u\n" +
 	"\x14BatchReleaseStockReq\x12\x19\n" +
@@ -15411,14 +15480,16 @@ const file_product_product_proto_rawDesc = "" +
 	"\x06remark\x18\x04 \x01(\tR\x06remark\x12\x1d\n" +
 	"\n" +
 	"submit_now\x18\x05 \x01(\bR\tsubmitNow\x123\n" +
-	"\x05items\x18\x06 \x03(\v2\x1d.product.PurchaseOrderItemReqR\x05items\"\xb9\x01\n" +
+	"\x05items\x18\x06 \x03(\v2\x1d.product.PurchaseOrderItemReqR\x05items\"\xd8\x01\n" +
 	"\x16UpdatePurchaseOrderReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\x12\x1f\n" +
 	"\vsupplier_id\x18\x03 \x01(\x03R\n" +
 	"supplierId\x12\x16\n" +
 	"\x06remark\x18\x04 \x01(\tR\x06remark\x123\n" +
-	"\x05items\x18\x05 \x03(\v2\x1d.product.PurchaseOrderItemReqR\x05items\"K\n" +
+	"\x05items\x18\x05 \x03(\v2\x1d.product.PurchaseOrderItemReqR\x05items\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\x06 \x01(\tR\tupdatedAt\"K\n" +
 	"\x16SubmitPurchaseOrderReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"K\n" +
@@ -15478,7 +15549,7 @@ const file_product_product_proto_rawDesc = "" +
 	"\bbatch_no\x18\x04 \x01(\tR\abatchNo\x12'\n" +
 	"\x0fproduction_date\x18\x05 \x01(\tR\x0eproductionDate\x12\x1f\n" +
 	"\vexpire_date\x18\x06 \x01(\tR\n" +
-	"expireDate\"\xf4\x01\n" +
+	"expireDate\"\x8b\x02\n" +
 	"\x15CreateStockInOrderReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x1f\n" +
 	"\vsupplier_id\x18\x02 \x01(\x03R\n" +
@@ -15487,7 +15558,8 @@ const file_product_product_proto_rawDesc = "" +
 	"\voperator_id\x18\x04 \x01(\x03R\n" +
 	"operatorId\x12\x16\n" +
 	"\x06remark\x18\x05 \x01(\tR\x06remark\x122\n" +
-	"\x05items\x18\x06 \x03(\v2\x1c.product.StockInOrderItemReqR\x05items\"\xfc\x02\n" +
+	"\x05items\x18\x06 \x03(\v2\x1c.product.StockInOrderItemReqR\x05items\x12\x15\n" +
+	"\x06biz_no\x18\a \x01(\tR\x05bizNo\"\xfc\x02\n" +
 	"\x10StockInOrderInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x13\n" +
 	"\x05in_no\x18\x02 \x01(\tR\x04inNo\x12!\n" +
@@ -15542,14 +15614,15 @@ const file_product_product_proto_rawDesc = "" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"I\n" +
 	"\x14StockOutOrderItemReq\x12\x15\n" +
 	"\x06sku_id\x18\x01 \x01(\x03R\x05skuId\x12\x1a\n" +
-	"\bquantity\x18\x02 \x01(\x05R\bquantity\"\xbd\x01\n" +
+	"\bquantity\x18\x02 \x01(\x05R\bquantity\"\xd4\x01\n" +
 	"\x16CreateStockOutOrderReq\x12!\n" +
 	"\fcommunity_id\x18\x01 \x01(\x03R\vcommunityId\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\x05R\x04type\x12\x1f\n" +
 	"\voperator_id\x18\x03 \x01(\x03R\n" +
 	"operatorId\x12\x16\n" +
 	"\x06remark\x18\x04 \x01(\tR\x06remark\x123\n" +
-	"\x05items\x18\x05 \x03(\v2\x1d.product.StockOutOrderItemReqR\x05items\"\xc9\x01\n" +
+	"\x05items\x18\x05 \x03(\v2\x1d.product.StockOutOrderItemReqR\x05items\x12\x15\n" +
+	"\x06biz_no\x18\x06 \x01(\tR\x05bizNo\"\xc9\x01\n" +
 	"\x11StockOutOrderInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x15\n" +
 	"\x06out_no\x18\x02 \x01(\tR\x05outNo\x12!\n" +

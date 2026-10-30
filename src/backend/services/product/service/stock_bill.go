@@ -35,16 +35,49 @@ func NewStockBillService(db *mysql.Instance) *StockBillService {
 	return &StockBillService{db: db}
 }
 
+// billReplayCheck 出入库单幂等互斥与重放检测
+// biz_no 非空时以 stock_op_logs 唯一索引 (order_id=0, sku_id, op_type, biz_no) 做互斥：
+// 首次提交插入幂等日志并随单据同事务生效；重复提交（网络重试/双击）全部命中唯一索引，
+// 调用方据此回查同 biz_no 的原单返回，不重复加/减库存。biz_no 为空时退化为无幂等（兼容旧调用）。
+// 参数：
+//   - tx: 事务
+//   - opType: 幂等操作类型（stockOpTypeBillIn / stockOpTypeBillOut）
+//   - qtyBySku: 按 SKU 聚合后的数量（同单同 SKU 多行必须先合并，否则唯一索引误判重复）
+//   - bizNo: 客户端幂等业务号（UUID）
+//
+// 返回值：
+//   - bool: 是否命中重放（true=已有同 biz_no 单据生效或提交中）
+//   - error: 写入失败
+func billReplayCheck(tx *gorm.DB, opType int8, qtyBySku map[int64]int32, bizNo string) (bool, error) {
+	if bizNo == "" {
+		return false, nil
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	logs := make([]*model.StockOpLog, 0, len(qtyBySku))
+	for id, qty := range qtyBySku {
+		logs = append(logs, &model.StockOpLog{
+			OrderID:   0, // 单据 ID 创建前未知，恒为 0，幂等键由 op_type + biz_no 区分
+			SkuID:     id,
+			OpType:    opType,
+			Quantity:  qty,
+			BizNo:     bizNo,
+			CreatedAt: now,
+		})
+	}
+	return insertOpLogsIdempotent(tx, logs)
+}
+
 // CreateStockInOrder 创建入库单（创建即生效）
 // 事务内完成：生成批次（SourceType=1）→ 回写 SKU 汇总库存与移动加权平均成本 →
 // 落库存流水（type=1）→ 关联采购单时回写 received_quantity 与采购单状态。
+// 带 biz_no 时具备幂等能力：同 biz_no 重复提交返回原单，不重复入库。
 //
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建请求
 //
 // 返回值：
-//   - *model.StockInOrder: 入库单模型
+//   - *model.StockInOrder: 入库单模型（重放时为原单）
 //   - []*model.StockInOrderItem: 入库单明细（含生成的批次 ID）
 //   - error: 错误信息
 func (s *StockBillService) CreateStockInOrder(ctx context.Context, req *product.CreateStockInOrderReq) (*model.StockInOrder, []*model.StockInOrderItem, error) {
@@ -63,6 +96,30 @@ func (s *StockBillService) CreateStockInOrder(ctx context.Context, req *product.
 	)
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().Format("2006-01-02 15:04:05")
+
+		// 幂等互斥与重放检测（biz_no 非空时）：重复提交回查原单直接返回
+		qtyBySku := make(map[int64]int32, len(req.Items))
+		for _, item := range req.Items {
+			qtyBySku[item.SkuId] += item.Quantity
+		}
+		replayed, err := billReplayCheck(tx, stockOpTypeBillIn, qtyBySku, req.BizNo)
+		if err != nil {
+			return err
+		}
+		if replayed {
+			var existing model.StockInOrder
+			if err := tx.Where("community_id = ? AND biz_no = ?", req.CommunityId, req.BizNo).
+				First(&existing).Error; err != nil {
+				return err
+			}
+			order = &existing
+			var rows []*model.StockInOrderItem
+			if err := tx.Where("in_order_id = ?", existing.ID).Find(&rows).Error; err != nil {
+				return err
+			}
+			items = rows
+			return nil
+		}
 
 		orderType := model.StockInTypeDirect
 		if req.PurchaseOrderId > 0 {
@@ -108,6 +165,7 @@ func (s *StockBillService) CreateStockInOrder(ctx context.Context, req *product.
 		order = &model.StockInOrder{
 			CommunityID:     req.CommunityId,
 			InNo:            generateInNo(),
+			BizNo:           req.BizNo,
 			SupplierID:      req.SupplierId,
 			PurchaseOrderID: req.PurchaseOrderId,
 			Type:            orderType,
@@ -389,13 +447,14 @@ func (s *StockBillService) GetStockInOrder(ctx context.Context, req *product.Get
 
 // CreateStockOutOrder 创建出库单（报损/领用/调整，类型后端枚举校验）
 // 事务内完成：FEFO 批次扣减 → 回写 SKU 汇总库存 → 落库存流水（type=2，ref_no=出库单号）。
+// 带 biz_no 时具备幂等能力：同 biz_no 重复提交返回原单，不重复出库。
 //
 // 参数：
 //   - ctx: 上下文
 //   - req: 创建请求
 //
 // 返回值：
-//   - *model.StockOutOrder: 出库单模型
+//   - *model.StockOutOrder: 出库单模型（重放时为原单）
 //   - []*model.StockOutOrderItem: 出库单明细
 //   - error: 错误信息
 func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product.CreateStockOutOrderReq) (*model.StockOutOrder, []*model.StockOutOrderItem, error) {
@@ -417,9 +476,35 @@ func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product
 	)
 	err := s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().Format("2006-01-02 15:04:05")
+
+		// 幂等互斥与重放检测（biz_no 非空时）：重复提交回查原单直接返回
+		qtyBySku := make(map[int64]int32, len(req.Items))
+		for _, item := range req.Items {
+			qtyBySku[item.SkuId] += item.Quantity
+		}
+		replayed, err := billReplayCheck(tx, stockOpTypeBillOut, qtyBySku, req.BizNo)
+		if err != nil {
+			return err
+		}
+		if replayed {
+			var existing model.StockOutOrder
+			if err := tx.Where("community_id = ? AND biz_no = ?", req.CommunityId, req.BizNo).
+				First(&existing).Error; err != nil {
+				return err
+			}
+			order = &existing
+			var rows []*model.StockOutOrderItem
+			if err := tx.Where("out_order_id = ?", existing.ID).Find(&rows).Error; err != nil {
+				return err
+			}
+			items = rows
+			return nil
+		}
+
 		order = &model.StockOutOrder{
 			CommunityID: req.CommunityId,
 			OutNo:       generateOutNo(),
+			BizNo:       req.BizNo,
 			Type:        req.Type,
 			OperatorID:  req.OperatorId,
 			Remark:      req.Remark,
@@ -449,7 +534,8 @@ func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product
 			}
 
 			before := sku.Stock
-			takes, err := deductBatches(tx, sku, item.Quantity, now)
+			// 出库单为报损/领用/调整路径，非销售，保留消耗过期批次的能力
+			takes, err := deductBatches(tx, sku, item.Quantity, now, false)
 			if err != nil {
 				return err
 			}
@@ -471,8 +557,9 @@ func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product
 					AfterStock:     running,
 					BatchID:        t.Batch.ID,
 					BatchNo:        t.Batch.BatchNo,
-					ProductionDate: t.Batch.ProductionDate,
-					ExpireDate:     t.Batch.ExpireDate,
+					// 批次日期从 DB 读回是 RFC3339 形态（parseTime=true），必须规范化后才能写回 DATE 列
+					ProductionDate: datePtr(t.Batch.ProductionDate),
+					ExpireDate:     datePtr(t.Batch.ExpireDate),
 					RefNo:          order.OutNo,
 					OperatorID:     req.OperatorId,
 					Remark:         req.Remark,

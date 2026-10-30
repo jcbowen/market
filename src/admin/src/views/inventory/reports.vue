@@ -244,6 +244,10 @@ function onTabChange(value: string) {
 }
 
 onMounted(loadSummary)
-// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新，避免展示离开前的旧报表
-refreshOnActivated(loadSummary)
+// keep-alive 缓存下切回本页不重新挂载，需在激活时刷新；
+// 按当前停留页签刷对应数据，停留在毛利分析时固定刷 summary 会刷新不可见数据
+refreshOnActivated(() => {
+  if (activeTab.value === 'profit') loadProfit()
+  else loadSummary()
+})
 </script>

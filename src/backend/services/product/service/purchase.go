@@ -5,8 +5,10 @@ import (
 	"time"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
+	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/likeutil"
 	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/common"
@@ -120,6 +122,11 @@ func (s *PurchaseService) UpdatePurchaseOrder(ctx context.Context, req *product.
 		}
 		if po.Status != model.PurchaseStatusDraft {
 			return invalidArg("仅草稿态采购单允许修改")
+		}
+		// 乐观锁：明细全量替换式保存，并发编辑后提交者会静默覆盖先提交者的改动；
+		// 前端携带读取时的 updated_at，与库中不一致即返回 10007 提示重拉
+		if req.UpdatedAt != "" && req.UpdatedAt != po.UpdatedAt {
+			return bizerr.New(codes.Aborted, "采购单已被其他操作更新，请刷新页面获取最新数据后重新提交")
 		}
 
 		var totalAmount float64

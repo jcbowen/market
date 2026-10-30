@@ -24,6 +24,7 @@ type StockInOrder struct {
 	ID              int64   `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	CommunityID     int64   `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
 	InNo            string  `gorm:"column:in_no;type:varchar(30);not null;index;comment:入库单号（IN 前缀）" json:"in_no"`
+	BizNo           string  `gorm:"column:biz_no;type:varchar(64);not null;default:'';index;comment:幂等业务号（客户端 UUID，防网络重试/双击重复入库）" json:"biz_no"`
 	SupplierID      int64   `gorm:"column:supplier_id;type:bigint;not null;default:0;comment:供应商 ID（0=未指定）" json:"supplier_id"`
 	PurchaseOrderID int64   `gorm:"column:purchase_order_id;type:bigint;not null;default:0;index;comment:关联采购单 ID（0=直接入库）" json:"purchase_order_id"`
 	Type            int32   `gorm:"column:type;type:tinyint;not null;default:2;comment:1采购入库 2直接入库" json:"type"`
@@ -70,6 +71,7 @@ type StockOutOrder struct {
 	ID          int64  `gorm:"column:id;type:bigint;primaryKey;autoIncrement;comment:主键" json:"id"`
 	CommunityID int64  `gorm:"column:community_id;type:bigint;not null;index;comment:社区 ID" json:"community_id"`
 	OutNo       string `gorm:"column:out_no;type:varchar(30);not null;index;comment:出库单号（OUT 前缀）" json:"out_no"`
+	BizNo       string `gorm:"column:biz_no;type:varchar(64);not null;default:'';index;comment:幂等业务号（客户端 UUID，防重放出库）" json:"biz_no"`
 	Type        int32  `gorm:"column:type;type:tinyint;not null;comment:1报损 2领用 3调整出库" json:"type"`
 	OperatorID  int64  `gorm:"column:operator_id;type:bigint;not null;default:0;comment:操作人（管理员 ID）" json:"operator_id"`
 	Remark      string `gorm:"column:remark;type:varchar(255);default:'';comment:备注" json:"remark"`

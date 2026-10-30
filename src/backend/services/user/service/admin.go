@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/likeutil"
 	"github.com/jcbowen/market/src/backend/common/pageparam"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -344,6 +345,8 @@ func (s *AdminService) UpdateAdmin(ctx context.Context, req *user.UpdateAdminReq
 		if req.Status != 0 {
 			a.Status = req.Status
 		}
+		a.CreatedAt = timeutil.NormalizeRFC3339(a.CreatedAt)
+		a.UpdatedAt = timeutil.NormalizeRFC3339(a.UpdatedAt)
 		if err := tx.Save(a).Error; err != nil {
 			return err
 		}

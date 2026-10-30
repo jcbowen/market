@@ -422,6 +422,8 @@ message UpdateProductReq {
   optional string on_sale_at = 17;
   // 商品富文本详情（服务端白名单消毒后的 HTML；admin 全量提交，直接覆盖）
   string content = 18;
+  // 乐观锁版本号：取详情接口返回的 updated_at 原样提交，服务端不一致时返回 10007（数据已被他人修改）
+  string updated_at = 19;
 }
 
 message DeleteProductReq {
@@ -494,6 +496,7 @@ message ProductInfo {
   string on_sale_at = 22;     // 定时上架时间（空=不定时；仅 status=0 且非空时为预约中）
   string content = 23;        // 商品富文本详情（服务端已消毒的 HTML，C 端 rich-text 渲染）
   int32 sku_total = 24;       // 启用 SKU 数（仅 BatchGetProducts 批量回填，其余出口为 0）
+  string updated_at = 25;     // 更新时间，兼作编辑保存的乐观锁版本号（UpdateProductReq.updated_at 回传比对）
 }
 
 message ProductDetail {
@@ -686,6 +689,9 @@ message DeductStockReq {
   int64 sku_id = 1;
   int32 quantity = 2;
   int64 order_id = 3;
+  // 幂等业务号：与 stock_op_logs.biz_no 同口径（整单扣减传订单号），
+  // 为未来分次扣减预留分片能力；空串时幂等键退化为 (order_id, sku_id, op_type, '')
+  string biz_no = 4;
 }
 
 // StockItemQty 库存操作明细项
@@ -699,6 +705,8 @@ message StockItemQty {
 message BatchDeductStockReq {
   int64 order_id = 1;
   repeated StockItemQty items = 2;
+  // 幂等业务号：整单扣减传订单号，同一单据内所有行共用，与文档 05 biz_no 口径一致
+  string biz_no = 3;
 }
 
 message BatchDeductStockResp {
@@ -909,6 +917,8 @@ message UpdatePurchaseOrderReq {
   int64 supplier_id = 3;
   string remark = 4;
   repeated PurchaseOrderItemReq items = 5; // 全量替换，仅草稿态可改
+  // 乐观锁版本号：取详情接口返回的 updated_at 原样提交，服务端不一致时返回 10007
+  string updated_at = 6;
 }
 
 message SubmitPurchaseOrderReq {
@@ -985,6 +995,8 @@ message CreateStockInOrderReq {
   int64 operator_id = 4;
   string remark = 5;
   repeated StockInOrderItemReq items = 6;
+  // 幂等业务号：客户端生成 UUID，同一 biz_no 重复提交不重复入库（防止网络重试/双击造成重复加库存）
+  string biz_no = 7;
 }
 
 message StockInOrderInfo {
@@ -1052,6 +1064,8 @@ message CreateStockOutOrderReq {
   int64 operator_id = 3;
   string remark = 4;
   repeated StockOutOrderItemReq items = 5;
+  // 幂等业务号：客户端生成 UUID，同一 biz_no 重复提交不重复出库
+  string biz_no = 6;
 }
 
 message StockOutOrderInfo {

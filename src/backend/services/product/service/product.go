@@ -578,8 +578,9 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 		if err := s.validateOnSaleAt(ctx, req.OnSaleAt); err != nil {
 			return nil, err
 		}
-		p.Status = 0
-		p.OnSaleAt = &req.OnSaleAt
+			p.Status = 0
+			norm := dbTimeString(req.OnSaleAt) // 同 UpdateProduct：RFC3339 入参归一化
+			p.OnSaleAt = &norm
 	}
 
 	// GORM 零值坑：Status 模型 tag 带 default:1，Create 遇零值 0 会跳过该列（落 DB 默认 1）
@@ -615,9 +616,13 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 // productEditableColumns UpdateProduct 归属列白名单（字段级更新，见其事务内注释）
 // 刻意不含派生/并发列：min_price、max_price、min_original_price、stock（SKU 聚合回写）、
 // sales_count（支付与退款调整）、community_id、id、created_at
+// 含 updated_at：兼作乐观锁版本号，须显式赋规范化时间（见 UpdateProduct 内赋值处）——
+// 若省略让 gorm 自动 touch，结构体里读回的 RFC3339 字面量（parseTime DSN）会被原样写库，
+// MySQL 8.0.19+ 可解析、5.7 直接 1292（sku/category 等整行 Save 同类问题的字段级更新版）
 var productEditableColumns = []string{
 	"category_id", "name", "description", "content", "cover_image", "images",
 	"unit", "is_multi_spec", "show_sales", "virtual_sales", "min_buy", "status", "sort", "on_sale_at",
+	"updated_at",
 }
 
 // UpdateProduct 更新商品
@@ -640,6 +645,11 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	}
 	if err := EnsureScope(req.CommunityId, p.CommunityID, "商品"); err != nil {
 		return nil, err
+	}
+	// 乐观锁：商品为整份覆盖式保存，两人同时编辑后提交者会静默覆盖先提交者的改动；
+	// 前端携带读取时的 updated_at，与库中不一致即返回 10007 提示重拉（与支付/附件配置同口径）
+	if req.UpdatedAt != "" && req.UpdatedAt != p.UpdatedAt {
+		return nil, bizerr.New(codes.Aborted, "商品已被其他操作更新，请刷新页面获取最新数据后重新提交")
 	}
 	name, err := normalizeProductName(req.Name, false)
 	if err != nil {
@@ -701,7 +711,8 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 				return nil, err
 			}
 			p.Status = 0
-			p.OnSaleAt = &at
+			norm := dbTimeString(at) // RFC3339 入参归一化为「Y-m-d H:i:s」（5.7 不收带时区偏移字面量）
+			p.OnSaleAt = &norm
 		} else {
 			p.OnSaleAt = nil
 		}
@@ -711,6 +722,17 @@ func (s *ProductService) UpdateProduct(ctx context.Context, req *product.UpdateP
 	if len(req.Images) > 0 {
 		imagesJSON, _ := json.Marshal(req.Images)
 		p.Images = string(imagesJSON)
+	}
+
+	// updated_at 兼作乐观锁版本号：显式赋「Y-m-d H:i:s」规范化当前时间（探针实证，
+	// gorm 自动 touch 会把读回的 RFC3339 字面量原样写库，5.7 报 1292）；
+	// 事务外赋值，成功后随返回值下发，前端下次保存携带即最新版本
+	p.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	// on_sale_at 同理：不编辑预约时保留库中原值，但读回形态是 RFC3339（parseTime DSN），
+	// 在白名单 Select 里会被原样写库 1292（MySQL 5.7）；统一归一化后再落库
+	if p.OnSaleAt != nil {
+		norm := dbTimeString(*p.OnSaleAt)
+		p.OnSaleAt = &norm
 	}
 
 	err = s.db.GetDb().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -1089,5 +1111,7 @@ func ToProductInfo(p *model.Product, categoryName string, images []string) *prod
 		VirtualSales:  p.VirtualSales,
 		OnSaleAt:      onSaleAt,
 		CategoryName:  categoryName,
+		// 更新时间兼作乐观锁版本号：管理端编辑保存时回传，服务端比对不一致即拒绝（10007）
+		UpdatedAt: p.UpdatedAt,
 	}
 }

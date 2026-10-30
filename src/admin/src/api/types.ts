@@ -138,6 +138,8 @@ export interface Product {
   virtual_sales?: number
   /** 定时上架时间（空=不定时；status=0 且非空时为预约中） */
   on_sale_at?: string
+  /** 更新时间，兼作编辑保存的乐观锁版本号 */
+  updated_at?: string
 }
 
 /**
@@ -246,6 +248,8 @@ export interface ProductSavePayload {
   on_sale_at?: string
   /** 上下架终态（仅编辑预约中商品切回「立即上架」时传 1：取消定时并上架；其余场景不传，状态维持不变） */
   status?: number
+  /** 乐观锁版本号：编辑时携带载入详情返回的 updated_at，服务端不一致返回 10007（新建不传） */
+  updated_at?: string
   specs: SpecSaveItem[]
   sku_items: SkuSaveItem[]
 }

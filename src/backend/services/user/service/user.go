@@ -15,6 +15,7 @@ import (
 	"github.com/jcbowen/market/src/backend/common/errcode"
 	"github.com/jcbowen/market/src/backend/common/likeutil"
 	"github.com/jcbowen/market/src/backend/common/pageparam"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -35,6 +36,20 @@ type UserService struct {
 //   - *UserService: 用户业务服务实例
 func NewUserService(db *mysql.Instance) *UserService {
 	return &UserService{db: db, attachmentLoader: attachmenturl.NewLoader(db.GetDb())}
+}
+
+// normUserScannedTimes 整行 Save 前把读回的 RFC3339 时间字面量归一化为「Y-m-d H:i:s」：
+// parseTime DSN 下 DATETIME 列读回 string 是带时区偏移形态，原样回写 DATEIME 列
+// MySQL 8.0.19+ 可解析、5.7 直接 1292（与 product 服务 sku/category 等同库同源问题）
+// 参数：
+//   - u: 待落库的会员模型（原地修改）
+func normUserScannedTimes(u *model.User) {
+	u.CreatedAt = timeutil.NormalizeRFC3339(u.CreatedAt)
+	u.UpdatedAt = timeutil.NormalizeRFC3339(u.UpdatedAt)
+	if u.LastLoginAt != nil {
+		n := timeutil.NormalizeRFC3339(*u.LastLoginAt)
+		u.LastLoginAt = &n
+	}
 }
 
 // MediaURL 附件地址出库拼接完整 URL（外链原样返回）
@@ -186,6 +201,7 @@ func (s *UserService) CreateOrUpdateUser(ctx context.Context, req *user.CreateUs
 	u.LastLoginAt = &lastLoginAt
 
 	if u.ID > 0 {
+		normUserScannedTimes(u)
 		if err := s.db.GetDb().WithContext(ctx).Save(u).Error; err != nil {
 			return nil, err
 		}
@@ -256,6 +272,7 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, req *user.UpdateUse
 		}
 		u.Birthday = &birthday
 	}
+	normUserScannedTimes(u)
 	if err := s.db.GetDb().WithContext(ctx).Save(u).Error; err != nil {
 		return nil, err
 	}
@@ -305,6 +322,7 @@ func (s *UserService) UpdateMember(ctx context.Context, req *user.UpdateMemberRe
 		}
 		u.Birthday = &birthday
 	}
+	normUserScannedTimes(u)
 	if err := db.Save(u).Error; err != nil {
 		return nil, err
 	}

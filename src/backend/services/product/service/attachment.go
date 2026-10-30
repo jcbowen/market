@@ -240,6 +240,9 @@ func (s *AttachmentService) SaveConfig(ctx context.Context, cfg *product.Attachm
 	row.OssCustomVisitDomain = ensureTrailingSlash(cfg.OssCustomVisitDomain)
 	row.MaxSize = cfg.MaxSize
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	// parseTime=true 下从 DB 读回的 created_at 是 RFC3339 形态，
+	// 整行 Save 原样回写会被严格模式拒绝（Error 1292），写库前规范化
+	row.CreatedAt = dbTimeString(row.CreatedAt)
 
 	if err := s.db.GetDb().WithContext(ctx).Save(&row).Error; err != nil {
 		return fmt.Errorf("保存附件配置失败: %w", err)

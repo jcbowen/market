@@ -23,7 +23,7 @@
         </n-form-item>
         <n-form-item label="入库明细">
           <n-space vertical style="width: 100%">
-            <n-table :bordered="false" :single-line="true" size="small" style="width: 980px">
+            <n-table :bordered="false" :single-line="true" size="small" style="width: 1100px">
               <thead>
                 <tr>
                   <th v-if="!purchaseId" style="width: 360px">商品 / SKU</th>
@@ -32,6 +32,7 @@
                   <th style="width: 140px">单位成本（元）</th>
                   <th style="width: 160px">批次号</th>
                   <th style="width: 150px">生产日期</th>
+                  <th style="width: 120px">保质天数</th>
                   <th style="width: 150px">过期日期</th>
                   <th v-if="!purchaseId" style="width: 80px">操作</th>
                 </tr>
@@ -60,10 +61,30 @@
                     <n-input v-model:value="item.batch_no" placeholder="自动生成" maxlength="50" style="width: 140px" />
                   </td>
                   <td>
-                    <n-date-picker v-model:value="item.production_date" type="date" clearable placeholder="选填" style="width: 140px" />
+                    <n-date-picker
+                      v-model:value="item.production_date"
+                      type="date"
+                      clearable
+                      placeholder="选填"
+                      style="width: 140px"
+                      @update:value="() => applyShelfLife(index)"
+                    />
                   </td>
                   <td>
-                    <n-date-picker v-model:value="item.expire_date" type="date" clearable placeholder="选填" style="width: 140px" />
+                    <n-input-number
+                      v-model:value="item.shelf_life_days"
+                      :min="0"
+                      :precision="0"
+                      placeholder="选填"
+                      style="width: 110px"
+                      @update:value="() => applyShelfLife(index)"
+                    />
+                  </td>
+                  <td>
+                    <n-date-picker v-model:value="item.expire_date" type="date" clearable placeholder="选填/自动算" style="width: 140px" />
+                    <n-text v-if="purchaseId && item.pending_qty !== undefined && item.quantity > item.pending_qty" depth="3" type="error" style="font-size: 12px; display: block">
+                      超过待入库量 {{ item.pending_qty }}，提交将被拒绝
+                    </n-text>
                   </td>
                   <td v-if="!purchaseId">
                     <n-button size="small" type="error" quaternary @click="removeItem(index)">删除</n-button>
@@ -121,6 +142,10 @@ interface InRow {
   batch_no: string
   production_date: number | null
   expire_date: number | null
+  // 保质天数：与生产日期一起自动算出过期日期，手工改过期日期仍可覆盖
+  shelf_life_days: number | null
+  // 按采购单入库时的待入库量（超量提示用）
+  pending_qty?: number
   // 按采购单入库时展示用
   sku_code?: string
   product_name?: string
@@ -142,7 +167,21 @@ function statusText(status: number) {
 }
 
 function addItem() {
-  rows.value.push({ sku_id: undefined, quantity: 1, unit_cost: 0, batch_no: '', production_date: null, expire_date: null })
+  rows.value.push({ sku_id: undefined, quantity: 1, unit_cost: 0, batch_no: '', production_date: null, expire_date: null, shelf_life_days: null })
+}
+
+/**
+ * 保质天数换算：生产日期 + 保质天数自动填充过期日期
+ * 仅在生产日期与保质天数均有效时计算；手工直接改过期日期仍可覆盖（自动算只在两者变化时触发）
+ *
+ * @param index 明细行下标
+ */
+function applyShelfLife(index: number) {
+  const row = rows.value[index]
+  if (!row?.shelf_life_days || row.shelf_life_days <= 0 || !row.production_date) return
+  const d = new Date(row.production_date)
+  d.setDate(d.getDate() + row.shelf_life_days)
+  row.expire_date = d.getTime()
 }
 
 function removeItem(index: number) {
@@ -175,6 +214,7 @@ function addBatchRows(skus: Sku[]) {
       batch_no: '',
       production_date: null,
       expire_date: null,
+      shelf_life_days: null,
     })
     existing.add(sku.id)
   }
@@ -213,6 +253,8 @@ async function loadPurchase() {
         batch_no: '',
         production_date: null,
         expire_date: null,
+        shelf_life_days: null,
+        pending_qty: item.quantity - item.received_quantity,
       }))
   }
 }
@@ -236,10 +278,17 @@ async function submit() {
     message.warning('存在未选择 SKU 的明细行')
     return
   }
+  // 生产/过期日期倒挂拦截：服务端虽能存下，但会造成「未生产先过期」的脏批次
+  if (rows.value.some((row) => row.production_date && row.expire_date && row.expire_date < row.production_date)) {
+    message.warning('存在过期日期早于生产日期的明细行，请修正后再提交')
+    return
+  }
 
   submitting.value = true
   try {
     const res = await createStockInOrder({
+      // 幂等业务号：防网络重试/双击重复入库（服务端同 biz_no 直接返回原单）
+      biz_no: crypto.randomUUID(),
       supplier_id: form.value.supplier_id ?? undefined,
       purchase_order_id: purchaseId.value || undefined,
       remark: form.value.remark,

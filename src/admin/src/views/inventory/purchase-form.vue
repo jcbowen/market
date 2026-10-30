@@ -112,6 +112,8 @@ const formRef = ref<FormInst | null>(null)
 const supplierOptions = ref<{ label: string; value: number }[]>([])
 const supplierLoading = ref(false)
 const submitting = ref(false)
+// 乐观锁版本号：编辑模式载入详情时记录，提交时原样回传（冲突时服务端返回 10007）
+const versionUpdatedAt = ref('')
 const batchPickerVisible = ref(false)
 // 已选 SKU 信息（含库存/成本），用于行内展示
 const skuInfoMap = ref<Record<number, Sku>>({})
@@ -135,9 +137,16 @@ function skuInfoOf(skuId: number | undefined) {
   return skuId ? skuInfoMap.value[skuId] : undefined
 }
 
-/** 选中 SKU 时记录信息用于行内展示，并用当前成本价预填采购价，省一次输入 */
+/** 选中 SKU 时记录信息用于行内展示，并用当前成本价预填采购价，省一次输入；同单重复 SKU 提前拦下 */
 function onSkuChange(index: number, sku: Sku | null) {
   if (sku) {
+    // 手动路径与批量路径同口径：同一 SKU 重复行会被服务端整单拒绝，选择时就拦下并提示改已有行数量
+    const duplicated = form.value.items.some((item, i) => i !== index && item.sku_id === sku.id)
+    if (duplicated) {
+      message.warning('该 SKU 已在其他明细行中，请直接修改那一行的数量')
+      form.value.items[index].sku_id = undefined
+      return
+    }
     skuInfoMap.value[sku.id] = sku
     if (!form.value.items[index].purchase_price && sku.cost_price) {
       form.value.items[index].purchase_price = Number(sku.cost_price)
@@ -174,6 +183,7 @@ async function loadDetail() {
     const detail = res.data.data
     form.value.supplier_id = detail.info.supplier_id || null
     form.value.remark = detail.info.remark
+    versionUpdatedAt.value = detail.info.updated_at || ''
     form.value.items = detail.items.map((item) => ({
       sku_id: item.sku_id,
       quantity: item.quantity,
@@ -206,6 +216,8 @@ async function submit(submitNow: boolean) {
     const payload = {
       supplier_id: form.value.supplier_id,
       remark: form.value.remark,
+      // 乐观锁版本号：仅编辑模式携带，与载入时不一致则服务端拒绝（10007），防止并发编辑静默覆盖
+      ...(isEdit.value ? { updated_at: versionUpdatedAt.value } : {}),
       items: form.value.items.map((item) => ({
         sku_id: item.sku_id as number,
         quantity: item.quantity,

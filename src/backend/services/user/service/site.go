@@ -17,6 +17,7 @@ import (
 
 	"github.com/jcbowen/market/src/backend/common/attachmenturl"
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
@@ -200,6 +201,7 @@ func (s *SiteService) SaveSiteConfig(ctx context.Context, req *user.SaveSiteConf
 	row.SeoKeywords = strings.TrimSpace(req.SeoKeywords)
 	row.Version++
 	row.UpdatedAt = time.Now().Format("2006-01-02 15:04:05")
+	row.CreatedAt = timeutil.NormalizeRFC3339(row.CreatedAt)
 
 	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
 		return nil, fmt.Errorf("保存站点设置失败: %w", err)

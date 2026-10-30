@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/dberr"
 	"github.com/jcbowen/market/src/backend/common/eventbus"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
@@ -332,6 +333,8 @@ func (s *RoleService) UpdateRole(ctx context.Context, req *user.UpdateRoleReq) (
 	}
 	r.Permissions = permsJSON
 
+	r.CreatedAt = timeutil.NormalizeRFC3339(r.CreatedAt)
+	r.UpdatedAt = timeutil.NormalizeRFC3339(r.UpdatedAt)
 	if err := s.db.GetDb().WithContext(ctx).Save(r).Error; err != nil {
 		return nil, err
 	}
