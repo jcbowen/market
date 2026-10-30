@@ -287,18 +287,18 @@ func (s *server) MarkPaymentPaid(ctx stdctx.Context, req *payment.MarkPaymentPai
 // 返回值：
 //   - *payment.PayConfigRow: proto 支付配置行
 func (s *server) toPayConfigRow(row *model.PayConfig) *payment.PayConfigRow {
-		ready, readyMsg := false, ""
-		switch row.Platform {
-		case model.PayPlatformWechat:
-			ready, readyMsg = service.WechatConfigStatus(row)
-		case model.PayPlatformAlipay:
-			ready, readyMsg = service.AlipayConfigStatus(row)
-		}
+	ready, readyMsg := false, ""
+	switch row.Platform {
+	case model.PayPlatformWechat:
+		ready, readyMsg = service.WechatConfigStatus(row)
+	case model.PayPlatformAlipay:
+		ready, readyMsg = service.AlipayConfigStatus(row)
+	}
 	return &payment.PayConfigRow{
-		Id:      row.ID,
-		Name:    row.Name,
+		Id:       row.ID,
+		Name:     row.Name,
 		Platform: row.Platform,
-		Enabled: row.Enabled,
+		Enabled:  row.Enabled,
 
 		WechatAppSecret:    row.WechatAppSecret,
 		WechatMchId:        row.WechatMchID,
@@ -320,8 +320,8 @@ func (s *server) toPayConfigRow(row *model.PayConfig) *payment.PayConfigRow {
 		AlipayPublicCertUploaded: row.AlipayPublicCert != "",
 		AlipayRootCertUploaded:   row.AlipayRootCert != "",
 
-		UpdatedAt:   row.UpdatedAt,
-		Ready:       ready,
+		UpdatedAt:    row.UpdatedAt,
+		Ready:        ready,
 		ReadyMessage: readyMsg,
 	}
 }

@@ -32,8 +32,8 @@ type ClientChannel struct {
 	// 同平台至多一条，cash 至多一条；保存时服务端做语法与平台兼容校验，
 	// 配置存在性/启用/凭证就绪在渲染与下单时由网关+payment 服务兜底过滤
 	PayMethods string `gorm:"column:pay_methods;type:varchar(255);comment:绑定的支付方式有序 JSON 数组：cash 或 platform:config_id，顺序即收银台展示顺序" json:"pay_methods"`
-	CreatedAt string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
-	UpdatedAt string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
+	CreatedAt  string `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+	UpdatedAt  string `gorm:"column:updated_at;type:datetime;comment:更新时间" json:"updated_at"`
 }
 
 // TableName 返回客户端渠道表名

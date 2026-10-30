@@ -5941,8 +5941,8 @@ func (h *AdminHandler) GetPaymentConfigs(c *gin.Context) {
 		list = append(list, payConfigViewOf(row))
 	}
 	response.Success(c, gin.H{
-		"list":            list,
-		"suggested_urls":  buildSuggestedURLs(c),
+		"list":           list,
+		"suggested_urls": buildSuggestedURLs(c),
 	})
 }
 
@@ -5950,7 +5950,8 @@ func (h *AdminHandler) GetPaymentConfigs(c *gin.Context) {
 // 回调地址一律按部署域名派生后落库；私钥/V3 密钥空值由 payment 侧保留原值
 //
 // 接口: POST /api/v1/admin/settings/payment（新增）
-//       PUT /api/v1/admin/settings/payment/:id（更新）
+//
+//	PUT /api/v1/admin/settings/payment/:id（更新）
 //
 // 参数：
 //   - c: gin 上下文

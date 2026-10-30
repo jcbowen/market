@@ -160,9 +160,9 @@ func (h *AdminHandler) UpdateSiteSetting(c *gin.Context) {
 		return
 	}
 
-	// 数据库已变更，立即刷新网关快照，使域名与品牌无需等待 TTL
-	brand.Invalidate()
-	snap := brand.Get(c.Request.Context())
+	// 数据库已变更，同步刷新网关快照：域名与品牌无需等待 TTL，
+	// 且紧随其后的回调地址回写/附件域名补写必须读到刚保存的域名（异步失效会读到旧值）
+	snap := brand.Refresh(c.Request.Context())
 	if snap.BaseURL != "" {
 		h.syncPayCallbackURLs(c.Request.Context(), snap.BaseURL)
 	}

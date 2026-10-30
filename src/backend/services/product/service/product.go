@@ -578,9 +578,9 @@ func (s *ProductService) CreateProduct(ctx context.Context, req *product.CreateP
 		if err := s.validateOnSaleAt(ctx, req.OnSaleAt); err != nil {
 			return nil, err
 		}
-			p.Status = 0
-			norm := dbTimeString(req.OnSaleAt) // 同 UpdateProduct：RFC3339 入参归一化
-			p.OnSaleAt = &norm
+		p.Status = 0
+		norm := dbTimeString(req.OnSaleAt) // 同 UpdateProduct：RFC3339 入参归一化
+		p.OnSaleAt = &norm
 	}
 
 	// GORM 零值坑：Status 模型 tag 带 default:1，Create 遇零值 0 会跳过该列（落 DB 默认 1）

@@ -9,11 +9,13 @@ import { autoName, uniqueSuffix } from '../helpers/data';
  *   - 免登录公开接口 /api/v1/site-info：只回非敏感品牌字段
  *   - HTML 品牌注入：/b/ 与 /s/ 入口的 <title>、meta 取自站点设置，后台入口带 noindex、C 端入口带 og 标签
  *   - 服务端兜底：部署域名缺协议/带路径、站点名超长、logo 非法外链整行拒绝且不落库
- *   - 部署域名唯一来源：三条支付回调地址一律按生效域名派生；支付配置页提交伪造 notify_url 被忽略
+ *   - 部署域名唯一来源：三条支付回调地址一律按生效域名派生；支付配置页提交伪造 notify_url 被忽略，
+ *     站点域名保存后网关会把派生值回写全部支付配置行（handler/site.go syncPayCallbackURLs）
  *   - 仅超管可读写：settings:* 是系统级权限点，不进社区权限上限，社区角色勾了也会在解析时被剥离，
  *     非超管读与写一律 11005
  * 环境说明：用例把 base_url 设为独立测试域名，期间附件外链与支付回调地址随之派生；
- *           afterAll 无条件恢复原值，并把支付回调地址退回按请求域名派生的本机口径，不把测试域名留在库里；
+ *           afterAll 无条件恢复原值，回调地址由站点保存的联动回写自动退回按请求域名派生的本机口径，
+ *           不把测试域名留在库里；
  *           站点域名保存的联动补写会把空的附件「访问域名」写成测试域名（图片出库地址前缀随之改变，
  *           跨模块共享同一单行），故 afterAll 同时恢复附件配置快照，回读期望值按当前访问域名现算
  */
@@ -44,12 +46,24 @@ interface AttachmentConfig {
   [k: string]: unknown;
 }
 
-/** 支付配置视图（仅断言回调地址派生相关字段） */interface PaymentSetting {
-  wechat?: { notify_url?: string; [k: string]: unknown };
-  alipay?: { notify_url?: string; return_url?: string; [k: string]: unknown };
-  suggested_urls?: { base_url?: string; wechat_notify_url?: string; alipay_notify_url?: string };
+/** 支付配置行视图（与网关 PayConfigView 对齐；多行制，仅断言回调地址派生相关字段） */
+interface PayConfigRow {
+  id: number;
+  name: string;
+  platform: string;
+  enabled: boolean;
+  wechat_notify_url?: string;
+  alipay_notify_url?: string;
+  alipay_return_url?: string;
+  /** 版本号（= 最后更新时间），保存时乐观锁比对 */
   updated_at?: string;
   [k: string]: unknown;
+}
+
+/** GET /admin/settings/payment 响应体 */
+interface PayConfigListResp {
+  list?: PayConfigRow[];
+  suggested_urls?: { base_url?: string; wechat_notify_url?: string; alipay_notify_url?: string };
 }
 
 const WECHAT_PATH = '/api/v1/payments/callback/wechat';
@@ -60,6 +74,39 @@ const TEST_DOMAIN = 'https://site-test.example.com';
 
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
 let communityId = 0;
+
+/**
+ * 读取支付配置列表与按当前生效域名派生的回调地址建议
+ * - 函数名: readPayConfigs
+ * - 参数: 无（使用模块级 adminApi）
+ * - 返回: Promise<PayConfigListResp>
+ * - 异常: 业务码非 0 时由 assertOk 抛出
+ * - 使用示例: const { list } = await readPayConfigs();
+ */
+async function readPayConfigs(): Promise<PayConfigListResp> {
+  const body = (await (
+    await adminApi.get('/api/v1/admin/settings/payment')
+  ).json()) as ApiResponse<PayConfigListResp>;
+  return assertOk(body, '读取支付配置');
+}
+
+/**
+ * 逐行原样重存支付配置，使落库回调地址重新按当前生效域名派生
+ * 站点域名清空后网关不会再回写（只认显式配置域名），库中会留着上一次派生出的测试域名，
+ * 而下单时通知地址直接取库值——恢复现场时主动重存一次，不把测试域名留在库里
+ * 每次写入都会推进版本号，故逐行重取最新 updated_at 再提交
+ */
+async function resavePayConfigs(): Promise<void> {
+  const { list } = await readPayConfigs();
+  for (const row of list) {
+    const fresh = ((await readPayConfigs()).list ?? []).find((r) => r.id === row.id);
+    if (!fresh) continue;
+    const resp = (await (
+      await adminApi.put(`/api/v1/admin/settings/payment/${fresh.id}`, { data: fresh })
+    ).json()) as ApiResponse;
+    if (resp.code !== 0) console.log(`[站点设置] 重存支付配置行 ${fresh.id} 失败 code=${resp.code} message=${resp.message}`);
+  }
+}
 /** 进入模块时的原值，afterAll 无条件恢复 */
 let original: SiteSetting | null = null;
 /**
@@ -90,16 +137,8 @@ test.afterAll(async () => {
       ).json()) as ApiResponse;
       if (back.code !== 0) console.log(`[站点设置] 恢复原值失败 code=${back.code} message=${back.message}`);
 
-      // 站点域名恢复为空后，网关按请求 host 派生，回写一次即可把回调地址从测试域名退回本机口径
-      const pay = (await (
-        await adminApi.get('/api/v1/admin/settings/payment')
-      ).json()) as ApiResponse<PaymentSetting>;
-      if (pay.code === 0) {
-        const again = (await (
-          await adminApi.put('/api/v1/admin/settings/payment', { data: { ...pay.data, updated_at: pay.data?.updated_at } })
-        ).json()) as ApiResponse;
-        if (again.code !== 0) console.log(`[站点设置] 回调地址退回本机口径失败 code=${again.code} message=${again.message}`);
-      }
+      // 站点域名恢复为空后网关不再回写回调地址，逐行重存把派生值退回按请求域名口径的本机地址
+      await resavePayConfigs();
     }
     // 附件访问域名放在最后恢复：站点域名与回调地址的回写都可能再次触发联动补写
     if (originalAttachment) {
@@ -182,9 +221,11 @@ test.describe.serial('站点设置读写与品牌注入', () => {
 
   test('2. 保存品牌与 SEO 字段可回读，版本号递增', async () => {
     const before = original?.version ?? 0;
-    // logo/favicon 出库按附件访问域名拼为完整地址（未配置时保持站内相对路径），
-    // 附件配置是跨模块共享的单行环境态，故回读期望值按当前访问域名现算，不写死相对路径
-    const prefix = ((await readAttachment()).visit_domain ?? '').replace(/\/+$/, '');
+    // logo/favicon 入库归一为站内相对路径、出库一律拼成完整地址（services/user/server.go toSiteConfigOut）：
+    // 前缀取附件「访问域名」，未配置时按当前请求域名现推。附件配置是跨模块共享的单行环境态，
+    // 故期望值按当时的访问域名/生效域名现算，不写死相对路径（写死必然与服务端回读不一致）
+    const domain = ((await readAttachment()).visit_domain ?? '').replace(/\/+$/, '');
+    const prefix = domain || (await readSite()).effective_base_url;
     const brand = {
       site_name: autoName('站点'),
       logo_url: `${prefix}/uploads/auto-test-logo.png`,
@@ -238,8 +279,8 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     const data = assertOk(body, '公开站点信息');
     expect(data.site_name).toBe(current.site_name);
     expect(data.footer_html).toBe(current.footer_html);
-    // 公开面只给品牌字段：支付渠道与密钥类配置不得出现在这里
-    for (const key of ['wechat', 'alipay', 'enabled_channels']) {
+    // 公开面只给品牌字段：支付渠道绑定与商户凭证类配置不得出现在这里
+    for (const key of ['pay_methods', 'client_channels', 'enabled_channels', 'wechat_mch_id', 'alipay_app_id']) {
       expect(data[key], `公开接口不应返回 ${key}`).toBeUndefined();
     }
   });
@@ -301,40 +342,48 @@ test.describe.serial('站点设置读写与品牌注入', () => {
     expect(data.alipay_return_url).toBe(`${eff}${ALIPAY_RETURN_PATH}`);
   });
 
-  test('8. 支付配置页回调地址只读派生，前端入参被忽略', async () => {
+  test('8. 支付配置回调地址只读派生并回写全部配置行，前端入参被忽略', async () => {
     const current = await readSite();
     const eff = current.effective_base_url;
+    const wechatNotify = `${eff}${WECHAT_PATH}`;
+    const alipayNotify = `${eff}${ALIPAY_PATH}`;
+    const alipayReturn = `${eff}${ALIPAY_RETURN_PATH}`;
 
-    const read = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    const pay = assertOk(read, '读取支付配置');
+    const pay = await readPayConfigs();
     expect(pay.suggested_urls?.base_url, '引导基址应与生效域名一致').toBe(eff);
-    expect(pay.wechat?.notify_url).toBe(`${eff}${WECHAT_PATH}`);
-    expect(pay.alipay?.notify_url).toBe(`${eff}${ALIPAY_PATH}`);
-    expect(pay.alipay?.return_url).toBe(`${eff}${ALIPAY_RETURN_PATH}`);
+    expect(pay.suggested_urls?.wechat_notify_url, '引导的微信通知地址应按生效域名派生').toBe(wechatNotify);
+    expect(pay.suggested_urls?.alipay_notify_url, '引导的支付宝通知地址应按生效域名派生').toBe(alipayNotify);
 
-    // 提交伪造回调地址：保存应成功（其它字段照常落库），但三个地址一律被派生值覆盖
+    // 用例 7 保存部署域名后，网关已把派生地址逐行回写配置（handler/site.go syncPayCallbackURLs）
+    const rows = pay.list ?? [];
+    for (const row of rows) {
+      if (row.platform === 'wechat') {
+        expect(row.wechat_notify_url, `微信行 ${row.id} 通知地址应为派生值`).toBe(wechatNotify);
+      }
+      if (row.platform === 'alipay') {
+        expect(row.alipay_notify_url, `支付宝行 ${row.id} 通知地址应为派生值`).toBe(alipayNotify);
+        expect(row.alipay_return_url, `支付宝行 ${row.id} 回跳地址应为派生值`).toBe(alipayReturn);
+      }
+    }
+    if (rows.length === 0) test.skip(true, '库中无支付配置行，无法验证前端入参不被采信');
+
+    // 提交伪造回调地址：保存应成功（其余字段照常落库），但三个地址一律被派生值覆盖
+    const target = rows[0];
     const evil = 'https://evil.example.com/callback';
     const forged = (await (
-      await adminApi.put('/api/v1/admin/settings/payment', {
-        data: {
-          ...pay,
-          wechat: { ...pay.wechat, notify_url: evil },
-          alipay: { ...pay.alipay, notify_url: evil, return_url: evil },
-          updated_at: pay.updated_at,
-        },
+      await adminApi.put(`/api/v1/admin/settings/payment/${target.id}`, {
+        data: { ...target, wechat_notify_url: evil, alipay_notify_url: evil, alipay_return_url: evil },
       })
     ).json()) as ApiResponse;
     expect(forged.code, `保存支付配置失败: ${forged.message}`).toBe(0);
 
-    const after = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    const saved = assertOk(after, '回读支付配置');
-    expect(saved.wechat?.notify_url, '微信通知地址不得被前端改写').toBe(`${eff}${WECHAT_PATH}`);
-    expect(saved.alipay?.notify_url, '支付宝通知地址不得被前端改写').toBe(`${eff}${ALIPAY_PATH}`);
-    expect(saved.alipay?.return_url, '支付宝回跳地址不得被前端改写').toBe(`${eff}${ALIPAY_RETURN_PATH}`);
+    const saved = (await readPayConfigs()).list?.find((r) => r.id === target.id);
+    if (target.platform === 'wechat') {
+      expect(saved?.wechat_notify_url, '微信通知地址不得被前端改写').toBe(wechatNotify);
+    } else {
+      expect(saved?.alipay_notify_url, '支付宝通知地址不得被前端改写').toBe(alipayNotify);
+      expect(saved?.alipay_return_url, '支付宝回跳地址不得被前端改写').toBe(alipayReturn);
+    }
   });
 
   // 站点设置是平台级配置：读写都要求 settings:* 系统级权限点，而系统级码不进社区权限上限

@@ -6,13 +6,15 @@ import { newAdminContext, assertOk, type ApiResponse } from '../helpers/api';
  * 覆盖：
  *   - GET/PUT /admin/settings/refund：运费退还策略（枚举 always/never/user_decide）
  *     非法枚举值被 binding 拒绝；写入生效可回读
- *   - GET/PUT /admin/settings/payment：渠道开关与微信/支付宝配置
- *     alipay 写入后可持久化保留（写侧不再强制过滤），但 C 端是否下发取决于 alipay_ready 就绪状态
- *     保存携带 updated_at 作版本号做乐观锁比对，过期版本提交被拒且不改写库中配置
- *   - 支付宝加签方式（公钥模式/证书模式）读写贯通：mode 可保存回读，证书内容不回传明文，
- *     证书未齐时按 fail-closed 判未就绪并给出与模式对应的原因文案
- *   - 异步通知地址格式服务端兜底：非法地址拒绝整行保存且不落库
- *   - 写后恢复原值，不污染环境（读→写→验证→恢复闭环）
+ *   - 支付配置多行制（2026-10-30 支付渠道重构后的契约）：POST 建空行、GET 返回列表与派生回调地址、
+ *     PUT /:id 整行覆写；支付宝行绑定进客户端渠道 pay_methods（<platform>:<config_id>）后即持久化，
+ *     C 端是否下发该支付方式取决于行的 ready 就绪状态（fail-closed）
+ *   - 渠道保存的服务端门槛：绑定微信支付但渠道 AppID 为空被拒（10004）且不改写已存绑定
+ *   - 支付宝加签方式（公钥模式/证书模式）读写贯通：mode 可保存回读，证书/私钥内容不回传明文，
+ *     证书未齐时判未就绪并给出与模式对应的原因文案
+ *   - 异步通知地址唯一来源是部署域名：前端入参（含伪造地址）不落库，回读恒为派生值
+ *   - 保存携带行 updated_at 作版本号做乐观锁比对，过期版本提交被拒（10007）且不改写库中该行
+ *   - 写后恢复原绑定、删除临时行，不污染环境（读→写→验证→恢复闭环）
  * 说明：证书上传（multipart）需真实证书文件，不在本模块范围，由 payment 服务离线测试覆盖
  */
 
@@ -21,31 +23,139 @@ interface RefundSetting {
   refund_freight_policy: string;
 }
 
-/** 支付配置视图（与后端 PaymentSetting 对齐，断言相关字段） */
-interface PaymentSetting {
-  enabled_channels?: string[];
-  wechat?: Record<string, unknown>;
-  alipay?: Record<string, unknown>;
-  /** 支付宝能力就绪标志（字段齐全且密钥自检通过才为 true），决定 C 端是否下发该渠道 */
-  alipay_ready?: boolean;
-  /** 支付宝密钥自检失败原因，空表示通过；就绪为 false 时后台据此提示 */
-  alipay_ready_message?: string;
-  /** 配置版本号（= 最后更新时间），保存时乐观锁比对 */
+/** 支付配置行视图（与网关 PayConfigView 对齐；多行制，2026-10-30 支付渠道重构后契约） */
+interface PayConfigRow {
+  id: number;
+  name: string;
+  platform: string;
+  enabled: boolean;
+  wechat_mch_id?: string;
+  wechat_notify_url?: string;
+  alipay_app_id?: string;
+  /** 加签方式：'' / public 为公钥模式，cert 为证书模式 */
+  alipay_mode?: string;
+  alipay_notify_url?: string;
+  alipay_return_url?: string;
+  alipay_app_cert_uploaded?: boolean;
+  alipay_public_cert_uploaded?: boolean;
+  alipay_root_cert_uploaded?: boolean;
+  /** 就绪状态（启用 + 当前平台必填齐全 + 密钥自检通过），决定 C 端是否下发 */
+  ready?: boolean;
+  ready_message?: string;
+  /** 版本号（= 最后更新时间），保存时乐观锁比对 */
   updated_at?: string;
   [k: string]: unknown;
 }
 
+/** 客户端渠道视图（与网关 ClientChannelView 对齐；pay_methods 为有序绑定） */
+interface ClientChannelRow {
+  id: number;
+  code: string;
+  name: string;
+  app_id: string;
+  app_secret: string;
+  enabled: boolean;
+  pay_methods: string[];
+  configured: boolean;
+  updated_at: string;
+  [k: string]: unknown;
+}
+
+/** 本模块临时支付宝配置行名：beforeAll 创建、afterAll 删除，不留残留 */
+const TEMP_ALIPAY_NAME = 'AUTO-TEST 支付宝配置';
+/** 数据已被他人修改（errcode.DataConflict） */
+const CODE_DATA_CONFLICT = 10007;
+/** 前置条件不满足（errcode.OperationNotAllowed，网关由 gRPC FailedPrecondition 映射） */
+const CODE_OPERATION_NOT_ALLOWED = 10004;
+
 const POLICIES = ['always', 'never', 'user_decide'];
 
 let adminApi: Awaited<ReturnType<typeof newAdminContext>>['api'];
+/** 临时支付宝配置行 ID，beforeAll 创建后赋值 */
+let alipayRowID = 0;
+/** h5 与 pos 渠道进入模块时的原始绑定，afterAll 无条件恢复 */
+let h5Original: ClientChannelRow | null = null;
+let posOriginal: ClientChannelRow | null = null;
+
+/**
+ * 读取支付配置列表与派生回调地址
+ * - 函数名: readPaymentConfigs
+ * - 参数: 无
+ * - 返回值: Promise<{ list: PayConfigRow[]; suggested: Record<string, string> }>
+ * - 异常: 业务码非 0 时由 assertOk 抛出
+ * - 使用示例: const { list, suggested } = await readPaymentConfigs()
+ */
+async function readPaymentConfigs(): Promise<{ list: PayConfigRow[]; suggested: Record<string, string> }> {
+  const body = (await (
+    await adminApi.get('/api/v1/admin/settings/payment')
+  ).json()) as ApiResponse<{ list?: PayConfigRow[]; suggested_urls?: Record<string, string> }>;
+  const data = assertOk(body, '读取支付配置');
+  return { list: data.list ?? [], suggested: data.suggested_urls ?? {} };
+}
+
+/**
+ * 按 ID 读取单条支付配置行
+ * 每次写入都会推进版本号，写入前需重取该行再提交，避免误触乐观锁
+ */
+async function readPayRow(id: number): Promise<PayConfigRow> {
+  const { list } = await readPaymentConfigs();
+  const row = list.find((r) => r.id === id);
+  if (!row) throw new Error(`支付配置行 ${id} 不存在`);
+  return row;
+}
+
+/**
+ * 按渠道 code 读取客户端渠道视图
+ */
+async function readChannel(code: string): Promise<ClientChannelRow> {
+  const body = (await (
+    await adminApi.get('/api/v1/admin/settings/channels')
+  ).json()) as ApiResponse<{ channels?: ClientChannelRow[] }>;
+  const row = (assertOk(body, '读取客户端渠道').channels ?? []).find((ch) => ch.code === code);
+  if (!row) throw new Error(`客户端渠道 ${code} 不存在`);
+  return row;
+}
 
 test.beforeAll(async ({ playwright }) => {
   const admin = await newAdminContext(playwright);
   adminApi = admin.api;
+
+  // 建一条凭证留空、默认停用的支付宝配置行：本模块的加签方式/就绪判定/回调派生都需要有行可写，
+  // 而本机没有真实商户凭据（也不应写入），空行既能承载读写又不参与下单
+  const created = (await (
+    await adminApi.post('/api/v1/admin/settings/payment', {
+      data: { name: TEMP_ALIPAY_NAME, platform: 'alipay', enabled: false },
+    })
+  ).json()) as ApiResponse<PayConfigRow>;
+  alipayRowID = assertOk(created, `创建临时支付宝配置行失败: ${created.message}`).id;
+
+  h5Original = await readChannel('h5');
+  posOriginal = await readChannel('pos');
 });
 
 test.afterAll(async () => {
-  await adminApi?.dispose();
+  // 环境恢复：渠道绑定回到进入模块时的原值（临时行可能已被绑定），再删除临时行
+  try {
+    for (const snapshot of [h5Original, posOriginal]) {
+      if (!snapshot) continue;
+      const current = await readChannel(snapshot.code);
+      await adminApi.put(`/api/v1/admin/settings/channels/${current.id}`, {
+        data: {
+          code: current.code,
+          name: current.name,
+          app_id: current.app_id,
+          app_secret: '',
+          enabled: current.enabled,
+          pay_methods: snapshot.pay_methods ?? [],
+        },
+      });
+    }
+    if (alipayRowID > 0) {
+      await adminApi.delete(`/api/v1/admin/settings/payment/${alipayRowID}`);
+    }
+  } finally {
+    await adminApi?.dispose();
+  }
 });
 
 test.describe.serial('退款配置（运费退还策略）', () => {
@@ -98,212 +208,167 @@ test.describe.serial('退款配置（运费退还策略）', () => {
   });
 });
 
-test.describe.serial('支付配置（渠道开关）', () => {
-  let original: PaymentSetting | null = null;
-
-  test('5. GET 读取原配置', async () => {
-    const body = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    original = assertOk(body, '读取支付配置');
-    expect(Array.isArray(original.enabled_channels), '渠道开关应为数组').toBe(true);
+test.describe.serial('支付配置多行制与渠道绑定', () => {
+  test('5. GET 返回列表与派生回调地址', async () => {
+    const { list, suggested } = await readPaymentConfigs();
+    expect(Array.isArray(list), '支付配置应为多行列表').toBe(true);
+    for (const row of list) {
+      expect(['wechat', 'alipay'], `配置行 platform 应为合法平台，实为 ${row.platform}`).toContain(row.platform);
+      expect(row.updated_at ?? '', '每行应回传版本号').not.toBe('');
+    }
+    const temp = list.find((r) => r.id === alipayRowID);
+    expect(temp, '前置：临时支付宝配置行应在列表中').toBeTruthy();
+    expect(temp?.platform, '临时行平台应为 alipay').toBe('alipay');
+    expect(suggested.alipay_notify_url ?? '', '应回传按部署域名派生的支付宝通知地址')
+      .toContain('/api/v1/payments/callback/alipay');
   });
 
-  test('6. 写入含 alipay 的渠道数组：配置持久化保留，C 端下发与否取决于就绪状态', async ({ request }) => {
-    if (!original) test.skip(true, '支付配置未读取');
-    const channels = [...(original.enabled_channels ?? []), 'alipay'];
-    const resp = await adminApi.put('/api/v1/admin/settings/payment', { data: { ...original, enabled_channels: channels } });
-    const body = (await resp.json()) as ApiResponse<{ success: boolean }>;
-    expect(body.code, `保存支付配置失败: ${body.message}`).toBe(0);
+  test('6. 渠道绑定支付宝：绑定持久化保留，C 端下发与否取决于就绪状态', async ({ request }) => {
+    const entry = `alipay:${alipayRowID}`;
+    const methods = [...(h5Original?.pay_methods ?? []), entry];
+    const h5 = await readChannel('h5');
+    const saved = (await (
+      await adminApi.put(`/api/v1/admin/settings/channels/${h5.id}`, {
+        data: { code: h5.code, name: h5.name, app_id: h5.app_id, app_secret: '', enabled: h5.enabled, pay_methods: methods },
+      })
+    ).json()) as ApiResponse<ClientChannelRow>;
+    expect(saved.code, `保存渠道绑定失败: ${saved.message}`).toBe(0);
 
-    const after = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    const saved = assertOk(after, '回读支付配置');
-    // 支付宝已完成接入，写侧不再有「保持关闭」的强制过滤：勾选即持久化
-    expect(saved.enabled_channels, 'alipay 勾选后应被持久化保留').toContain('alipay');
-    for (const ch of original.enabled_channels ?? []) {
-      expect(saved.enabled_channels, `原渠道 ${ch} 应保留`).toContain(ch);
+    const after = await readChannel('h5');
+    expect(after.pay_methods, '绑定条目应被持久化').toContain(entry);
+    for (const m of h5Original?.pay_methods ?? []) {
+      expect(after.pay_methods, `原绑定 ${m} 应保留`).toContain(m);
     }
+    // 顺序即收银台展示顺序，新增条目应落在末尾
+    expect(after.pay_methods[after.pay_methods.length - 1], '新增绑定应排在末尾').toBe(entry);
 
-    // 勾选与能力就绪是两件事：本机无商户配置时 alipay_ready=false，C 端不得出现该渠道，
+    // 绑定与能力就绪是两件事：凭证未配齐的行必然未就绪（fail-closed），C 端不得下发该方式，
     // 否则用户点进一个必然失败的支付方式；线上配齐密钥后 ready=true 则应当下发。
-    // 断言按就绪标志分支，使本用例在两种环境下都成立，不会因开通商户配置而反向翻红。
-    const ready = saved.alipay_ready === true;
-    // 未就绪时后台需拿到可读原因（字段缺失或密钥自检失败），否则管理员只看到「未配置」无从下手
-    if (!ready) {
-      expect(saved.alipay_ready_message, '未就绪时应返回原因文案').toBeTruthy();
-    }
+    const row = await readPayRow(alipayRowID);
     const cBody = (await (await request.get('/api/v1/payments/channels')).json()) as ApiResponse<{
       channels?: { channel: string }[];
     }>;
-    expect(cBody.code, `读取 C 端支付渠道失败: ${cBody.message}`).toBe(0);
+    expect(cBody.code, `读取 C 端支付方式失败: ${cBody.message}`).toBe(0);
     const offered = (cBody.data?.channels ?? []).map((c) => c.channel);
-    if (ready) {
-      expect(offered, '能力已就绪且已勾选时 C 端应下发 alipay').toContain('alipay');
+    if (row.ready === true) {
+      expect(offered, '能力已就绪且已绑定时 C 端应下发 alipay').toContain('alipay');
     } else {
       expect(offered, '能力未就绪时 C 端不得下发 alipay').not.toContain('alipay');
+      expect(row.ready_message, '未就绪时应返回原因文案，否则管理员无从下手').toBeTruthy();
     }
-
-    // 微信配置字段应回读一致（私钥类字段不回传明文，仅比对 AppID）
-    expect(saved.wechat?.app_id ?? saved.wechat?.appId, '微信 AppID 应保持原值').toBe(
-      original.wechat?.app_id ?? original.wechat?.appId,
-    );
   });
 
-  test('7. 恢复原渠道配置（不污染环境）', async () => {
-    if (!original) test.skip(true, '支付配置未读取');
-    // 保存带版本号做乐观锁比对，上一个用例已推进版本，故恢复前必须重读取最新版本
-    const fresh = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    const current = assertOk(fresh, '恢复前读取最新配置');
-    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
-      data: { ...original, updated_at: current.updated_at },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `恢复支付配置失败: ${body.message}`).toBe(0);
-    const after = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    const restored = assertOk(after, '回读支付配置');
-    expect([...(restored.enabled_channels ?? [])].sort(), '渠道配置应恢复原值').toEqual(
-      [...(original.enabled_channels ?? [])].sort(),
-    );
+  test('7. 恢复 h5 原绑定（不污染环境）', async () => {
+    if (!h5Original) test.skip(true, 'h5 渠道未读取');
+    const h5 = await readChannel('h5');
+    const resp = (await (
+      await adminApi.put(`/api/v1/admin/settings/channels/${h5.id}`, {
+        data: {
+          code: h5.code, name: h5.name, app_id: h5.app_id, app_secret: '',
+          enabled: h5.enabled, pay_methods: h5Original.pay_methods ?? [],
+        },
+      })
+    ).json()) as ApiResponse;
+    expect(resp.code, `恢复渠道绑定失败: ${resp.message}`).toBe(0);
+    const after = await readChannel('h5');
+    expect(after.pay_methods, '绑定应恢复原值').toEqual(h5Original?.pay_methods ?? []);
   });
 
-  test('8. 携带过期版本号保存应被拒绝（乐观锁防并发覆盖）', async () => {
-    if (!original) test.skip(true, '支付配置未读取');
-    const fresh = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    const current = assertOk(fresh, '读取最新配置');
+  test('8. 绑定微信支付但渠道 AppID 为空应被拒绝（10004）', async () => {
+    if (!posOriginal) test.skip(true, 'pos 渠道未读取');
+    const wechatRow = (await readPaymentConfigs()).list.find((r) => r.platform === 'wechat');
+    if (!wechatRow) test.skip(true, '库中无微信配置行，无法构造绑定');
 
-    // 模拟另一管理员先行改写：本实例再提交读取时的旧版本，必须被拒且不改写库
-    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
-      data: {
-        ...current,
-        updated_at: '2000-01-01 00:00:00',
-        enabled_channels: [...(current.enabled_channels ?? []), 'alipay'],
-      },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    // 10007 数据已被他人修改（payment 侧版本冲突以 gRPC Aborted 承载，网关映射回该码）
-    expect(body.code, `过期版本提交应被乐观锁拒绝，实为 code=${body.code}`).toBe(10007);
-    expect(body.message, '应透传服务端冲突文案').toContain('支付配置已被其他操作更新');
+    // pos 无登录凭证，AppID 只能由管理员显式填写；此处故意留空提交绑定微信的请求
+    const pos = await readChannel('pos');
+    const body = (await (
+      await adminApi.put(`/api/v1/admin/settings/channels/${pos.id}`, {
+        data: {
+          code: pos.code, name: pos.name, app_id: '', app_secret: '', enabled: pos.enabled,
+          pay_methods: [...(pos.pay_methods ?? []), `wechat:${wechatRow.id}`],
+        },
+      })
+    ).json()) as ApiResponse;
+    expect(body.code, `绑定微信但缺 AppID 应被拒绝，实为 code=${body.code}`).toBe(CODE_OPERATION_NOT_ALLOWED);
+    expect(body.message, '应透传服务端门槛文案').toContain('绑定微信支付需先填写渠道 AppID');
 
-    const after = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    const saved = assertOk(after, '回读支付配置');
-    expect(saved.enabled_channels ?? [], '冲突拒绝后渠道配置不应被改写').toEqual(
-      current.enabled_channels ?? [],
-    );
+    const after = await readChannel('pos');
+    expect(after.pay_methods, '拒绝后渠道绑定不应被改写').toEqual(pos.pay_methods);
   });
 });
 
-/** 支付宝配置子对象（GET 视图，断言相关字段） */
-interface AlipaySetting {
-  app_id?: string;
-  mode?: string;
-  notify_url?: string;
-  /** 证书内容仅由上传接口写入，GET 恒回传空串 */
-  app_cert?: string;
-  alipay_public_cert?: string;
-  alipay_root_cert?: string;
-  [k: string]: unknown;
-}
-
-test.describe.serial('支付宝加签方式与通知地址校验', () => {
-  let original: PaymentSetting | null = null;
-
+test.describe.serial('支付宝加签方式与通知地址（按配置行读写）', () => {
   /**
-   * 读取最新支付配置
-   * 每次写入都会推进版本号，写入前需重取配置再提交，避免误触乐观锁
+   * 读取临时支付宝配置行的当前视图
+   * 每次写入都会推进版本号，写入前需重取该行再提交，避免误触乐观锁
    */
-  async function readSetting(): Promise<PaymentSetting> {
-    const body = (await (
-      await adminApi.get('/api/v1/admin/settings/payment')
-    ).json()) as ApiResponse<PaymentSetting>;
-    return assertOk(body, '读取支付配置');
+  async function readRow(): Promise<PayConfigRow> {
+    return readPayRow(alipayRowID);
   }
 
-  test('9. GET 返回加签方式与三证书上传标志，且证书内容不回传明文', async () => {
-    const data = await readSetting();
-    original = data;
-    const alipay = (data.alipay ?? {}) as AlipaySetting;
-    // 存量数据 mode 为空串时后台按公钥模式展示，接口仍应稳定回传该字段
-    expect(typeof alipay.mode, '应回传加签方式字段').toBe('string');
+  test('9. GET 回传加签方式与三证书上传标志，且证书内容不出现在视图里', async () => {
+    const row = await readRow();
+    // 新建行 mode 为空串，后台按公钥模式展示，接口仍应稳定回传该字段
+    expect(typeof row.alipay_mode, '应回传加签方式字段').toBe('string');
     for (const key of ['alipay_app_cert_uploaded', 'alipay_public_cert_uploaded', 'alipay_root_cert_uploaded']) {
-      expect(typeof data[key], `${key} 应为布尔标志`).toBe('boolean');
+      expect(typeof row[key], `${key} 应为布尔标志`).toBe('boolean');
     }
-    for (const key of ['app_cert', 'alipay_public_cert', 'alipay_root_cert']) {
-      expect(alipay[key], `证书内容 ${key} 不得回传明文`).toBe('');
+    // 证书与私钥内容只由上传接口写入，读视图永不回传明文（连字段都不该出现）
+    for (const key of ['app_cert', 'alipay_public_cert', 'alipay_root_cert', 'alipay_private_key']) {
+      expect(row[key], `视图不应出现证书/私钥字段 ${key}`).toBeUndefined();
     }
   });
 
   test('10. 保存为证书模式：证书未齐即判未就绪且原因按模式给出', async () => {
-    if (!original) test.skip(true, '支付配置未读取');
-    const current = await readSetting();
-    const alipay = { ...(current.alipay as AlipaySetting), mode: 'cert' };
-    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
-      data: { ...current, alipay, updated_at: current.updated_at },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `保存证书模式失败: ${body.message}`).toBe(0);
+    const current = await readRow();
+    const resp = (await (
+      await adminApi.put(`/api/v1/admin/settings/payment/${current.id}`, {
+        data: { ...current, alipay_mode: 'cert', updated_at: current.updated_at },
+      })
+    ).json()) as ApiResponse;
+    expect(resp.code, `保存证书模式失败: ${resp.message}`).toBe(0);
 
-    const saved = await readSetting();
-    expect((saved.alipay as AlipaySetting).mode, '加签方式应持久化为证书模式').toBe('cert');
-    // 未上传三证书时证书模式必然未就绪（fail-closed），C 端不展示支付宝
+    const saved = await readRow();
+    expect(saved.alipay_mode, '加签方式应持久化为证书模式').toBe('cert');
     const allUploaded = ['alipay_app_cert_uploaded', 'alipay_public_cert_uploaded', 'alipay_root_cert_uploaded']
       .every((k) => saved[k] === true);
     if (!allUploaded) {
-      expect(saved.alipay_ready, '证书未齐时支付宝不应判就绪').toBe(false);
-      expect(saved.alipay_ready_message ?? '', '未就绪原因应指向证书模式必填项').toContain('证书模式');
+      expect(saved.ready, '证书未齐时该配置行不应判就绪').toBe(false);
+      expect(saved.ready_message ?? '', '未就绪原因应指向证书模式必填项').toContain('证书模式');
     }
   });
 
   // 站点设置落地后，回调地址唯一来源是部署域名派生：前端入参（含伪造的非法地址）不参与落库，
   // payment 侧的格式兜底校验只对 gRPC 直连调用生效，管理端不再提供手填入口
   test('11. 异步通知地址为派生值，前端入参不被采信', async () => {
-    if (!original) test.skip(true, '支付配置未读取');
-    const current = await readSetting();
-    const derived = (current.suggested_urls as { alipay_notify_url?: string }).alipay_notify_url ?? '';
+    const { suggested } = await readPaymentConfigs();
+    const derived = suggested.alipay_notify_url ?? '';
     expect(derived, '读取接口应返回派生的支付宝通知地址').toContain('/api/v1/payments/callback/alipay');
 
-    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
-      data: {
-        ...current,
-        alipay: { ...(current.alipay as AlipaySetting), notify_url: 'market.example.com/callback' },
-        updated_at: current.updated_at,
-      },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `保存支付配置失败: ${body.message}`).toBe(0);
+    const current = await readRow();
+    const resp = (await (
+      await adminApi.put(`/api/v1/admin/settings/payment/${current.id}`, {
+        data: { ...current, alipay_notify_url: 'market.example.com/callback', updated_at: current.updated_at },
+      })
+    ).json()) as ApiResponse;
+    expect(resp.code, `保存支付配置失败: ${resp.message}`).toBe(0);
 
-    const after = await readSetting();
-    expect(
-      (after.alipay as AlipaySetting).notify_url ?? '',
-      '伪造的通知地址应被派生值覆写',
-    ).toBe(derived);
+    const after = await readRow();
+    expect(after.alipay_notify_url ?? '', '伪造的通知地址应被派生值覆写').toBe(derived);
   });
 
-  test('12. 恢复原加签方式（不污染环境）', async () => {
-    if (!original) test.skip(true, '支付配置未读取');
-    const current = await readSetting();
-    const alipay = {
-      ...(current.alipay as AlipaySetting),
-      mode: (original.alipay as AlipaySetting)?.mode ?? '',
-    };
-    const resp = await adminApi.put('/api/v1/admin/settings/payment', {
-      data: { ...current, alipay, updated_at: current.updated_at },
-    });
-    const body = (await resp.json()) as ApiResponse;
-    expect(body.code, `恢复加签方式失败: ${body.message}`).toBe(0);
-    const after = await readSetting();
-    expect(
-      (after.alipay as AlipaySetting).mode || 'public',
-      '加签方式应恢复原值',
-    ).toBe((original.alipay as AlipaySetting)?.mode || 'public');
+  test('12. 过期版本号提交被拒且该行未被改写（乐观锁）', async () => {
+    const current = await readRow();
+    const resp = (await (
+      await adminApi.put(`/api/v1/admin/settings/payment/${current.id}`, {
+        data: { ...current, alipay_mode: 'public', name: `${TEMP_ALIPAY_NAME}-并发覆盖`, updated_at: '2000-01-01 00:00:00' },
+      })
+    ).json()) as ApiResponse;
+    expect(resp.code, `过期版本提交应被乐观锁拒绝，实为 code=${resp.code}`).toBe(CODE_DATA_CONFLICT);
+    expect(resp.message, '应透传服务端冲突文案').toContain('支付配置已被其他操作更新');
+
+    const after = await readRow();
+    expect(after.name, '拒绝后行名称不应被改写').toBe(current.name);
+    expect(after.alipay_mode, '拒绝后加签方式不应被改写').toBe(current.alipay_mode);
   });
 });

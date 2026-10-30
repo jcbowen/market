@@ -9,8 +9,8 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
-	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/common/proto/user"
+	"github.com/jcbowen/market/src/backend/common/timeutil"
 	"github.com/jcbowen/market/src/backend/services/user/model"
 )
 

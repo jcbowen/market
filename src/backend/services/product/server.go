@@ -1480,10 +1480,20 @@ func rpcKeySet(keys []string) map[string]bool {
 
 // PreviewDataCleanup 数据清理预检：逐域统计将清理的记录行数（只读，不写库）
 func (s *server) PreviewDataCleanup(ctx stdctx.Context, _ *product.DataCleanupPreviewReq) (*product.DataCleanupPreviewResp, error) {
-	return s.dataCleanupSvc.Preview(ctx)
+	resp, err := s.dataCleanupSvc.Preview(ctx)
+	if err != nil {
+		return nil, bizerr.ToStatus(err)
+	}
+	return resp, nil
 }
 
 // RunDataCleanup 执行数据清理：强确认文案校验 → 逆依赖顺序逐域清理 → 统计与明细回显
+// 确认文案不匹配是 bizerr(InvalidArgument)，须经错误归一透出状态码，
+// 直接 return 会被 gRPC 降级成 Unknown，网关只能回 10002，前端无从区分「填错文案」与「服务故障」
 func (s *server) RunDataCleanup(ctx stdctx.Context, req *product.DataCleanupRunReq) (*product.DataCleanupRunResp, error) {
-	return s.dataCleanupSvc.Run(ctx, req)
+	resp, err := s.dataCleanupSvc.Run(ctx, req)
+	if err != nil {
+		return nil, writeError(err, "数据清理")
+	}
+	return resp, nil
 }

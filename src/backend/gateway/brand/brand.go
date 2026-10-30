@@ -189,11 +189,21 @@ func (c *Cache) Warm(ctx context.Context) error {
 	return nil
 }
 
-// invalidate 使快照立即过期，保存站点设置后调用，使本实例无需等待 TTL 即生效
-func (c *Cache) invalidate() {
-	c.mu.Lock()
-	c.loaded = false
-	c.mu.Unlock()
+// Refresh 同步拉取最新站点设置并返回新快照（保存站点设置后调用）
+//
+// 为什么不能用 invalidate + Get：get 的刷新是异步放行的，置过期后立刻读拿到的是变更前
+// 旧快照——保存域名后派生支付回调地址、补写附件访问域名都在这一次请求里发生，
+// 用旧值会把上一次的域名写进 pay_config（旧值为空时则整段跳过，回调地址永不更新）。
+// 刷新失败时 refresh 内部已退避并沿用旧快照，不阻断保存响应。
+//
+// 参数：
+//   - ctx: 请求上下文
+//
+// 返回值：
+//   - Snapshot: 刷新后的快照
+func (c *Cache) Refresh(ctx context.Context) Snapshot {
+	c.refresh(ctx)
+	return c.snapshot()
 }
 
 // defaultCache 网关进程级单例
@@ -221,9 +231,16 @@ func Get(ctx context.Context) Snapshot {
 	return defaultCache.get(ctx)
 }
 
-// Invalidate 立即失效快照（保存站点设置后调用）
-func Invalidate() {
-	if defaultCache != nil {
-		defaultCache.invalidate()
+// Refresh 同步刷新进程级快照并返回最新值（保存站点设置后调用）
+//
+// 参数：
+//   - ctx: 请求上下文
+//
+// 返回值：
+//   - Snapshot: 刷新后的快照，缓存未注入时返回空快照
+func Refresh(ctx context.Context) Snapshot {
+	if defaultCache == nil {
+		return Snapshot{}
 	}
+	return defaultCache.Refresh(ctx)
 }

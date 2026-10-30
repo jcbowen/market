@@ -7,9 +7,11 @@ import { autoName } from '../helpers/data';
  * 覆盖 2026-10-29 行为变更：运行期「按首请求域名补写入库」已删除，visit_domain
  * 只接受显式配置（后台手填 / 站点设置 base_url / SITE_BASE_URL 联动）。
  * 回归点：
- *  1. visit_domain 为空（未做显式配置的常态）时，附件出库为站内相对路径 /uploads/<path>
- *     （随访问域名解析，任何入口开箱即用，不出现「首访者域名抢注」的绝对地址）
- *  2. 出库访问不会反向写库：请求后 visit_domain 仍为空（旧实现的回归即表现为被补写）
+ *  1. visit_domain 为空（未做显式配置的常态）时，附件出库按网关透传的当前访问域名兜底拼完整 URL
+ *     （2026-10-29 请求基址透传后的口径：小程序/APP 的 image 组件解析不了站内相对路径；
+ *     基址未透传时才降级为 /uploads/<path>，浏览器按当前域名解析）
+ *  2. 出库访问不会反向写库：请求后 visit_domain 仍为空（旧实现的回归即表现为被补写），
+ *     兜底只发生在响应层，不以「首个请求的域名」固化配置
  *  3. 显式配置 visit_domain 后出库按配置域名拼接完整 URL
  * 边界：商品出库（admin 详情与 C 端列表）统一走 product 服务 ToMediaURL，
  *       与附件配置读取共用同一套口径；自造商品不依赖基线数据，用后清理
@@ -37,8 +39,12 @@ let catId = 0;
 let productName = '';
 /** 自造商品的封面图入库相对路径（不含 uploads 前缀） */
 const coverRelPath = 'images/auto-test/87-visit-domain.png';
-/** 空域名降级形态 = 站内绝对路径 */
-const fallbackCover = `/uploads/${coverRelPath}`;
+/**
+ * 空域名兜底形态：按当前访问域名拼完整地址（网关 x-request-base 透传，仅响应层）
+ * 相对路径形态只在基址未透传（后台任务/直调）时出现，管理端请求恒带基址
+ */
+const requestBase = (process.env.TEST_BASE_URL ?? 'http://localhost:18080').replace(/\/+$/, '');
+const fallbackCover = `${requestBase}/uploads/${coverRelPath}`;
 /** 显式域名拼接形态 */
 const explicitDomain = 'http://visit-domain-explicit.example.com';
 const explicitCover = `${explicitDomain}/uploads/${coverRelPath}`;
@@ -105,11 +111,12 @@ test.describe.serial('附件访问域名口径', () => {
     }
   });
 
-  test('空 visit_domain 出库为站内相对路径（随访问域名解析）', async () => {
+  test('空 visit_domain 出库按当前访问域名兜底，且不固化配置', async () => {
     const resp = await adminApi.get(`/api/v1/admin/products/${productId}`);
     const body = (await resp.json()) as ApiResponse<{ product?: AdminProduct }>;
     expect(body.code, `读取商品详情失败: ${body.message}`).toBe(0);
-    // 详情响应结构 { product, skus, specs }；关键断言：不含任何绝对域名（旧缺陷形态是拼出 http://localhost:18080/...）
+    // 详情响应结构 { product, skus, specs }；兜底地址来自本次请求基址而非库中配置，
+    // 换个域名访问即随之外形变化，下一个用例断言它没有被写回库
     expect(body.data?.product?.cover_image).toBe(fallbackCover);
   });
 

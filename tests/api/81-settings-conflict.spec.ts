@@ -3,8 +3,8 @@ import { newAdminContext, assertOk, type ApiResponse } from '../helpers/api';
 
 /**
  * 模块 81：设置类整份覆盖保存的乐观并发冲突（业务错误码 10007）
- * 背景：站点/支付/附件三张配置表都是「单行 + 整份 PUT」，不加并发保护时，
- *       后保存者会把先保存者的改动静默丢掉（多管理员或多标签页必然踩到）。
+ * 背景：站点/附件是「单行 + 整份 PUT」、支付配置自 2026-10-30 重构起是「多行 + 按行 PUT」，
+ *       不加并发保护时，后保存者会把先保存者的改动静默丢掉（多管理员或多标签页必然踩到）。
  *       三处统一改为提交时携带读取到的版本号，版本过期即拒绝写入并回 10007：
  *         - 站点设置：网关按 site_configs.version 比对（handler/site.go）
  *         - 支付/附件设置：服务层按 updated_at 比对，以 gRPC Aborted 承载（payconfig.go / attachment.go）
@@ -44,9 +44,12 @@ interface AttachmentConfig {
   [k: string]: unknown;
 }
 
-/** 支付配置视图（本模块只关心版本号与渠道开关） */
-interface PaymentSetting {
-  enabled_channels?: string[];
+/** 支付配置行视图（多行制，本模块只关心版本号与该行的可改字段） */
+interface PayConfigRow {
+  id: number;
+  name?: string;
+  platform?: string;
+  enabled?: boolean;
   updated_at?: string;
   [k: string]: unknown;
 }
@@ -118,11 +121,19 @@ async function readAttachment(): Promise<AttachmentConfig> {
  * - 返回: Promise<PaymentSetting>
  * - 异常: 业务码非 0 时经 assertOk 抛 Error
  */
-async function readPayment(): Promise<PaymentSetting> {
+/**
+ * 读取支付配置行列表
+ * - 函数名: readPayConfigs
+ * - 参数: 无
+ * - 返回值: Promise<PayConfigRow[]>，全部配置行（含停用）
+ * - 异常: 业务码非 0 时由 assertOk 抛出
+ * - 使用示例: const [row] = await readPayConfigs()
+ */
+async function readPayConfigs(): Promise<PayConfigRow[]> {
   const body = (await (
     await adminApi.get('/api/v1/admin/settings/payment')
-  ).json()) as ApiResponse<PaymentSetting>;
-  return assertOk(body, '读取支付配置');
+  ).json()) as ApiResponse<{ list?: PayConfigRow[] }>;
+  return assertOk(body, '读取支付配置').list ?? [];
 }
 
 test.describe.serial('设置类乐观并发冲突（10007）', () => {
@@ -167,22 +178,27 @@ test.describe.serial('设置类乐观并发冲突（10007）', () => {
     expect(after.storage_type, '拒绝后存储类型不应被改写').toBe(current.storage_type);
   });
 
-  test('3. 支付设置携带过期 updated_at 提交被拒，且渠道开关未被改写', async () => {
-    const current = await readPayment();
+  test('3. 支付配置行携带过期 updated_at 提交被拒，且该行未被改写', async () => {
+    const rows = await readPayConfigs();
+    if (rows.length === 0) test.skip(true, '库中无支付配置行');
+    const current = rows[0];
+
+    // 模拟另一管理员先行改写同一行：本实例提交读取时的旧版本，必须被拒且不改写库
     const body = (await (
-      await adminApi.put('/api/v1/admin/settings/payment', {
+      await adminApi.put(`/api/v1/admin/settings/payment/${current.id}`, {
         data: {
           ...current,
           updated_at: STALE_VERSION_TIME,
-          enabled_channels: [...(current.enabled_channels ?? []), 'alipay'],
+          name: `${current.name ?? '支付配置'}-并发覆盖`,
         },
       })
     ).json()) as ApiResponse;
     expect(body.code, `过期 updated_at 提交应被乐观锁拒绝，实为 code=${body.code}`).toBe(CODE_DATA_CONFLICT);
     expect(body.message, '应透传服务端冲突文案').toContain('支付配置已被其他操作更新');
 
-    const after = await readPayment();
-    expect(after.enabled_channels ?? [], '拒绝后渠道开关不应被改写').toEqual(current.enabled_channels ?? []);
+    const after = (await readPayConfigs()).find((r) => r.id === current.id);
+    expect(after?.name, '拒绝后该配置行名称不应被改写').toBe(current.name);
+    expect(after?.updated_at, '拒绝后该行版本号不应被推进').toBe(current.updated_at);
   });
 
   test('4. 不携带版本号时保持原行为（兼容未参与并发写入的旧调用方）', async () => {

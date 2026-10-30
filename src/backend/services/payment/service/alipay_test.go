@@ -13,9 +13,9 @@ import (
 	"testing"
 
 	alipaysdk "github.com/jcbowen/alipay-sdk-go-all"
-	wegopayment "github.com/jcbowen/wego/payment"
 	"github.com/jcbowen/market/src/backend/common/config"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
+	wegopayment "github.com/jcbowen/wego/payment"
 )
 
 /**

@@ -549,14 +549,14 @@ func (s *StockBillService) CreateStockOutOrder(ctx context.Context, req *product
 			for _, t := range takes {
 				running -= t.Take
 				record := &model.StockRecord{
-					SkuID:          sku.ID,
-					CommunityID:    req.CommunityId,
-					Type:           2,
-					Quantity:       -t.Take,
-					BeforeStock:    running + t.Take,
-					AfterStock:     running,
-					BatchID:        t.Batch.ID,
-					BatchNo:        t.Batch.BatchNo,
+					SkuID:       sku.ID,
+					CommunityID: req.CommunityId,
+					Type:        2,
+					Quantity:    -t.Take,
+					BeforeStock: running + t.Take,
+					AfterStock:  running,
+					BatchID:     t.Batch.ID,
+					BatchNo:     t.Batch.BatchNo,
 					// 批次日期从 DB 读回是 RFC3339 形态（parseTime=true），必须规范化后才能写回 DATE 列
 					ProductionDate: datePtr(t.Batch.ProductionDate),
 					ExpireDate:     datePtr(t.Batch.ExpireDate),

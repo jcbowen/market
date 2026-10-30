@@ -75,7 +75,7 @@ func newFixTestEnv(t *testing.T) *fixTestEnv {
 	); err != nil {
 		t.Fatalf("测试库迁移失败: %v", err)
 	}
-		env := &fixTestEnv{
+	env := &fixTestEnv{
 		db:    dbInst,
 		stock: &StockService{db: dbInst, expireWarningDays: 3},
 		bill:  &StockBillService{db: dbInst},
