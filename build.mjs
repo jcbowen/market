@@ -197,26 +197,38 @@ if (PULL_DEPS) {
   console.log('');
 }
 
-// 编译前格式闸门：gofmt -l 有输出即终止构建并列出待格式化文件。
+// 编译前格式闸门：gofmt -l 检出不合格式文件时自动 gofmt -w 修复，复检通过即继续构建。
+// 不中断进程：格式问题无需人工介入，自动修复可避免整次构建因个别文件排版被打断；
+// 复检仍不合格式（gofmt 本身执行异常）才终止构建并列出残留文件。
 // 放这里而非 git hook：三台开发机（win10 / macOS / win11）的 hook 需各自安装、
 // core.hooksPath 与 --no-verify 都能绕过，而 build.mjs 是所有人都必经的编译入口，
 // CI 的 backend job 也走它，闸门放在唯一入口才有约束力
 async function checkGofmt() {
-  const { stdout, stderr } = await new Promise((resolve, reject) => {
-    execFile('gofmt', ['-l', '.'], { cwd: BACKEND_DIR, env: { ...process.env, ...ctx.goEnv } }, (err, stdout, stderr) =>
-      err ? reject(err) : resolve({ stdout, stderr }),
-    );
-  }).catch((err) => {
-    console.error(`错误: gofmt 检查执行失败（go 工具链自带该命令，请确认 go 在 PATH 中）: ${err.message}`);
-    process.exit(1);
-  });
-  const bad = stdout.trim().split('\n').filter(Boolean);
-  if (bad.length) {
-    console.error(`错误: ${bad.length} 个 Go 文件格式不符合 gofmt（请在 src/backend 执行 gofmt -w .）:`);
-    for (const f of bad) console.error(`  - ${f}`);
+  // 执行 gofmt 子命令并返回按行拆分的 stdout；执行失败（如 go 不在 PATH）直接终止构建
+  const runGofmt = async (args) => {
+    const { stdout, stderr } = await new Promise((resolve, reject) => {
+      execFile('gofmt', args, { cwd: BACKEND_DIR, env: { ...process.env, ...ctx.goEnv } }, (err, stdout, stderr) =>
+        err ? reject(err) : resolve({ stdout, stderr }),
+      );
+    }).catch((err) => {
+      console.error(`错误: gofmt ${args.join(' ')} 执行失败（go 工具链自带该命令，请确认 go 在 PATH 中）: ${err.message}`);
+      process.exit(1);
+    });
+    if (stderr.trim()) console.error(`gofmt 提示: ${stderr.trim()}`);
+    return stdout.trim().split('\n').filter(Boolean);
+  };
+
+  const bad = await runGofmt(['-l', '.']);
+  if (!bad.length) return;
+  console.log(`    自动格式化 ${bad.length} 个 Go 文件（等效 gofmt -w .）:`);
+  for (const f of bad) console.log(`      - ${f}`);
+  await runGofmt(['-w', '.']);
+  const still = await runGofmt(['-l', '.']);
+  if (still.length) {
+    console.error(`错误: 自动格式化后仍有 ${still.length} 个文件不符合 gofmt:`);
+    for (const f of still) console.error(`  - ${f}`);
     process.exit(1);
   }
-  if (stderr.trim()) console.error(`gofmt 提示: ${stderr.trim()}`);
 }
 
 // 编译前预检 Go 模块依赖（本地 replace 路径、go.mod/go.sum 一致性）
