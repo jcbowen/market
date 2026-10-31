@@ -20,7 +20,7 @@ func (s *bannersSection) Name() string   { return "Banner 轮播" }
 func (s *bannersSection) Scope() string  { return SectionScopeCommunity }
 func (s *bannersSection) InitOnly() bool { return false }
 func (s *bannersSection) Description() string {
-	return "首页轮播演示位（平台级通用位 + 社区定制位，图片为外部占位图，可替换为本地上传素材）"
+	return "首页轮播演示位（平台级通用位 + 社区定制位，图片为内置演示素材，可替换为本地上传素材）"
 }
 
 // inScope 该 Banner 是否参与本次导入：平台级恒参与（全局唯一，重复导入由 community_id=0 判重跳过）

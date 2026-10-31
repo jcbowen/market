@@ -71,6 +71,8 @@ COPY src/backend/deploy/entrypoint.sh /entrypoint.sh
 # 该目录部署时被宿主目录挂载、会遮蔽镜像内容）；演示数据本身由 market-admin init
 # 经内嵌数据包导入（非 production 且空库时），不再携带 SQL 种子文件
 COPY deploy/seed-assets/products ./seed/products
+COPY deploy/seed-assets/banners ./seed/banners
+COPY deploy/seed-assets/avatars ./seed/avatars
 
 RUN chmod +x /entrypoint.sh ./gateway ./user-service ./product-service \
     ./order-service ./cart-service ./payment-service ./market-admin ./geoip-download

@@ -22,9 +22,11 @@ COPY bin/linux-${TARGETARCH}/market-admin ./market-admin
 # 复制前端编译产物（非源码）
 COPY bin/static ./static
 
-# 演示种子素材（商品图/分类图等）：打包进镜像由网关直接服务 /uploads/seed/**。
+# 演示种子素材（商品图/分类图/首页Banner/用户头像）：打包进镜像由网关直接服务 /uploads/seed/**。
 # 不能放进 /app/uploads —— 该目录在 compose 部署中被宿主目录挂载，镜像内文件会被遮蔽
 COPY deploy/seed-assets/products ./seed/products
+COPY deploy/seed-assets/banners ./seed/banners
+COPY deploy/seed-assets/avatars ./seed/avatars
 
 RUN chmod +x ./gateway ./market-admin && chown -R appuser:appuser /app
 

@@ -1957,9 +1957,12 @@ type OrderInfo struct {
 	// 用户软删除标记：1=该单已被用户在 C 端删除（仅从 C 端列表移除，后台与详情链路保留）
 	UserDeleted int32 `protobuf:"varint,33,opt,name=user_deleted,json=userDeleted,proto3" json:"user_deleted,omitempty"`
 	// 商品明细行数（0=直接收款等无商品单）：列表批量回填，用于收敛依赖商品明细的入口
-	ItemCount     int32 `protobuf:"varint,34,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ItemCount int32 `protobuf:"varint,34,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"`
+	// 已成功退款金额（money 口径，含运费，仅统计 status=5 的退款单）：列表/导出批量回填，
+	// 用于后台展示售后标记；0=无成功退款记录
+	RefundedAmount float64 `protobuf:"fixed64,35,opt,name=refunded_amount,json=refundedAmount,proto3" json:"refunded_amount,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *OrderInfo) Reset() {
@@ -2226,6 +2229,13 @@ func (x *OrderInfo) GetUserDeleted() int32 {
 func (x *OrderInfo) GetItemCount() int32 {
 	if x != nil {
 		return x.ItemCount
+	}
+	return 0
+}
+
+func (x *OrderInfo) GetRefundedAmount() float64 {
+	if x != nil {
+		return x.RefundedAmount
 	}
 	return 0
 }
@@ -6636,7 +6646,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\x0fexpress_company\x18\x06 \x01(\tR\x0eexpressCompany\x12\x1d\n" +
 	"\n" +
 	"express_no\x18\a \x01(\tR\texpressNo\x12!\n" +
-	"\fcommunity_id\x18\b \x01(\x03R\vcommunityId\"\x8c\t\n" +
+	"\fcommunity_id\x18\b \x01(\x03R\vcommunityId\"\xb5\t\n" +
 	"\tOrderInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x19\n" +
 	"\border_no\x18\x02 \x01(\tR\aorderNo\x12!\n" +
@@ -6679,7 +6689,8 @@ const file_order_order_proto_rawDesc = "" +
 	"\bshift_id\x18  \x01(\x03R\ashiftId\x12!\n" +
 	"\fuser_deleted\x18! \x01(\x05R\vuserDeleted\x12\x1d\n" +
 	"\n" +
-	"item_count\x18\" \x01(\x05R\titemCount\"\xdb\x02\n" +
+	"item_count\x18\" \x01(\x05R\titemCount\x12'\n" +
+	"\x0frefunded_amount\x18# \x01(\x01R\x0erefundedAmount\"\xdb\x02\n" +
 	"\rOrderItemInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +

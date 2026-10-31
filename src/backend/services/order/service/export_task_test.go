@@ -67,7 +67,7 @@ func TestExportCSVRow(t *testing.T) {
 		s := string(line)
 		for _, want := range []string{
 			`"ORD-TEST-1"`, `"张三"`, `"自提"`, `"C端"`,
-			`"苹果（500g）x2；香蕉 x1"`, `"微信支付"`, `"12.50"`, `"10.00"`, `"待自提"`, `"2026-10-24 10:00:00"`,
+			`"苹果（500g）x2；香蕉 x1"`, `"微信支付"`, `"12.50"`, `"10.00"`, `"0.00"`, `"待自提"`, `"2026-10-24 10:00:00"`,
 		} {
 			if !strings.Contains(s, want) {
 				t.Errorf("CSV 行缺少 %s: %s", want, s)
@@ -76,8 +76,20 @@ func TestExportCSVRow(t *testing.T) {
 		if !strings.HasSuffix(s, "\n") {
 			t.Error("CSV 行应以换行结尾")
 		}
-		if strings.Count(s, ",") != 10 {
-			t.Errorf("11 列应产生 10 个分隔逗号, got %d: %s", strings.Count(s, ","), s)
+		if strings.Count(s, ",") != 11 {
+			t.Errorf("12 列应产生 11 个分隔逗号, got %d: %s", strings.Count(s, ","), s)
+		}
+	})
+
+	t.Run("已退金额按订单快照输出", func(t *testing.T) {
+		refunded := *o
+		refunded.RefundedAmount = 3.5
+		line, err := exportCSVRow(&refunded, nil, "", payTypesText(0))
+		if err != nil {
+			t.Fatalf("exportCSVRow 异常: %v", err)
+		}
+		if !strings.Contains(string(line), `"3.50"`) {
+			t.Errorf("已退金额列应输出 3.50: %s", string(line))
 		}
 	})
 
@@ -253,8 +265,8 @@ func TestExportQueryToListOrdersReq(t *testing.T) {
 // TestExportCSVHeader 表头与数据行列数一致（错位会让 Excel 打开串列）
 func TestExportCSVHeader(t *testing.T) {
 	cols := len(strings.Split(strings.TrimSuffix(exportCSVHeader, "\n"), ","))
-	if cols != 11 {
-		t.Fatalf("表头应为 11 列, got %d", cols)
+	if cols != 12 {
+		t.Fatalf("表头应为 12 列, got %d", cols)
 	}
 }
 

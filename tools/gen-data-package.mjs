@@ -84,7 +84,7 @@ const admins = [
 const users = [
   {
     key: 'user-1', openid: 'test_openid_1', phone: '13800138000', nickname: '测试用户',
-    avatar: 'https://placehold.co/100x100/orange/white?text=User', gender: 0,
+    avatar: '/uploads/seed/avatars/user-1.png', gender: 0,
     community_key: 'comm-1',
     address: {
       contact_name: '张三', contact_phone: '13800138000',
@@ -96,7 +96,7 @@ const users = [
   },
   {
     key: 'user-2', openid: 'test_openid_2', phone: '13900139000', nickname: '阳光用户',
-    avatar: 'https://placehold.co/100x100/blue/white?text=User2', gender: 0,
+    avatar: '/uploads/seed/avatars/user-2.png', gender: 0,
     community_key: 'comm-2',
     address: {
       contact_name: '李四', contact_phone: '13900139000',
@@ -120,9 +120,9 @@ const site = {
 // 前两条挂 community_id=0（全平台兜底展示，所有社区可见），第 3 条为阳光花园定制；
 // 初始化逐社区导入时平台级 Banner 只落一次（按 community_id=0 标题判重）
 const banners = [
-  { key: 'banner-1', platform: true, title: '新人专享满减', image_url: 'https://placehold.co/750x300/ff6b35/white?text=Banner1', link_url: '#', position: 2, sort: 1 },
-  { key: 'banner-2', platform: true, title: '零食饮品周周上新', image_url: 'https://placehold.co/750x300/4caf50/white?text=Banner2', link_url: '#', position: 2, sort: 2 },
-  { key: 'banner-3', community_key: 'comm-2', title: '阳光花园精选', image_url: 'https://placehold.co/750x300/2196f3/white?text=Banner3', link_url: '#', position: 2, sort: 1 },
+  { key: 'banner-1', platform: true, title: '新人专享满减', image_url: '/uploads/seed/banners/banner-1.png', link_url: '#', position: 2, sort: 1 },
+  { key: 'banner-2', platform: true, title: '零食饮品周周上新', image_url: '/uploads/seed/banners/banner-2.png', link_url: '#', position: 2, sort: 2 },
+  { key: 'banner-3', community_key: 'comm-2', title: '阳光花园精选', image_url: '/uploads/seed/banners/banner-3.png', link_url: '#', position: 2, sort: 1 },
 ];
 
 // ---------- 满减（start/end NULL=长期有效） ----------

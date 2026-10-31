@@ -365,6 +365,9 @@ message OrderInfo {
   int32 user_deleted = 33;
   // 商品明细行数（0=直接收款等无商品单）：列表批量回填，用于收敛依赖商品明细的入口
   int32 item_count = 34;
+  // 已成功退款金额（money 口径，含运费，仅统计 status=5 的退款单）：列表/导出批量回填，
+  // 用于后台展示售后标记；0=无成功退款记录
+  double refunded_amount = 35;
 }
 
 message OrderItemInfo {
@@ -934,6 +937,8 @@ message SaveAppPreferencesReq {
 **无商品明细订单（收银台直接收款）退款（2026-10-25 修订）：** 该类单本就没有 `order_items`，服务端 `calcRefundOrder` 走无明细分支——按剩余可退金额执行，不产生退款行、不回补库存、不涉及运费；`amount` 仍可只调低。**退款单类型按「本次是否把剩余可退退完」判定**（`itemlessRefundPlan`）：退完为 `type=1` 整单退，调低未退完为 `type=2` 部分退（与「订单仍有剩余可退」自洽，后续可再退），全额退完时同 money 口径升格为 `type=1`。展示端判定「无商品明细」必须用 `RefundInfo.order_item_count=0`（订单口径），不能只看本退款行有无 `items`——仅金额退在全额退完时同样升为 `type=1` 且没有明细。
 
 **订单商品行数 `item_count`：** `OrderInfo.item_count` 为列表查询侧一次 `GROUP BY` 批量回填的非持久化字段（`orderItemCountsByOrders` 与退款列表共用），`0` 表示收银台直接收款等无商品单；前端据此隐藏「引用到收银台」「部分商品退」等依赖商品明细的入口。统计查询失败时整页报错，不返回空值以免误隐藏有效入口。
+
+**已成功退款金额 `refunded_amount`（2026-10-31）：** `OrderInfo.refunded_amount` 与 `item_count` 同构的批量回填非持久化字段（`refundedAmountsByOrders`/`fillRefundedAmounts`），口径与剩余可退计算一致：仅统计 `refunds.status=5`（成功）退款单的 `SUM(amount)`（money 口径，含运费），退款中/已拒绝不占用。列表与导出（CSV「已退金额」列）共用同一统计，两处展示口径必须一致。前端在订单状态非 7/8 且该值 >0 时于状态列展示「已退 ¥xx」标记——部分退款完成后订单状态回退款前值，状态文本看不出售后痕迹，该标记用于防重复退款/误判。
 
 **收银台（POS）语义：** `CreateOrder` 支持收银台代客下单（`source=2`，`delivery_type=3` 到店即买即走）：单品改价走 `items[].price`（服务端快照原价到 `order_items.original_price/price_modified`）；整单优惠走 `manual_discount`（实付 = max(0, 应付 − manual_discount)，超应付拒绝）；收银单必须携带进行中班次 `shift_id`。挂单三 RPC（创建/列表/删除）仅暂存草稿，不生成订单、不占库存，删除按社区隔离。交班四 RPC（开工/当前/交班/记录）围绕 pos_shifts 表：同操作员同社区同时仅一条进行中班次；交班时冻结统计快照（收款 JOIN payments 限 `status=2`、退款按订单归属班次、现金合计仅取 pay_type=4）。
 

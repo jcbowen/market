@@ -534,6 +534,70 @@ func TestListOrdersFilterPayNoProduct(t *testing.T) {
 	})
 }
 
+// TestRefundedAmountFill 已退金额批量回填口径（列表售后标记/导出「已退金额」列共用）
+// 覆盖：仅统计成功退款单（status=5），退款中/已拒绝不占用；多笔部分退累加；
+// 无退款订单按零值处理；空集合不发查询；ListOrders 链路回填生效
+//
+// 参数：
+//   - t: 测试对象
+func TestRefundedAmountFill(t *testing.T) {
+	db, svc, _ := newExportTestEnv(t)
+	ctx := context.Background()
+
+	prefix := fmt.Sprintf("%sexp-refund-%d", schedTestOrderNoPrefix, time.Now().UnixNano())
+	oHas := seedSchedOrder(t, db, "exp-refund-a", 2, schedTimeAgo(time.Hour), schedTimeAgo(time.Hour))
+	_ = db.GetDb().Exec("UPDATE orders SET order_no = ? WHERE id = ?", prefix+"-A", oHas).Error
+	oNone := seedSchedOrder(t, db, "exp-refund-b", 2, schedTimeAgo(time.Hour), schedTimeAgo(time.Hour))
+	_ = db.GetDb().Exec("UPDATE orders SET order_no = ? WHERE id = ?", prefix+"-B", oNone).Error
+	// 退款单按订单 ID 圈定清理（LIFO：先于订单清理执行）
+	t.Cleanup(func() {
+		_ = db.GetDb().Exec("DELETE FROM refunds WHERE order_id IN ?", []int64{oHas, oNone}).Error
+	})
+
+	// -A：成功 3.50 + 成功 2.00 + 退款中 10.00 + 已拒绝 1.00 → 应只统计 5.50
+	seedRefund(t, db, oHas, 5, 3.50)
+	seedRefund(t, db, oHas, 5, 2.00)
+	seedRefund(t, db, oHas, 4, 10.00)
+	seedRefund(t, db, oHas, 3, 1.00)
+
+	t.Run("批量统计仅累计成功退款", func(t *testing.T) {
+		amounts, err := refundedAmountsByOrders(db.GetDb().WithContext(ctx), []int64{oHas, oNone})
+		if err != nil {
+			t.Fatalf("统计失败: %v", err)
+		}
+		if got := amounts[oHas]; got != 5.50 {
+			t.Errorf("已成功退款合计 = %.2f, want 5.50（退款中/已拒绝不计入）", got)
+		}
+		if _, ok := amounts[oNone]; ok {
+			t.Errorf("无退款订单不应出现在结果集中: %v", amounts)
+		}
+	})
+
+	t.Run("空集合不发查询", func(t *testing.T) {
+		amounts, err := refundedAmountsByOrders(db.GetDb().WithContext(ctx), nil)
+		if err != nil || len(amounts) != 0 {
+			t.Fatalf("空集合应返回空映射, err=%v amounts=%v", err, amounts)
+		}
+	})
+
+	t.Run("ListOrders 链路回填生效", func(t *testing.T) {
+		list, total, err := svc.ListOrders(ctx, &order.ListOrdersReq{CommunityId: 1, OrderNo: prefix})
+		if err != nil || total != 2 {
+			t.Fatalf("应返回 2 单, total=%d err=%v", total, err)
+		}
+		byNo := make(map[string]float64, len(list))
+		for _, o := range list {
+			byNo[o.OrderNo] = o.RefundedAmount
+		}
+		if got := byNo[prefix+"-A"]; got != 5.50 {
+			t.Errorf("列表 -A 已退金额 = %.2f, want 5.50", got)
+		}
+		if got := byNo[prefix+"-B"]; got != 0 {
+			t.Errorf("列表 -B 已退金额 = %.2f, want 0", got)
+		}
+	})
+}
+
 // ptrString 字符串指针便捷包装（expires_at 可空列测试造数用）
 func ptrString(s string) *string { return &s }
 

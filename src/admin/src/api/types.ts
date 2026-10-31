@@ -285,6 +285,8 @@ export interface Order {
   user_deleted?: number
   /** 商品明细行数（0=直接收款等无商品单），列表返回；用于隐藏引用/按商品退款等入口 */
   item_count?: number
+  /** 已成功退款金额（money 口径，含运费，仅统计成功退款单；0=无售后记录），列表/详情返回；用于售后标记展示 */
+  refunded_amount?: number
   /** 订单来源：1=C端 2=收银台（决策点⑨） */
   source?: number
   /** 手动优惠金额（收银台整单改价/抹零折算，仅收银单） */

@@ -60,6 +60,9 @@ type Order struct {
 	UserDeleted int32 `gorm:"column:user_deleted;type:tinyint;default:0;comment:用户软删除 0否 1是" json:"user_deleted"`
 	// ItemCount 商品明细行数：非持久化字段，仅列表查询时批量回填（0=直接收款等无商品单）
 	ItemCount int32 `gorm:"-" json:"item_count"`
+	// RefundedAmount 已成功退款金额（money 口径，含运费，仅统计 status=5 的退款单）：
+	// 非持久化字段，列表/导出查询时批量回填（0=无成功退款记录），用于后台售后标记展示
+	RefundedAmount float64 `gorm:"-" json:"refunded_amount"`
 	// 时间列参与调度器复合索引：超时扫描按 (status, created_at)、
 	// 卡单恢复与抢占按 (status, updated_at)；此前的 (community_id,status,created_at)
 	// 因缺少 community_id 前导列无法被这些查询使用

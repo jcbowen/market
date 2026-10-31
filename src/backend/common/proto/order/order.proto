@@ -393,6 +393,9 @@ message OrderInfo {
   int32 user_deleted = 33;
   // 商品明细行数（0=直接收款等无商品单）：列表批量回填，用于收敛依赖商品明细的入口
   int32 item_count = 34;
+  // 已成功退款金额（money 口径，含运费，仅统计 status=5 的退款单）：列表/导出批量回填，
+  // 用于后台展示售后标记；0=无成功退款记录
+  double refunded_amount = 35;
 }
 
 message OrderItemInfo {

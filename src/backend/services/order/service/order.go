@@ -700,6 +700,9 @@ func (s *OrderService) ListOrders(ctx context.Context, req *order.ListOrdersReq)
 	if err := s.fillOrderItemCounts(ctx, list); err != nil {
 		return nil, 0, err
 	}
+	if err := fillRefundedAmounts(s.db.GetDb().WithContext(ctx), list); err != nil {
+		return nil, 0, err
+	}
 	return list, int(total), nil
 }
 
@@ -761,6 +764,65 @@ func orderItemCountsByOrders(ctx context.Context, db *gorm.DB, orderIds []int64)
 		counts[row.OrderID] = row.Cnt
 	}
 	return counts, nil
+}
+
+// fillRefundedAmounts 批量回填订单的已成功退款金额（后台售后标记用）
+// 口径与剩余可退计算一致（refundedMoneyStat）：仅统计 refunds.status=5（成功）的
+// SUM(amount)（money 口径，含运费）；无成功退款的订单保持 0。
+// 列表与导出共用：两处展示口径必须一致，避免「列表有标、导出没有」
+// 参数：
+//   - db: 查询句柄（列表/导出各传自己的句柄，本函数只读）
+//   - list: 订单列表（原地写入 RefundedAmount）
+//
+// 返回值：
+//   - error: 统计查询失败时返回错误（宁可整页失败也不回填空值，避免漏标售后单）
+func fillRefundedAmounts(db *gorm.DB, list []*model.Order) error {
+	if len(list) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(list))
+	for _, o := range list {
+		ids = append(ids, o.ID)
+	}
+	amounts, err := refundedAmountsByOrders(db, ids)
+	if err != nil {
+		return err
+	}
+	for _, o := range list {
+		o.RefundedAmount = amounts[o.ID]
+	}
+	return nil
+}
+
+// refundedAmountsByOrders 批量统计订单的已成功退款金额（一次 GROUP BY 覆盖全部入参订单）
+// 口径与剩余可退计算（refundedMoneyStat）一致：refunds.status=5 的 SUM(amount)（money 口径，含运费）
+// 参数：
+//   - db: 查询句柄
+//   - orderIds: 订单 ID 集合（空集合直接返回空映射，不发查询）
+//
+// 返回值：
+//   - map[int64]float64: 订单 ID -> 已成功退款金额（2位小数），无退款记录的订单不出现在结果集中（调用方按零值处理）
+//   - error: 统计查询失败时返回错误
+func refundedAmountsByOrders(db *gorm.DB, orderIds []int64) (map[int64]float64, error) {
+	amounts := make(map[int64]float64)
+	if len(orderIds) == 0 {
+		return amounts, nil
+	}
+	var rows []struct {
+		OrderID int64
+		Total   float64
+	}
+	if err := db.Model(&model.Refund{}).
+		Select("order_id, COALESCE(SUM(amount), 0) AS total").
+		Where("order_id IN ? AND status = ?", orderIds, 5).
+		Group("order_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		amounts[row.OrderID] = round2(row.Total)
+	}
+	return amounts, nil
 }
 
 // applyOrderListFilters 构建订单列表查询过滤条件（列表查询与后台导出共用单一事实源，

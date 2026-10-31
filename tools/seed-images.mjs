@@ -1,7 +1,10 @@
-// seed-images.mjs —— 依据 deploy/seed-assets/images.json 绘制 dev 种子商品图（PNG）
-// 风格：品类色包装剪影 + 正面标签 + 品牌与品名，全部本地矢量绘制后光栅化，不含任何外部素材，无版权风险
-// 参数：argv[2] 可选，输出目录，默认 deploy/seed-assets/products/
-// 返回值：无（每张图写盘后在 stdout 输出数量）
+// seed-images.mjs —— 绘制 dev 演示种子素材（PNG）：商品图 / 首页 Banner / 用户头像
+// 商品图依据 deploy/seed-assets/images.json；Banner 与头像使用脚本内清单（与 full-demo.json 的
+// banners/users 段 key 对应）。风格：品类色包装剪影 + 正面标签 + 品牌与品名，全部本地矢量绘制后
+// 光栅化，不含任何外部素材，无版权风险（替代早期的 placehold.co 外链占位图）
+// 参数：argv[2] 可选，输出目录，默认按类型分目录落盘：
+//       商品 deploy/seed-assets/products/，Banner deploy/seed-assets/banners/，头像 deploy/seed-assets/avatars/
+// 返回值：无（每张图写盘后在 stdout 输出数量与目录）
 // 异常：图片清单缺失或 Chromium 未安装时抛错
 // 使用示例：node tools/seed-images.mjs            # 生成/更新全部种子图
 //          node tools/seed-images.mjs /tmp/png   # 只导出到临时目录做样式试看
@@ -18,9 +21,10 @@ const playwright = (await import(
 const { chromium } = playwright;
 
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'deploy', 'seed-assets', 'images.json'), 'utf8'));
-const OUT_DIR = process.argv[2] || path.join(ROOT_DIR, 'deploy', 'seed-assets', 'products');
+// 试看模式：argv[2] 指定目录时三类图集中输出便于预览；默认按类型分目录落盘（与 /uploads/seed/** 路由对应）
+const TRY_DIR = process.argv[2] || '';
+const PRODUCT_DIR = TRY_DIR || path.join(ROOT_DIR, 'deploy', 'seed-assets', 'products');
 const SIZE = 600;
-fs.mkdirSync(OUT_DIR, { recursive: true });
 
 // ---------- 颜色工具 ----------
 const hex2rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -219,21 +223,75 @@ function card(item) {
 </svg>`;
 }
 
+// ---------- 首页 Banner：750x300，浅底 + 同色系装饰圆 + 标题/副文案 + 主色按钮 ----------
+// key 对应 full-demo.json 的 banners 段（banner-N），file 即落盘文件名
+const BANNER_DIR = TRY_DIR || path.join(ROOT_DIR, 'deploy', 'seed-assets', 'banners');
+const BANNERS = [
+  { file: 'banner-1.png', title: '新人专享满减', sub: '首单立减 · 领券更划算', color: '#FF6B35' },
+  { file: 'banner-2.png', title: '零食饮品周周上新', sub: '每周新鲜到货', color: '#4CAF50' },
+  { file: 'banner-3.png', title: '阳光花园精选', sub: '社区专属好物', color: '#2196F3' },
+];
+
+/** Banner 绘制：浅色底延续商品卡片的 tint 配色，文字用墨色/灰棕色保持统一观感 */
+function bannerSvg(b) {
+  const c = b.color;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="750" height="300" viewBox="0 0 750 300">
+  <g>
+    <rect width="750" height="300" fill="${tint(c, 0.88)}"/>
+    <circle cx="630" cy="30" r="130" fill="${tint(c, 0.72)}"/>
+    <circle cx="700" cy="245" r="90" fill="${tint(c, 0.8)}"/>
+    <circle cx="540" cy="260" r="42" fill="${tint(c, 0.6)}"/>
+    <text x="56" y="130" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="48" font-weight="700" fill="${INK}">${b.title}</text>
+    <text x="58" y="174" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="22" fill="${SUB}">${b.sub}</text>
+    <rect x="56" y="204" width="150" height="48" rx="24" fill="${c}"/>
+    <text x="131" y="234" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="20" fill="#FFFFFF" text-anchor="middle">立即查看</text>
+  </g>
+</svg>`;
+}
+
+// ---------- 用户头像：200x200，浅底 + 同色人物剪影（C 端按圆形展示） ----------
+// file 对应 full-demo.json 的 users 段（user-N）
+const AVATAR_DIR = TRY_DIR || path.join(ROOT_DIR, 'deploy', 'seed-assets', 'avatars');
+const AVATARS = [
+  { file: 'user-1.png', color: '#F59E0B' },
+  { file: 'user-2.png', color: '#3B82F6' },
+];
+
+/** 头像绘制：头 + 肩剪影填满底边，剪影色与底色同色系区分明暗 */
+function avatarSvg(a) {
+  const c = a.color;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <g>
+    <rect width="200" height="200" fill="${tint(c, 0.85)}"/>
+    <circle cx="100" cy="76" r="34" fill="${c}"/>
+    <path d="M100 122 q-54 0-54 44 v34 h108 v-34 q0-44-54-44 z" fill="${c}"/>
+  </g>
+</svg>`;
+}
+
+// ---------- 汇总输出清单：商品卡片（600x600）/ 首页 Banner（750x300）/ 用户头像（200x200） ----------
+const jobs = [
+  ...MANIFEST.map((it) => ({ dir: PRODUCT_DIR, file: it.file, w: SIZE, h: SIZE, html: card(it) })),
+  ...BANNERS.map((b) => ({ dir: BANNER_DIR, file: b.file, w: 750, h: 300, html: bannerSvg(b) })),
+  ...AVATARS.map((a) => ({ dir: AVATAR_DIR, file: a.file, w: 200, h: 200, html: avatarSvg(a) })),
+];
+
 const html = `<!doctype html><meta charset="utf-8"><style>
   body{margin:0;background:#fff}
-  .shot{width:600px;height:600px;display:block}
+  .shot{display:block}
   .shot+ .shot{margin-top:4px}
 </style>
-${MANIFEST.map((it) => `<div class="shot" data-file="${it.file}" style="width:600px;height:600px">${card(it)}</div>`).join('')}`;
+${jobs.map((j) => `<div class="shot" data-file="${j.file}" style="width:${j.w}px;height:${j.h}px">${j.html}</div>`).join('')}`;
 
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 640, height: 640 }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({ viewport: { width: 780, height: 660 }, deviceScaleFactor: 1 });
   await page.setContent(html, { waitUntil: 'load' });
   await page.evaluate(() => document.fonts.ready);
-  for (let i = 0; i < MANIFEST.length; i += 1) {
-    await page.locator('.shot').nth(i).screenshot({ path: path.join(OUT_DIR, MANIFEST[i].file) });
+  for (let i = 0; i < jobs.length; i += 1) {
+    fs.mkdirSync(jobs[i].dir, { recursive: true });
+    await page.locator('.shot').nth(i).screenshot({ path: path.join(jobs[i].dir, jobs[i].file) });
   }
   await browser.close();
-  console.log('已绘制', MANIFEST.length, '张 →', OUT_DIR);
+  console.log('已绘制', jobs.length, '张 →', PRODUCT_DIR, BANNER_DIR, AVATAR_DIR);
 })();

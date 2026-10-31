@@ -661,6 +661,21 @@ function resetFilters() {
   loadData()
 }
 
+/**
+ * 是否存在已完成的部分退款（售后标记展示条件）
+ * 退款中(7)/已退款(8)的状态文本本身已表达售后进度，不重复标；
+ * 其余状态出现 refunded_amount>0 即为「部分退款后回到正常状态」的订单
+ * @param row 订单行数据
+ * @returns 是否显示「已退 ¥xx」标记
+ */
+function hasPartialRefund(row: Order): boolean {
+  return (
+    row.status !== ORDER_STATUS.REFUNDING &&
+    row.status !== ORDER_STATUS.REFUNDED &&
+    (row.refunded_amount ?? 0) > 0
+  )
+}
+
 const columns: DataTableColumns<Order> = [
   { type: 'selection' },
   { title: '订单号', key: 'order_no', width: 200 },
@@ -729,6 +744,10 @@ const columns: DataTableColumns<Order> = [
       h(NSpace, { size: 4, vertical: true, wrap: true }, {
         default: () => [
           h(NTag, { type: orderStatusTagType(row.status), size: 'small', bordered: false }, { default: () => row.status_text }),
+          // 有成功退款且未整单退完（状态回退款前值）：状态文本看不出售后痕迹，标出已退金额防重复退款/误判
+          hasPartialRefund(row)
+            ? h(NTag, { type: 'info', size: 'small', bordered: false }, { default: () => `已退 ￥${formatAmount(row.refunded_amount ?? 0)}` })
+            : null,
           // 用户已从自己的订单列表删除（软删）：后台仍全量可见，这里标出来避免误判为脏数据
           row.user_deleted === 1
             ? h(NTag, { type: 'warning', size: 'small', bordered: false }, { default: () => '用户已删' })

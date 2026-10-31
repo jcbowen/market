@@ -545,6 +545,8 @@ func ToOrderInfo(o *model.Order) *order.OrderInfo {
 		// （网关侧为手工装配 gin.H，不存在 omitempty 吞零值的问题）
 		UserDeleted: o.UserDeleted,
 		ItemCount:   o.ItemCount,
+		// 已成功退款金额透出，供后台列表打售后标记（0=无成功退款记录）
+		RefundedAmount: o.RefundedAmount,
 	}
 	// 送达签收凭证：DB 存 JSON 数组字符串，解析失败静默为空
 	if o.DeliveryProofImages != "" {

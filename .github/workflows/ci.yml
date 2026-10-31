@@ -661,9 +661,11 @@ jobs:
             cp -r bin/static/admin "package/${stage}/static/admin"
             cp -r bin/static/h5 "package/${stage}/static/h5"
             # 演示种子素材：发布包内 gateway 以 <包根>/seed 作为 /uploads/seed/** 的根目录，
-            # 不带这份素材时种子商品图全 404（来源与镜像一致，均为 deploy/seed-assets/products）
+            # 不带这份素材时种子商品图/Banner/头像全 404（来源与镜像一致，均为 deploy/seed-assets/*）
             mkdir -p "package/${stage}/seed"
             cp -r deploy/seed-assets/products "package/${stage}/seed/products"
+            cp -r deploy/seed-assets/banners "package/${stage}/seed/banners"
+            cp -r deploy/seed-assets/avatars "package/${stage}/seed/avatars"
             case "$name" in
               windows-*) zip -qr "package/${stage}.zip" "package/${stage}" ;;
               *)         tar -czf "package/${stage}.tar.gz" -C package "${stage}" ;;

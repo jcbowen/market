@@ -309,7 +309,7 @@
    "openid": "test_openid_1",
    "phone": "13800138000",
    "nickname": "测试用户",
-   "avatar": "https://placehold.co/100x100/orange/white?text=User",
+   "avatar": "/uploads/seed/avatars/user-1.png",
    "gender": 0,
    "community_key": "comm-1",
    "address": {
@@ -337,7 +337,7 @@
    "openid": "test_openid_2",
    "phone": "13900139000",
    "nickname": "阳光用户",
-   "avatar": "https://placehold.co/100x100/blue/white?text=User2",
+   "avatar": "/uploads/seed/avatars/user-2.png",
    "gender": 0,
    "community_key": "comm-2",
    "address": {
@@ -3700,7 +3700,7 @@
    "key": "banner-1",
    "platform": true,
    "title": "新人专享满减",
-   "image_url": "https://placehold.co/750x300/ff6b35/white?text=Banner1",
+   "image_url": "/uploads/seed/banners/banner-1.png",
    "link_url": "#",
    "position": 2,
    "sort": 1
@@ -3709,7 +3709,7 @@
    "key": "banner-2",
    "platform": true,
    "title": "零食饮品周周上新",
-   "image_url": "https://placehold.co/750x300/4caf50/white?text=Banner2",
+   "image_url": "/uploads/seed/banners/banner-2.png",
    "link_url": "#",
    "position": 2,
    "sort": 2
@@ -3718,7 +3718,7 @@
    "key": "banner-3",
    "community_key": "comm-2",
    "title": "阳光花园精选",
-   "image_url": "https://placehold.co/750x300/2196f3/white?text=Banner3",
+   "image_url": "/uploads/seed/banners/banner-3.png",
    "link_url": "#",
    "position": 2,
    "sort": 1

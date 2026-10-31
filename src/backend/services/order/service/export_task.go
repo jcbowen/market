@@ -315,6 +315,11 @@ func (s *ExportTaskService) writeRows(ctx context.Context, q *exportQuery, f *os
 		}
 		nameMap := s.userNamesOf(ctx, userIDs, q.CommunityID)
 		payMap := s.payTypesOf(ctx, ids)
+		// 已退金额批内回填：与列表售后标记同口径（refunds.status=5 的 SUM(amount)），
+		// 保证「所见即所导」延伸到售后标记
+		if err := fillRefundedAmounts(s.db.GetDb().WithContext(ctx), list); err != nil {
+			return written, false, err
+		}
 
 		var buf []byte
 		for _, o := range list {
@@ -826,8 +831,8 @@ func exportRootDir() (string, error) {
 	return dir, nil
 }
 
-// exportCSVHeader 导出 CSV 表头（与前端旧导出列一致，另补商品明细与支付方式）
-const exportCSVHeader = "订单号,用户,配送方式,来源,经手人,商品明细,支付方式,订单金额,实付金额,状态,创建时间\n"
+// exportCSVHeader 导出 CSV 表头（与前端旧导出列一致，另补商品明细、支付方式与已退金额）
+const exportCSVHeader = "订单号,用户,配送方式,来源,经手人,商品明细,支付方式,订单金额,实付金额,已退金额,状态,创建时间\n"
 
 // exportCSVRow 单行订单转 CSV 数据行（字段内引号转义，防 CSV 注入）
 // 参数：
@@ -866,6 +871,8 @@ func exportCSVRow(o *model.Order, items []model.OrderItem, userName, payTypeText
 		payTypeText,
 		fmt.Sprintf("%.2f", o.TotalAmount),
 		fmt.Sprintf("%.2f", o.PayAmount),
+		// 已成功退款金额（money 口径，含运费）：与列表售后标记同口径，对账用
+		fmt.Sprintf("%.2f", o.RefundedAmount),
 		orderStatusTextOf(o.Status, o.DeliveryType),
 		o.CreatedAt,
 	}
