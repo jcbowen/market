@@ -237,8 +237,11 @@ func (x *GetPaymentStatusResp) GetOrderNo() string {
 
 // GetAlipayPayUrlReq 凭支付单号换取支付宝收银台链接
 type GetAlipayPayUrlReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PaymentNo     string                 `protobuf:"bytes,1,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	PaymentNo string                 `protobuf:"bytes,1,opt,name=payment_no,json=paymentNo,proto3" json:"payment_no,omitempty"`
+	// 支付发起场景标记：wxh5=微信内置浏览器发起（引导页换取链接时携带），
+	// 服务端编入 return_url/quit_url，支付完成回跳结果页据此把「回到首页」换成「返回微信」
+	From          string `protobuf:"bytes,2,opt,name=from,proto3" json:"from,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -276,6 +279,13 @@ func (*GetAlipayPayUrlReq) Descriptor() ([]byte, []int) {
 func (x *GetAlipayPayUrlReq) GetPaymentNo() string {
 	if x != nil {
 		return x.PaymentNo
+	}
+	return ""
+}
+
+func (x *GetAlipayPayUrlReq) GetFrom() string {
+	if x != nil {
+		return x.From
 	}
 	return ""
 }
@@ -2988,10 +2998,11 @@ const file_payment_payment_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\x05R\x06status\x12\x16\n" +
 	"\x06amount\x18\x03 \x01(\x01R\x06amount\x12\x19\n" +
 	"\border_id\x18\x04 \x01(\x03R\aorderId\x12\x19\n" +
-	"\border_no\x18\x05 \x01(\tR\aorderNo\"3\n" +
+	"\border_no\x18\x05 \x01(\tR\aorderNo\"G\n" +
 	"\x12GetAlipayPayUrlReq\x12\x1d\n" +
 	"\n" +
-	"payment_no\x18\x01 \x01(\tR\tpaymentNo\"\x8d\x01\n" +
+	"payment_no\x18\x01 \x01(\tR\tpaymentNo\x12\x12\n" +
+	"\x04from\x18\x02 \x01(\tR\x04from\"\x8d\x01\n" +
 	"\x13GetAlipayPayUrlResp\x12\x1d\n" +
 	"\n" +
 	"payment_no\x18\x01 \x01(\tR\tpaymentNo\x12\x16\n" +

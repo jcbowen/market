@@ -44,17 +44,22 @@ export function getPaymentStatusPublic(paymentNo: string) {
   return get<PaymentStatusResult>('/payments/status', { no: paymentNo }, undefined, { silent: true })
 }
 
+/** 支付发起场景标记：微信内置浏览器发起（引导页携带，服务端编入支付宝回跳地址供结果页识别） */
+export const ALIPAY_FROM_WX_H5 = 'wxh5'
+
 /**
  * 凭支付单号换取支付宝收银台链接（免登录）
  * 支付引导页用：引导页 URL 只携带支付单号，打开后实时换取新签名的收银台链接，
  * 规避支付链接（含 # 等保留字符）经 uni-app H5 路由 query 传递时被框架编解码破坏的问题；
  * 仅待支付的支付宝单返回链接，其它状态只回支付单状态
  * @param paymentNo 支付单号
+ * @param from 支付发起场景标记：引导页固定传 wxh5（微信内发起），
+ *             服务端白名单校验后编入支付宝回跳地址，结果页据此切换「返回微信」按钮
  */
-export function getAlipayPayUrlPublic(paymentNo: string) {
+export function getAlipayPayUrlPublic(paymentNo: string, from = '') {
   return get<{ payment_no: string; status: number; order_id: number; alipay_pay_url: string }>(
     '/payments/alipay/url',
-    { no: paymentNo },
+    { no: paymentNo, from },
     undefined,
     { silent: true },
   )

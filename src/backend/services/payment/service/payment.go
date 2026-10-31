@@ -249,7 +249,7 @@ func (s *PaymentService) CreatePayment(ctx context.Context, req *payment.CreateP
 		if req.ClientChannel == "alimp" {
 			payParams, err = s.buildAlipayMiniParams(ctx, p)
 		} else {
-			payParams, err = s.buildAlipayParams(ctx, p)
+			payParams, err = s.buildAlipayParams(ctx, p, "")
 		}
 	case 3, 4:
 		// 货到付款(3)/收银台现金(4)只在本事务内把支付单标记为支付成功（4 含 0 元全额优惠单），
@@ -533,12 +533,13 @@ func (s *PaymentService) FindOrdersByPayNo(ctx context.Context, payNo string) ([
 // 参数：
 //   - ctx: 上下文
 //   - paymentNo: 支付单号
+//   - from: 支付发起场景标记（引导页透传，白名单外忽略）
 //
 // 返回值：
 //   - *model.Payment: 支付记录模型（任何状态均可见，供引导页分流）
 //   - string: 支付宝收银台链接，仅待支付且 pay_type=2 时有值
 //   - error: 参数为空或记录不存在或重新签名失败
-func (s *PaymentService) GetAlipayPayUrl(ctx context.Context, paymentNo string) (*model.Payment, string, error) {
+func (s *PaymentService) GetAlipayPayUrl(ctx context.Context, paymentNo, from string) (*model.Payment, string, error) {
 	p, err := s.GetPaymentStatusByNo(ctx, paymentNo)
 	if err != nil {
 		return nil, "", err
@@ -547,7 +548,7 @@ func (s *PaymentService) GetAlipayPayUrl(ctx context.Context, paymentNo string) 
 	if p.Status != 1 || p.PayType != 2 {
 		return p, "", nil
 	}
-	params, err := s.buildAlipayParams(ctx, p)
+	params, err := s.buildAlipayParams(ctx, p, from)
 	if err != nil {
 		return nil, "", err
 	}

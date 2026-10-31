@@ -78,7 +78,7 @@
 import { ref } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { isWeixinBrowser } from '@/utils/platform'
-import { getAlipayPayUrlPublic } from '@/api/payment'
+import { getAlipayPayUrlPublic, ALIPAY_FROM_WX_H5 } from '@/api/payment'
 import { withQuery, decodeQueryValue, queryNumber } from '@/utils/query'
 // #ifdef H5
 import { copyTextToClipboard } from '@/pagesOrder/common/pay'
@@ -103,6 +103,7 @@ onShow(async () => {
 
 /**
  * 凭支付单号换取支付宝收银台链接并按环境/状态分流：
+ * 携带 from=wxh5 场景标记（服务端编入支付宝回跳地址，结果页据此切换「返回微信」按钮）；
  * 拿到链接且非微信环境 → 直接跳转收银台；微信内 → 展示指引与复制入口；
  * 支付单非待支付（已支付/已关闭等）→ 自动转入结果页展示状态；换取失败 → 展示兜底文案
  */
@@ -113,7 +114,7 @@ async function fetchPayUrlAndGo() {
     return
   }
   try {
-    const res = await getAlipayPayUrlPublic(paymentNo.value)
+    const res = await getAlipayPayUrlPublic(paymentNo.value, ALIPAY_FROM_WX_H5)
     // 已支付/已关闭/已退款等非待支付状态：转入结果页展示真实状态
     if (res.data?.status && res.data.status !== 1) {
       goResult()

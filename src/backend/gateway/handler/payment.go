@@ -629,7 +629,7 @@ func (h *PaymentHandler) PaymentStatus(c *gin.Context) {
 // 新签名的收银台链接，规避支付链接（含 # 等保留字符）经 uni-app H5 路由
 // query 传递时被框架编解码破坏的问题（实测 ? 会被改写为 =，与编码层数无关）；
 // 仅待支付的支付宝单返回链接，其它状态只回支付单状态，引导页据此跳结果页
-// 接口: GET /api/v1/payments/alipay/url?no=<payment_no>
+// 接口: GET /api/v1/payments/alipay/url?no=<payment_no>&from=wxh5
 // 参数：
 //   - c: gin 上下文
 func (h *PaymentHandler) AlipayPayUrl(c *gin.Context) {
@@ -638,8 +638,11 @@ func (h *PaymentHandler) AlipayPayUrl(c *gin.Context) {
 		response.Error(c, errcode.ParamError, "缺少支付单号")
 		return
 	}
+	// 支付发起场景标记原样透传，是否采纳由 payment 服务白名单裁定
+	from := strings.TrimSpace(c.Query("from"))
 	resp, err := h.paymentClient.GetAlipayPayUrl(c.Request.Context(), &payment.GetAlipayPayUrlReq{
 		PaymentNo: paymentNo,
+		From:      from,
 	})
 	if err != nil {
 		response.GRPCError(c, err)

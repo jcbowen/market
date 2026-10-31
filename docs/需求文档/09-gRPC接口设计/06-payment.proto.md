@@ -105,6 +105,9 @@ message GetPaymentStatusResp {
 // GetAlipayPayUrlReq 凭支付单号换取支付宝收银台链接
 message GetAlipayPayUrlReq {
   string payment_no = 1;
+  // 支付发起场景标记：wxh5=微信内置浏览器发起（引导页换取链接时携带），
+  // 服务端编入 return_url/quit_url，支付完成回跳结果页据此把「回到首页」换成「返回微信」
+  string from = 2;
 }
 
 // GetAlipayPayUrlResp 支付宝收银台链接换取结果

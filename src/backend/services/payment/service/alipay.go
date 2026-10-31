@@ -156,17 +156,23 @@ func buildAlipayExecutor(cfg config.AlipayConfig) *alipaysdk.GenericExecuteApi {
 	return executor
 }
 
+// AlipayFromWxH5 支付发起场景标记：微信内置浏览器发起（引导页换取链接时携带）
+// 微信内无法唤起支付宝，走「引导页→在浏览器中打开→系统浏览器唤起支付宝」链路，
+// 支付完成回跳必然落在无本站登录态的系统浏览器，结果页据此把「回到首页」换成「返回微信」
+const AlipayFromWxH5 = "wxh5"
+
 // buildAlipayParams 构造支付宝手机网站支付（alipay.trade.wap.pay）调起参数
 // 通过 V2 网关 pageExecute（GET）生成带 RSA2 签名的收银台跳转 URL，
 // H5 端直接跳转该 URL 即可在浏览器内唤起支付宝完成支付
 // 参数：
 //   - ctx: 上下文
 //   - p: 支付记录模型
+//   - from: 支付发起场景标记（引导页换链时透传；白名单外忽略，创建支付直连链路传空）
 //
 // 返回值：
 //   - string: 调起参数 JSON 字符串（{"alipay_pay_url": "https://openapi.alipay.com/..."}）
 //   - error: 错误信息
-func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment) (string, error) {
+func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment, from string) (string, error) {
 	// 客户端与配置均按支付单绑定的配置行获取（内部含版本热刷新）
 	executor := s.getAlipayExecutorFor(ctx, p.ConfigID)
 	if executor == nil {
@@ -190,6 +196,11 @@ func (s *PaymentService) buildAlipayParams(ctx context.Context, p *model.Payment
 		// 单号拼在 hash 路由的 query 上（uni-app H5 为 hash 路由），
 		// 支付宝回跳时会在整串末尾追加 &out_trade_no=... 等参数，同样落在 hash query 内，两者取其一即可
 		returnURL := appendQueryParam(cfg.ReturnURL, "no", p.PaymentNo)
+		// 微信内发起的支付把发起场景标记编入回跳地址（quit_url 同步携带），
+		// 结果页据此切换按钮区；白名单外的标记忽略，避免任意串被编进回跳 URL
+		if from == AlipayFromWxH5 {
+			returnURL = appendQueryParam(returnURL, "from", from)
+		}
 		bizParams["return_url"] = returnURL
 		// quit_url：用户在支付宝收银台中途退出后回跳的商户地址，与支付完成回跳同域
 		biz["quit_url"] = returnURL
