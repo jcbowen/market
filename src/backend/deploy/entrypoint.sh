@@ -23,6 +23,8 @@
 #   /app/runtime        运行时配置快照 + 超管凭证文件
 #   /app/logs           业务日志
 #   /app/data/geoip     IP 定位库（可选，缺失时自动下载，失败优雅降级）
+#   /app/verify         平台验证文件（微信域名归属校验，后台站点设置页生成；
+#                       可不挂载，容器重建丢失属预期——后台重新保存即可）
 
 set -u
 
@@ -166,6 +168,9 @@ prepare_dir "$APP_DIR/data/geoip" 10001
 # 登录密码加密 RSA 私钥目录：gateway 首启自动生成落盘（bin/config.allinone.yaml 的
 # password_rsa_key_file 指向此处），挂载宿主目录后容器重建/升级镜像密钥不丢
 prepare_dir "$APP_DIR/data/ssl" 10001
+# 平台验证文件目录：gateway 伪静态下发的落盘目标（/app 属 root，非 root 的 gateway
+# 无权就地 mkdir，须在此预创建授权；verifyfs.Save 自身另有 MkdirAll 兜底）
+prepare_dir "$APP_DIR/verify" 10001
 prepare_dir "$MYSQL_DATA" "$(id -u mysql)"
 prepare_dir /data "$(id -u redis)"
 
