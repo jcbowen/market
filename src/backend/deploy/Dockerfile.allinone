@@ -25,6 +25,9 @@
 #      ./market-admin 等工具的新 shell 不继承 entrypoint 的 export；漏配时应用
 #      会回退 MYSQL_ROOT_PASSWORD，但显式注入保证各链路口径一致） \
 #     -e REDIS_PASSWORD='<强口令>' -e JWT_SECRET='<随机强密钥>' -e APP_ENV=production \
+#     （逐项 -e 或先备好 .env 后用 --env-file <路径> 整体注入——docker run 不会
+#      自动读取 .env 文件；服务器端 compose 部署示例已 ${VAR} 化、自动读取同级
+#      .env，见 docs/需求文档/10-部署方案/03-生产环境部署.md） \
 #     -v /opt/market/data/mysql:/var/lib/mysql \
 #     -v /opt/market/data/redis:/data \
 #     -v /opt/market/data/uploads:/app/uploads \
