@@ -606,9 +606,13 @@ function onSwitchSku(item: CartItem) {
 }
 
 /**
- * 切换规格确认回调：删旧购物车项 + 按新 SKU 重新加购
- * 服务端同 SKU 已存在时自动累加合并；两步均以写接口响应快照回写本地，
- * 删除成功而加购失败时列表也会反映服务端真实状态（旧项已删）
+ * 切换规格确认回调：按「新规格先落地、旧规格后移除」的顺序执行
+ * 两步顺序刻意与直觉相反（先删后加更顺手）：删除成功而加购失败时，
+ * 用户眼前的商品会整条消失且无从恢复——先加后删则失败只停在原状，商品必不丢
+ * - 同 SKU（仅改数量）：一次 PUT 设定数量，单请求原子完成；
+ *   不能走「加购 + 删除」，服务端同 SKU 会累加合并，随后按 sku_id 删除会把合并出来的行整条删掉
+ * - 跨 SKU：先加购新 SKU，失败则保留旧项、弹窗不关供重试；成功后再删旧项，
+ *   删除失败只多留一条旧规格项（可再次删除），不丢商品
  * @param product 组件内兜底加载后的完整商品对象
  * @param sku 切换后的 SKU
  * @param quantity 数量
@@ -616,16 +620,24 @@ function onSwitchSku(item: CartItem) {
 async function onSkuConfirm({ product, sku, quantity }: { product: Product; sku: Sku; quantity: number }) {
   const item = switchItem.value
   if (!item) return
-  // 旧项的数量提交作废：新项按弹窗选择的 SKU 与数量重新加购，旧 SKU 即将被删除
+  // 挂起的旧项数量提交作废：本次确认即旧 SKU 的最终数量，不需要再发一次 PUT
   cancelQuantityCommit(item.id)
-  await commitWrite(removeCartItem(item.id))
+  if (sku.id === item.sku_id) {
+    const r = await commitWrite(updateCartItem(item.id, { quantity }))
+    if (r.ok) {
+      showSkuSelector.value = false
+    }
+    return
+  }
   // 加购社区与 SKU 选择器载货口径一致（按旧项社区）：选择器按 item.community_id
   // 加载的商品/SKU 一定归属该社区，若用当前社区加购，跨社区换规格会被服务端
-  // 「该商品不属于当前社区」拒绝，而旧项已删造成商品丢失
-  const r = await commitWrite(addCartItem(product.id, sku.id, quantity, item.community_id || userStore.communityInfo?.id))
-  if (r.ok) {
-    showSkuSelector.value = false
-  }
+  // 「该商品不属于当前社区」拒绝
+  const added = await commitWrite(
+    addCartItem(product.id, sku.id, quantity, item.community_id || userStore.communityInfo?.id),
+  )
+  if (!added.ok) return
+  await commitWrite(removeCartItem(item.id))
+  showSkuSelector.value = false
 }
 
 /**

@@ -386,13 +386,18 @@ func (s *PaymentService) DeletePayConfigRow(ctx context.Context, id int64) error
 // 成功后回传最新配置行：上传推进了乐观锁版本（updated_at），调用方若不同步新版本，
 // 编辑会话随后的保存会被「已被其他操作更新」拒绝——返回行让前端直接渲染，乐观锁机制原样保留
 //
+// 写入用「仅证书列 + WHERE id AND updated_at=读取时版本」的条件更新，不用整行 Save：
+// 上传请求只带证书内容，整行 Save 会把读取时快照的其他列（回调地址/名称/启停状态等）
+// 原样写回，覆盖这期间并发保存的改动；且版本号也来自同一快照，
+// 会把别人刚推进的版本写回旧值，使注册表按「版本未变」复用缓存而漏重建渠道客户端
+//
 // 参数：
 //   - ctx: 上下文
 //   - req: 上传请求（config_id 定位配置行，cert_type 决定写入字段）
 //
 // 返回值：
 //   - *model.PayConfig: 上传后的最新配置行
-//   - error: 校验或保存失败时返回错误
+//   - error: 校验失败、版本冲突或保存失败时返回错误
 func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadPayCertReq) (*model.PayConfig, error) {
 	if req.ConfigId <= 0 {
 		return nil, fmt.Errorf("缺少支付配置 ID")
@@ -419,42 +424,54 @@ func (s *PaymentService) UploadPayCert(ctx context.Context, req *payment.UploadP
 	}
 
 	content := string(req.Content)
+	var column string
 	switch {
 	case row.Platform == model.PayPlatformWechat && req.CertType == "private_key":
-		row.WechatPrivateKey = content
+		column = "wechat_private_key"
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "private_key":
 		// 支付宝证书内容可解析性校验：FailedPrecondition 使网关原样透传具体原因，便于定位传错的文件
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
 			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
-		row.AlipayPrivateKey = content
+		column = "alipay_private_key"
 	// 证书模式三证书：内容与私钥同类处理，仅此处写入，保存请求不触碰
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "app_cert":
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
 			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
-		row.AlipayAppCert = content
+		column = "alipay_app_cert"
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "alipay_public_cert":
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
 			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
-		row.AlipayPublicCert = content
+		column = "alipay_public_cert"
 	case row.Platform == model.PayPlatformAlipay && req.CertType == "root_cert":
 		if msg := checkAlipayUploadContent(req.CertType, content); msg != "" {
 			return nil, bizerr.New(codes.FailedPrecondition, msg)
 		}
-		row.AlipayRootCert = content
+		column = "alipay_root_cert"
 	default:
 		return nil, fmt.Errorf("该配置平台不支持上传 %s 类型证书", req.CertType)
 	}
-	row.UpdatedAt = nextPayConfigVersion(row.UpdatedAt)
 
-	if err := s.db.GetDb().WithContext(ctx).Save(row).Error; err != nil {
-		return nil, fmt.Errorf("保存证书失败: %w", err)
+	prevVersion := row.UpdatedAt
+	res := s.db.GetDb().WithContext(ctx).Model(&model.PayConfig{}).
+		Where("id = ? AND updated_at = ?", row.ID, prevVersion).
+		Updates(map[string]any{
+			column:       content,
+			"updated_at": nextPayConfigVersion(prevVersion),
+		})
+	if res.Error != nil {
+		return nil, fmt.Errorf("保存证书失败: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		log.Printf("证书上传冲突：期望版本 %s 已被并发更新 config_id=%d", prevVersion, row.ID)
+		return nil, bizerr.New(codes.Aborted, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新上传")
 	}
 
+	// 本实例立即刷新，其余实例在下次支付调用时按版本号自动刷新
 	s.getRegistryCached(ctx)
-	return row, nil
+	return s.reloadPayConfigRow(ctx, row.ID)
 }
 
 // SetPayConfigEnabled 单独启停一条支付配置：仅更新 enabled 字段，不做整行覆写

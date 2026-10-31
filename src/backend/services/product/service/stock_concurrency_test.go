@@ -70,7 +70,7 @@ func newStockTestEnv(t *testing.T) *stockTestEnv {
 	}
 	if err := dbInst.GetDb().AutoMigrate(
 		&model.Sku{}, &model.StockBatch{}, &model.StockOpLog{}, &model.StockRecord{},
-		&model.Coupon{}, &model.UserCoupon{},
+		&model.Coupon{}, &model.UserCoupon{}, &model.FlashSaleItem{},
 	); err != nil {
 		t.Fatalf("测试库迁移失败: %v", err)
 	}
@@ -88,6 +88,7 @@ func newStockTestEnv(t *testing.T) *stockTestEnv {
 			_ = db.Where("sku_id IN ?", skuIDs).Delete(&model.StockBatch{})
 			_ = db.Where("sku_id IN ?", skuIDs).Delete(&model.StockRecord{})
 			_ = db.Where("sku_id IN ?", skuIDs).Delete(&model.StockOpLog{})
+			_ = db.Where("sku_id IN ?", skuIDs).Delete(&model.FlashSaleItem{})
 		}
 		_ = db.Where("community_id = ?", stockTestCommunityID).Delete(&model.Sku{})
 		_ = db.Where("name LIKE ?", "COUPONTEST-%").Delete(&model.UserCoupon{})
