@@ -223,7 +223,7 @@ function card(item) {
 </svg>`;
 }
 
-// ---------- 首页 Banner：750x300，浅底 + 同色系装饰圆 + 标题/副文案 + 主色按钮 ----------
+// ---------- 首页 Banner：750x320（21:9，与后台 BannerManager 建议尺寸及 C 端展示位口径一致），浅底 + 同色系装饰圆 + 标题/副文案 + 主色按钮 ----------
 // key 对应 full-demo.json 的 banners 段（banner-N），file 即落盘文件名
 const BANNER_DIR = TRY_DIR || path.join(ROOT_DIR, 'deploy', 'seed-assets', 'banners');
 const BANNERS = [
@@ -235,16 +235,16 @@ const BANNERS = [
 /** Banner 绘制：浅色底延续商品卡片的 tint 配色，文字用墨色/灰棕色保持统一观感 */
 function bannerSvg(b) {
   const c = b.color;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="750" height="300" viewBox="0 0 750 300">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="750" height="320" viewBox="0 0 750 320">
   <g>
-    <rect width="750" height="300" fill="${tint(c, 0.88)}"/>
-    <circle cx="630" cy="30" r="130" fill="${tint(c, 0.72)}"/>
-    <circle cx="700" cy="245" r="90" fill="${tint(c, 0.8)}"/>
-    <circle cx="540" cy="260" r="42" fill="${tint(c, 0.6)}"/>
-    <text x="56" y="130" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="48" font-weight="700" fill="${INK}">${b.title}</text>
-    <text x="58" y="174" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="22" fill="${SUB}">${b.sub}</text>
-    <rect x="56" y="204" width="150" height="48" rx="24" fill="${c}"/>
-    <text x="131" y="234" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="20" fill="#FFFFFF" text-anchor="middle">立即查看</text>
+    <rect width="750" height="320" fill="${tint(c, 0.88)}"/>
+    <circle cx="630" cy="40" r="130" fill="${tint(c, 0.72)}"/>
+    <circle cx="700" cy="260" r="90" fill="${tint(c, 0.8)}"/>
+    <circle cx="540" cy="275" r="42" fill="${tint(c, 0.6)}"/>
+    <text x="56" y="140" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="48" font-weight="700" fill="${INK}">${b.title}</text>
+    <text x="58" y="184" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="22" fill="${SUB}">${b.sub}</text>
+    <rect x="56" y="214" width="150" height="48" rx="24" fill="${c}"/>
+    <text x="131" y="244" font-family="PingFang SC, Hiragino Sans GB, sans-serif" font-size="20" fill="#FFFFFF" text-anchor="middle">立即查看</text>
   </g>
 </svg>`;
 }
@@ -269,10 +269,10 @@ function avatarSvg(a) {
 </svg>`;
 }
 
-// ---------- 汇总输出清单：商品卡片（600x600）/ 首页 Banner（750x300）/ 用户头像（200x200） ----------
+// ---------- 汇总输出清单：商品卡片（600x600）/ 首页 Banner（750x320）/ 用户头像（200x200） ----------
 const jobs = [
   ...MANIFEST.map((it) => ({ dir: PRODUCT_DIR, file: it.file, w: SIZE, h: SIZE, html: card(it) })),
-  ...BANNERS.map((b) => ({ dir: BANNER_DIR, file: b.file, w: 750, h: 300, html: bannerSvg(b) })),
+  ...BANNERS.map((b) => ({ dir: BANNER_DIR, file: b.file, w: 750, h: 320, html: bannerSvg(b) })),
   ...AVATARS.map((a) => ({ dir: AVATAR_DIR, file: a.file, w: 200, h: 200, html: avatarSvg(a) })),
 ];
 

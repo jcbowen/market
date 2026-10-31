@@ -74,11 +74,11 @@
         scroll-with-animation
         @scroll="onRightScroll"
       >
-        <!-- 分类页 Banner -->
+        <!-- 分类页 Banner：展示位 2，高度 320rpx 对齐后台建议尺寸 750×320（21:9），aspectFill 下几乎零裁切 -->
         <view v-if="bannerImages.length" class="category-banner">
           <u-swiper
             :list="bannerImages"
-            height="240rpx"
+            height="320rpx"
             radius="16"
             @click="onBannerClick"
           />
