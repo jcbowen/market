@@ -660,7 +660,8 @@ func (h *PaymentHandler) AlipayPayUrl(c *gin.Context) {
 // 读取 raw body（限 wechatNotifyBodyLimit 体积，超限直接按报文非法拒绝，不进 gRPC）与微信签名头，
 // 调用 payment.HandleWechatCallback，
 // 按 V3 规范应答：成功 HTTP 204 空体（wegopayment.NotificationSuccess），
-// 失败 5xx + {"code":"FAIL"}（wegopayment.NotificationFail，微信按间隔重试）
+// 失败非 2xx + {"code":"FAIL"}（wegopayment.NotificationFail：处理失败回 5xx、请求体超限回 400；
+// V3 下任何非 2xx 都算未受理，微信按策略重投直至自行放弃）
 // 受理情况经 recordWechatCallback 记入 debugger 进程级日志（请求体为渠道密文，只记元数据）
 // 参数：
 //   - c: gin 上下文
@@ -675,7 +676,8 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 	if err != nil {
 		recordWechatCallback(clientIP, start, len(body), "failure", fmt.Sprintf("读取请求体失败: %v", err))
 		if isBodyTooLarge(err) {
-			// 超限报文重投多少次都会超限，回 400 而非 5xx，避免渠道无意义重试
+			// 超限是报文本身非法（重投也不会变小），与临时读取失败分档应答便于排障定位；
+			// 注意 V3 下 400 与 5xx 对微信都是未受理、都会重投，只是重投若干次后渠道自行放弃
 			wegopayment.NotificationFail(c.Writer, http.StatusBadRequest, "请求体超出大小上限")
 			return
 		}
