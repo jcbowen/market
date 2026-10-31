@@ -48,11 +48,12 @@
 
           <n-divider title-placement="left">页脚与备案</n-divider>
           <n-form-item label="页脚文案">
-            <RichTextEditor v-model:value="form.footer_html" :readonly="!isSuperAdmin" />
+            <RichTextEditor v-model:value="form.footer_html" :readonly="!isSuperAdmin" centered />
           </n-form-item>
           <n-alert type="default" :show-icon="false" class="mb-16" style="font-size: 12px">
             版权与 ICP 备案号在此合并编辑；备案号建议做成链接指向 https://beian.miit.gov.cn。
-            仅支持加粗、斜体、下划线、链接与换行，其它格式保存时会被过滤。
+            仅支持加粗、斜体、下划线、链接与换行，其它格式保存时会被过滤；
+            C 端页脚固定居中展示，编辑器内同步居中预览，所见即所得。
           </n-alert>
 
           <n-divider title-placement="left">搜索优化</n-divider>

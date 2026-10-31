@@ -1,5 +1,5 @@
 <template>
-  <div class="rich-editor">
+  <div class="rich-editor" :class="{ 'rich-editor--centered': centered }">
     <!-- 自定义工具栏 DOM：Quill 按类名识别按钮（空内容即图标按钮）；
          图片按钮用自定义类名（非 ql-image）避免 Quill 默认处理器插入 base64，
          改走 uploadImageFile 上传后插入 URL -->
@@ -32,10 +32,11 @@ import { isHandledRequestError, uploadImageFile } from '@/utils/image'
  * 富文本编辑器通用组件（Quill 2 封装）
  * 基础排版：加粗/斜体/下划线/链接/清除格式，产出 HTML 由服务端白名单消毒后落库；
  * enableImage 开启后支持插入图片（走后台上传链路得到 URL，而非 base64 内联）；
+ * centered 为编辑态预览居中：C 端展示端固定居中（如页脚文案）时开启，纯 CSS 不影响产出 HTML；
  * 编辑中（text-change）主动外发，外部回灌（value 变化）时与当前内容比对去重，避免回环
  *
  * 使用示例：
- *   <RichTextEditor v-model:value="form.footer_html" :readonly="!isSuperAdmin" />
+ *   <RichTextEditor v-model:value="form.footer_html" :readonly="!isSuperAdmin" centered />
  *   <RichTextEditor v-model:value="form.content" enable-image />
  */
 const props = withDefaults(
@@ -46,8 +47,10 @@ const props = withDefaults(
     readonly?: boolean
     /** 是否启用图片插入（上传后以 <img src="URL"> 嵌入） */
     enableImage?: boolean
+    /** 编辑区居中预览：对齐 C 端固定居中的展示端（如页脚文案），仅编辑态视觉，不改产出 HTML */
+    centered?: boolean
   }>(),
-  { readonly: false, enableImage: false },
+  { readonly: false, enableImage: false, centered: false },
 )
 
 const emit = defineEmits<{
@@ -184,5 +187,12 @@ onBeforeUnmount(() => {
 .rich-editor :deep(.ql-snow .ql-editor img) {
   max-width: 100%;
   height: auto;
+}
+
+/* 居中预览：对齐 C 端固定居中的展示端（如 SiteFooter 的 text-align: center），
+   保证所见即所得；Quill 动态生成的 DOM 无 scoped 属性，须 :deep 穿透，
+   placeholder 在 .ql-editor 内随文本对齐，无需单独处理 */
+.rich-editor--centered :deep(.ql-snow .ql-editor) {
+  text-align: center;
 }
 </style>
