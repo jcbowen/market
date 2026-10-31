@@ -1384,7 +1384,8 @@ func (s *RefundService) queryRefundFlowStatus(ctx context.Context, refund *model
 // 事务内调 RPC 会让退款单/订单的行锁横跨网络往返（并发退款互相阻塞、连接池被拖垮），
 // 更糟的是「RPC 已成功、事务随后回滚」会在 product 侧留下无对应的回补流水。
 // 事务内只组装事实（订单 ID、明细、幂等槽位、是否整单退），提交后再统一调用，
-// 失败由 runPostCommitEffect 有限重试并打 [CRITICAL] 告警
+// 失败由 runPostCommitEffect 有限重试并打 [CRITICAL] 告警，最终失败落 scheduler_failures
+// （task_type=refund_release，biz_no=退款单号）交调度器按幂等槽位重放到收敛，口径与取消收尾一致
 // 参数：
 //   - ctx: 上下文
 //   - refund: 退款单（须处于退款中状态）
@@ -1488,14 +1489,15 @@ func (s *RefundService) completeRefundSuccess(ctx context.Context, refund *model
 	}
 
 	// 事务提交成功后再执行跨服务副作用与销量回退（失败均不回滚已提交的退款）
-	_ = runPostCommitEffect(ctx, "回补库存", fmt.Sprintf("order_id=%d biz_no=%s", stockOrderID, stockBizNo),
-		func(c context.Context) error { return releaseStockBatch(c, stockOrderID, stockItems, stockBizNo) })
-	if couponOrderID > 0 {
-		_ = runPostCommitEffect(ctx, "回补优惠券", fmt.Sprintf("order_id=%d", couponOrderID),
-			func(c context.Context) error {
-				_, err := grpcclient.ProductClient.ReleaseCoupon(c, &product.ReleaseCouponReq{OrderId: couponOrderID})
-				return err
-			})
+	// 远端回补重试仍失败时按退款单号入队重放：退款单已是成功态(5)，钱退了而货/券未放出
+	// 只能靠重放收敛，人工补做在单容器 + 每日数十笔的量级下不现实
+	if err := runRefundEffects(ctx, &refundReleaseEffect{
+		OrderID:  stockOrderID,
+		RefundNo: stockBizNo,
+		Items:    stockItems,
+		Coupon:   couponOrderID > 0,
+	}); err != nil {
+		recordSchedulerFailure(ctx, s.db, stockOrderID, taskTypeRefundRelease, stockBizNo, err.Error())
 	}
 	// 按退款明细回退销量（仅金额退无商品明细自然跳过）；
 	// AdjustSalesCount 无幂等键，放事务内重试会重复回退
@@ -1521,8 +1523,9 @@ const (
 // 收尾动作不能让调用方误以为业务失败而重复操作。
 // product 侧以 order_id+sku_id+op_type+biz_no 唯一键去重（退款场景 biz_no=退款单号，
 // 优惠券按 order_id+status 幂等），因此重复调用只生效一次，重试是安全的；
-// 三次仍失败时打 [CRITICAL] 日志并带上幂等槽位：调用方若已把它接入调度器重试队列
-// （取消收尾 cancel_release 即如此）则等自动重放，否则按同一 biz_no 手工补做即可对齐
+// 三次仍失败时打 [CRITICAL] 日志并带上幂等槽位：取消收尾（cancel_release）与退款收尾
+// （refund_release，biz_no=退款单号）都已接入调度器重放队列，会自动重试到收敛；
+// 未接入的调用方（如关闭待支付支付单）按同一 biz_no 手工补做即可对齐
 // 参数：
 //   - ctx: 上下文（内部会脱离取消信号，调用方断连不影响收尾）
 //   - name: 动作名，用于日志定位（如「回补库存」）
@@ -1572,6 +1575,101 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// taskTypeRefundRelease 退款收尾回补的调度器重试任务类型
+// 退款已置成功(5)而远端回补重试仍失败时落一条 scheduler_failures，由调度器按 biz_no=退款单号重放到收敛。
+// 与取消收尾（cancel_release）的差别只在定位粒度：同一订单可以有多笔部分退款，各自占独立幂等槽位，
+// 只按订单 ID 无法知道要补哪一笔，故本任务类型必须带 biz_no
+const taskTypeRefundRelease = "refund_release"
+
+// refundReleaseEffect 退款事务提交后需要向商品服务补做的动作清单
+type refundReleaseEffect struct {
+	// OrderID 订单 ID（优惠券回补按订单定位）
+	OrderID int64
+	// RefundNo 退款单号，同时是库存回补的幂等槽位（product 侧回补唯一键的一部分）
+	RefundNo string
+	// Items 按退款明细组装的待回补数量；仅金额退（无商品明细）时为空
+	Items []*product.StockItemQty
+	// Coupon 是否回补优惠券：仅整单退（订单已置 8 已退款）为 true
+	Coupon bool
+}
+
+// runRefundEffects 执行退款收尾的远端回补（库存 + 优惠券），返回首个最终失败项
+// 与取消收尾 runCancelEffects 同构：单项各自做有限次重试、互不阻断（回补库存失败不影响继续回券），
+// 任一失败即返回错误，由调用方决定是否入队重放；重放整单安全
+// （库存按退款单号在 product 侧去重、优惠券按 order_id+status 条件更新幂等）。
+// 销量回退不在本清单内：AdjustSalesCount 无幂等键，放进来重放会重复回退，见 adjustRefundSales
+// 参数：
+//   - ctx: 上下文
+//   - eff: 待回补清单（非 nil）
+//
+// 返回值：
+//   - error: 任一收尾项重试后仍失败时返回其错误，全部成功返回 nil
+//
+// 使用示例：
+//   - err := runRefundEffects(ctx, &refundReleaseEffect{OrderID: 12, RefundNo: "RF20261031001", Items: items, Coupon: true})
+func runRefundEffects(ctx context.Context, eff *refundReleaseEffect) error {
+	var firstErr error
+	if len(eff.Items) > 0 {
+		if err := runPostCommitEffect(ctx, "退款回补库存",
+			fmt.Sprintf("order_id=%d biz_no=%s", eff.OrderID, eff.RefundNo),
+			func(c context.Context) error { return releaseStockBatch(c, eff.OrderID, eff.Items, eff.RefundNo) }); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if eff.Coupon {
+		if err := runPostCommitEffect(ctx, "退款回补优惠券", fmt.Sprintf("order_id=%d", eff.OrderID),
+			func(c context.Context) error {
+				_, err := grpcclient.ProductClient.ReleaseCoupon(c, &product.ReleaseCouponReq{OrderId: eff.OrderID})
+				return err
+			}); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// loadRefundReleaseEffect 按退款单号重建待回补清单（供调度器重放退款收尾回补）
+// 重建口径与退款事务内组装一致（明细来自 refund_items，优惠券按订单状态 8 判定）：
+// 订单状态 8 与「本笔退款退完全款」在同一事务内写入，是全额退完的可靠标记；
+// 退款单 type=1 不能单独作依据——部分退补齐全款后同样转整单退，但那时订单也已是 8
+// 参数：
+//   - ctx: 上下文
+//   - db: 订单库实例
+//   - refundNo: 退款单号（scheduler_failures.biz_no）
+//
+// 返回值：
+//   - *refundReleaseEffect: 重建的清单；退款单已不处于成功态(5) 时返回 nil，
+//     表示该记录无需回补（被拒/撤销的退款单本就没有回补语义），调用方据此把记录置为已处理，
+//     避免其永久滞留在重试队列
+//   - error: 退款单、订单或明细查询失败
+func loadRefundReleaseEffect(ctx context.Context, db *mysql.Instance, refundNo string) (*refundReleaseEffect, error) {
+	var r model.Refund
+	if err := db.GetDb().WithContext(ctx).Where("refund_no = ?", refundNo).First(&r).Error; err != nil {
+		return nil, err
+	}
+	if r.Status != 5 {
+		return nil, nil
+	}
+	var o model.Order
+	if err := db.GetDb().WithContext(ctx).First(&o, r.OrderID).Error; err != nil {
+		return nil, err
+	}
+	var items []*model.RefundItem
+	if err := db.GetDb().WithContext(ctx).Where("refund_id = ?", r.ID).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	stockItems := make([]*product.StockItemQty, 0, len(items))
+	for _, it := range items {
+		stockItems = append(stockItems, &product.StockItemQty{SkuId: it.SkuID, Quantity: it.Quantity})
+	}
+	return &refundReleaseEffect{
+		OrderID:  r.OrderID,
+		RefundNo: r.RefundNo,
+		Items:    stockItems,
+		Coupon:   o.Status == 8 && o.CouponID > 0,
+	}, nil
 }
 
 // adjustRefundSales 退款成功后按明细回退销量（净成交口径）

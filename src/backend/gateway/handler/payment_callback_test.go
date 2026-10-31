@@ -481,3 +481,46 @@ func TestWechatCallbackRecordsProcessLog(t *testing.T) {
 		}
 	})
 }
+
+// TestWechatCallbackBodyLimit 微信回调请求体体积上限
+// 本路由免登录、由渠道主动投递，原实现 c.GetRawData() 整包读入无上限，
+// 等于让任何打得到该 URL 的请求替网关分配内存；此处锁定超限即拒且不外密投递。
+// 注：真实渠道通知（验签通过的加密切文）本机无商户配置无法构造，
+// 覆盖范围为「报文体量维度」，验签/解密维度见 payment 服务离线单测与上线门禁项。
+func TestWechatCallbackBodyLimit(t *testing.T) {
+	t.Run("超限报文回 400 且不投递", func(t *testing.T) {
+		stub := &stubWechatCallbackClient{}
+		// 上限 + 1 字节：MaxBytesReader 读到第 limit+1 字节即判定超限
+		body := strings.Repeat("A", wechatNotifyBodyLimit+1)
+		code, got := doWechatCallback(t, stub, body)
+		if code != http.StatusBadRequest || !strings.Contains(got, "FAIL") {
+			t.Fatalf("超限应答 = (%d, %q), 期望 400 + FAIL", code, got)
+		}
+		if stub.called {
+			t.Fatal("超限报文不应投递给支付服务")
+		}
+	})
+
+	t.Run("上限内报文照常投递", func(t *testing.T) {
+		stub := &stubWechatCallbackClient{}
+		body := strings.Repeat("A", wechatNotifyBodyLimit)
+		if code, _ := doWechatCallback(t, stub, body); code != http.StatusNoContent {
+			t.Fatalf("上限内报文期望 204，实际 %d（不得因限流误伤正常通知）", code)
+		}
+		if !stub.called || len(stub.body) != wechatNotifyBodyLimit {
+			t.Fatalf("通知未完整投递: called=%v len=%d", stub.called, len(stub.body))
+		}
+	})
+
+	t.Run("超限与其他读取错误区分", func(t *testing.T) {
+		if !isBodyTooLarge(&http.MaxBytesError{}) {
+			t.Error("MaxBytesError 应判定为超限")
+		}
+		if isBodyTooLarge(fmt.Errorf("包装后的客户端中断: %w", errors.New("connection reset"))) {
+			t.Error("非 MaxBytesError 不得判定为超限（应回 5xx 让渠道重试）")
+		}
+		if isBodyTooLarge(nil) {
+			t.Error("nil 错误不得判定为超限")
+		}
+	})
+}

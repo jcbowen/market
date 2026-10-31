@@ -451,6 +451,9 @@ func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID in
 
 // ChangeAdminPassword 修改管理员密码
 // force = true 时跳过旧密码校验（超管重置密码场景，调用方须自行校验操作者身份）
+// communityID > 0 时强校验目标员工在该社区有任职：本接口同时服务「本人改密」与「员工管理改密」，
+// 只验旧密码不足以形成租户边界——任一员工只要知道同行口令（含离职同事、共享弱口令）就能改掉
+// 他社区员工乃至超管账号的密码。超管语境传 0（社区管理员不可能有超管任职行，天然被拒）。
 //
 // 参数：
 //   - ctx: 上下文
@@ -458,16 +461,24 @@ func (s *AdminService) DeleteAdmin(ctx context.Context, id int64, communityID in
 //   - oldPassword: 旧密码
 //   - newPassword: 新密码
 //   - force: 是否跳过旧密码校验
+//   - communityID: 操作者社区语境（0=超管或内部调用）
 //
 // 返回：
 //   - error: 错误信息
-func (s *AdminService) ChangeAdminPassword(ctx context.Context, id int64, oldPassword, newPassword string, force bool) error {
+//
+// 使用示例：
+//   - err := s.ChangeAdminPassword(ctx, id, old, new, false, h.scopeCommunityID(c))
+func (s *AdminService) ChangeAdminPassword(ctx context.Context, id int64, oldPassword, newPassword string, force bool, communityID int64) error {
 	a, err := s.getAdminByID(ctx, id)
 	if err != nil {
 		return err
 	}
-
+	// 本接口同时服务「本人改密」与「员工管理改密」：只验旧密码不足以形成租户边界，
+	// 作用域校验放在旧密码校验之前，越权请求不必暴露目标口令是否正确
 	if !force {
+		if err := s.ensureAdminAssignableToCommunity(ctx, id, communityID); err != nil {
+			return err
+		}
 		if err := CheckPassword(oldPassword, a.Password); err != nil {
 			return bizerr.New(codes.InvalidArgument, "旧密码错误")
 		}
@@ -482,6 +493,37 @@ func (s *AdminService) ChangeAdminPassword(ctx context.Context, id int64, oldPas
 		Model(&model.Admin{}).
 		Where("id = ?", id).
 		Update("password", hashed).Error
+}
+
+// ensureAdminAssignableToCommunity 校验目标员工在操作者社区语境内有任职
+// communityID <= 0（超管/内部调用）直接放行；否则要求 admin_communities 存在该 (员工, 社区) 行，
+// 无任职即视为跨社区越权。作用域只在 !force 分支调用：force 是超管重置密码，网关已按 IsSuperAdmin 拦截
+//
+// 参数：
+//   - ctx: 上下文
+//   - adminID: 目标员工 ID
+//   - communityID: 操作者社区语境
+//
+// 返回：
+//   - error: 查询失败或该员工在本社区无任职
+//
+// 使用示例：
+//   - err := s.ensureAdminAssignableToCommunity(ctx, id, 12)
+func (s *AdminService) ensureAdminAssignableToCommunity(ctx context.Context, adminID int64, communityID int64) error {
+	if communityID <= 0 {
+		return nil
+	}
+	var cnt int64
+	if err := s.db.GetDb().WithContext(ctx).
+		Model(&model.AdminCommunity{}).
+		Where("admin_id = ? AND community_id = ?", adminID, communityID).
+		Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt == 0 {
+		return bizerr.New(codes.PermissionDenied, "无权操作其他社区的员工账号")
+	}
+	return nil
 }
 
 // UpdateLoginInfo 更新管理员登录信息

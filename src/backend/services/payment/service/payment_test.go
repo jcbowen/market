@@ -12,6 +12,7 @@ import (
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"gorm.io/gorm"
 
 	"github.com/jcbowen/market/src/backend/common/bizerr"
 	"github.com/jcbowen/market/src/backend/common/config"
@@ -20,7 +21,6 @@ import (
 	"github.com/jcbowen/market/src/backend/common/proto/payment"
 	"github.com/jcbowen/market/src/backend/internal/grpcclient"
 	"github.com/jcbowen/market/src/backend/services/payment/model"
-	usermodel "github.com/jcbowen/market/src/backend/services/user/model"
 )
 
 /**
@@ -41,6 +41,7 @@ import (
  *   - TestProcessRefundCash        现金退款：成功 / refund_no 幂等 / 累计上限校验
  *   - TestProcessRefundNoChannel   渠道未配置：流水落「退款失败」保留审计，重试可清理重发
  *   - TestClosePayments            关闭待支付单后迟到回调被忽略
+ *   - TestCashCreateLockAnchorIsPaymentOwned 现金建单串行锚点归支付自有表，且不触碰用户服务 site_configs
  *
  * 测试数据统一使用 testOrderIDBase 起始的订单 ID，结束即清理，不与业务数据混淆。
  */
@@ -123,11 +124,11 @@ func newPaymentTestEnv(t *testing.T) (*PaymentService, *stubOrderClient, func())
 	if err != nil {
 		t.Fatalf("连接测试数据库失败: %v", err)
 	}
-	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}, &model.NotifyLog{}, &model.SchedulerFailure{}, &model.PayConfig{}, &usermodel.SiteConfig{}); err != nil {
+	if err := dbInst.GetDb().AutoMigrate(&model.Payment{}, &model.RefundPayment{}, &model.NotifyLog{}, &model.SchedulerFailure{}, &model.PayConfig{}, &model.PayLock{}); err != nil {
 		t.Fatalf("迁移支付测试表失败: %v", err)
 	}
 
-	// 现金/货到付款建单走 cashCreateLockTx 锁 site_configs 固定单行（id=1），
+	// 现金/货到付款建单走 cashCreateLockTx 锁支付自有锚点表 payment_locks 固定单行（id=1），
 	// 该行由锁函数事务内 get-or-create 自行兜底，此处无需预置支付配置行
 
 	// 直接构造服务实例，微信/支付宝渠道保持未配置状态，便于测渠道失败路径
@@ -857,5 +858,124 @@ func TestSavePayConfigRowKeepsSecrets(t *testing.T) {
 		updated.WechatPrivateKey != created.WechatPrivateKey {
 		t.Errorf("密钥空值应保留原值: app_secret=%q api_v3=%q private_key=%q",
 			updated.WechatAppSecret, updated.WechatAPIV3Key, updated.WechatPrivateKey)
+	}
+}
+
+// siteConfigSnapshot 读取用户服务 site_configs 的行数与最大 ID，作为「支付不得碰他人表」的基线
+// 表不存在（未跑过 user 服务迁移的库）时返回 ok=false，调用方跳过该维度断言
+// 参数：
+//   - db: 测试库连接
+//
+// 返回值：
+//   - int64: 行数
+//   - int64: 最大 ID（空表为 0）
+//   - bool: 表是否存在且读取成功
+func siteConfigSnapshot(db *gorm.DB) (int64, int64, bool) {
+	if !db.Migrator().HasTable("site_configs") {
+		return 0, 0, false
+	}
+	var rows int64
+	if err := db.Table("site_configs").Count(&rows).Error; err != nil {
+		return 0, 0, false
+	}
+	var maxID int64
+	if err := db.Table("site_configs").Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error; err != nil {
+		return 0, 0, false
+	}
+	return rows, maxID, true
+}
+
+// TestCashCreateLockAnchorIsPaymentOwned 现金/货到付款建单串行锚点归属回归（审查项 P2-10）
+// 锚点曾借用户服务 site_configs 固定行（甚至 get-or-create 写行），用户侧改表或迁移顺序变化会
+// 直接打断现金与货到付款建单；现锚点为支付自有表 payment_locks。此处锁定三件事：
+//   - 空锚点表也能建单（锚点行由加锁事务内 get-or-create 兜底，不依赖任何预置行）
+//   - 全表恒一行，反复建单与并发首单都不会产生第二把锚点（并发靠主键唯一）
+//   - 建单不再触碰 site_configs：行数与最大 ID 前后一致
+//
+// 参数：
+//   - t: 测试对象
+//
+// 使用示例：
+//
+//	TEST_MYSQL_PASSWORD=xxx go test ./services/payment/service/ -run TestCashCreateLockAnchorIsPaymentOwned -v
+func TestCashCreateLockAnchorIsPaymentOwned(t *testing.T) {
+	s, _, cleanup := newPaymentTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+	db := s.db.GetDb()
+
+	rowsBefore, maxIDBefore, hasSite := siteConfigSnapshot(db)
+
+	// 清空锚点表：模拟「新库首单」，锚点行必须自兜底而不是靠迁移预置
+	if err := db.Where("1 = 1").Delete(&model.PayLock{}).Error; err != nil {
+		t.Fatalf("清空锚点表失败: %v", err)
+	}
+
+	orderID := testOrderIDBase + 60
+	if _, _, err := s.CreatePayment(ctx, &payment.CreatePaymentReq{OrderId: orderID, Amount: 12.00, PayType: 4}); err != nil {
+		t.Fatalf("空锚点表现金建单失败: %v", err)
+	}
+	var locks []model.PayLock
+	if err := db.Find(&locks).Error; err != nil {
+		t.Fatalf("查询锚点表失败: %v", err)
+	}
+	if len(locks) != 1 || locks[0].ID != model.CashCreateLockID {
+		t.Fatalf("payment_locks 应恰有 1 行且主键为 %d，实际 %+v", model.CashCreateLockID, locks)
+	}
+
+	// 后续建单复用同一行（货到付款同样走该串行点）
+	if _, _, err := s.CreatePayment(ctx, &payment.CreatePaymentReq{OrderId: orderID + 1, Amount: 13.00, PayType: 3}); err != nil {
+		t.Fatalf("货到付款建单失败: %v", err)
+	}
+	var cnt int64
+	if err := db.Model(&model.PayLock{}).Count(&cnt).Error; err != nil {
+		t.Fatalf("统计锚点行数失败: %v", err)
+	}
+	if cnt != 1 {
+		t.Fatalf("重复建单不应新增锚点行，实际 %d 行", cnt)
+	}
+
+	// 并发首单：清空后再并发抢建，主键唯一保证只落一行，其余事务走重复键分支
+	if err := db.Where("1 = 1").Delete(&model.PayLock{}).Error; err != nil {
+		t.Fatalf("二次清空锚点表失败: %v", err)
+	}
+	const n = 5
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _, errs[i] = s.CreatePayment(ctx, &payment.CreatePaymentReq{
+				OrderId: orderID + 10 + int64(i), // 各不相同的订单：并发只抢锚点，不触发重复支付拒绝
+				Amount:  1.00,
+				PayType: 4,
+			})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("并发建锚点单第 %d 笔失败: %v", i, err)
+		}
+	}
+	if err := db.Model(&model.PayLock{}).Count(&cnt).Error; err != nil {
+		t.Fatalf("统计并发后锚点行数失败: %v", err)
+	}
+	if cnt != 1 {
+		t.Fatalf("并发首单只应落 1 行锚点（重复键由事务吞掉），实际 %d 行", cnt)
+	}
+
+	// 跨服务边界：支付建单前后用户服务站点配置表保持原样
+	rowsAfter, maxIDAfter, hasSiteAfter := siteConfigSnapshot(db)
+	if hasSite && hasSiteAfter {
+		if rowsAfter != rowsBefore || maxIDAfter != maxIDBefore {
+			t.Errorf("现金/货到付款建单改动了用户服务 site_configs: 行数 %d→%d，最大 ID %d→%d",
+				rowsBefore, rowsAfter, maxIDBefore, maxIDAfter)
+		}
+	} else if hasSite != hasSiteAfter {
+		t.Errorf("site_configs 可达性在建单前后不一致（存在=%v→%v）", hasSite, hasSiteAfter)
+	} else {
+		t.Log("site_configs 表不存在，跳过跨服务边界断言")
 	}
 }

@@ -55,6 +55,50 @@ type stubProductClient struct {
 	batchReleases  []*product.BatchReleaseStockReq
 	couponReleases []*product.ReleaseCouponReq
 	salesAdjusts   []*product.AdjustSalesCountReq
+	releaseFailFor map[string]bool // biz_no → 强制失败：构造「回补一直不收敛」的重放场景
+	couponFailFor  map[int64]bool  // order_id → 强制失败
+}
+
+// failBatchRelease 让指定幂等号（biz_no）的批量库存回补失败，模拟 product 侧持续不可用
+// 参数：
+//   - bizNo: 回补幂等号（取消为 cancel:{orderID}，退款为退款单号）
+func (s *stubProductClient) failBatchRelease(bizNo string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.releaseFailFor == nil {
+		s.releaseFailFor = map[string]bool{}
+	}
+	s.releaseFailFor[bizNo] = true
+}
+
+// healBatchRelease 解除指定幂等号的库存回补失败（重放用例据此验证「下一轮自动收敛」）
+// 参数：
+//   - bizNo: 回补幂等号
+func (s *stubProductClient) healBatchRelease(bizNo string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.releaseFailFor, bizNo)
+}
+
+// failReleaseCoupon 让指定订单的优惠券回补失败
+// 参数：
+//   - orderID: 订单 ID
+func (s *stubProductClient) failReleaseCoupon(orderID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.couponFailFor == nil {
+		s.couponFailFor = map[int64]bool{}
+	}
+	s.couponFailFor[orderID] = true
+}
+
+// healReleaseCoupon 解除指定订单的优惠券回补失败
+// 参数：
+//   - orderID: 订单 ID
+func (s *stubProductClient) healReleaseCoupon(orderID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.couponFailFor, orderID)
 }
 
 func (s *stubProductClient) ReleaseStock(ctx context.Context, in *product.ReleaseStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
@@ -67,8 +111,12 @@ func (s *stubProductClient) ReleaseStock(ctx context.Context, in *product.Releas
 // BatchReleaseStock 整单批量回补（取消链路收口后的实际调用形态）
 func (s *stubProductClient) BatchReleaseStock(ctx context.Context, in *product.BatchReleaseStockReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.batchReleases = append(s.batchReleases, in)
+	fail := s.releaseFailFor[in.GetBizNo()]
+	s.mu.Unlock()
+	if fail {
+		return nil, status.Error(codes.Unavailable, "桩：批量回补库存失败")
+	}
 	return &common.CommonResponse{}, nil
 }
 
@@ -79,8 +127,12 @@ func (s *stubProductClient) BatchReleaseFlashSaleStock(ctx context.Context, in *
 
 func (s *stubProductClient) ReleaseCoupon(ctx context.Context, in *product.ReleaseCouponReq, opts ...grpc.CallOption) (*common.CommonResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.couponReleases = append(s.couponReleases, in)
+	fail := s.couponFailFor[in.GetOrderId()]
+	s.mu.Unlock()
+	if fail {
+		return nil, status.Error(codes.Unavailable, "桩：优惠券回补失败")
+	}
 	return &common.CommonResponse{}, nil
 }
 
@@ -114,6 +166,20 @@ func (s *stubProductClient) salesAdjustCalls() []*product.AdjustSalesCountReq {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]*product.AdjustSalesCountReq(nil), s.salesAdjusts...)
+}
+
+// couponCalls 返回 ReleaseCoupon 调用快照（优惠券回补的唯一入口，按订单定位）
+func (s *stubProductClient) couponCalls() []*product.ReleaseCouponReq {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*product.ReleaseCouponReq(nil), s.couponReleases...)
+}
+
+// batchReleaseCalls 返回 BatchReleaseStock 调用快照（整单库存回补的唯一入口，含失败尝试）
+func (s *stubProductClient) batchReleaseCalls() []*product.BatchReleaseStockReq {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*product.BatchReleaseStockReq(nil), s.batchReleases...)
 }
 
 // stubPaymentClient 支付服务客户端桩：按订单号维护「渠道已收款」标记
@@ -882,7 +948,8 @@ func TestShouldRecordOrder(t *testing.T) {
 		{"自提单自动完成即记录", orderStat{pickup: 1}, true},
 		{"卡单退款重试成功即记录", orderStat{refundOK: 1}, true},
 		{"超时退款自动审批即记录", orderStat{approved: 1}, true},
-		{"取消收尾回补重放成功即记录", orderStat{released: 1}, true},
+		{"取消收尾回补重放成功即记录", orderStat{cancelReleased: 1}, true},
+		{"退款收尾回补重放成功即记录", orderStat{refundReleased: 1}, true},
 		{"失败即记录", orderStat{failed: 1}, true},
 		{"panic 即记录", orderStat{panics: 1}, true},
 	}
@@ -899,8 +966,8 @@ func TestOrderStatMerge(t *testing.T) {
 	total.merge(orderStat{cancelled: 1, completed: 2})
 	total.merge(orderStat{pickup: 1, refundOK: 1, failed: 1})
 	total.merge(orderStat{approved: 1, recovered: 3, panics: 1})
-	total.merge(orderStat{released: 2})
-	want := orderStat{recovered: 3, cancelled: 1, completed: 2, pickup: 1, refundOK: 1, approved: 1, released: 2, failed: 1, panics: 1}
+	total.merge(orderStat{cancelReleased: 2, refundReleased: 1})
+	want := orderStat{recovered: 3, cancelled: 1, completed: 2, pickup: 1, refundOK: 1, approved: 1, cancelReleased: 2, refundReleased: 1, failed: 1, panics: 1}
 	if total != want {
 		t.Errorf("merge 结果 = %+v, 期望 %+v", total, want)
 	}

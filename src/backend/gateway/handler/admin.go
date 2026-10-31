@@ -620,6 +620,8 @@ type ChangeAdminPasswordReq struct {
 }
 
 // ChangeAdminPassword 修改管理员密码
+// 须验旧密码，同时供本人改密与员工管理改密使用；目标员工是否可改由 user 服务按操作者社区语境裁定
+// （超管传 0 不受限，社区管理员只能改本社区员工），网关不在此处判断目标归属，避免与任职数据脱钩
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
@@ -648,6 +650,8 @@ func (h *AdminHandler) ChangeAdminPassword(c *gin.Context) {
 		Id:          id,
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
+		// 社区语境：超管传 0 放行，社区管理员只能改本社区员工（含本人）的密码
+		CommunityId: h.scopeCommunityID(c),
 	})
 	if err != nil {
 		if grpcErr, ok := status.FromError(err); ok && grpcErr.Code() == codes.InvalidArgument {
@@ -6059,9 +6063,14 @@ func (h *AdminHandler) DeletePaymentConfig(c *gin.Context) {
 // 参数：
 //   - c: gin 上下文
 func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
+	// 限流必须先于任何表单字段读取：gin 的 PostForm/FormFile 都会触发 multipart 解析，
+	// 先读 config_id 就等于把整包（含尾随垃圾段）读进内存后才想起设上限。
+	// 顺序调整为「先罩上限、再解析、最后统一按参数错误响应」，与后台图片上传同口径
+	limitUploadBody(c)
+
 	configID, err := strconv.ParseInt(strings.TrimSpace(c.PostForm("config_id")), 10, 64)
 	if err != nil || configID <= 0 {
-		response.Error(c, errcode.ParamError, "缺少支付配置 ID")
+		response.Error(c, errcode.ParamError, "缺少支付配置 ID 或请求体超过 12MB 上限")
 		return
 	}
 	certType := c.PostForm("cert_type")
@@ -6069,7 +6078,8 @@ func (h *AdminHandler) UploadPaymentCert(c *gin.Context) {
 		certType = "private_key"
 	}
 
-	limitUploadBody(c)
+	// 不再重复调用 limitUploadBody：MaxBytesReader 每次包装都会重置已读字节计数，
+	// 解析中途再包一次等于把 12MB 预算重新发一遍；首行的包装对整包读取全程有效
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		response.Error(c, errcode.ParamError, "请选择要上传的证书文件（不超过 12MB）")

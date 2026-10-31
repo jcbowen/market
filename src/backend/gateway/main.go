@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -345,8 +346,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.POST("/fulfillment/orders/:id/complete-delivery", orderHandler.CompleteDelivery)
 			authUser.POST("/fulfillment/orders/:id/verify-pickup", orderHandler.VerifyPickupByStaff)
 
-			// C 端图片上传（履约签收照片等凭证用途，IsDisplay=false 不进附件选择器）
-			authUser.POST("/upload/image", fulfillmentUploadHandler.UploadImage)
+			// C 端图片上传（头像 + 履约签收照片等凭证用途，IsDisplay=false 不进附件选择器）
+			// 按用户限流：本路由对所有登录用户开放（换头像必需），而图片落盘是真实存储成本，
+			// 只靠全局 IP 限流（apiLimiter）挡不住单个账号低速刷盘；稳态 180 张/小时远高于履约峰值
+			// （每单最多 3 张、逐张串行上传），桶容量 6 容得下连续两单。
+			// 类型/大小/MIME 与图片可解码性已由 product 服务 UploadImageLocal 兜底，此处不重复校验
+			authUser.POST("/upload/image", gwMiddleware.UserRateLimitMiddleware(0.05, 6), fulfillmentUploadHandler.UploadImage)
 
 			authUser.POST("/payments", paymentHandler.CreatePayment)
 			authUser.GET("/payments/:id", paymentHandler.GetPayment)
@@ -778,14 +783,16 @@ const exportPrivateDir = "exports"
 //     穿越形态会绕过拦截（标准库自身始终按 / 归一）
 //   - /<local_dir>/exports/** 固定 404：导出文件与附件共享服务目录但含用户数据属私有文件，
 //     下载只走订单服务的鉴权流式接口
+//   - 目录路径一律 404（见 noListingFS）：http.FileServer 默认会渲染目录列表，
+//     附件目录按日期分桶、文件名带业务语义，列表本身就是信息泄露
 //   - local_dir 变更需重启 gateway 生效（路由在启动时注册）
 //
 // 使用示例：
 //   - registerUploads(r, filepath.Join(getBinDir(), "seed"), filepath.Join(getBinDir(), "uploads"), "uploads")
 func registerUploads(r *gin.Engine, seedRoot, attachmentRoot, localDir string) {
 	prefix := "/" + localDir + "/"
-	seedFS := http.StripPrefix(prefix+"seed/", http.FileServer(http.Dir(seedRoot)))
-	attachmentFS := http.StripPrefix(prefix, http.FileServer(http.Dir(attachmentRoot)))
+	seedFS := http.StripPrefix(prefix+"seed/", http.FileServer(noListingFS{next: http.Dir(seedRoot)}))
+	attachmentFS := http.StripPrefix(prefix, http.FileServer(noListingFS{next: http.Dir(attachmentRoot)}))
 	serve := func(c *gin.Context) {
 		// gin 的 *filepath 带前导斜杠，形如 /seed/products/latiao.png；/images/../exports/task.csv
 		// 这类穿越形态归一后才是真正要打开的路径
@@ -804,6 +811,46 @@ func registerUploads(r *gin.Engine, seedRoot, attachmentRoot, localDir string) {
 	}
 	r.GET(prefix+"*filepath", serve)
 	r.HEAD(prefix+"*filepath", serve)
+}
+
+// noListingFS 关闭目录列表的 http.FileSystem 包装
+// http.FileServer 打开到目录时要么渲染文件清单、要么回落到该目录的 index.html，
+// 两种都等于把「这个目录里有什么」交给任何打得到静态路由的人：附件目录按日期分桶、
+// 文件名与路径本身带业务含义（订单、导出任务），列表即泄露。
+// 目录统一按不存在返回 fs.ErrNotExist，http.FileServer 对它的应答就是 404，单文件照常服务
+// 参数：
+//   - next: 被包装的原始文件系统（通常是 http.Dir 的附件根/种子根）
+//
+// 使用示例：
+//   - http.FileServer(noListingFS{next: http.Dir(attachmentRoot)})
+type noListingFS struct {
+	next http.FileSystem
+}
+
+// Open 打开路径，命中目录时按不存在处理
+// 参数：
+//   - name: 已由 http.Dir 校验过（不含 .. 、以 / 开头）的路径
+//
+// 返回值：
+//   - http.File: 普通文件句柄；目录与错误返回 nil
+//   - error: 打开失败、Stat 失败或目标是目录（fs.ErrNotExist）
+//
+// 异常：Stat 失败时先关闭已打开的句柄再返回错误，不泄漏文件描述符
+func (f noListingFS) Open(name string) (http.File, error) {
+	file, err := f.next.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if info.IsDir() {
+		_ = file.Close()
+		return nil, fs.ErrNotExist
+	}
+	return file, nil
 }
 
 // isExportPrivatePath 判定归一后的相对路径是否落在附件目录的导出私有段内

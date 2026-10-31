@@ -657,7 +657,8 @@ func (h *PaymentHandler) AlipayPayUrl(c *gin.Context) {
 }
 
 // WechatCallback 微信支付回调
-// 读取 raw body 与微信签名头，调用 payment.HandleWechatCallback，
+// 读取 raw body（限 wechatNotifyBodyLimit 体积，超限直接按报文非法拒绝，不进 gRPC）与微信签名头，
+// 调用 payment.HandleWechatCallback，
 // 按 V3 规范应答：成功 HTTP 204 空体（wegopayment.NotificationSuccess），
 // 失败 5xx + {"code":"FAIL"}（wegopayment.NotificationFail，微信按间隔重试）
 // 受理情况经 recordWechatCallback 记入 debugger 进程级日志（请求体为渠道密文，只记元数据）
@@ -667,9 +668,17 @@ func (h *PaymentHandler) WechatCallback(c *gin.Context) {
 	start := time.Now()
 	clientIP := c.ClientIP()
 
+	// 先把请求体罩进体积上限再整包读取：微信 V3 通知是加密 JSON，验签前无法判断合法性，
+	// 不设上限就等于让免登录路由替攻击者做内存分配
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, wechatNotifyBodyLimit)
 	body, err := c.GetRawData()
 	if err != nil {
 		recordWechatCallback(clientIP, start, len(body), "failure", fmt.Sprintf("读取请求体失败: %v", err))
+		if isBodyTooLarge(err) {
+			// 超限报文重投多少次都会超限，回 400 而非 5xx，避免渠道无意义重试
+			wegopayment.NotificationFail(c.Writer, http.StatusBadRequest, "请求体超出大小上限")
+			return
+		}
 		// V3 规范失败应答：非 2xx + JSON。原 response.Error 返回 HTTP 200，
 		// 微信会视为受理成功而不再重试，导致通知丢失
 		wegopayment.NotificationFail(c.Writer, http.StatusInternalServerError, "读取请求体失败")
@@ -732,6 +741,28 @@ func recordWechatCallback(clientIP string, start time.Time, bodySize int, result
 // alipayNotifyBodyLimit 支付宝异步通知请求体体积上限。
 // 通知参数为扁平 form，正常体量在 2KB 以内；设置上限防止异常大报文耗尽内存。
 const alipayNotifyBodyLimit = 64 << 10
+
+// wechatNotifyBodyLimit 微信支付 V3 异步通知请求体体积上限。
+// 通知体是「加密资源 + 少量元数据」的 JSON，正常体量在 2KB 以内，密文也不会撑大；
+// 与支付宝同口径取 64KB。本路由免登录且由渠道主动投递，不设上限就等于把网关内存
+// 交给任意能打到此 URL 的请求（原实现 c.GetRawData() 整包读入，无上限）
+const wechatNotifyBodyLimit = 64 << 10
+
+// isBodyTooLarge 判定请求体读取错误是否为「超出 MaxBytesReader 上限」
+// 超限属报文本身非法，重试也不会变小，应答与临时读取失败（客户端中断）区分开：
+// 前者 400、后者 5xx 让渠道按各自策略处理（微信对非 2xx 一律重投，两种都算未受理）
+// 参数：
+//   - err: c.GetRawData 返回的错误
+//
+// 返回值：
+//   - bool: true 表示超限
+//
+// 使用示例：
+//   - if isBodyTooLarge(err) { wegopayment.NotificationFail(c.Writer, http.StatusBadRequest, "请求体超限") }
+func isBodyTooLarge(err error) bool {
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
+}
 
 // AlipayCallback 支付宝支付回调
 // 直接读取 raw body 并以 url 编码解析通知参数（不依赖 Content-Type，

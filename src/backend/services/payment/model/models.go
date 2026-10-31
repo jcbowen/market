@@ -18,5 +18,7 @@ func Models() []any {
 		&PayConfig{},
 		&NotifyLog{},
 		&SchedulerFailure{},
+		// 串行锚点表排在最后：不与业务表建外键关系，仅现金建单事务内 get-or-create 单行
+		&PayLock{},
 	}
 }

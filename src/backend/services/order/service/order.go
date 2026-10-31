@@ -1425,7 +1425,8 @@ func releaseCancelledOrder(ctx context.Context, db *mysql.Instance, eff *cancelE
 		return
 	}
 	if err := runCancelEffects(ctx, eff); err != nil {
-		recordSchedulerFailure(ctx, db, eff.OrderID, taskTypeCancelRelease, err.Error())
+		// 取消收尾按订单整体重放（幂等号 cancel:{orderID} 由订单 ID 现推），biz_no 留空
+		recordSchedulerFailure(ctx, db, eff.OrderID, taskTypeCancelRelease, "", err.Error())
 	}
 }
 
@@ -1494,26 +1495,62 @@ func loadCancelEffect(ctx context.Context, db *mysql.Instance, orderID int64) (*
 // recordSchedulerFailure 写入调度器失败重试队列（scheduler_failures）
 // 从 Scheduler 方法收口为包级函数，供无调度器实例的订单服务写入同一张重试表；
 // 入队失败只记日志，前置的 [CRITICAL] 日志已保证可观测
+// 入队脱离调用方取消信号：收尾失败往往正是客户端断连/上游超时那一轮发生的，
+// 用已取消的 ctx 写库会让「回补没做成」这条线索一起丢掉，重试队列形同虚设
 //
 // 参数：
-//   - ctx: 上下文
+//   - ctx: 上下文（内部脱离取消信号并另行限时）
 //   - db: 数据库实例
 //   - orderID: 订单 ID
 //   - taskType: 任务类型
+//   - bizNo: 幂等业务号（退款收尾传退款单号；按订单整体收尾的任务传空串）
 //   - errMsg: 错误信息
-func recordSchedulerFailure(ctx context.Context, db *mysql.Instance, orderID int64, taskType string, errMsg string) {
+//
+// 使用示例：
+//   - recordSchedulerFailure(ctx, db, orderID, taskTypeRefundRelease, refundNo, err.Error())
+func recordSchedulerFailure(ctx context.Context, db *mysql.Instance, orderID int64, taskType string, bizNo string, errMsg string) {
+	enqueueCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postEffectTimeout)
+	defer cancel()
+
 	now := time.Now().Format("2006-01-02 15:04:05")
 	failure := &model.SchedulerFailure{
 		OrderID:   orderID,
 		TaskType:  taskType,
+		BizNo:     bizNo,
 		Status:    1,
-		ErrorMsg:  errMsg,
+		ErrorMsg:  truncateRunes(errMsg, schedulerFailureMsgMax),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := db.GetDb().WithContext(ctx).Create(failure).Error; err != nil {
-		log.Printf("[order-scheduler] 记录失败订单 %d 出错: %v", orderID, err)
+	if err := db.GetDb().WithContext(enqueueCtx).Create(failure).Error; err != nil {
+		log.Printf("[order-scheduler] 记录失败订单 %d 任务 %s(%s) 出错: %v", orderID, taskType, bizNo, err)
 	}
+}
+
+// schedulerFailureMsgMax 失败原因列可存的最大字符数（与 error_msg varchar(500) 同口径）
+const schedulerFailureMsgMax = 500
+
+// truncateRunes 按字符数截断字符串，超限部分以 … 标记
+// MySQL 的 varchar(N) 按字符计数，驱动侧若按字节截断会把中文切成半个字，
+// 报文体（含中文文案）超限直接触发 1406 Data too long，反而丢掉整条记录
+// 参数：
+//   - value: 原始字符串
+//   - max: 最大字符数（<=0 表示不截断）
+//
+// 返回值：
+//   - string: 截断结果
+//
+// 使用示例：
+//   - truncateRunes("rpc error: code = FailedPrecondition desc = 回补数量超出已扣减", 500)
+func truncateRunes(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 // closePendingPayments 关闭订单的待支付支付单（订单取消后的收尾动作）

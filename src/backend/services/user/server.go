@@ -527,8 +527,9 @@ func (s *server) GetAdminAssignments(ctx stdctx.Context, req *user.GetAdminAssig
 }
 
 // ChangeAdminPassword 修改管理员密码（force=true 时跳过旧密码校验，须由网关校验超管身份）
+// community_id > 0 时服务端强校验目标员工在该社区有任职，跨社区改密一律拒绝
 func (s *server) ChangeAdminPassword(ctx stdctx.Context, req *user.ChangeAdminPasswordReq) (*common.CommonResponse, error) {
-	if err := s.adminService.ChangeAdminPassword(ctx, req.Id, req.OldPassword, req.NewPassword, req.Force); err != nil {
+	if err := s.adminService.ChangeAdminPassword(ctx, req.Id, req.OldPassword, req.NewPassword, req.Force, req.CommunityId); err != nil {
 		if err.Error() == "旧密码错误" || err.Error() == "管理员不存在" {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}

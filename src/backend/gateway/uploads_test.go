@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +28,7 @@ import (
  *   - 含 .. 的请求被拒绝，无法逃出所属根目录
  *   - 归一后仍指向合法附件的路径正常 200（拦截不误伤正常访问）
  *   - 素材缺失时返回 404 而非 500
+ *   - 目录路径（含内置 index.html 的目录）一律 404，不渲染文件清单
  */
 
 // newUploadsTestRouter 用两个临时目录构造只注册了 /uploads 的 gin 引擎
@@ -220,5 +223,116 @@ func TestRegisterUploadsMissingFile(t *testing.T) {
 	}
 	if code, _ := doGet(r, "/uploads/images/not-exist.jpg"); code != http.StatusNotFound {
 		t.Fatalf("缺失附件期望 404，实际 %d", code)
+	}
+}
+
+// TestRegisterUploadsDisablesDirectoryListing 验证目录路径不渲染清单（noListingFS）
+// http.FileServer 对目录请求有两种渲染：文件清单、或该目录下的 index.html，
+// 两者都等于向任何打得到静态路由的人公开「这个目录里有什么」。附件目录按日期分桶、
+// 文件名带订单等业务语义，清单本身就是信息泄露。
+// 目录一律 404；index.html 直链与裸 /uploads 只保留各自的 301 规范化，落点仍是 404
+// 参数：
+//   - t: 测试上下文
+//
+// 异常：断言失败即 t.Fatalf
+func TestRegisterUploadsDisablesDirectoryListing(t *testing.T) {
+	r, seedRoot, attachmentRoot := newUploadsTestRouter(t)
+
+	// index.html 形态：FileServer 默认把目录请求回落到 index.html，同样属于枚举
+	if err := os.WriteFile(filepath.Join(attachmentRoot, "images", "20260101", "index.html"), []byte("index-listing-leak"), 0o644); err != nil {
+		t.Fatalf("写入目录索引夹具失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(seedRoot, "index.html"), []byte("seed-index-leak"), 0o644); err != nil {
+		t.Fatalf("写入种子索引夹具失败: %v", err)
+	}
+
+	for _, p := range []string{
+		"/uploads/",                    // 附件根
+		"/uploads/images/",             // 含 index.html 的目录
+		"/uploads/images",              // 含 index.html 的目录（无尾斜杠）
+		"/uploads/images/20260101/01/", // 叶子目录
+		"/uploads/seed/",               // 种子根
+		"/uploads/seed/products",       // 种子子目录
+		"/uploads/images/../../",       // 穿越到根目录也不清单
+		"/uploads/seed/products/../",   // 种子目录列表
+	} {
+		code, body := doGet(r, p)
+		if code != http.StatusNotFound {
+			t.Fatalf("%s: 目录路径期望 404，实际 %d（body=%q）", p, code, body)
+		}
+		for _, leak := range []string{"index-listing-leak", "seed-index-leak", "order.jpg", "latiao.png", "<tr>"} {
+			if strings.Contains(body, leak) {
+				t.Fatalf("%s: 目录清单泄露（命中 %q）", p, leak)
+			}
+		}
+	}
+
+	// 直接点名索引页：FileServer 先 301 到所属目录，跟进后是 404，索引内容永不下发
+	if code, body := doGet(r, "/uploads/images/20260101/index.html"); code != http.StatusMovedPermanently || body != "" {
+		t.Fatalf("索引页直链期望 301 空体（重定向目标是 404 的目录），实际 %d（body=%q）", code, body)
+	}
+
+	// 裸 /uploads（无尾斜杠）由 gin 路由规范化为 301 → /uploads/，跟进后仍是 404，不产生清单
+	if code, body := doGet(r, "/uploads"); code == http.StatusOK || strings.Contains(body, "order.jpg") {
+		t.Fatalf("裸 /uploads 不应下发内容，实际 %d（body=%q）", code, body)
+	}
+
+	// 关闭清单不得误伤单文件下发
+	if code, body := doGet(r, "/uploads/images/20260101/01/order.jpg"); code != http.StatusOK || body != "jpg-upload" {
+		t.Fatalf("单文件下发受影响：期望 200 jpg-upload，实际 %d %q", code, body)
+	}
+	if code, body := doGet(r, "/uploads/seed/products/latiao.png"); code != http.StatusOK || body != "png-seed" {
+		t.Fatalf("种子单文件下发受影响：期望 200 png-seed，实际 %d %q", code, body)
+	}
+}
+
+// TestNoListingFSOpenSemantics 直接验证 noListingFS 的打开语义与句柄回收
+// 经 http.FileServer 的端到端用例看不到句柄层面：目录命中时句柄必须先关闭再返回错误，
+// 否则每次枚举请求都泄漏一个文件描述符
+// 参数：
+//   - t: 测试上下文
+//
+// 异常：断言失败即 t.Fatalf
+func TestNoListingFSOpenSemantics(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatalf("创建目录失败: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("写入文件失败: %v", err)
+	}
+	fsys := noListingFS{next: http.Dir(root)}
+
+	// 目录（含根）一律 fs.ErrNotExist
+	for _, name := range []string{"/", "/sub", "/sub/"} {
+		file, err := fsys.Open(name)
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("Open(%q) 期望 fs.ErrNotExist，实际 %v", name, err)
+		}
+		if file != nil {
+			t.Fatalf("Open(%q) 判定为目录时不得返回句柄", name)
+		}
+	}
+
+	// 不存在的文件透传底层错误（仍是 fs.ErrNotExist）
+	if _, err := fsys.Open("/sub/none.txt"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("缺失文件期望 fs.ErrNotExist，实际 %v", err)
+	}
+
+	// 普通文件照常返回可读句柄
+	file, err := fsys.Open("/sub/a.txt")
+	if err != nil {
+		t.Fatalf("Open 普通文件失败: %v", err)
+	}
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		t.Fatalf("普通文件 Stat 异常: info=%+v err=%v", info, err)
+	}
+	buf := make([]byte, 1)
+	if n, _ := file.Read(buf); n != 1 || buf[0] != 'a' {
+		t.Fatalf("普通文件内容读取错误: n=%d buf=%q", n, buf)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("关闭句柄失败: %v", err)
 	}
 }

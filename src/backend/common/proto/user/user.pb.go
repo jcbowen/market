@@ -3346,7 +3346,9 @@ type ChangeAdminPasswordReq struct {
 	OldPassword string                 `protobuf:"bytes,2,opt,name=old_password,json=oldPassword,proto3" json:"old_password,omitempty"`
 	NewPassword string                 `protobuf:"bytes,3,opt,name=new_password,json=newPassword,proto3" json:"new_password,omitempty"`
 	// 超管重置密码：跳过旧密码校验（由网关校验操作者身份后注入）
-	Force         bool `protobuf:"varint,4,opt,name=force,proto3" json:"force,omitempty"`
+	Force bool `protobuf:"varint,4,opt,name=force,proto3" json:"force,omitempty"`
+	// 操作者社区语境：>0 时服务端强校验目标员工在该社区有任职，防止跨社区改他社区员工口令（超管传 0 放行）
+	CommunityId   int64 `protobuf:"varint,5,opt,name=community_id,json=communityId,proto3" json:"community_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3407,6 +3409,13 @@ func (x *ChangeAdminPasswordReq) GetForce() bool {
 		return x.Force
 	}
 	return false
+}
+
+func (x *ChangeAdminPasswordReq) GetCommunityId() int64 {
+	if x != nil {
+		return x.CommunityId
+	}
+	return 0
 }
 
 // GetAdminContextReq 实时权限上下文查询
@@ -6465,12 +6474,13 @@ const file_user_user_proto_rawDesc = "" +
 	"\x0ecommunity_name\x18\x02 \x01(\tR\rcommunityName\x12$\n" +
 	"\x05roles\x18\x03 \x03(\v2\x0e.user.RoleInfoR\x05roles\"D\n" +
 	"\x17GetAdminAssignmentsResp\x12)\n" +
-	"\x04list\x18\x01 \x03(\v2\x15.user.AdminAssignmentR\x04list\"\x84\x01\n" +
+	"\x04list\x18\x01 \x03(\v2\x15.user.AdminAssignmentR\x04list\"\xa7\x01\n" +
 	"\x16ChangeAdminPasswordReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12!\n" +
 	"\fold_password\x18\x02 \x01(\tR\voldPassword\x12!\n" +
 	"\fnew_password\x18\x03 \x01(\tR\vnewPassword\x12\x14\n" +
-	"\x05force\x18\x04 \x01(\bR\x05force\"R\n" +
+	"\x05force\x18\x04 \x01(\bR\x05force\x12!\n" +
+	"\fcommunity_id\x18\x05 \x01(\x03R\vcommunityId\"R\n" +
 	"\x12GetAdminContextReq\x12\x19\n" +
 	"\badmin_id\x18\x01 \x01(\x03R\aadminId\x12!\n" +
 	"\fcommunity_id\x18\x02 \x01(\x03R\vcommunityId\"\x80\x01\n" +

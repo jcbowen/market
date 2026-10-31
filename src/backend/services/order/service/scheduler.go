@@ -56,25 +56,26 @@ const (
 	// refundMaxRetry 累计核查上限，达到即停止自动重试并转人工待办；
 	// 按 10min 一次折算约 4 小时，足以覆盖渠道异步退款的正常收敛窗口
 	refundMaxRetry = 24
-	// cancelReleaseMaxRetry 取消收尾回补重放上限，与 retryFailures 的 retry_count < 5 同口径；
-	// 每分钟一轮折算约 5 分钟，覆盖商品服务短时抖动/重启，仍失败则只剩人工补做
-	cancelReleaseMaxRetry = 5
-	// cancelReleaseBatch 每轮最多重放的取消收尾记录数（与其余重试任务同用 Limit(100)）
-	cancelReleaseBatch = 100
+	// releaseMaxRetry 收尾回补重放上限（取消收尾与退款收尾共用），与 retryFailures 的
+	// retry_count < 5 同口径；每分钟一轮折算约 5 分钟，覆盖商品服务短时抖动/重启，仍失败则只剩人工补做
+	releaseMaxRetry = 5
+	// releaseBatch 每轮最多重放的收尾回补记录数（取消与退款各一批，与其余重试任务同用 Limit(100)）
+	releaseBatch = 100
 )
 
 // orderStat 单轮订单调度统计：debugger 进程记录的落库判定与摘要字段的唯一依据
 type orderStat struct {
-	recovered     int // 兜底恢复的处理中订单数
-	cancelled     int // 超时未支付自动取消
-	completed     int // 配送单发货超时自动完成
-	pickup        int // 自提单支付超时自动完成
-	refundOK      int // 卡单退款重试成功
-	approved      int // 超时退款自动审批
-	released      int // 取消收尾回补（库存/优惠券）重放成功
-	exportCleaned int // 过期导出任务清理数（文件 + 记录）
-	failed        int // 本轮失败（含扫描/抢占/事务/重试/审批出错）
-	panics        int // 本轮被 runOnce 恢复的 panic 次数（正常为 0 或 1）
+	recovered      int // 兜底恢复的处理中订单数
+	cancelled      int // 超时未支付自动取消
+	completed      int // 配送单发货超时自动完成
+	pickup         int // 自提单支付超时自动完成
+	refundOK       int // 卡单退款重试成功
+	approved       int // 超时退款自动审批
+	cancelReleased int // 取消收尾回补（库存/优惠券）重放成功
+	refundReleased int // 退款收尾回补（库存/优惠券）重放成功
+	exportCleaned  int // 过期导出任务清理数（文件 + 记录）
+	failed         int // 本轮失败（含扫描/抢占/事务/重试/审批出错）
+	panics         int // 本轮被 runOnce 恢复的 panic 次数（正常为 0 或 1）
 }
 
 // hasAction 本轮是否发生了实质动作或失败
@@ -83,7 +84,7 @@ type orderStat struct {
 // 返回值：
 //   - bool: true 表示有实质动作
 func (s orderStat) hasAction() bool {
-	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.released+s.exportCleaned+s.failed+s.panics > 0
+	return s.recovered+s.cancelled+s.completed+s.pickup+s.refundOK+s.approved+s.cancelReleased+s.refundReleased+s.exportCleaned+s.failed+s.panics > 0
 }
 
 // merge 把另一份统计并入本轮（子任务结果汇总）
@@ -96,7 +97,8 @@ func (s *orderStat) merge(other orderStat) {
 	s.pickup += other.pickup
 	s.refundOK += other.refundOK
 	s.approved += other.approved
-	s.released += other.released
+	s.cancelReleased += other.cancelReleased
+	s.refundReleased += other.refundReleased
 	s.exportCleaned += other.exportCleaned
 	s.failed += other.failed
 	s.panics += other.panics
@@ -209,6 +211,7 @@ func (s *Scheduler) runOnce(ctx context.Context, orderTimeout int, autoCompleteD
 	stat.merge(s.recoverStuckOrders(ctx))
 	stat.merge(s.cancelTimeoutOrders(ctx, orderTimeout))
 	stat.merge(s.retryCancelReleases(ctx))
+	stat.merge(s.retryRefundReleases(ctx))
 	stat.merge(s.autoCompleteOrders(ctx, autoCompleteDays))
 	stat.merge(s.autoCompletePickupOrders(ctx, autoCompleteDays))
 	stat.merge(s.retryStuckRefunds(ctx))
@@ -235,7 +238,8 @@ func (s *Scheduler) recordRound(start time.Time, stat orderStat) {
 		"pickup":         stat.pickup,
 		"refund_ok":      stat.refundOK,
 		"approved":       stat.approved,
-		"cancel_release": stat.released,
+		"cancel_release": stat.cancelReleased,
+		"refund_release": stat.refundReleased,
 		"export_cleaned": stat.exportCleaned,
 		"failed":         stat.failed,
 		"panics":         stat.panics,
@@ -502,7 +506,7 @@ func (s *Scheduler) auditPaidAfterCancel(ctx context.Context, orderID int64) {
 // 取消事务提交后回补库存/优惠券重试仍失败时，落 task_type=cancel_release 的失败记录（订单已是终态 6，
 // 不能像旧实现那样靠「取消整体失败回滚」来重试，否则会造成一物两卖）。
 // 本任务按幂等号 cancel:{orderID} 重放：product 侧唯一键保证重复回补只生效一次，重放安全；
-// 达 cancelReleaseMaxRetry 次仍未收敛的记录停止自动重放（每轮已打 [CRITICAL]，转人工按幂等槽位补做）。
+// 达 releaseMaxRetry 次仍未收敛的记录停止自动重放（每轮已打 [CRITICAL]，转人工按幂等槽位补做）。
 // 参数：
 //   - ctx: 上下文
 //
@@ -519,9 +523,9 @@ func (s *Scheduler) retryCancelReleases(ctx context.Context) orderStat {
 
 	var failures []*model.SchedulerFailure
 	if err := s.db.GetDb().WithContext(ctx).
-		Where("task_type = ? AND status = ? AND retry_count < ?", taskTypeCancelRelease, 1, cancelReleaseMaxRetry).
+		Where("task_type = ? AND status = ? AND retry_count < ?", taskTypeCancelRelease, 1, releaseMaxRetry).
 		Order("id asc").
-		Limit(cancelReleaseBatch).
+		Limit(releaseBatch).
 		Find(&failures).Error; err != nil {
 		log.Printf("[order-scheduler] 查询取消收尾回补失败记录出错: %v", err)
 		stat.failed++
@@ -543,8 +547,73 @@ func (s *Scheduler) retryCancelReleases(ctx context.Context) orderStat {
 			continue
 		}
 		s.markFailureStatus(ctx, f.ID, 2)
-		stat.released++
+		stat.cancelReleased++
 		log.Printf("[order-scheduler] 订单 %d 取消收尾回补重放成功", f.OrderID)
+	}
+	return stat
+}
+
+// retryRefundReleases 重放「退款已提交成功、远端回补未成功」的收尾动作
+// 退款事务提交后回补库存/优惠券重试仍失败时，落 task_type=refund_release 的失败记录并带上
+// biz_no=退款单号：同一订单可以有多笔部分退款，各自占独立幂等槽位，只按订单 ID 无法定位补哪一笔
+// （取消收尾按订单整体重放，不需要该列）。
+// 重放按退款单号取明细后走同一套幂等口径：product 侧回补唯一键含 biz_no，重复调用只生效一次；
+// 退款单已转出成功态(5) 的记录（被拒/撤销）没有回补语义，直接标记已处理，不永久滞留队列。
+// 达 releaseMaxRetry 次仍未收敛的记录停止自动重放，每轮已打 [CRITICAL] 供人工按幂等槽位补做。
+// 参数：
+//   - ctx: 上下文
+//
+// 返回值：
+//   - orderStat: 本轮统计（落库判定依据）
+func (s *Scheduler) retryRefundReleases(ctx context.Context) orderStat {
+	var stat orderStat
+	lockKey := "scheduler:order:refund:release:lock"
+	lockValue := s.acquireLock(ctx, lockKey, 5*time.Minute)
+	if lockValue == "" {
+		return stat
+	}
+	defer s.releaseLock(ctx, lockKey, lockValue)
+
+	var failures []*model.SchedulerFailure
+	if err := s.db.GetDb().WithContext(ctx).
+		Where("task_type = ? AND status = ? AND retry_count < ?", taskTypeRefundRelease, 1, releaseMaxRetry).
+		Order("id asc").
+		Limit(releaseBatch).
+		Find(&failures).Error; err != nil {
+		log.Printf("[order-scheduler] 查询退款收尾回补失败记录出错: %v", err)
+		stat.failed++
+		return stat
+	}
+
+	for _, f := range failures {
+		if f.BizNo == "" {
+			// 无幂等号无法定位回补哪一笔：标记放弃并留线索，不能整单重放（可能吞掉同订单其他退款的槽位）
+			log.Printf("[CRITICAL] 退款收尾回补记录 %d（order_id=%d）缺退款单号，停止自动重放，需人工按退款单核对", f.ID, f.OrderID)
+			s.markFailureStatus(ctx, f.ID, 3)
+			stat.failed++
+			continue
+		}
+		eff, err := loadRefundReleaseEffect(ctx, s.db, f.BizNo)
+		if err != nil {
+			log.Printf("[order-scheduler] 重放退款单 %s 收尾回补时读取失败: %v", f.BizNo, err)
+			s.incrementFailureRetry(ctx, f.ID, err.Error())
+			stat.failed++
+			continue
+		}
+		if eff == nil {
+			s.markFailureStatus(ctx, f.ID, 2)
+			log.Printf("[order-scheduler] 退款单 %s 已不处于退款成功态，收尾回补记录标记为已处理", f.BizNo)
+			continue
+		}
+		if err := runRefundEffects(ctx, eff); err != nil {
+			s.incrementFailureRetry(ctx, f.ID, err.Error())
+			log.Printf("[order-scheduler] 重放退款单 %s 收尾回补仍失败: %v", f.BizNo, err)
+			stat.failed++
+			continue
+		}
+		s.markFailureStatus(ctx, f.ID, 2)
+		stat.refundReleased++
+		log.Printf("[order-scheduler] 退款单 %s 收尾回补重放成功", f.BizNo)
 	}
 	return stat
 }
@@ -1069,6 +1138,7 @@ func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) orderStat {
 }
 
 // recordFailure 记录处理失败的订单
+// 按订单整体重试的任务（超时取消/自动完成等）不带幂等号，biz_no 留空
 //
 // 参数：
 //   - ctx: 上下文
@@ -1076,7 +1146,7 @@ func (s *Scheduler) autoApproveStaleRefunds(ctx context.Context) orderStat {
 //   - taskType: 任务类型
 //   - errMsg: 错误信息
 func (s *Scheduler) recordFailure(ctx context.Context, orderID int64, taskType string, errMsg string) {
-	recordSchedulerFailure(ctx, s.db, orderID, taskType, errMsg)
+	recordSchedulerFailure(ctx, s.db, orderID, taskType, "", errMsg)
 }
 
 // markFailureStatus 更新失败记录状态

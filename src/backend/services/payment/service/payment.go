@@ -88,26 +88,16 @@ func (s *PaymentService) reloadPayConfig() {
 	s.applyPayConfig(rows)
 }
 
-// siteConfigLockID 现金建单库级串行点的锚定行：site_configs 固定单行（id=1）
-// 全平台单行配置表，行由建单事务内 get-or-create 兜底，不依赖启动初始化
-const siteConfigLockID = int64(1)
-
-// siteConfigLockRow 现金建单串行点锚定行的最小查询载体（仅取主键）
-// 不直接复用用户服务的 SiteConfig 模型：支付服务只借该行做行锁，不关心站点配置语义，
-// 避免跨服务模型依赖随站点字段演进被牵连
-type siteConfigLockRow struct {
-	ID int64 `gorm:"column:id"`
-}
-
-// cashCreateLockTx 现金/货到付款建单的库级串行点：锁站点设置固定行
+// cashCreateLockTx 现金/货到付款建单的库级串行点：锁支付服务自有锚点表 payment_locks 固定行
 // 现金单「创建即已支付」，不置 pending_flag（唯一索引只保护待支付态），
 // 「查重 → 插入」在并发双击下非原子，同订单可落两笔已支付现金流水（交班营业额双计）。
 // 旧实现用进程内分段锁，只在单容器部署下成立；改为锁表行后多实例同样串行。
 // 代价是现金/货到付款建单全局串行（事务内无远程调用，收银量级可忽略）。
-// 锁定目标曾是 pay_config 首行，空表时靠启动初始化占位行兜底；pay_config 多行化且
-// 占位行可被管理员删除后，改锁 site_configs 固定单行（site_configs 表本身恒存在，
-// 锚定行由本函数事务内 get-or-create，空库首单也能建）——锁哪一行不影响串行语义，
-// 只要求全实例锁定同一目标。
+// 锁定目标两次迁移：曾是 pay_config 首行，该表多行化且占位行可被管理员删除后失去恒存在性，
+// 改锁用户服务 site_configs 固定单行——那虽同样能串行，却让支付服务读写他人系统的表，
+// 站点配置改表或迁移顺序变化会直接打断现金/货到付款建单，故再迁到支付自有 payment_locks
+// （表随 model.Models() 建、锚点行由本函数事务内 get-or-create，空库首单也能建）。
+// 锁哪一行不影响串行语义，只要求全实例锁定同一目标。
 // 调用方必须在同一事务内紧接着复查「已存在成功支付单」，锁才有意义。
 // 参数：
 //   - tx: 建单事务
@@ -115,15 +105,14 @@ type siteConfigLockRow struct {
 // 返回值：
 //   - error: 锚定行创建失败或加锁失败
 func cashCreateLockTx(tx *gorm.DB) error {
-	// get-or-create：行不存在时插入占位行（仅 id 与创建时间，无业务含义），再对同一行加锁。
+	// get-or-create：行不存在时插入占位行（仅主键与时间，无业务含义），再对同一行加锁。
 	// 插入与加锁都在建单事务内完成：并发首单下唯一主键保证只有一个事务插入成功，
 	// 其余事务阻塞到该事务提交后读到新行并加锁，串行语义不受影响。
 	// 查询目的对象必须是可解析出 schema 的结构体：dest 为 map 时 GORM 解析不到主键列，
 	// First 拼 ORDER BY 主键会直接报 model value required（v1.31 实测），现金建单全量失败
-	var anchor siteConfigLockRow
-	res := tx.Table("site_configs").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", siteConfigLockID).
+	var anchor model.PayLock
+	res := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", model.CashCreateLockID).
 		Take(&anchor)
 	if res.Error == nil {
 		return nil
@@ -131,20 +120,14 @@ func cashCreateLockTx(tx *gorm.DB) error {
 	if !errors.Is(res.Error, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("锁定现金建单串行点失败: %w", res.Error)
 	}
-	placeholder := map[string]any{
-		"id":         siteConfigLockID,
-		"created_at": time.Now().Format("2006-01-02 15:04:05"),
-		"updated_at": time.Now().Format("2006-01-02 15:04:05"),
-	}
-	if err := tx.Table("site_configs").Create(placeholder).Error; err != nil {
+	if err := tx.Create(&model.PayLock{ID: model.CashCreateLockID, Name: "cash_create"}).Error; err != nil {
 		// 并发首单下行已被其他事务插入，视为已存在，重新加锁读取
 		if !dberr.IsDuplicate(err) {
 			return fmt.Errorf("创建现金建单串行点失败: %w", err)
 		}
 	}
-	if err := tx.Table("site_configs").
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", siteConfigLockID).
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", model.CashCreateLockID).
 		Take(&anchor).Error; err != nil {
 		return fmt.Errorf("锁定现金建单串行点失败: %w", err)
 	}

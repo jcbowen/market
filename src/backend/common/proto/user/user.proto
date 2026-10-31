@@ -515,6 +515,8 @@ message ChangeAdminPasswordReq {
   string new_password = 3;
   // 超管重置密码：跳过旧密码校验（由网关校验操作者身份后注入）
   bool force = 4;
+  // 操作者社区语境：>0 时服务端强校验目标员工在该社区有任职，防止跨社区改他社区员工口令（超管传 0 放行）
+  int64 community_id = 5;
 }
 
 // GetAdminContextReq 实时权限上下文查询

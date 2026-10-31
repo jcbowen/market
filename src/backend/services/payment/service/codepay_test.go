@@ -141,7 +141,7 @@ func TestCreatePaymentCodePayPlaceholder(t *testing.T) {
 const testWechatAppID = "wx-test-app"
 
 // testPayConfigIDBase 测试播种配置行的固定 ID 基准（远低真实业务自增区间，清理依据）
-// 现金建单锁行已改锚 site_configs（见 cashCreateLockTx），配置行 ID 不再承载锁语义，
+// 现金建单锁行已改锚支付自有 payment_locks（见 cashCreateLockTx），配置行 ID 不再承载锁语义，
 // 仅作为播种固定行便于 FirstOrCreate 幂等复用
 const testPayConfigIDBase = int64(1)
 
