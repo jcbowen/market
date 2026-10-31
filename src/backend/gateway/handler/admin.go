@@ -2448,6 +2448,8 @@ func (h *AdminHandler) ListAdminOrders(c *gin.Context) {
 			"manual_discount": o.ManualDiscount,
 			"delivery_fee":    o.DeliveryFee,
 			"pay_amount":      o.PayAmount,
+			// 已成功退款金额（0=无）：列表打「部分售后」标记（此前服务端已回填但本接口漏输出，标记一直失效）
+			"refunded_amount": o.RefundedAmount,
 			"delivery_type":   o.DeliveryType,
 			"status":          o.Status,
 			"status_text":     orderStatusText(o.Status, o.DeliveryType),
@@ -2828,17 +2830,18 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 	items := make([]gin.H, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		items = append(items, gin.H{
-			"id":             item.Id,
-			"product_id":     item.ProductId,
-			"sku_id":         item.SkuId,
-			"product_name":   item.ProductName,
-			"sku_name":       item.SpecName,
-			"product_image":  item.ProductImage,
-			"price":          item.Price,
-			"quantity":       item.Quantity,
-			"total_amount":   item.TotalPrice,
-			"original_price": item.OriginalPrice,
-			"price_modified": item.PriceModified,
+			"id":                item.Id,
+			"product_id":        item.ProductId,
+			"sku_id":            item.SkuId,
+			"product_name":      item.ProductName,
+			"sku_name":          item.SpecName,
+			"product_image":     item.ProductImage,
+			"price":             item.Price,
+			"quantity":          item.Quantity,
+			"total_amount":      item.TotalPrice,
+			"original_price":    item.OriginalPrice,
+			"price_modified":    item.PriceModified,
+			"refunded_quantity": item.RefundedQuantity,
 		})
 	}
 
@@ -2912,6 +2915,8 @@ func (h *AdminHandler) GetAdminOrder(c *gin.Context) {
 		"manual_discount": o.ManualDiscount,
 		"delivery_fee":    o.DeliveryFee,
 		"pay_amount":      o.PayAmount,
+		// 已成功退款金额（0=无）：详情顶部金额区展示「已退 ￥X」
+		"refunded_amount": o.RefundedAmount,
 		"delivery_type":   o.DeliveryType,
 		"delivery_time":   o.DeliveryTime,
 		"remark":          o.Remark,

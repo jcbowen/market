@@ -325,6 +325,8 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authUser.GET("/orders", orderHandler.ListOrders)
 			authUser.GET("/orders/status-counts", orderHandler.GetUserOrderStatusCounts)
 			authUser.GET("/orders/frequent-products", orderHandler.ListFrequentProducts)
+			// 售后单列表（独立售后单维度，须注册在 /orders/:id 之前，gin 静态路由优先匹配）
+			authUser.GET("/orders/refunds", orderHandler.ListMyRefunds)
 			authUser.POST("/orders/free-shipping/preview", orderHandler.PreviewFreeShipping)
 			authUser.POST("/orders/coupon-eligibility/preview", orderHandler.PreviewCouponEligibility)
 			authUser.GET("/orders/:id", orderHandler.GetOrder)

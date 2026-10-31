@@ -411,6 +411,9 @@ message OrderItemInfo {
   // 收银台改价痕迹：original_price=服务端实时单价快照；price_modified=true 表示行单价被手动修改
   double original_price = 10;
   bool price_modified = 11;
+  // 行级已成功退款数量（0=无退款）：详情/履约端展示「已退 N 件」用，
+  // 查询侧（GetOrder）按订单回填；proto3 数字 0 会被 omitempty 省略，消费方按缺省=0 处理
+  int32 refunded_quantity = 12;
 }
 
 message OrderStatusLog {

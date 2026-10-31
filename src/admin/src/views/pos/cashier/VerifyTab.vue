@@ -82,7 +82,11 @@
           <div class="card-items">
             <div v-for="item in detail.items" :key="item.id" class="card-item">
               <span class="item-name">{{ item.product_name }}<template v-if="item.sku_name">（{{ item.sku_name }}）</template></span>
-              <span class="item-qty">x{{ item.quantity }}</span>
+              <span class="item-qty">
+                x{{ item.quantity }}
+                <!-- 部分退款痕迹：本行已退数量（2026-10-31 售后展示） -->
+                <span v-if="(item.refunded_quantity ?? 0) > 0" class="item-refunded">已退{{ item.refunded_quantity }}</span>
+              </span>
               <span class="item-price">￥{{ formatAmount(item.price) }}</span>
             </div>
           </div>
@@ -91,9 +95,19 @@
             <span>实付金额</span>
             <span class="amount">￥{{ formatAmount(detail.pay_amount) }}</span>
           </div>
+          <!-- 部分退款痕迹：已退金额（订单级 money 口径含运费） -->
+          <div v-if="(detail.refunded_amount ?? 0) > 0" class="card-amount refunded">
+            <span>已退金额</span>
+            <span class="amount">-￥{{ formatAmount(detail.refunded_amount) }}</span>
+          </div>
 
           <!-- 状态差异化操作区：可核销 / 未支付 / 无权限 -->
           <div class="card-actions">
+            <!-- 部分退款单核销提示：显著提醒剩余应交付件数，不强制阻断（口径 2026-10-31） -->
+            <n-alert v-if="canVerify && hasPartialRefundInfo" type="warning" :bordered="false" class="refund-alert">
+              本单已部分退款：已退 ￥{{ formatAmount(detail.refunded_amount ?? 0) }}（{{ refundedQty }} 件），
+              核销请仅交付剩余 {{ remainingQty }} 件商品
+            </n-alert>
             <n-button
               v-if="canVerify"
               type="primary"
@@ -170,6 +184,21 @@ const canVerify = computed(
 
 /** 是否有核销权限（接口要求 order:update） */
 const hasUpdatePermission = computed(() => authStore.isSuperAdmin || authStore.hasPermission('order:update'))
+
+/** 行级已退件数合计（0=无退款痕迹） */
+const refundedQty = computed(() => (detail.value?.items ?? []).reduce((s, it) => s + (it.refunded_quantity ?? 0), 0))
+
+/** 订单商品总件数（核销提示剩余应交付件数的分母） */
+const totalQty = computed(() => (detail.value?.items ?? []).reduce((s, it) => s + it.quantity, 0))
+
+/**
+ * 是否存在部分退款痕迹（金额或任一行数量）
+ * 退款中/已退款状态文本本身已表达售后进度，核销场景不会出现这两种状态，无需排除
+ */
+const hasPartialRefundInfo = computed(() => (detail.value?.refunded_amount ?? 0) > 0 || refundedQty.value > 0)
+
+/** 核销时应交付的剩余件数（总件数 - 已退件数） */
+const remainingQty = computed(() => Math.max(0, totalQty.value - refundedQty.value))
 
 /**
  * 追加一位数字到取货码（页面级键盘与小键盘共用；满 8 位自动查询）
@@ -482,6 +511,10 @@ onBeforeUnmount(() => {
   }
   .item-qty {
     color: #999;
+    .item-refunded {
+      color: #d03050;
+      margin-left: 3px;
+    }
   }
   .item-price {
     font-variant-numeric: tabular-nums;
@@ -500,8 +533,22 @@ onBeforeUnmount(() => {
     font-weight: 700;
     color: #d03050;
   }
+  // 已退金额行：弱化字号但仍醒目
+  &.refunded {
+    margin-top: 6px;
+    padding-top: 6px;
+    font-size: 13px;
+    color: #d03050;
+    .amount {
+      font-size: 15px;
+      font-weight: 600;
+    }
+  }
 }
 .card-actions {
   margin-top: 16px;
+  .refund-alert {
+    margin-bottom: 10px;
+  }
 }
 </style>

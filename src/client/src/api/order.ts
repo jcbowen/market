@@ -7,6 +7,10 @@ import { get, post, put, del } from './request'
 import type { PageData } from './request'
 import type { Order, Address } from './types'
 
+// 退款进度类型已上移 types.ts（Order.refunds 与之同源），此处按原路径再导出保持兼容
+export type { RefundProgress, RefundProgressItem } from './types'
+import type { RefundProgress } from './types'
+
 /** 创建订单参数 */
 export interface CreateOrderParams {
   /** 配送方式：1 社区自提 2 送货上门 */
@@ -111,34 +115,21 @@ export function applyRefund(id: number, data: ApplyRefundParams) {
   return post(`/orders/${id}/refund`, data as unknown as Record<string, unknown>)
 }
 
-/** 退款进度商品明细项 */
-export interface RefundProgressItem {
-  product_name: string
-  spec_name: string
-  quantity: number
-  refund_amount: number
+/** 售后单列表项（「退款/售后」tab 独立售后单维度，2026-10-31） */
+export interface AfterSaleListItem extends RefundProgress {
+  /** 关联订单 ID（点击跳转订单详情） */
+  order_id: number
+  order_no: string
+  /** 所属订单商品明细行数（0=收银台直接收款等无商品单） */
+  order_item_count: number
 }
 
-/** 退款进度记录（订单详情「退款进度」弹窗展示用） */
-export interface RefundProgress {
-  id: number
-  refund_no: string
-  /** 退款金额（商品 + 运费，服务端汇算） */
-  amount: number
-  /** 本单退还的运费金额 */
-  freight_amount: number
-  /** 退款类型：1整单退 2部分退 3仅金额退 */
-  type: number
-  /** 退款原因 */
-  reason: string
-  /** 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款 */
-  status: number
-  /** 拒绝原因（仅已拒绝时有值） */
-  reject_reason: string
-  /** 退款成功时间（到账时间） */
-  refund_time: string
-  created_at: string
-  items: RefundProgressItem[]
+/**
+ * 查询当前用户售后单列表（独立售后单维度，时间倒序，不做二级筛选）
+ * @param params 分页参数
+ */
+export function getMyRefunds(params?: { page?: number; page_size?: number }) {
+  return get<PageData<AfterSaleListItem>>('/orders/refunds', params as Record<string, unknown>)
 }
 
 /**

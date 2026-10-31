@@ -25,13 +25,20 @@
         <view v-for="order in orders" :key="order.id" class="order-card">
           <view class="order-header">
             <text class="order-no">{{ order.order_no }}</text>
-            <text class="order-status">{{ order.status_text }}</text>
+            <view class="header-right">
+              <!-- 部分退款标识：状态文本看不出售后痕迹，提示交付时留意剩余件数（2026-10-31） -->
+              <text v-if="hasPartialRefund(order)" class="refund-tag">部分退款</text>
+              <text class="order-status">{{ order.status_text }}</text>
+            </view>
           </view>
 
-          <!-- 商品摘要（最多显示 2 行 + 数量） -->
+          <!-- 商品摘要（最多显示 2 行 + 数量；已退件数随行展示） -->
           <view class="goods-line" v-for="item in order.items.slice(0, 2)" :key="`${order.id}-${item.sku_id}`">
             <text class="goods-name">{{ item.product_name }}{{ item.spec_name ? `（${item.spec_name}）` : '' }}</text>
-            <text class="goods-qty">x{{ item.quantity }}</text>
+            <text class="goods-qty">
+              x{{ item.quantity }}
+              <text v-if="(item.refunded_quantity ?? 0) > 0" class="goods-refunded">已退{{ item.refunded_quantity }}</text>
+            </text>
           </view>
           <view v-if="order.items.length > 2" class="goods-more">
             <text>…共 {{ order.items.length }} 种商品</text>
@@ -44,7 +51,13 @@
           </view>
 
           <view class="order-footer">
-            <text class="pay-amount">实付 {{ formatPrice(order.pay_amount) }}</text>
+            <view class="pay-wrap">
+              <text class="pay-amount">实付 {{ formatPrice(order.pay_amount) }}</text>
+              <!-- 部分退款痕迹：原实付保留，附加已退金额（订单级 money 口径含运费） -->
+              <text v-if="(order.refunded_amount ?? 0) > 0" class="refunded-amount">
+                已退 {{ formatPrice(order.refunded_amount ?? 0) }}，应交付剩余 {{ remainingQty(order) }} 件
+              </text>
+            </view>
             <!-- 送货：开始配送 / 送达拍照 -->
             <u-button
               v-if="isDeliveryTab && (order.status === 2 || order.status === 3)"
@@ -111,6 +124,10 @@
       <view class="proof-panel">
         <view class="panel-title"><text>核销自提订单</text></view>
         <text class="panel-tip">请输入顾客出示的取货码（订单详情页展示的 8 位数字码）</text>
+        <!-- 部分退款单核销提示：显著提醒剩余应交付件数，不强制阻断（口径 2026-10-31） -->
+        <text v-if="verifyOrder && hasPartialRefund(verifyOrder)" class="panel-refund-tip">
+          本单已部分退款：已退 {{ formatPrice(verifyOrder.refunded_amount ?? 0) }}（{{ refundedQty(verifyOrder) }} 件），请仅核销剩余 {{ remainingQty(verifyOrder) }} 件商品
+        </text>
         <view class="verify-order-no"><text>订单 {{ verifyOrder?.order_no }}</text></view>
         <view class="verify-input-wrap">
           <input
@@ -282,12 +299,41 @@ function loadMore() {
 }
 
 /**
- * 开始配送（status 2/3 → 4）
+ * 订单行级已退件数合计（部分售后提示用）
+ * @param order 履约订单
+ * @returns 已退件数
+ */
+function refundedQty(order: FulfillmentOrder): number {
+  return order.items.reduce((s, it) => s + (it.refunded_quantity ?? 0), 0)
+}
+
+/**
+ * 剩余应交付件数（总件数 - 已退件数，下限 0）
+ * @param order 履约订单
+ * @returns 剩余件数
+ */
+function remainingQty(order: FulfillmentOrder): number {
+  return Math.max(0, order.items.reduce((s, it) => s + it.quantity, 0) - refundedQty(order))
+}
+
+/**
+ * 是否存在部分退款痕迹（金额或任一行数量）
+ * @param order 履约订单
+ * @returns 是否显示「部分退款」标识
+ */
+function hasPartialRefund(order: FulfillmentOrder): boolean {
+  return (order.refunded_amount ?? 0) > 0 || refundedQty(order) > 0
+}
+
+/**
+ * 开始配送（status 2/3 → 4）；部分退款单在确认文案中提示剩余应交付件数，不强制阻断
  */
 function onStartDelivery(order: FulfillmentOrder) {
+  const refunded = refundedQty(order)
+  const refundTip = refunded > 0 ? `本单已部分退款（已退 ${refunded} 件），请仅配送剩余 ${remainingQty(order)} 件商品。\n` : ''
   uni.showModal({
     title: '开始配送',
-    content: `确定开始为订单 ${order.order_no} 配送？`,
+    content: `${refundTip}确定开始为订单 ${order.order_no} 配送？`,
     success: async (res) => {
       if (!res.confirm) return
       try {
@@ -466,7 +512,23 @@ async function onSubmitVerify() {
 .order-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   margin-bottom: 16rpx;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+/* 部分退款标识：红色小标签，与状态文本并排 */
+.refund-tag {
+  font-size: 22rpx;
+  color: #fa3534;
+  background-color: rgba(250, 53, 52, 0.08);
+  padding: 2rpx 12rpx;
+  border-radius: 8rpx;
 }
 
 .order-no {
@@ -500,6 +562,12 @@ async function onSubmitVerify() {
   color: #999;
 }
 
+/* 行级已退件数：随数量展示，红色可辨 */
+.goods-refunded {
+  color: #fa3534;
+  margin-left: 6rpx;
+}
+
 .goods-more {
   font-size: 24rpx;
   color: #999;
@@ -530,6 +598,18 @@ async function onSubmitVerify() {
   margin-top: 8rpx;
 }
 
+.pay-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+/* 已退金额/剩余件数：弱于实付强调级但需醒目 */
+.refunded-amount {
+  font-size: 24rpx;
+  color: #fa3534;
+}
+
 .pay-amount {
   font-size: 28rpx;
   color: #fa3534;
@@ -552,6 +632,14 @@ async function onSubmitVerify() {
   display: block;
   font-size: 26rpx;
   color: #999;
+  margin-bottom: 24rpx;
+}
+
+/* 核销弹层部分退款提示：警示色，紧随操作提示 */
+.panel-refund-tip {
+  display: block;
+  font-size: 26rpx;
+  color: #fa3534;
   margin-bottom: 24rpx;
 }
 

@@ -750,6 +750,45 @@ func (s *RefundService) refundedStat(tx *gorm.DB, orderID int64) (map[int64]int3
 	return qty, round2(goods), nil
 }
 
+// refundedQuantitiesByOrders 批量统计订单集合内各商品行已成功退款数量
+//（一次 GROUP BY 覆盖全部入参订单，行级口径与 refundedStat 一致：refunds.status=5）
+// 订单详情按次回填商品行 RefundedQuantity、履约/核销侧提示应交付剩余件数共用
+// 参数：
+//   - ctx: 上下文
+//   - db: 查询句柄
+//   - orderIds: 订单 ID 集合（空集合直接返回空映射，不发查询）
+//
+// 返回值：
+//   - map[int64]map[int64]int32: 订单 ID -> (order_item_id -> 已退数量)，
+//     无退款记录的订单不出现在结果集中（调用方按零值处理）
+//   - error: 统计查询失败时返回错误
+func refundedQuantitiesByOrders(ctx context.Context, db *gorm.DB, orderIds []int64) (map[int64]map[int64]int32, error) {
+	result := make(map[int64]map[int64]int32)
+	if len(orderIds) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		OrderID     int64
+		OrderItemID int64
+		Total       int32
+	}
+	if err := db.WithContext(ctx).Table("refund_items").
+		Joins("JOIN refunds ON refunds.id = refund_items.refund_id").
+		Where("refunds.order_id IN ? AND refunds.status = 5", orderIds).
+		Select("refunds.order_id AS order_id, refund_items.order_item_id AS order_item_id, SUM(refund_items.quantity) AS total").
+		Group("refunds.order_id, refund_items.order_item_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if result[row.OrderID] == nil {
+			result[row.OrderID] = make(map[int64]int32)
+		}
+		result[row.OrderID][row.OrderItemID] += row.Total
+	}
+	return result, nil
+}
+
 // refundedMoneyStat 统计订单已完成退款的总金额与运费金额（money 口径，剩余可退计算用）
 // 参数：
 //   - tx: 查询句柄（申请/代客退款路径传调用方事务，避免在事务外读剩余可退）

@@ -6,6 +6,52 @@
       @change="onTabChange"
     />
     <scroll-view class="order-list" scroll-y @scrolltolower="loadMore">
+      <!-- 退款/售后 tab：独立售后单维度（refund 单），点击跳转关联订单详情 -->
+      <template v-if="isRefundTab">
+        <view
+          v-for="refund in refunds"
+          :key="refund.id"
+          class="order-card"
+          @click="goOrderDetail(refund.order_id)"
+        >
+          <view class="order-header">
+            <view class="refund-no-wrap">
+              <text class="refund-no">{{ refund.refund_no }}</text>
+              <text class="refund-type-tag">{{ refundTypeText(refund.type) }}</text>
+            </view>
+            <text class="order-status" :class="refundStatusClass(refund.status)">{{ refundStatusText(refund.status) }}</text>
+          </view>
+          <view
+            v-for="item in refund.items"
+            :key="`${refund.id}-${item.order_item_id || item.product_name}`"
+            class="refund-item"
+          >
+            <view class="refund-item-main">
+              <text class="item-name">{{ item.product_name }}</text>
+              <text v-if="item.spec_name" class="item-sku">{{ item.spec_name }}</text>
+            </view>
+            <view class="refund-item-side">
+              <text class="item-quantity">x{{ item.quantity }}</text>
+              <text class="item-price">{{ formatPrice(item.refund_amount) }}</text>
+            </view>
+          </view>
+          <!-- 无商品明细：仅金额退或收银台直接收款单（order_item_count=0 区分来源） -->
+          <view v-if="!refund.items.length && !refund.order_item_count" class="refund-item">
+            <text class="item-sku">无商品明细（仅金额退款）</text>
+          </view>
+          <view class="order-total">
+            <text>退款金额: {{ formatPrice(refund.amount) }}</text>
+            <text v-if="refund.freight_amount > 0" class="refund-freight">含运费 {{ formatPrice(refund.freight_amount) }}</text>
+          </view>
+          <view class="refund-footer">
+            <text v-if="refund.reason" class="refund-reason">原因：{{ refund.reason }}</text>
+            <text v-if="refund.status === 3 && refund.reject_reason" class="refund-reject">拒绝原因：{{ refund.reject_reason }}</text>
+            <text class="refund-order-link">关联订单 {{ refund.order_no }} ></text>
+          </view>
+        </view>
+      </template>
+      <!-- 订单 tab：订单卡片（refund tab 之外的 5 个状态） -->
+      <template v-else>
       <view
         v-for="order in orders"
         :key="order.id"
@@ -40,6 +86,8 @@
         </view>
         <view class="order-total">
           <text>合计: {{ formatPrice(order.pay_amount) }}</text>
+          <!-- 部分退款标记：部分退后订单状态回到退款前状态，凭 refunded_amount 打标（状态 7/8 已有专属状态文案不重复打） -->
+          <text v-if="showRefundedTag(order)" class="refunded-tag">已退 {{ formatPrice(order.refunded_amount || 0) }}</text>
         </view>
         <!-- 待支付展示剩余支付时间，归零前提醒用户及时支付 -->
         <view v-if="order.status === 1 && remainingText(order)" class="order-expire">
@@ -88,6 +136,7 @@
           />
         </view>
       </view>
+      </template>
       <u-loadmore :status="loadStatus" />
     </scroll-view>
 
@@ -99,10 +148,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import type { Ref } from 'vue'
 import { onLoad, onShow, onHide, onUnload } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
-import { getOrders, confirmReceive, deleteOrder } from '@/api/order'
+import { getOrders, getMyRefunds, confirmReceive, deleteOrder } from '@/api/order'
 import { getPaymentChannels } from '@/api/payment'
 import { formatPrice } from '@/utils/format'
 import { notifyPayOutcome, payOrder } from '@/pagesOrder/common/pay'
@@ -111,24 +161,33 @@ import { canReceive, receiveButtonText, canCancel, canRefund, canDelete, isStore
 import RefundModal from '@/components/RefundModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
 import type { Order, PaymentChannel } from '@/api/types'
+import type { AfterSaleListItem } from '@/api/order'
 
 const userStore = useUserStore()
 const refundVisible = ref(false)
 const refundOrderId = ref(0)
 const cancelVisible = ref(false)
 const cancelOrderId = ref(0)
-// tab value 说明：0 全部；9 = 退款/售后聚合（后端翻译为 7 退款中 + 8 已退款）；
-// 90 = 待发货聚合（后端翻译为 2 已支付 + 3 备货中）；均为查询专用虚拟状态，不落库
-const tabs = ref([
+// 售后 tab 的专用虚拟值：不传后端 status，走独立售后单列表接口（/orders/refunds）
+const REFUND_TAB_VALUE = 'refunds'
+
+// tab value 说明：0 全部；1/4/5 与后端订单状态一致；90 = 待发货聚合（后端翻译为 2 已支付 + 3 备货中）；
+// 'refunds' = 退款/售后（2026-10-31 起改为独立售后单维度，展示售后单而非按状态 7/8 过滤订单）；
+// 90 与 'refunds' 均为查询专用虚拟值，不落库
+const tabs = ref<{ name: string; value: number | string }[]>([
   { name: '全部', value: 0 },
   { name: '待支付', value: 1 },
   { name: '待发货', value: 90 },
   { name: '待收货', value: 4 },
   { name: '已完成', value: 5 },
-  { name: '退款/售后', value: 9 },
+  { name: '退款/售后', value: REFUND_TAB_VALUE },
 ])
 const currentTab = ref(0)
 const orders = ref<Order[]>([])
+/** 售后单列表（退款/售后 tab 数据源，独立售后单维度） */
+const refunds = ref<AfterSaleListItem[]>([])
+/** 是否为退款/售后 tab（该 tab 展示售后单卡片而非订单卡片） */
+const isRefundTab = computed(() => tabs.value[currentTab.value].value === REFUND_TAB_VALUE)
 const page = ref(1)
 const pageSize = 10
 const loadStatus = ref<'loadmore' | 'loading' | 'nomore'>('loadmore')
@@ -145,7 +204,8 @@ function clearTickTimer() {
 }
 
 onLoad((query) => {
-  const status = Number(query?.status) || 0
+  // 'refunds' 为售后 tab 专用值（Number 转换会得 NaN 回落 0），需在数值解析前特判
+  const status = query?.status === REFUND_TAB_VALUE ? REFUND_TAB_VALUE : Number(query?.status) || 0
   const index = tabs.value.findIndex((tab) => tab.value === status)
   currentTab.value = index >= 0 ? index : 0
 })
@@ -193,12 +253,55 @@ function remainingText(order: Order): string {
 }
 
 /**
+ * 退款类型标签文案
+ * @param type 退款类型：1整单退 2部分退 3仅金额退
+ * @returns 类型标签文案，未知类型兜底「退款」
+ */
+function refundTypeText(type: number): string {
+  const map: Record<number, string> = { 1: '整单退', 2: '部分退', 3: '仅金额退' }
+  return map[type] || '退款'
+}
+
+/**
+ * 退款状态文案
+ * @param status 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
+ * @returns 状态文案，未知状态返回空串
+ */
+function refundStatusText(status: number): string {
+  const map: Record<number, string> = { 1: '待审核', 2: '已同意', 3: '已拒绝', 4: '退款中', 5: '已退款' }
+  return map[status] || ''
+}
+
+/**
+ * 退款状态样式 class（按状态区分颜色，已退款沿用默认绿色不单列）
+ * @param status 退款状态
+ * @returns 状态 class 名
+ */
+function refundStatusClass(status: number): string {
+  if (status === 3) return 'is-rejected'
+  if (status === 5) return 'is-refunded'
+  return 'is-pending'
+}
+
+/**
+ * 订单卡片是否展示「已退」标记
+ * 部分退款成功后订单状态回到退款前状态，凭 refunded_amount 打标；
+ * 状态 7（退款中）/8（已退款）已有专属状态文案，不重复打标
+ * @param order 订单对象
+ * @returns 是否展示标记
+ */
+function showRefundedTag(order: Order): boolean {
+  return !!order.refunded_amount && order.status !== 7 && order.status !== 8
+}
+
+/**
  * 重置分页状态并回到第 1 页刷新（切 tab / onShow 共用）
  * @returns 本次列表加载的 Promise，需要「刷新完成后再提示」的调用方可 await
  */
 function resetAndReload() {
   page.value = 1
   orders.value = []
+  refunds.value = []
   loadStatus.value = 'loadmore'
   return loadOrders()
 }
@@ -218,36 +321,49 @@ function onTabChange(item: { index: number }) {
 let requestSeq = 0
 
 /**
- * 加载订单列表
- * 不传 community_id：后端按用户全量返回，避免 token 中社区快照过期导致切换社区后订单查不到
+ * 加载当前 tab 列表
+ * 订单 tab 走订单接口（不传 community_id：后端按用户全量返回，避免 token 中社区快照过期导致切换社区后订单查不到）；
+ * 退款/售后 tab 走独立售后单列表接口（/orders/refunds）
  */
 async function loadOrders() {
   if (loadStatus.value === 'loading' || loadStatus.value === 'nomore') return
   loadStatus.value = 'loading'
   const seq = ++requestSeq
   try {
-    const status = tabs.value[currentTab.value].value
+    if (isRefundTab.value) {
+      const res = await getMyRefunds({ page: page.value, page_size: pageSize })
+      if (seq === requestSeq) fillPage(res.data?.list || [], refunds)
+      return
+    }
+    const value = tabs.value[currentTab.value].value
     const res = await getOrders({
-      status: status || undefined,
+      status: typeof value === 'number' && value ? value : undefined,
       page: page.value,
       page_size: pageSize,
     })
-    if (seq !== requestSeq) return
-    const list = res.data?.list || []
-    if (page.value === 1) {
-      orders.value = list
-    } else {
-      orders.value.push(...list)
-    }
-    if (list.length < pageSize) {
-      loadStatus.value = 'nomore'
-    } else {
-      loadStatus.value = 'loadmore'
-      page.value += 1
-    }
+    if (seq === requestSeq) fillPage(res.data?.list || [], orders)
   } catch {
     if (seq !== requestSeq) return
     loadStatus.value = 'loadmore'
+  }
+}
+
+/**
+ * 通用落页：写入目标列表并推进分页状态（订单 tab 与售后 tab 共用）
+ * @param list 本页数据
+ * @param target 目标列表（orders 或 refunds）
+ */
+function fillPage<T>(list: T[], target: Ref<T[]>) {
+  if (page.value === 1) {
+    target.value = list
+  } else {
+    target.value.push(...list)
+  }
+  if (list.length < pageSize) {
+    loadStatus.value = 'nomore'
+  } else {
+    loadStatus.value = 'loadmore'
+    page.value += 1
   }
 }
 
@@ -444,6 +560,105 @@ function refreshList() {
 .order-status {
   font-size: 26rpx;
   color: #07c160;
+}
+
+/* 售后单状态色（覆盖默认绿：待审核/退款中为橙色，已拒绝为红色；已退款沿用绿色） */
+.order-status.is-pending {
+  color: #ff9900;
+}
+
+.order-status.is-rejected {
+  color: #ee0a24;
+}
+
+/* 售后单卡片头部：售后单号 + 类型标签 */
+.refund-no-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+}
+
+.refund-no {
+  font-size: 24rpx;
+  color: #666666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refund-type-tag {
+  flex-shrink: 0;
+  font-size: 20rpx;
+  line-height: 1;
+  color: #ff4d4f;
+  border: 1rpx solid #ff4d4f;
+  border-radius: 6rpx;
+  padding: 4rpx 8rpx;
+}
+
+/* 售后单商品明细行（横向布局：名称/规格在左，数量/金额在右） */
+.refund-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+
+.refund-item-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  min-width: 0;
+}
+
+.refund-item-side {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-left: 20rpx;
+}
+
+/* 售后单底部：退款原因 / 拒绝原因 / 关联订单入口 */
+.refund-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+  padding-top: 16rpx;
+  font-size: 24rpx;
+  color: #999999;
+}
+
+.refund-reason,
+.refund-reject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refund-reject {
+  color: #ee0a24;
+}
+
+.refund-order-link {
+  color: #07c160;
+  text-align: right;
+}
+
+.refund-freight {
+  margin-left: 16rpx;
+  font-size: 24rpx;
+  color: #999999;
+}
+
+/* 订单卡片「已退」标记（部分退款可见性，2026-10-31） */
+.refunded-tag {
+  margin-left: 16rpx;
+  font-size: 22rpx;
+  color: #ff4d4f;
 }
 
 .order-item {

@@ -167,6 +167,8 @@ export interface OrderItem {
   quantity: number
   total_price: number
   product_image: string
+  /** 该行已成功退款数量（0=无，2026-10-31 部分退款可见性） */
+  refunded_quantity?: number
 }
 
 /** 订单 */
@@ -186,6 +188,10 @@ export interface Order {
   /** 期望配送时间（自提单为空） */
   delivery_time?: string
   pay_amount: number
+  /** 已成功退款金额（money 口径含运费，0=无；2026-10-31 部分退款可见性，卡片/金额区展示「已退 ￥X」） */
+  refunded_amount?: number
+  /** 本单全部售后记录（2026-10-31 新增，仅订单详情返回；结构与退款进度一致） */
+  refunds?: RefundProgress[]
   /** 支付类型：1 微信 2 支付宝 3 货到付款 4 现金（收银台）；0=未支付/未知 */
   pay_type?: number
   /** 订单来源：1=C端用户 2=收银台代客（门店单，展示但只读）；缺省按 C 端单处理 */
@@ -206,6 +212,38 @@ export interface Order {
   cancel_time?: string
   /** 待支付订单的超时截止时间（仅 status=1 返回，用于倒计时） */
   expire_at?: string
+}
+
+/** 退款进度商品明细项 */
+export interface RefundProgressItem {
+  /** 关联订单商品行 ID（部分退款行级标记用） */
+  order_item_id?: number
+  product_name: string
+  spec_name: string
+  quantity: number
+  refund_amount: number
+}
+
+/** 退款进度记录（订单详情「售后记录/退款进度」弹窗展示用） */
+export interface RefundProgress {
+  id: number
+  refund_no: string
+  /** 退款金额（商品 + 运费，服务端汇算） */
+  amount: number
+  /** 本单退还的运费金额 */
+  freight_amount: number
+  /** 退款类型：1整单退 2部分退 3仅金额退 */
+  type: number
+  /** 退款原因 */
+  reason: string
+  /** 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款 */
+  status: number
+  /** 拒绝原因（仅已拒绝时有值） */
+  reject_reason: string
+  /** 退款成功时间（到账时间） */
+  refund_time: string
+  created_at: string
+  items: RefundProgressItem[]
 }
 
 /** 优惠券 */

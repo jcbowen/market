@@ -100,6 +100,10 @@ type OrderItem struct {
 	OriginalPrice float64 `gorm:"column:original_price;type:decimal(10,2);default:0.00;comment:服务端实时单价快照（改价痕迹）" json:"original_price"`
 	PriceModified int32   `gorm:"column:price_modified;type:tinyint;default:0;comment:单价是否被手动修改 0否 1是" json:"price_modified"`
 	CreatedAt     string  `gorm:"column:created_at;type:datetime;comment:创建时间" json:"created_at"`
+
+	// RefundedQuantity 该行已成功退款数量（非表字段，查询时按订单回填；0=无退款）：
+	// 订单详情/履约工作台展示「已退 N 件」、核销侧提示应交付剩余件数
+	RefundedQuantity int32 `gorm:"-" json:"refunded_quantity"`
 }
 
 // TableName 返回订单商品项表名

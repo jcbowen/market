@@ -47,6 +47,8 @@ vi.mock('naive-ui', () => {
     createDiscreteApi: () => ({ message: { success: vi.fn(), warning: vi.fn(), info: vi.fn(), error: vi.fn() } }),
     NButton: Pass('<button type="button" class="n-button-stub"><slot /></button>'),
     NEmpty: Pass('<div class="n-empty-stub"><slot /></div>'),
+    // 状态列 render 用 h(NSpace) 包裹标签，需要提供替身避免 undefined
+    NSpace: Pass('<div class="n-space-stub"><slot /></div>'),
     NTag: defineComponent({
       props: { closable: Boolean, type: String, size: String },
       emits: ['close'],

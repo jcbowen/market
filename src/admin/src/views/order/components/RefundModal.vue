@@ -28,18 +28,24 @@
         <n-form-item v-if="form.mode === 'partial'" label="退款商品">
           <div class="item-list">
             <div v-for="item in detail.items" :key="item.id" class="item-row">
-              <n-checkbox v-model:checked="selState[item.id].checked" />
+              <!-- 已退完的行禁选（剩余可退为 0），避免提交后被服务端拒绝 -->
+              <n-checkbox v-model:checked="selState[item.id].checked" :disabled="maxQty(item) <= 0" />
               <span class="item-name">
                 {{ item.product_name }}
                 <span v-if="item.sku_name" class="item-spec">{{ item.sku_name }}</span>
               </span>
-              <span class="item-qty">共 {{ item.quantity }} 件</span>
+              <span class="item-qty">
+                共 {{ item.quantity }} 件
+                <!-- 部分退款可见性：展示本行已退/剩余可退（2026-10-31） -->
+                <template v-if="maxQty(item) <= 0">，已退完</template>
+                <template v-else-if="maxQty(item) < item.quantity">，已退 {{ item.quantity - maxQty(item) }} 件</template>
+              </span>
               <n-input-number
                 v-model:value="selState[item.id].qty"
                 size="small"
                 :min="1"
-                :max="item.quantity"
-                :disabled="!selState[item.id].checked"
+                :max="maxQty(item)"
+                :disabled="!selState[item.id].checked || maxQty(item) <= 0"
                 style="width: 110px"
               />
               <span class="item-amount">￥{{ formatAmount(itemEstimate(item, selState[item.id].qty)) }}</span>
@@ -161,8 +167,18 @@ const freightRemaining = computed(() => Math.round(((detail.value?.delivery_fee 
 const hasItems = computed(() => (detail.value?.items?.length ?? 0) > 0)
 
 /**
+ * 行剩余可退数量（原数量 - 已退数量；0=已退完不可再退）
+ * @param item 订单商品行
+ * @returns 剩余可退数量
+ */
+function maxQty(item: OrderItem): number {
+  return Math.max(0, item.quantity - (item.refunded_quantity ?? 0))
+}
+
+/**
  * 单行商品指定数量的应退金额估算（前端展示用，以服务端汇算为准）
- * 行全额应退 = 行小计 - 行小计/订单总额 × 订单优惠总额（系统优惠 + 手动优惠），按数量比例折算
+ * 行全额应退 = 行小计 - 行小计/订单总额 × 订单优惠总额（系统优惠 + 手动优惠），按数量比例折算；
+ * 分母用原购买数量（不能用剩余可退做分母，部分已退行会多算单价）
  * @param item 订单商品行
  * @param qty 退货数量
  */
@@ -182,7 +198,8 @@ const estimate = computed(() => {
   if (!hasItems.value) return remaining.value
   let goods = 0
   if (form.mode === 'full') {
-    goods = d.items.reduce((s, item) => s + itemEstimate(item, item.quantity), 0)
+    // 整单退按「剩余可退数量」汇算（已退部分不再计入），最终仍以剩余可退金额兜底
+    goods = d.items.reduce((s, item) => s + itemEstimate(item, maxQty(item)), 0)
     // 整单退以剩余可退兜底（多笔退后行合计可能有余差）
     const withFreight = remaining.value - (form.refund_freight ? freightRemaining.value : 0)
     goods = Math.min(goods, withFreight)
@@ -213,12 +230,12 @@ async function loadDetail(id: number) {
     const [detailRes, settingRes] = await Promise.all([getOrderDetail(id), getRefundSetting()])
     if (detailRes.data.code === 0) {
       detail.value = detailRes.data.data
-      // 重建部分退勾选状态（默认全不勾选、数量取整行数量）
+      // 重建部分退勾选状态（默认全不勾选、数量取行剩余可退数量；已退完行为 0 且禁选）
       for (const key of Object.keys(selState)) {
         delete selState[Number(key)]
       }
       for (const item of detailRes.data.data.items) {
-        selState[item.id] = { checked: false, qty: item.quantity }
+        selState[item.id] = { checked: false, qty: maxQty(item) }
       }
       form.amount = remaining.value
     }

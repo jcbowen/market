@@ -56,6 +56,10 @@
           <n-descriptions-item label="实付金额">
             <span class="amount-strong">￥{{ formatAmount(detail.pay_amount) }}</span>
           </n-descriptions-item>
+          <!-- 部分退款痕迹：原实付/原数量保留，附加已退金额（订单级 money 口径含运费） -->
+          <n-descriptions-item v-if="(detail.refunded_amount ?? 0) > 0" label="已退金额">
+            <span class="amount-strong refunded-amount">-￥{{ formatAmount(detail.refunded_amount ?? 0) }}</span>
+          </n-descriptions-item>
           <n-descriptions-item label="期望送达">{{ formatDateTime(detail.delivery_time) }}</n-descriptions-item>
           <n-descriptions-item label="下单时间">{{ formatDateTime(detail.created_at) }}</n-descriptions-item>
           <n-descriptions-item v-if="detail.express_company || detail.express_no" label="物流信息" :span="2">
@@ -335,6 +339,13 @@ const itemColumns: DataTableColumns<OrderItem> = [
   { title: '规格', key: 'sku_name', width: 120 },
   { title: '单价', key: 'price', width: 100, render: (row) => `￥${formatAmount(row.price)}` },
   { title: '数量', key: 'quantity', width: 70 },
+  // 部分退款痕迹：本行已退数量（0/缺省不显示，避免整列噪音）
+  {
+    title: '已退',
+    key: 'refunded_quantity',
+    width: 70,
+    render: (row) => ((row.refunded_quantity ?? 0) > 0 ? `${row.refunded_quantity} 件` : '-'),
+  },
   { title: '小计', key: 'total_amount', width: 110, render: (row) => `￥${formatAmount(row.total_amount)}` },
 ]
 
@@ -806,6 +817,11 @@ onUnmounted(() => {
 <style scoped>
 .amount-strong {
   color: #d03050;
+  font-weight: 600;
+}
+
+/* 已退金额：与实付同强调级，负向语义前缀已在模板中体现 */
+.refunded-amount {
   font-weight: 600;
 }
 

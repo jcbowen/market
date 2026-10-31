@@ -580,6 +580,8 @@ func ToOrderItemInfo(item *model.OrderItem) *order.OrderItemInfo {
 		TotalPrice:    item.TotalPrice,
 		OriginalPrice: item.OriginalPrice,
 		PriceModified: item.PriceModified == 1,
+		// 行级已退数量透出，供详情/履约端展示「已退 N 件」（0=无退款）
+		RefundedQuantity: item.RefundedQuantity,
 	}
 }
 

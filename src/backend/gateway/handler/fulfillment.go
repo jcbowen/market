@@ -209,6 +209,8 @@ func (h *OrderHandler) ListFulfillmentOrders(c *gin.Context) {
 					"product_name": it.ProductName,
 					"spec_name":    it.SpecName,
 					"quantity":     it.Quantity,
+					// 行级已成功退款数量（0=无）：卡片展示「已退 N 件」、核销提示应交付剩余件数
+					"refunded_quantity": it.RefundedQuantity,
 				})
 			}
 			itemLists[idx] = items
@@ -233,6 +235,8 @@ func (h *OrderHandler) ListFulfillmentOrders(c *gin.Context) {
 			"contact_phone":         o.ContactPhone,
 			"contact_address":       o.ContactAddress,
 			"pay_amount":            o.PayAmount,
+			// 已成功退款金额（0=无）：部分退款后订单状态不变，卡片凭该字段打「部分售后」标识
+			"refunded_amount":       o.RefundedAmount,
 			"delivery_user_id":      o.DeliveryUserId,
 			"delivery_user_name":    o.DeliveryUserName,
 			"delivery_proof_images": o.DeliveryProofImages,

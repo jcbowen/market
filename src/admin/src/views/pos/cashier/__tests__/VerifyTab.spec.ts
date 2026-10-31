@@ -89,6 +89,28 @@ function mockHitOrder() {
   })
 }
 
+/** 部分退款后回到待自提的订单详情 mock（2 件已退 1 件） */
+function mockPartiallyRefundedOrder() {
+  getOrderList.mockResolvedValue({ data: { code: 0, data: { list: [{ id: 66 }] } } })
+  getOrderDetail.mockResolvedValue({
+    data: {
+      code: 0,
+      data: {
+        id: 66,
+        order_no: 'O-066',
+        user_name: '李四',
+        delivery_type: 1,
+        status: 2,
+        status_text: '待自提',
+        created_at: '2026-10-31 10:00:00',
+        pay_amount: '11.00',
+        refunded_amount: '5.50',
+        items: [{ id: 1, product_name: '薯片', sku_name: '', quantity: 2, price: '5.50', refunded_quantity: 1 }],
+      },
+    },
+  })
+}
+
 describe('VerifyTab 键盘录入与查询', () => {
   it('数字键录入码格，退格删一位', async () => {
     const wrapper = mountTab()
@@ -123,6 +145,28 @@ describe('VerifyTab 键盘录入与查询', () => {
     await flushPromises()
     expect(warningMock).toHaveBeenCalled()
     expect(getOrderList).not.toHaveBeenCalled()
+  })
+})
+
+describe('VerifyTab 部分退款核销提示', () => {
+  it('部分退款单可核销时：显示已退金额与剩余应交付件数提示', async () => {
+    mockPartiallyRefundedOrder()
+    const wrapper = mountTab()
+    await typeCode()
+    expect(wrapper.text()).toContain('O-066')
+    // 金额区已退痕迹与核销前的剩余件数警示（不阻断，仍可确认核销）
+    expect(wrapper.text()).toContain('已退金额')
+    expect(wrapper.text()).toContain('请仅交付剩余 1 件商品')
+    expect(wrapper.findAll('button').some((b) => b.text().includes('确认核销'))).toBe(true)
+  })
+
+  it('无退款单核销：不出现已退金额行与剩余件数提示', async () => {
+    mockHitOrder()
+    const wrapper = mountTab()
+    await typeCode()
+    expect(wrapper.text()).toContain('O-055')
+    expect(wrapper.text()).not.toContain('已退金额')
+    expect(wrapper.text()).not.toContain('请仅交付剩余')
   })
 })
 

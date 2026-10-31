@@ -659,6 +659,23 @@ func (s *OrderService) GetOrder(ctx context.Context, id, userID int64) (*model.O
 		}
 	}
 
+	// 已成功退款金额：详情页金额区展示「已退 ￥X」（部分退款后订单状态可能仍是 5 已完成，
+	// 只看状态无法感知售后痕迹）；无退款记录保持 0
+	if err := fillRefundedAmounts(s.db.GetDb().WithContext(ctx), []*model.Order{&o}); err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	// 行级已退数量：详情商品行展示「已退 N 件」、履约/核销侧提示应交付剩余件数
+	if len(items) > 0 {
+		qtyMap, err := refundedQuantitiesByOrders(ctx, s.db.GetDb(), []int64{id})
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		for _, item := range items {
+			item.RefundedQuantity = qtyMap[id][item.ID]
+		}
+	}
+
 	return &o, items, logs, refunds, nil
 }
 

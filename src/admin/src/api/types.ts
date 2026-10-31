@@ -471,6 +471,8 @@ export interface OrderItem {
   price_modified?: number
   quantity: number
   total_amount: number
+  /** 行已退数量（部分退款后回填，0/缺省=未退；2026-10-31 售后展示） */
+  refunded_quantity?: number
 }
 
 /**

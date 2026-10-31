@@ -140,6 +140,11 @@ func (s *OrderService) ListFulfillmentOrders(ctx context.Context, req *order.Lis
 		Find(&list).Error; err != nil {
 		return nil, 0, err
 	}
+	// 已成功退款金额：部分退款后订单状态不变（部分退完成回到退款前状态），
+	// 工作台卡片需凭该字段打「部分售后」标识并提示应交付剩余件数
+	if err := fillRefundedAmounts(s.db.GetDb().WithContext(ctx), list); err != nil {
+		return nil, 0, err
+	}
 	return list, total, nil
 }
 

@@ -42,7 +42,11 @@
           <text class="goods-sku">{{ item.spec_name }}</text>
           <view class="goods-bottom">
             <text class="goods-price">{{ formatPrice(item.price) }}</text>
-            <text class="goods-quantity">x{{ item.quantity }}</text>
+            <view class="goods-quantity-wrap">
+              <!-- 行级已退数量（服务端 GetOrder 回填，保留原数量展示，2026-10-31 部分退款可见性） -->
+              <text v-if="item.refunded_quantity" class="goods-refunded">已退 {{ item.refunded_quantity }} 件</text>
+              <text class="goods-quantity">x{{ item.quantity }}</text>
+            </view>
           </view>
         </view>
       </view>
@@ -75,6 +79,49 @@
         <view class="amount-row">
           <text class="pay-label">实付</text>
           <text class="pay-amount">{{ formatPrice(order.pay_amount) }}</text>
+        </view>
+        <!-- 保留原始实付展示，另列已退金额（money 口径含运费，2026-10-31 部分退款可见性） -->
+        <view v-if="(order.refunded_amount || 0) > 0" class="amount-row refunded">
+          <text>已退款</text>
+          <text>-{{ formatPrice(order.refunded_amount ?? 0) }}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 售后记录：详情接口随单返回全部退款单，逐笔展示（部分退款可见性，2026-10-31） -->
+    <view v-if="(order.refunds?.length || 0) > 0" class="refund-card">
+      <view class="refund-card-title">
+        <text class="card-label">售后记录</text>
+        <text class="refund-card-link" @click="onShowRefundProgress">查看进度 ></text>
+      </view>
+      <view v-for="refund in order.refunds" :key="refund.id" class="refund-record">
+        <view class="refund-record-head">
+          <text class="refund-record-no">{{ refund.refund_no }}</text>
+          <text class="refund-record-status" :class="refundRecordStatusClass(refund.status)">
+            {{ refundRecordStatusText(refund.status) }}
+          </text>
+        </view>
+        <view
+          v-for="item in refund.items"
+          :key="`${refund.id}-${item.order_item_id || item.product_name}`"
+          class="refund-record-item"
+        >
+          <text class="refund-record-name">
+            {{ item.product_name }}{{ item.spec_name ? `（${item.spec_name}）` : '' }} x{{ item.quantity }}
+          </text>
+          <text class="refund-record-amount">{{ formatPrice(item.refund_amount) }}</text>
+        </view>
+        <!-- 无商品明细：仅金额退或收银台直接收款单 -->
+        <view v-if="!refund.items.length" class="refund-record-item">
+          <text class="refund-record-name">无商品明细（仅金额退款）</text>
+        </view>
+        <view class="refund-record-meta">
+          <text>{{ refundMetaText(refund) }}</text>
+          <text v-if="refund.reason">原因：{{ refund.reason }}</text>
+          <text v-if="refund.status === 3 && refund.reject_reason" class="refund-record-reject">
+            拒绝原因：{{ refund.reject_reason }}
+          </text>
+          <text v-if="refund.refund_time">到账：{{ formatDate(refund.refund_time) }}</text>
         </view>
       </view>
     </view>
@@ -149,7 +196,7 @@ import PaymentChannelCard from '@/components/PaymentChannelCard.vue'
 import RefundModal from '@/components/RefundModal.vue'
 import RefundProgressModal from '@/components/RefundProgressModal.vue'
 import CancelOrderModal from '@/components/CancelOrderModal.vue'
-import type { Order, PaymentChannel } from '@/api/types'
+import type { Order, PaymentChannel, RefundProgress } from '@/api/types'
 
 const orderId = ref(0)
 const refundVisible = ref(false)
@@ -195,14 +242,51 @@ const order = ref<Order>({
 /** 是否自提单 */
 const isPickup = computed(() => order.value.delivery_type === DELIVERY_TYPE_PICKUP)
 
-/** 是否展示「退款进度」入口：退款中(7)/已退款(8)订单 */
-const showRefundProgress = computed(() => order.value.status === 7 || order.value.status === 8)
+/** 是否展示「退款进度」入口：退款中(7)/已退款(8)订单，或本单存在任何退款记录（含部分退款，2026-10-31 放宽） */
+const showRefundProgress = computed(
+  () => order.value.status === 7 || order.value.status === 8 || (order.value.refunds?.length || 0) > 0,
+)
 
 /** 是否展示支付方式卡片：待支付(1)且非门店单（门店单只读，支付由门店处理） */
 const showPaymentCard = computed(() => order.value.status === 1 && !isStoreOrder(order.value))
 
 /** 当前选中的支付渠道（支付方式卡片 v-model，组件内默认选中第一个） */
 const selectedChannel = ref<PaymentChannel | null>(null)
+
+// --- 售后记录展示（详情接口随单返回 refunds，2026-10-31 部分退款可见性） ---
+
+/**
+ * 售后记录状态文案
+ * @param status 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
+ * @returns 状态文案，未知状态返回空串
+ */
+function refundRecordStatusText(status: number): string {
+  const map: Record<number, string> = { 1: '待审核', 2: '已同意', 3: '已拒绝', 4: '退款中', 5: '已退款' }
+  return map[status] || ''
+}
+
+/**
+ * 售后记录状态样式 class（按状态区分颜色，已退款沿用默认色不单列）
+ * @param status 退款状态
+ * @returns 状态 class 名，默认状态返回空串
+ */
+function refundRecordStatusClass(status: number): string {
+  if (status === 3) return 'is-rejected'
+  if (status === 5) return 'is-refunded'
+  return ''
+}
+
+/**
+ * 单笔售后记录的金额摘要文案（类型 + 退款金额 + 含运费说明）
+ * @param refund 退款单
+ * @returns 如「部分退 · 退款 ¥5.50」或「整单退 · 退款 ¥11.00（含运费 ¥1.00）」
+ */
+function refundMetaText(refund: RefundProgress): string {
+  const typeMap: Record<number, string> = { 1: '整单退', 2: '部分退', 3: '仅金额退' }
+  const type = typeMap[refund.type] || '退款'
+  const freight = refund.freight_amount > 0 ? `（含运费 ${formatPrice(refund.freight_amount)}）` : ''
+  return `${type} · 退款 ${formatPrice(refund.amount)}${freight}`
+}
 
 // --- 自提取货码 ---
 // 待自提（已支付2/备货中3）时展示取货码与二维码；已完成/已取消不再展示
@@ -615,6 +699,18 @@ async function onReorder() {
   color: #999999;
 }
 
+/* 商品行数量区：行级已退标记与原数量并排（保留原数量展示） */
+.goods-quantity-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.goods-refunded {
+  font-size: 22rpx;
+  color: #ff4d4f;
+}
+
 .order-info {
   display: flex;
   flex-direction: column;
@@ -655,6 +751,11 @@ async function onReorder() {
 }
 
 .amount-row.discount {
+  color: #ff4d4f;
+}
+
+/* 已退款金额行（与优惠行同为红色系） */
+.amount-row.refunded {
   color: #ff4d4f;
 }
 
@@ -706,6 +807,96 @@ async function onReorder() {
   margin-top: 20rpx;
   font-size: 24rpx;
   color: #999999;
+}
+
+/* 售后记录卡片（部分退款可见性，2026-10-31） */
+.refund-card {
+  margin: 20rpx 30rpx;
+  padding: 24rpx;
+  border-radius: 16rpx;
+  background-color: #ffffff;
+}
+
+.refund-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8rpx;
+}
+
+.refund-card-link {
+  font-size: 24rpx;
+  color: #07c160;
+}
+
+.refund-record {
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
+}
+
+.refund-record:last-child {
+  border-bottom: none;
+}
+
+.refund-record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.refund-record-no {
+  font-size: 24rpx;
+  color: #666666;
+}
+
+.refund-record-status {
+  font-size: 24rpx;
+  color: #ff9900;
+}
+
+/* 售后记录状态色（待审核/退款中为默认橙，已拒绝红，已退款绿） */
+.refund-record-status.is-rejected {
+  color: #ee0a24;
+}
+
+.refund-record-status.is-refunded {
+  color: #07c160;
+}
+
+.refund-record-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8rpx;
+  font-size: 26rpx;
+  color: #333333;
+}
+
+.refund-record-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refund-record-amount {
+  flex-shrink: 0;
+  margin-left: 20rpx;
+  color: #ff4d4f;
+}
+
+.refund-record-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #999999;
+}
+
+.refund-record-reject {
+  color: #ee0a24;
 }
 
 .footer-bar {

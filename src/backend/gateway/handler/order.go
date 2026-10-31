@@ -351,6 +351,8 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 			"delivery_type": o.DeliveryType,
 			"total_amount":  o.TotalAmount,
 			"pay_amount":    o.PayAmount,
+			// 已成功退款金额（0=无）：部分退款后订单状态仍是 5 已完成，卡片凭该字段打「已退」标记
+			"refunded_amount": o.RefundedAmount,
 			// 订单所属社区（列表页展示社区标签）
 			"community_id":   o.CommunityId,
 			"community_name": communityNames[o.CommunityId],
@@ -621,6 +623,39 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			"quantity":      item.Quantity,
 			"total_price":   item.TotalPrice,
 			"product_image": item.ProductImage,
+			// 行级已成功退款数量（0=无）：部分退后商品行展示「已退 N 件」
+			"refunded_quantity": item.RefundedQuantity,
+		})
+	}
+
+	// 售后记录：本单全部退款单（C端详情页「售后记录」区块）。
+	// 仅回传进度展示所需字段，不含后台审批日志；refunded_quantity 让前端能按行标记已退
+	refunds := make([]gin.H, 0, len(resp.Refunds))
+	for _, r := range resp.Refunds {
+		refundItems := make([]gin.H, 0, len(r.Items))
+		for _, item := range r.Items {
+			refundItems = append(refundItems, gin.H{
+				"order_item_id": item.OrderItemId,
+				"product_name":  item.ProductName,
+				"spec_name":     item.SpecName,
+				"quantity":      item.Quantity,
+				"refund_amount": item.RefundAmount,
+			})
+		}
+		refunds = append(refunds, gin.H{
+			"id":          r.Id,
+			"refund_no":   r.RefundNo,
+			"amount":      r.Amount,
+			"freight_amount": r.FreightAmount,
+			// 退款类型：1整单退 2部分退 3仅金额退
+			"type":   r.Type,
+			"reason": r.Reason,
+			// 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
+			"status":        r.Status,
+			"reject_reason": r.RejectReason,
+			"refund_time":   r.RefundTime,
+			"created_at":    r.CreatedAt,
+			"items":         refundItems,
 		})
 	}
 
@@ -633,6 +668,8 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"discount_amount": o.DiscountAmount,
 		"delivery_fee":    o.DeliveryFee,
 		"pay_amount":      o.PayAmount,
+		// 已成功退款金额（0=无）：金额区展示「已退 ￥X」
+		"refunded_amount": o.RefundedAmount,
 		"delivery_type":   o.DeliveryType,
 		"delivery_time":   o.DeliveryTime,
 		"cancel_reason":   o.CancelReason,
@@ -642,6 +679,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		// 订单来源（1=C端用户 2=收银台代客）：门店单在 C 端展示但只读（隐藏操作按钮）
 		"source":     o.Source,
 		"items":      items,
+		"refunds":    refunds,
 		"address":    address,
 		"remark":     o.Remark,
 		"created_at": o.CreatedAt,
@@ -1011,6 +1049,63 @@ type ApplyRefundItemReq struct {
 	Quantity    int32 `json:"quantity"`
 }
 
+// ListMyRefunds 查询当前用户的售后单列表（C端「我的-退款/售后」tab）
+// 独立售后单维度：返回本人全部退款单（含各状态，不做二级筛选），按时间倒序分页；
+// 每条带关联订单 ID/单号与商品明细摘要，点击跳转对应订单详情。
+// 复用 ListRefunds RPC 的 UserId 过滤实现用户隔离，防越权查他人退款单。
+//
+// 接口: GET /api/v1/orders/refunds
+//
+// 参数：
+//   - c: gin 上下文（query: page、page_size）
+func (h *OrderHandler) ListMyRefunds(c *gin.Context) {
+	page, pageSize := parsePageParams(c)
+	uc := appcontext.GetUserContext(c)
+	resp, err := h.orderClient.ListRefunds(c.Request.Context(), &order.ListRefundsReq{
+		UserId:     uc.UserID,
+		Pagination: &common.Pagination{Page: int32(page), PageSize: int32(pageSize)},
+	})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+
+	refunds := make([]gin.H, 0, len(resp.List))
+	for _, r := range resp.List {
+		items := make([]gin.H, 0, len(r.Items))
+		for _, item := range r.Items {
+			items = append(items, gin.H{
+				"order_item_id": item.OrderItemId,
+				"product_name":  item.ProductName,
+				"spec_name":     item.SpecName,
+				"quantity":      item.Quantity,
+				"refund_amount": item.RefundAmount,
+			})
+		}
+		refunds = append(refunds, gin.H{
+			"id":       r.Id,
+			"refund_no": r.RefundNo,
+			// 关联订单：售后单卡片点击跳转订单详情用
+			"order_id":       r.OrderId,
+			"order_no":       r.OrderNo,
+			"amount":         r.Amount,
+			"freight_amount": r.FreightAmount,
+			// 退款类型：1整单退 2部分退 3仅金额退
+			"type":   r.Type,
+			"reason": r.Reason,
+			// 退款状态：1待审核 2已同意 3已拒绝 4退款中 5已退款
+			"status":        r.Status,
+			"reject_reason": r.RejectReason,
+			"refund_time":   r.RefundTime,
+			// 所属订单商品行数（0=收银台直接收款等无商品单），供前端区分明细为空的原因
+			"order_item_count": r.OrderItemCount,
+			"created_at":       r.CreatedAt,
+			"items":            items,
+		})
+	}
+	response.SuccessWithPage(c, refunds, int(resp.Pagination.Total), page, pageSize)
+}
+
 // ListOrderRefunds 查询订单退款进度（C端订单详情「退款进度」弹窗用）
 // 先校验订单归属当前用户，防止越权查看他人退款单；
 // 仅回传进度展示所需字段（金额/原因/状态/拒绝原因/到账时间/商品明细），不含后台审批日志
@@ -1048,6 +1143,7 @@ func (h *OrderHandler) ListOrderRefunds(c *gin.Context) {
 		items := make([]gin.H, 0, len(r.Items))
 		for _, item := range r.Items {
 			items = append(items, gin.H{
+				"order_item_id": item.OrderItemId,
 				"product_name":  item.ProductName,
 				"spec_name":     item.SpecName,
 				"quantity":      item.Quantity,

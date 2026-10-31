@@ -15,17 +15,24 @@
         <view class="section-title">退款商品（默认整单退，可取消勾选或调低数量改为部分退）</view>
         <view v-for="(line, index) in lines" :key="line.order_item_id" class="refund-item">
           <view class="item-check" @click="toggleLine(index)">
-            <view :class="['check-circle', line.checked ? 'checked' : '']">
+            <view :class="['check-circle', line.checked ? 'checked' : '', line.max_qty <= 0 ? 'disabled' : '']">
               <u-icon v-if="line.checked" name="checkmark" size="12" color="#ffffff" />
             </view>
           </view>
           <view class="item-info">
             <text class="item-name">{{ line.product_name }}</text>
             <text class="item-spec">{{ line.spec_name }}</text>
-            <text class="item-price">￥{{ formatAmount(line.line_full_refund) }} / {{ line.max_qty }}件</text>
+            <text class="item-price">￥{{ formatAmount(line.line_full_refund) }} / {{ line.total_qty }}件</text>
+            <!-- 部分退款可见性：展示本行已退/剩余可退（2026-10-31） -->
+            <text v-if="line.max_qty <= 0" class="item-refund-hint">已退完</text>
+            <text v-else-if="line.max_qty < line.total_qty" class="item-refund-hint">
+              已退 {{ line.total_qty - line.max_qty }} 件，可退 {{ line.max_qty }} 件
+            </text>
           </view>
           <view class="item-qty">
+            <text v-if="line.max_qty <= 0" class="item-sold-out">已退完</text>
             <u-number-box
+              v-else
               :modelValue="line.qty"
               :min="1"
               :max="line.max_qty"
@@ -127,12 +134,14 @@ interface RefundLine {
   order_item_id: number
   product_name: string
   spec_name: string
-  /** 行可退数量上限 */
+  /** 行原购买数量（单价换算与展示基准） */
+  total_qty: number
+  /** 行剩余可退数量上限（原数量 - 已退数量，2026-10-31 部分退款可见性；0=已退完不可再退） */
   max_qty: number
   /** 当前申请退货数量 */
   qty: number
   checked: boolean
-  /** 行全额应退（分摊优惠后） */
+  /** 行全额应退（分摊优惠后，按原数量口径） */
   line_full_refund: number
 }
 
@@ -165,10 +174,11 @@ const amountTouched = ref(false)
 /** 运费金额（订单实收运费） */
 const freight = computed(() => order.value?.delivery_fee ?? 0)
 
-/** 是否整单退：全部行勾选且数量与行数量一致 */
+/** 是否整单退：全部「可退行」（不含已退完的行）勾选且数量与剩余可退数量一致 */
 const isFullRefund = computed(() => {
-  if (!lines.value.length) return false
-  return lines.value.every((line) => line.checked && line.qty === line.max_qty)
+  const refundableLines = lines.value.filter((line) => line.max_qty > 0)
+  if (!refundableLines.length) return false
+  return refundableLines.every((line) => line.checked && line.qty === line.max_qty)
 })
 
 /** 运费策略展示文案 */
@@ -195,7 +205,7 @@ const freightRefund = computed(() => {
   return 0
 })
 
-/** 商品部分应退合计（服务端汇算为准，此处为预览） */
+/** 商品部分应退合计（按行原数量换算单价，服务端汇算为准，此处为预览） */
 const goodsRefund = computed(() => {
   const o = order.value
   if (!o) return 0
@@ -205,7 +215,8 @@ const goodsRefund = computed(() => {
   let sum = 0
   for (const line of lines.value) {
     if (line.checked) {
-      sum += round2(line.line_full_refund * line.qty / line.max_qty)
+      // 单价 = 行全额应退 / 原购买数量（不能用剩余上限做分母，部分已退行会多算）
+      sum += round2(line.line_full_refund * line.qty / line.total_qty)
     }
   }
   return round2(sum)
@@ -249,10 +260,11 @@ function onClose() {
 }
 
 /**
- * 切换商品行勾选
+ * 切换商品行勾选（已退完的行不可勾选）
  * @param index 行索引
  */
 function toggleLine(index: number) {
+  if (lines.value[index].max_qty <= 0) return
   lines.value[index].checked = !lines.value[index].checked
 }
 
@@ -318,15 +330,20 @@ async function load() {
     ])
     if (orderRes.data) {
       order.value = orderRes.data
-      lines.value = (orderRes.data.items || []).map((item) => ({
-        order_item_id: item.id,
-        product_name: item.product_name,
-        spec_name: item.spec_name,
-        max_qty: item.quantity,
-        qty: item.quantity,
-        checked: true,
-        line_full_refund: calcLineFullRefund(item, orderRes.data as Order),
-      }))
+      // 已退数量扣减可退上限（2026-10-31 部分退款可见性）；已退完的行默认不勾选、数量归零
+      lines.value = (orderRes.data.items || []).map((item) => {
+        const maxQty = item.quantity - (item.refunded_quantity || 0)
+        return {
+          order_item_id: item.id,
+          product_name: item.product_name,
+          spec_name: item.spec_name,
+          total_qty: item.quantity,
+          max_qty: maxQty,
+          qty: Math.max(maxQty, 0),
+          checked: maxQty > 0,
+          line_full_refund: calcLineFullRefund(item, orderRes.data as Order),
+        }
+      })
     }
     if (configRes?.data?.refund_freight_policy) {
       policy.value = configRes.data.refund_freight_policy
@@ -490,6 +507,12 @@ watch(refundable, (value) => {
   background-color: #07c160;
 }
 
+/* 已退完行的勾选圈置灰不可点 */
+.check-circle.disabled {
+  border-color: #eeeeee;
+  background-color: #f5f5f5;
+}
+
 .item-info {
   flex: 1;
   display: flex;
@@ -507,6 +530,18 @@ watch(refundable, (value) => {
 }
 
 .item-spec {
+  font-size: 24rpx;
+  color: #999999;
+}
+
+/* 行级已退提示（部分退款可见性，2026-10-31） */
+.item-refund-hint {
+  font-size: 22rpx;
+  color: #ff9900;
+}
+
+/* 已退完行的占位文案（替代数量选择框） */
+.item-sold-out {
   font-size: 24rpx;
   color: #999999;
 }

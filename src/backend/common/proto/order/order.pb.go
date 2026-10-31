@@ -2254,8 +2254,11 @@ type OrderItemInfo struct {
 	// 收银台改价痕迹：original_price=服务端实时单价快照；price_modified=true 表示行单价被手动修改
 	OriginalPrice float64 `protobuf:"fixed64,10,opt,name=original_price,json=originalPrice,proto3" json:"original_price,omitempty"`
 	PriceModified bool    `protobuf:"varint,11,opt,name=price_modified,json=priceModified,proto3" json:"price_modified,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// 行级已成功退款数量（0=无退款）：详情/履约端展示「已退 N 件」用，
+	// 查询侧（GetOrder）按订单回填；proto3 数字 0 会被 omitempty 省略，消费方按缺省=0 处理
+	RefundedQuantity int32 `protobuf:"varint,12,opt,name=refunded_quantity,json=refundedQuantity,proto3" json:"refunded_quantity,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *OrderItemInfo) Reset() {
@@ -2363,6 +2366,13 @@ func (x *OrderItemInfo) GetPriceModified() bool {
 		return x.PriceModified
 	}
 	return false
+}
+
+func (x *OrderItemInfo) GetRefundedQuantity() int32 {
+	if x != nil {
+		return x.RefundedQuantity
+	}
+	return 0
 }
 
 type OrderStatusLog struct {
@@ -6690,7 +6700,7 @@ const file_order_order_proto_rawDesc = "" +
 	"\fuser_deleted\x18! \x01(\x05R\vuserDeleted\x12\x1d\n" +
 	"\n" +
 	"item_count\x18\" \x01(\x05R\titemCount\x12'\n" +
-	"\x0frefunded_amount\x18# \x01(\x01R\x0erefundedAmount\"\xdb\x02\n" +
+	"\x0frefunded_amount\x18# \x01(\x01R\x0erefundedAmount\"\x88\x03\n" +
 	"\rOrderItemInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1d\n" +
 	"\n" +
@@ -6705,7 +6715,8 @@ const file_order_order_proto_rawDesc = "" +
 	"totalPrice\x12%\n" +
 	"\x0eoriginal_price\x18\n" +
 	" \x01(\x01R\roriginalPrice\x12%\n" +
-	"\x0eprice_modified\x18\v \x01(\bR\rpriceModified\"\xaa\x01\n" +
+	"\x0eprice_modified\x18\v \x01(\bR\rpriceModified\x12+\n" +
+	"\x11refunded_quantity\x18\f \x01(\x05R\x10refundedQuantity\"\xaa\x01\n" +
 	"\x0eOrderStatusLog\x12\x1f\n" +
 	"\vfrom_status\x18\x01 \x01(\x05R\n" +
 	"fromStatus\x12\x1b\n" +

@@ -238,7 +238,11 @@
                 ￥{{ formatAmount(item.price) }}
                 <span v-if="item.price_modified" class="origin">￥{{ formatAmount(item.original_price ?? item.price) }}</span>
               </span>
-              <span class="item-qty">x{{ item.quantity }}</span>
+              <span class="item-qty">
+                x{{ item.quantity }}
+                <!-- 部分退款痕迹：本行已退数量（2026-10-31 售后展示） -->
+                <span v-if="(item.refunded_quantity ?? 0) > 0" class="refunded-qty">退{{ item.refunded_quantity }}</span>
+              </span>
               <span class="item-subtotal">￥{{ formatAmount(item.total_amount) }}</span>
             </div>
           </div>
@@ -250,6 +254,8 @@
             <div v-if="(detail.manual_discount ?? 0) > 0" class="amount-row"><span>收银优惠（改价/抹零）</span><span>-￥{{ formatAmount(detail.manual_discount) }}</span></div>
             <div v-if="detail.delivery_fee > 0" class="amount-row"><span>配送费</span><span>+￥{{ formatAmount(detail.delivery_fee) }}</span></div>
             <div class="amount-row strong"><span>实付</span><span>￥{{ formatAmount(detail.pay_amount) }}</span></div>
+            <!-- 部分退款痕迹：原实付保留，附加已退金额（订单级 money 口径含运费） -->
+            <div v-if="(detail.refunded_amount ?? 0) > 0" class="amount-row refunded"><span>已退</span><span>-￥{{ formatAmount(detail.refunded_amount) }}</span></div>
           </div>
 
           <!-- 售后记录（每次退款单：类型/金额/状态/时间） -->
@@ -420,7 +426,7 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { formatAmount } from '@/utils/format'
-import { NButton, NEmpty, NTag, useDialog, useMessage } from 'naive-ui'
+import { NButton, NEmpty, NSpace, NTag, useDialog, useMessage } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { bindOrderUser, cancelOrder, ensurePosCodePaySession, getOrderDetail, getOrderList, payPosOrderCash, verifyPickup } from '@/api/order'
 import { getProductList } from '@/api/product'
@@ -1164,6 +1170,21 @@ async function onBindUserSelect(u: User) {
   }
 }
 
+/**
+ * 是否存在已完成的部分退款（售后标记展示条件，与后台订单列表同口径）
+ * 退款中(7)/已退款(8)的状态文本本身已表达售后进度，不重复标；
+ * 其余状态出现 refunded_amount>0 即为「部分退款后回到正常状态」的订单
+ * @param row 订单行数据
+ * @returns 是否显示「已退 ¥xx」标记
+ */
+function hasPartialRefund(row: Order): boolean {
+  return (
+    row.status !== ORDER_STATUS.REFUNDING &&
+    row.status !== ORDER_STATUS.REFUNDED &&
+    (row.refunded_amount ?? 0) > 0
+  )
+}
+
 /** 表格列定义（行点击打开详情；状态列彩色标签；待支付可继续收款；有商品的单可引用到收银台） */
 const columns = computed<DataTableColumns<Order>>(() => [
   { title: '订单号', key: 'order_no', width: 190, ellipsis: { tooltip: true } },
@@ -1194,9 +1215,17 @@ const columns = computed<DataTableColumns<Order>>(() => [
     // 支付/订单状态彩色标签：与详情弹窗同口径（待支付黄/已支付蓝/完成绿/退款红）
     title: '状态',
     key: 'status',
-    width: 90,
+    width: 110,
     render: (row) =>
-      h(NTag, { size: 'small', type: orderStatusTagType(row.status), bordered: false }, { default: () => row.status_text }),
+      h(NSpace, { size: 4, vertical: true, wrap: true }, {
+        default: () => [
+          h(NTag, { size: 'small', type: orderStatusTagType(row.status), bordered: false }, { default: () => row.status_text }),
+          // 部分退款痕迹：状态文本看不出已退金额，标出防重复退款/误判（与后台订单列表同口径）
+          hasPartialRefund(row)
+            ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => `已退 ￥${formatAmount(row.refunded_amount ?? 0)}` })
+            : null,
+        ],
+      }),
   },
   {
     title: '来源',
@@ -1433,6 +1462,10 @@ onBeforeUnmount(() => {
     color: #999;
     width: 44px;
     text-align: right;
+    .refunded-qty {
+      color: #d03050;
+      margin-left: 3px;
+    }
   }
   .item-subtotal {
     width: 84px;
@@ -1457,6 +1490,11 @@ onBeforeUnmount(() => {
     font-weight: 700;
     font-size: 14px;
     margin-top: 4px;
+  }
+  // 已退金额：弱于实付强调级，但需一眼可辨
+  &.refunded {
+    color: #d03050;
+    font-weight: 600;
   }
 }
 .detail-actions {
