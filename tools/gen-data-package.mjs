@@ -35,13 +35,14 @@ const communities = [
     allow_outside_delivery: false,
   },
   {
-    key: 'comm-2', name: '阳光花园', address: '重庆市南岸区阳光路 8 号',
-    longitude: 106.5716, latitude: 29.5218,
+    // 城口县葛城街道：距重庆中心城区约 400km，避免演示环境按 IP 就近定位时总是命中本社区
+    key: 'comm-2', name: '阳光花园', address: '重庆市城口县葛城街道东大街 8 号',
+    longitude: 108.6647, latitude: 31.9478,
     contact_phone: '023-88886666', manager_name: '李管家', manager_phone: '13900139002',
     pickup_address: '花园南门快递柜旁自提点', delivery_fee: 2.0, min_order_amount: 0.0, delivery_range_km: 3.0,
     business_hours: '09:00-21:00', // 存量单段文本格式，展示端兼容解析（演示两种营业时段口径）
-    province: '重庆市', city: '重庆市', district: '南岸区',
-    province_code: '50', city_code: '', district_code: '500108',
+    province: '重庆市', city: '重庆市', district: '城口县',
+    province_code: '50', city_code: '', district_code: '500229',
     allow_outside_delivery: true, // 允许社区外配送：测试两种锁区分支
   },
 ];
@@ -100,9 +101,9 @@ const users = [
     community_key: 'comm-2',
     address: {
       contact_name: '李四', contact_phone: '13900139000',
-      province: '重庆市', city: '重庆市', district: '南岸区',
-      province_code: '50', city_code: '', district_code: '500108',
-      detail: '阳光路 8 号 5 栋 1201', tag: '家', is_default: true,
+      province: '重庆市', city: '重庆市', district: '城口县',
+      province_code: '50', city_code: '', district_code: '500229',
+      detail: '东大街 8 号 5 栋 1201', tag: '家', is_default: true,
     },
     memberships: [{ community_key: 'comm-2', source: 'address' }],
   },
@@ -346,8 +347,8 @@ const orders = [
   {
     key: 'order-7', community_key: 'comm-2', order_no: 'SEED20261018007', user_key: 'user-2',
     status: 4, total_amount: 25.8, discount_amount: 0, delivery_fee: 2.0, pay_amount: 27.8,
-    delivery_type: 2, delivery_time: '工作日晚间', address_detail: '阳光路 8 号 5 栋 1201',
-    contact_name: '李四', contact_phone: '13900139000', contact_address: '重庆市南岸区阳光路 8 号 5 栋 1201',
+    delivery_type: 2, delivery_time: '工作日晚间', address_detail: '东大街 8 号 5 栋 1201',
+    contact_name: '李四', contact_phone: '13900139000', contact_address: '重庆市城口县葛城街道东大街 8 号 5 栋 1201',
     remark: '送货上门', express_company: '顺丰速运', express_no: 'SF1000000001',
     source: 1, created_at: { offset_minutes: -2880 }, pay_time: { offset_minutes: -2870 }, deliver_time: { offset_minutes: -60 },
     items: [
