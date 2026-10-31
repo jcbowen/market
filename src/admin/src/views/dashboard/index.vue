@@ -296,6 +296,8 @@ interface TodoItem {
   icon: any
   color: string
   bg: string
+  /** 查看该待办所需权限：无权限时不渲染（对应接口会 403，数据恒为 0 的空卡片无意义） */
+  perm?: string
 }
 
 /** 订单状态统计（全量口径，与订单列表页概览卡片一致） */
@@ -308,7 +310,8 @@ const paymentAnomalyCount = ref(0)
 /** 库存预警 SKU 数 */
 const stockWarningCount = ref(0)
 
-const todoItems = computed<TodoItem[]>(() => [
+const todoItems = computed<TodoItem[]>(() => {
+  const items: TodoItem[] = [
   {
     key: 'pending_pay',
     label: '待支付订单',
@@ -317,6 +320,7 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: TimeOutline,
     color: '#faad14',
     bg: 'rgba(250, 173, 20, 0.1)',
+    perm: 'order:view',
   },
   {
     key: 'pending_ship',
@@ -326,6 +330,7 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: AirplaneOutline,
     color: '#07c160',
     bg: 'rgba(7, 193, 96, 0.1)',
+    perm: 'order:view',
   },
   {
     key: 'pending_receive',
@@ -335,6 +340,7 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: StorefrontOutline,
     color: '#10aeff',
     bg: 'rgba(16, 174, 255, 0.12)',
+    perm: 'order:view',
   },
   {
     // 资金安全类待办：回调失败/对账不符/资金挂账等需人工核实，数据取异常队列 pending
@@ -345,6 +351,7 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: WarningOutline,
     color: '#fa5151',
     bg: 'rgba(250, 81, 81, 0.08)',
+    perm: 'order:view',
   },
   {
     key: 'refund_pending',
@@ -354,6 +361,7 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: ArrowUndoOutline,
     color: '#fa5151',
     bg: 'rgba(250, 81, 81, 0.08)',
+    perm: 'refund:view',
   },
   {
     key: 'refund_processing',
@@ -363,6 +371,7 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: SyncOutline,
     color: '#ff7a45',
     bg: 'rgba(255, 122, 69, 0.1)',
+    perm: 'refund:view',
   },
   {
     key: 'stock_warning',
@@ -372,8 +381,13 @@ const todoItems = computed<TodoItem[]>(() => [
     icon: AlertCircleOutline,
     color: '#7c6cf0',
     bg: 'rgba(124, 108, 240, 0.1)',
+    perm: 'inventory:view',
   },
-])
+  ]
+  // 无对应权限的待办不渲染：仅 dashboard:view 的自定义角色进入工作台时，
+  // 避免展示一批永远为 0 的空卡片（数据接口均需更高权限）
+  return items.filter((t) => !t.perm || can(t.perm))
+})
 
 /** 是否存在待办项 */
 const hasTodo = computed(() => todoItems.value.some((t) => t.count > 0))
@@ -475,6 +489,18 @@ function recentRange(): { startDate: string; endDate: string } {
 }
 
 /**
+ * 有权限才发起请求：无权限返回已拒绝占位（allSettled 吞掉，对应状态保持初始值），
+ * 避免对仅 dashboard:view 的自定义角色发送必然 403 的请求
+ * @param code 所需权限编码
+ * @param fn 请求函数
+ * @returns 有权限时返回请求 Promise，否则返回 rejected Promise
+ */
+function whenPerm(code: string, fn: () => Promise<any>): Promise<any> {
+  if (can(code)) return fn()
+  return Promise.reject(new Error(`no permission: ${code}`))
+}
+
+/**
  * 加载待办计数区（订单待办 / 售后待办 / 支付异常 / 库存预警）
  * 拆分理由：WS 事件驱动的刷新只拉这一部分，避免每次事件放大到全量 8 个请求
  * 使用 allSettled：单个接口失败只保留对应项旧值，不影响其他项渲染
@@ -484,12 +510,12 @@ function recentRange(): { startDate: string; endDate: string } {
  */
 async function loadTodos() {
   const [orderRes, refundPendingRes, refundProcessingRes, anomalyRes, stockRes] = await Promise.allSettled([
-    getOrderStatistics({}),
-    getRefundList({ page: 1, page_size: 1, status: 1 }),
-    getRefundList({ page: 1, page_size: 1, status: 4 }),
+    whenPerm('order:view', () => getOrderStatistics({})),
+    whenPerm('refund:view', () => getRefundList({ page: 1, page_size: 1, status: 1 })),
+    whenPerm('refund:view', () => getRefundList({ page: 1, page_size: 1, status: 4 })),
     // 只取 1 条最小化开销：待办计数用响应的 pending（社区范围内待处理总数，不随筛选变化）
-    getPaymentAnomalies({ page: 1, page_size: 1 }),
-    getStockWarnings(),
+    whenPerm('order:view', () => getPaymentAnomalies({ page: 1, page_size: 1 })),
+    whenPerm('inventory:view', () => getStockWarnings()),
   ])
 
   if (orderRes.status === 'fulfilled' && orderRes.value.data.code === 0) {

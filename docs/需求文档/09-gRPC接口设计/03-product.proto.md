@@ -633,7 +633,9 @@ message BatchDeductStockResp {
   bool success = 1;
 }
 
-// BatchReleaseStockReq 批量释放库存（取消/退款/超时关单整单回补）
+// BatchReleaseStockReq 批量释放库存（取消/退款/超时关单回补）
+// 服务端按订单维度净额闸门校验：累计回补数量不得超过累计扣减数量（released > deducted 拒绝），
+// 拦截跨 biz_no 的重复回补；取消侧调用方按「明细 − 已成功退款数量」净额提交（2026-10-31）
 message BatchReleaseStockReq {
   int64 order_id = 1;
   string biz_no = 2;
@@ -647,6 +649,8 @@ message BatchDeductFlashSaleStockReq {
 }
 
 // BatchReleaseFlashSaleStockReq 批量回补秒杀独立库存（biz_no 为空时由服务端按 cancel:{order_id} 生成）
+// 2026-10-31 起带净额闸门：累计秒杀回补不得超过累计秒杀扣减（对齐主库存 assertReleaseWithinDeduct），
+// 拦截「部分退款回补 + 取消全量回补」跨 biz_no 的重复回补，避免活动池超发
 message BatchReleaseFlashSaleStockReq {
   int64 order_id = 1;
   repeated StockItemQty items = 2;

@@ -21,7 +21,7 @@
       </n-form-item>
       <n-form-item>
         <n-space>
-          <n-button type="primary" @click="submit">保存</n-button>
+          <n-button type="primary" :loading="saving" :disabled="saving" @click="submit">保存</n-button>
           <n-button @click="router.back()">返回</n-button>
         </n-space>
       </n-form-item>
@@ -43,6 +43,8 @@ const router = useRouter()
 const dateRange = ref<[number, number] | null>(null)
 const form = ref<Partial<Seckill & { name: string }>>({ name: '' })
 const item = ref({ sku_id: undefined as number | undefined, flash_price: undefined as number | undefined, stock: undefined as number | undefined, limit_per_user: 1 })
+/** 保存进行中标志：防连击重复创建活动 */
+const saving = ref(false)
 
 function formatTime(ts: number) {
   const d = new Date(ts)
@@ -50,15 +52,21 @@ function formatTime(ts: number) {
 }
 
 async function submit() {
-  const data: any = { ...form.value }
-  if (dateRange.value) {
-    data.start_time = formatTime(dateRange.value[0])
-    data.end_time = formatTime(dateRange.value[1])
-  }
-  data.items = [{ ...item.value }]
-  const res = await createSeckill(data)
-  if (res.data.code === 0) {
-    router.back()
+  if (saving.value) return
+  saving.value = true
+  try {
+    const data: any = { ...form.value }
+    if (dateRange.value) {
+      data.start_time = formatTime(dateRange.value[0])
+      data.end_time = formatTime(dateRange.value[1])
+    }
+    data.items = [{ ...item.value }]
+    const res = await createSeckill(data)
+    if (res.data.code === 0) {
+      router.back()
+    }
+  } finally {
+    saving.value = false
   }
 }
 </script>

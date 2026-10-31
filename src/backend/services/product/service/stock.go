@@ -669,6 +669,25 @@ func releaseOneFlashSku(tx *gorm.DB, orderID, skuID int64, quantity int32, bizNo
 		return nil
 	}
 
+	// 净额闸门（与主库存 assertReleaseWithinDeduct 同口径）：累计秒杀回补不得超过累计秒杀扣减。
+	// 调用时本笔回补日志已在上方落库，统计口径已含本次；「部分退款回补 + 取消全量回补」
+	// 这类跨 biz_no 的重复回补会在此被拦下，避免活动池超发（少卖反成多卖）
+	var flashDeducted, flashReleased int64
+	if err := tx.Model(&model.StockOpLog{}).
+		Where("order_id = ? AND sku_id = ? AND op_type = ?", orderID, skuID, stockOpTypeFlashDeduct).
+		Select("COALESCE(SUM(quantity), 0)").Scan(&flashDeducted).Error; err != nil {
+		return err
+	}
+	if err := tx.Model(&model.StockOpLog{}).
+		Where("order_id = ? AND sku_id = ? AND op_type = ?", orderID, skuID, stockOpTypeFlashRelease).
+		Select("COALESCE(SUM(quantity), 0)").Scan(&flashReleased).Error; err != nil {
+		return err
+	}
+	if flashReleased > flashDeducted {
+		return bizerr.New(codes.FailedPrecondition,
+			fmt.Sprintf("订单 %d 的秒杀商品（SKU %d）回补数量 %d 超过扣减数量 %d，已拒绝", orderID, skuID, flashReleased, flashDeducted))
+	}
+
 	// 优先按扣减日志记录的活动商品 ID 定向回补：同 SKU 多活动先后/并发时，
 	// 活动结束后的退款也能回补到当初扣减的活动池，避免 A 扣 B 补的池错位；
 	// 日志缺失（历史数据/活动项被删）时回落到现有定位逻辑

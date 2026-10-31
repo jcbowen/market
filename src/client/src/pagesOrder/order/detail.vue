@@ -93,7 +93,7 @@
         v-if="order.status === 1 && !isStoreOrder(order)"
         class="action-btn"
       >
-        <u-button type="success" text="去支付" @click="onPay" />
+        <u-button type="success" text="去支付" :loading="paying" :disabled="paying" @click="onPay" />
       </view>
       <view
         v-if="canCancel(order)"
@@ -360,6 +360,9 @@ function copyOrderNo() {
   })
 }
 
+/** 支付进行中标志：支付含创建支付单、拉起收银台等异步环节，防连击重复发起 */
+const paying = ref(false)
+
 /**
  * 支付订单
  * 按页面内支付方式卡片选中的渠道创建支付单并拉起支付：货到付款直接完成，
@@ -367,11 +370,13 @@ function copyOrderNo() {
  * 仅在支付真实完成时提示支付成功
  */
 async function onPay() {
+  if (paying.value) return
   if (!selectedChannel.value) {
     uni.showToast({ title: '暂无可用支付方式', icon: 'none' })
     return
   }
   const channel = selectedChannel.value
+  paying.value = true
   try {
     const outcome = await payOrder(order.value.id, channel.channel)
     notifyPayOutcome(outcome, channel.channel)
@@ -388,6 +393,8 @@ async function onPay() {
     loadOrder()
   } catch {
     // request 已统一提示错误
+  } finally {
+    paying.value = false
   }
 }
 

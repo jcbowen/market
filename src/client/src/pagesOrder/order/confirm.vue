@@ -383,7 +383,9 @@ const couponText = computed(() => {
 function couponDiscountOf(coupon: UserCoupon | null): number {
   if (!coupon) return 0
   const verdict = couponEligibility.value[coupon.coupon_id]
-  if (verdict?.available) return verdict.discount_amount
+  // 试算已判定不可用（门槛按适用范围金额未达等）：不再回退全车估算，
+  // 否则混有不适配商品时页面实付更低，提交却被服务端按适用范围拒绝
+  if (verdict) return verdict.available ? verdict.discount_amount : 0
   return calcCouponDiscount(totalAmount.value, coupon)
 }
 
@@ -459,8 +461,13 @@ async function loadCouponEligibility() {
     couponOptions.value = buildCouponOptions(couponOptions.value.map((o) => o.coupon))
     autoSelectCoupon()
   } catch {
-    // 试算失败退回按全车金额判定（原行为），提交时仍由服务端按适用范围把关
-    if (seq === eligibilitySeq) couponEligibility.value = {}
+    // 试算失败退回按全车金额判定（原行为），提交时仍由服务端按适用范围把关；
+    // 清空试算缓存后重建选项并重选，此时无 verdict 不会自动选券（见 autoSelectCoupon）
+    if (seq === eligibilitySeq) {
+      couponEligibility.value = {}
+      couponOptions.value = buildCouponOptions(couponOptions.value.map((o) => o.coupon))
+      autoSelectCoupon()
+    }
   }
 }
 
@@ -482,7 +489,11 @@ function autoSelectCoupon() {
   let best: UserCoupon | null = null
   let bestDiscount = 0
   for (const option of couponOptions.value) {
-    if (!option.available) continue
+    // 仅试算判定可用（verdict.available）的券参与自动选券：试算未返回/失败时
+    // 按全车口径标记的 available 只作展示，自动选券不采用，防止选中不适配券
+    // 后提交被服务端拒绝；试算返回后会重建选项并再次进入本函数自动选中
+    const verdict = couponEligibility.value[option.coupon.coupon_id]
+    if (!option.available || !verdict?.available) continue
     const discount = couponDiscountOf(option.coupon)
     if (discount > bestDiscount) {
       bestDiscount = discount

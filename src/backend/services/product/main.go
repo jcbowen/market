@@ -4,8 +4,10 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 	"github.com/jcbowen/market/src/backend/common/proto/product"
@@ -40,6 +42,12 @@ func main() {
 		// 图片经 gateway 转发（本地上传模式）时单条消息可达数 MB，默认 4MB 上限不够用
 		grpc.MaxRecvMsgSize(10*1024*1024),
 		grpc.MaxSendMsgSize(10*1024*1024),
+		// 客户端以 10s 间隔 Ping 且 PermitWithoutStream，服务端默认策略 MinTime=5m
+		// 会判 too_many_pings 并 GOAWAY 断开空闲连接，enforcement 对齐客户端口径
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	)
 	product.RegisterProductServiceServer(srv, newServer(db, cfg))
 	bootstrap.RegisterHealth(srv)

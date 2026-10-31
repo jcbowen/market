@@ -3,8 +3,10 @@ package main
 import (
 	stdctx "context"
 	"log"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 
@@ -74,7 +76,14 @@ func main() {
 	// Redis：权限变更事件发布用（WS 提醒在线管理员刷新权限快照），失败不阻塞启动
 	rds := bootstrap.InitRedis(cfg)
 
-	srv := grpc.NewServer()
+	// 客户端以 10s 间隔 Ping 且 PermitWithoutStream，服务端默认策略 MinTime=5m
+	// 会判 too_many_pings 并 GOAWAY 断开空闲连接，enforcement 对齐客户端口径
+	srv := grpc.NewServer(
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 	user.RegisterUserServiceServer(srv, newServer(db, rds.GetClient()))
 	bootstrap.RegisterHealth(srv)
 

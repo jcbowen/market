@@ -2,9 +2,11 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/jcbowen/jcbaseGo/component/orm/mysql"
 
@@ -39,7 +41,14 @@ func main() {
 	defer productConn.Close()
 	productClient := product.NewProductServiceClient(productConn)
 
-	srv := grpc.NewServer()
+	// 客户端以 10s 间隔 Ping 且 PermitWithoutStream，服务端默认策略 MinTime=5m
+	// 会判 too_many_pings 并 GOAWAY 断开空闲连接，enforcement 对齐客户端口径
+	srv := grpc.NewServer(
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 	cart.RegisterCartServiceServer(srv, newServer(db, productClient))
 	bootstrap.RegisterHealth(srv)
 

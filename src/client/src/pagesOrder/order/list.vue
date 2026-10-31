@@ -51,6 +51,8 @@
             type="success"
             size="small"
             text="去支付"
+            :loading="payingId === order.id"
+            :disabled="!!payingId"
             @click.stop="onPay(order)"
           />
           <u-button
@@ -256,6 +258,9 @@ function loadMore() {
   loadOrders()
 }
 
+/** 正在支付的订单 ID：支付含创建支付单、拉起收银台等异步环节，防连击重复发起 */
+const payingId = ref(0)
+
 /**
  * 支付订单
  * 选择渠道后创建支付单并拉起支付，货到付款直接完成，微信按运行端拉起，
@@ -263,6 +268,8 @@ function loadMore() {
  * @param order 订单对象
  */
 async function onPay(order: Order) {
+  if (payingId.value) return
+  payingId.value = order.id
   try {
     const channelRes = await getPaymentChannels()
     const channels = channelRes.data?.channels || []
@@ -289,6 +296,8 @@ async function onPay(order: Order) {
     resetAndReload()
   } catch {
     // request 已统一提示错误
+  } finally {
+    payingId.value = 0
   }
 }
 

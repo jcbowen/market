@@ -6025,14 +6025,19 @@ func (h *AdminHandler) DeletePaymentConfig(c *gin.Context) {
 		response.Error(c, errcode.NotFound, "支付配置不存在")
 		return
 	}
-	if chList, err := h.userClient.ListClientChannels(c.Request.Context(), &user.ListClientChannelsReq{OnlyEnabled: false}); err == nil {
-		ref := fmt.Sprintf("%s:%d", platform, id)
-		for _, ch := range chList.List {
-			if containsString(ch.PayMethods, ref) {
-				response.Error(c, errcode.OperationNotAllowed,
-					fmt.Sprintf("该支付配置正被渠道「%s」引用，请先在渠道管理中解除绑定", ch.Name))
-				return
-			}
+	// 渠道引用校验 fail-closed：user 服务查询失败时拒绝删除而不是跳过校验，
+	// 否则渠道 pay_methods 会悬空指向已删除的支付配置（与「删除前网关校验无渠道引用」约定一致）
+	chList, err := h.userClient.ListClientChannels(c.Request.Context(), &user.ListClientChannelsReq{OnlyEnabled: false})
+	if err != nil {
+		response.GRPCError(c, err)
+		return
+	}
+	ref := fmt.Sprintf("%s:%d", platform, id)
+	for _, ch := range chList.List {
+		if containsString(ch.PayMethods, ref) {
+			response.Error(c, errcode.OperationNotAllowed,
+				fmt.Sprintf("该支付配置正被渠道「%s」引用，请先在渠道管理中解除绑定", ch.Name))
+			return
 		}
 	}
 

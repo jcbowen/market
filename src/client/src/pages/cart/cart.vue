@@ -619,7 +619,10 @@ async function onSkuConfirm({ product, sku, quantity }: { product: Product; sku:
   // 旧项的数量提交作废：新项按弹窗选择的 SKU 与数量重新加购，旧 SKU 即将被删除
   cancelQuantityCommit(item.id)
   await commitWrite(removeCartItem(item.id))
-  const r = await commitWrite(addCartItem(product.id, sku.id, quantity, userStore.communityInfo?.id))
+  // 加购社区与 SKU 选择器载货口径一致（按旧项社区）：选择器按 item.community_id
+  // 加载的商品/SKU 一定归属该社区，若用当前社区加购，跨社区换规格会被服务端
+  // 「该商品不属于当前社区」拒绝，而旧项已删造成商品丢失
+  const r = await commitWrite(addCartItem(product.id, sku.id, quantity, item.community_id || userStore.communityInfo?.id))
   if (r.ok) {
     showSkuSelector.value = false
   }

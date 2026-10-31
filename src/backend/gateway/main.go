@@ -495,10 +495,12 @@ func registerRoutes(r *gin.Engine, jwtManager *jwt.Manager, clients *client.Serv
 			authAdmin.GET("/app-preferences", adminHandler.GetAppPreferences)
 			authAdmin.PUT("/app-preferences", gwMiddleware.RequirePermission("community:config"), adminHandler.SaveAppPreferences)
 
-			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetOrderStatistics)
-			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetSalesStatistics)
-			authAdmin.GET("/statistics/rankings", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetProductRankings)
-			authAdmin.GET("/statistics/revenue", gwMiddleware.RequirePermission("order:view", "statistics:view"), adminHandler.GetRevenueReport)
+			// statistics 类接口追加 dashboard:view：工作台（仅 dashboard:view 的自定义角色）
+			// 的今日概览与图表消费这些接口，缺权限时会整体 403 恒空
+			authAdmin.GET("/statistics/orders", gwMiddleware.RequirePermission("order:view", "statistics:view", "dashboard:view"), adminHandler.GetOrderStatistics)
+			authAdmin.GET("/statistics/sales", gwMiddleware.RequirePermission("order:view", "statistics:view", "dashboard:view"), adminHandler.GetSalesStatistics)
+			authAdmin.GET("/statistics/rankings", gwMiddleware.RequirePermission("order:view", "statistics:view", "dashboard:view"), adminHandler.GetProductRankings)
+			authAdmin.GET("/statistics/revenue", gwMiddleware.RequirePermission("order:view", "statistics:view", "dashboard:view"), adminHandler.GetRevenueReport)
 
 			authAdmin.GET("/inventory/entries", gwMiddleware.RequirePermission("inventory:view"), adminHandler.ListStockRecords)
 			authAdmin.POST("/inventory/purchase-order", gwMiddleware.RequirePermission("inventory:view"), adminHandler.GeneratePurchaseOrder)

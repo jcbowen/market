@@ -15,7 +15,7 @@
       </n-form-item>
       <n-form-item>
         <n-space>
-          <n-button type="primary" @click="submit">保存</n-button>
+          <n-button type="primary" :loading="saving" :disabled="saving" @click="submit">保存</n-button>
           <n-button @click="router.back()">返回</n-button>
         </n-space>
       </n-form-item>
@@ -39,6 +39,8 @@ const form = ref<Partial<FullReduction>>({
   threshold: 0,
   reduce_amount: 0,
 })
+/** 保存进行中标志：防连击重复创建活动 */
+const saving = ref(false)
 
 function formatTime(ts: number) {
   const d = new Date(ts)
@@ -46,14 +48,20 @@ function formatTime(ts: number) {
 }
 
 async function submit() {
-  const data: any = { ...form.value }
-  if (dateRange.value) {
-    data.start_time = formatTime(dateRange.value[0])
-    data.end_time = formatTime(dateRange.value[1])
-  }
-  const res = await createFullReduction(data)
-  if (res.data.code === 0) {
-    router.back()
+  if (saving.value) return
+  saving.value = true
+  try {
+    const data: any = { ...form.value }
+    if (dateRange.value) {
+      data.start_time = formatTime(dateRange.value[0])
+      data.end_time = formatTime(dateRange.value[1])
+    }
+    const res = await createFullReduction(data)
+    if (res.data.code === 0) {
+      router.back()
+    }
+  } finally {
+    saving.value = false
   }
 }
 </script>

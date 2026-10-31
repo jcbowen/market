@@ -1110,7 +1110,13 @@ func (s *OrderService) CancelOrder(ctx context.Context, req *order.CancelOrderRe
 		if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
 			return err
 		}
-		eff = &cancelEffect{OrderID: o.ID, Items: items, CouponID: o.CouponID}
+		// 取消回补按净额（明细 − 已成功退款数量）：部分退款完成时已按退款单号回补过，
+		// 全量回补会触发商品服务净额闸门整批拒绝（详见 netCancelItems）
+		net, err := netCancelItems(tx, o.ID, items)
+		if err != nil {
+			return err
+		}
+		eff = &cancelEffect{OrderID: o.ID, Items: net, CouponID: o.CouponID}
 
 		return s.createStatusLogTx(tx, o.ID, o.Status, 6, "user", req.UserId, req.Reason)
 	})
@@ -1310,7 +1316,7 @@ func releaseStockBatch(ctx context.Context, orderID int64, stockItems []*product
 // 事务提交成功后交给 releaseCancelledOrder 执行
 // 参数：
 //   - OrderID: 订单 ID（同时是幂等号 cancel:{orderID} 的来源）
-//   - Items: 取消时读到的订单明细（整单全量回补）
+//   - Items: 取消回补的净额明细（明细数量 − 已成功退款数量，见 netCancelItems）
 //   - CouponID: 订单占用的用户券 ID，0 表示未用券
 //
 // 使用示例：
@@ -1327,6 +1333,59 @@ type cancelEffect struct {
 	OrderID  int64
 	Items    []*model.OrderItem
 	CouponID int64
+}
+
+// netCancelItems 计算取消回补库存的净额清单：订单明细数量扣除该行已成功退款
+// （refunds.status=5，退款完成路径已按退款单号回补过对应数量）。
+// COD 单允许 status 2/3 取消，「部分退款成功 → 订单回到 2 → 取消」时若仍按明细
+// 全量回补，累计回补将超过扣减量，触发商品服务净额闸门（released > deducted 拒绝）
+// 整批事务回滚，库存永久泄漏且调度器重放同样失败——净额口径从源头消除该缺口。
+// 参数：
+//   - query: 查询句柄（取消事务内传 tx，统计与状态变更同事务；
+//     调度器重放传普通连接——订单已置 6 后状态机禁回 2/3，不会再有退款进入成功态，二者等价）
+//   - orderID: 订单 ID
+//   - items: 订单明细全量
+//
+// 返回值：
+//   - []*model.OrderItem: 净数量>0 的明细行（Quantity 为净额，行浅拷贝不改原明细）；
+//     全部退完或订单无明细（收银台直接收款）时返回空切片，product 侧空明细 no-op
+//   - error: 统计失败
+//
+// 使用示例：
+//
+//	net, err := netCancelItems(tx, o.ID, items)
+//	if err != nil {
+//	    return err
+//	}
+//	eff = &cancelEffect{OrderID: o.ID, Items: net, CouponID: o.CouponID}
+func netCancelItems(query *gorm.DB, orderID int64, items []*model.OrderItem) ([]*model.OrderItem, error) {
+	var refunded []*model.RefundItem
+	// refunds.status=5 为退款成功（与 refundedStat 统计口径一致）
+	err := query.
+		Table("refund_items").
+		Joins("JOIN refunds ON refunds.id = refund_items.refund_id").
+		Where("refunds.order_id = ? AND refunds.status = ?", orderID, 5).
+		Select("refund_items.*").
+		Find(&refunded).Error
+	if err != nil {
+		return nil, err
+	}
+	// 按订单明细行聚合已退数量（部分退/整单退的退款行都挂回原订单明细行）
+	refundedByItem := make(map[int64]int32, len(refunded))
+	for _, it := range refunded {
+		refundedByItem[it.OrderItemID] += it.Quantity
+	}
+	net := make([]*model.OrderItem, 0, len(items))
+	for _, it := range items {
+		qty := it.Quantity - refundedByItem[it.ID]
+		if qty <= 0 {
+			continue
+		}
+		row := *it
+		row.Quantity = qty
+		net = append(net, &row)
+	}
+	return net, nil
 }
 
 // taskTypeCancelRelease 取消收尾回补的调度器重试任务类型
@@ -1387,7 +1446,8 @@ func runCancelEffects(ctx context.Context, eff *cancelEffect) error {
 }
 
 // loadCancelEffect 按订单重建待回补清单（供调度器重放取消收尾回补）
-// 整单取消的回补口径固定为全量明细，订单已置 6 时明细与用券不会再变，重建安全
+// 回补口径与取消事务内收集一致（净额 = 全量明细 − 已成功退款数量），
+// 订单已置 6 时状态机禁回 2/3、不会再有退款进入成功态，重建结果稳定
 //
 // 参数：
 //   - ctx: 上下文
@@ -1406,7 +1466,12 @@ func loadCancelEffect(ctx context.Context, db *mysql.Instance, orderID int64) (*
 	if err := db.GetDb().WithContext(ctx).Where("order_id = ?", orderID).Find(&items).Error; err != nil {
 		return nil, err
 	}
-	return &cancelEffect{OrderID: o.ID, Items: items, CouponID: o.CouponID}, nil
+	// 重放同样按净额口径组装（明细 − 已成功退款数量），与取消事务内收集的清单一致
+	net, err := netCancelItems(db.GetDb().WithContext(ctx), orderID, items)
+	if err != nil {
+		return nil, err
+	}
+	return &cancelEffect{OrderID: o.ID, Items: net, CouponID: o.CouponID}, nil
 }
 
 // recordSchedulerFailure 写入调度器失败重试队列（scheduler_failures）
@@ -1850,9 +1915,15 @@ func (s *OrderService) cancelOrderInTx(tx *gorm.DB, o *model.Order, operatorType
 	if err := tx.Where("order_id = ?", o.ID).Find(&items).Error; err != nil {
 		return nil, err
 	}
+	// 取消回补按净额（明细 − 已成功退款数量）：部分退款完成时已按退款单号回补过，
+	// 全量回补会触发商品服务净额闸门整批拒绝（详见 netCancelItems）
+	net, err := netCancelItems(tx, o.ID, items)
+	if err != nil {
+		return nil, err
+	}
 	// 库存与优惠券回补不在事务内做（远端已提交无法随本地回滚撤回），
 	// 交给调用方在事务提交后经 releaseCancelledOrder 执行
-	eff := &cancelEffect{OrderID: o.ID, Items: items, CouponID: o.CouponID}
+	eff := &cancelEffect{OrderID: o.ID, Items: net, CouponID: o.CouponID}
 
 	if err := s.createStatusLogTx(tx, o.ID, o.Status, 6, operatorType, operatorID, reason); err != nil {
 		return nil, err

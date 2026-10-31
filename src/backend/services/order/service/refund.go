@@ -425,7 +425,7 @@ type refundCalc struct {
 // reqAmount 仅允许调低，调低差额从最后一行明细扣减；
 // mode=2 仅金额退：不退商品，amount 为必填的自定义金额（不超过剩余可退）；
 // 运费仅整单退按 refund_freight_policy 策略退还（user_decide 时按 refundFreight 勾选），
-// 且不超过剩余可退运费（配送费已含在 pay_amount 内）
+// 且不超过剩余可退运费与剩余可退总额的较小值（配送费已含在 pay_amount 内）
 // 参数：
 //   - tx: 调用方事务句柄；本函数及其全部下游统计必须沿用同一句柄，
 //     否则「已退金额/已退数量」在事务外读取，看不见本事务未提交的写入（详见审查报告 P1-6）
@@ -452,6 +452,12 @@ func (s *RefundService) calcRefundOrder(tx *gorm.DB, o *model.Order, reqItems []
 	freightRemaining := round2(o.DeliveryFee - refundedFreight)
 	if freightRemaining < 0 {
 		freightRemaining = 0
+	}
+	// 运费可退额还须按剩余可退总额封顶：满减/券/手动优惠叠加后实付可能低于运费
+	// （如应付 110 含运费 10、手动优惠 105 → 实付 5），不封顶时整单退会算出
+	// 超过实付的退款金额，被支付侧累计退款上限拒绝，退款单永久卡失败且库存/券不回补
+	if freightRemaining > remaining {
+		freightRemaining = remaining
 	}
 	goodsRemaining := round2(remaining - freightRemaining)
 	if goodsRemaining < 0 {

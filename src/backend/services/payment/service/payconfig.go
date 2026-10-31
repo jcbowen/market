@@ -220,12 +220,17 @@ func (s *PaymentService) SavePayConfigRow(ctx context.Context, in *payment.PayCo
 	}
 
 	var row model.PayConfig
+	// prevVersion 记录读取时库中版本：下方比较校验是先读后写存在窗口
+	// （两请求读到同一版本后都会通过比较），原子性最终由保存时的
+	// WHERE updated_at=prevVersion 条件更新收口，空版本调用方（未传 UpdatedAt）同样兼容
+	prevVersion := ""
 	if in.Id > 0 {
 		existing, err := s.GetPayConfigRow(ctx, in.Id)
 		if err != nil {
 			return nil, err
 		}
 		row = *existing
+		prevVersion = row.UpdatedAt
 		// 乐观锁：调用方携带读取时的版本号，与库中不一致说明期间已被他人改写，
 		// 拒绝整行覆写（全量覆盖式保存，后提交者会静默丢掉先提交者的改动）
 		if in.UpdatedAt != "" && in.UpdatedAt != row.UpdatedAt {
@@ -280,13 +285,28 @@ func (s *PaymentService) SavePayConfigRow(ctx context.Context, in *payment.PayCo
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
-	row.UpdatedAt = nextPayConfigVersion(row.UpdatedAt)
+	row.UpdatedAt = nextPayConfigVersion(prevVersion)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
 	}
 
-	if err := s.db.GetDb().WithContext(ctx).Save(&row).Error; err != nil {
-		return nil, fmt.Errorf("保存支付配置失败: %w", err)
+	if row.ID > 0 {
+		// 条件更新代替整行 Save：WHERE 带读取时版本，与比较校验共同构成完整乐观锁，
+		// 0 行说明期间已被并发改写，后提交者不再静默覆盖先提交者的改动
+		res := s.db.GetDb().WithContext(ctx).Model(&model.PayConfig{}).
+			Where("id = ? AND updated_at = ?", row.ID, prevVersion).
+			Select("*").Updates(&row)
+		if res.Error != nil {
+			return nil, fmt.Errorf("保存支付配置失败: %w", res.Error)
+		}
+		if res.RowsAffected == 0 {
+			log.Printf("支付配置保存冲突：期望版本 %s 已被并发更新", prevVersion)
+			return nil, bizerr.New(codes.Aborted, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
+		}
+	} else {
+		if err := s.db.GetDb().WithContext(ctx).Create(&row).Error; err != nil {
+			return nil, fmt.Errorf("保存支付配置失败: %w", err)
+		}
 	}
 
 	// 本实例立即刷新，其余实例在下次支付调用时按版本号自动刷新
@@ -470,14 +490,20 @@ func (s *PaymentService) SetPayConfigEnabled(ctx context.Context, req *payment.S
 	}
 
 	// 条件更新代替整行 Save：只动 enabled 与乐观锁版本，
-	// 上传/保存等并发操作推进的其余字段不会被本接口回写覆盖
-	res := s.db.GetDb().WithContext(ctx).Model(&row).
+	// 上传/保存等并发操作推进的其余字段不会被本接口回写覆盖；
+	// WHERE 同时带读取时版本收口先读后写窗口，0 行说明期间已被并发改写
+	res := s.db.GetDb().WithContext(ctx).Model(&model.PayConfig{}).
+		Where("id = ? AND updated_at = ?", req.Id, row.UpdatedAt).
 		Updates(map[string]any{
 			"enabled":    req.Enabled,
 			"updated_at": nextPayConfigVersion(row.UpdatedAt),
 		})
 	if res.Error != nil {
 		return nil, fmt.Errorf("更新支付配置状态失败: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		log.Printf("支付配置启停冲突：期望版本 %s 已被并发更新", row.UpdatedAt)
+		return nil, bizerr.New(codes.Aborted, "支付配置已被其他操作更新，请刷新页面获取最新配置后重新提交")
 	}
 
 	s.getRegistryCached(ctx)
