@@ -358,7 +358,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      # fetch-depth: 0 完整克隆含全部 tag：H5 版本编号 = git tag 数量
+      # （gen-version.js / vite.config.ts 口径），默认浅克隆只有当前 1 个 tag
+      # 会导致镜像发布的 H5 版本编号恒为 1；完整克隆仅增数秒，远小于 npm ci 耗时
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
