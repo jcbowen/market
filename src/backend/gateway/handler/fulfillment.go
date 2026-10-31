@@ -226,15 +226,15 @@ func (h *OrderHandler) ListFulfillmentOrders(c *gin.Context) {
 		}
 		// 不回 pickup_code：取货码由顾客在详情页出示，回给履约端等于给了可截图冒领的凭据
 		list = append(list, gin.H{
-			"id":                    o.Id,
-			"order_no":              o.OrderNo,
-			"status":                o.Status,
-			"status_text":           fulfillmentStatusText(o.Status, req.OrderType),
-			"delivery_type":         o.DeliveryType,
-			"contact_name":          o.ContactName,
-			"contact_phone":         o.ContactPhone,
-			"contact_address":       o.ContactAddress,
-			"pay_amount":            o.PayAmount,
+			"id":              o.Id,
+			"order_no":        o.OrderNo,
+			"status":          o.Status,
+			"status_text":     fulfillmentStatusText(o.Status, req.OrderType),
+			"delivery_type":   o.DeliveryType,
+			"contact_name":    o.ContactName,
+			"contact_phone":   o.ContactPhone,
+			"contact_address": o.ContactAddress,
+			"pay_amount":      o.PayAmount,
 			// 已成功退款金额（0=无）：部分退款后订单状态不变，卡片凭该字段打「部分售后」标识
 			"refunded_amount":       o.RefundedAmount,
 			"delivery_user_id":      o.DeliveryUserId,

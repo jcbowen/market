@@ -751,7 +751,7 @@ func (s *RefundService) refundedStat(tx *gorm.DB, orderID int64) (map[int64]int3
 }
 
 // refundedQuantitiesByOrders 批量统计订单集合内各商品行已成功退款数量
-//（一次 GROUP BY 覆盖全部入参订单，行级口径与 refundedStat 一致：refunds.status=5）
+// （一次 GROUP BY 覆盖全部入参订单，行级口径与 refundedStat 一致：refunds.status=5）
 // 订单详情按次回填商品行 RefundedQuantity、履约/核销侧提示应交付剩余件数共用
 // 参数：
 //   - ctx: 上下文

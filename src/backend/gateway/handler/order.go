@@ -643,9 +643,9 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			})
 		}
 		refunds = append(refunds, gin.H{
-			"id":          r.Id,
-			"refund_no":   r.RefundNo,
-			"amount":      r.Amount,
+			"id":             r.Id,
+			"refund_no":      r.RefundNo,
+			"amount":         r.Amount,
 			"freight_amount": r.FreightAmount,
 			// 退款类型：1整单退 2部分退 3仅金额退
 			"type":   r.Type,
@@ -1083,7 +1083,7 @@ func (h *OrderHandler) ListMyRefunds(c *gin.Context) {
 			})
 		}
 		refunds = append(refunds, gin.H{
-			"id":       r.Id,
+			"id":        r.Id,
 			"refund_no": r.RefundNo,
 			// 关联订单：售后单卡片点击跳转订单详情用
 			"order_id":       r.OrderId,

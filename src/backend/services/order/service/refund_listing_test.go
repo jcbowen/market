@@ -32,7 +32,7 @@ import (
  */
 
 // seedRefundForUser 直插一条指定用户的退款单
-//（seedRefund 固定 UserID=99100001，用户隔离用例需要他人数据，参数化一份）
+// （seedRefund 固定 UserID=99100001，用户隔离用例需要他人数据，参数化一份）
 //
 // 参数：
 //   - t: 测试对象
