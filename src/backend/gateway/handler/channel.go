@@ -51,9 +51,10 @@ func (h *AdminHandler) GetClientChannels(c *gin.Context) {
 }
 
 // UpdateClientChannelRequest 更新客户端渠道请求体
+// name 仅作兼容保留：渠道名称为内置固定，服务端忽略传入值保留库中原值
 type UpdateClientChannelRequest struct {
 	Code       string   `json:"code" binding:"required"`
-	Name       string   `json:"name" binding:"required"`
+	Name       string   `json:"name"`
 	AppID      string   `json:"app_id"`
 	AppSecret  string   `json:"app_secret"`
 	Enabled    bool     `json:"enabled"`
@@ -61,7 +62,7 @@ type UpdateClientChannelRequest struct {
 }
 
 // UpdateClientChannel 更新客户端渠道配置
-// AppSecret 提交为空时保留原值；渠道 code 服务端校验一致性，不可变更
+// AppSecret 提交为空时保留原值；名称与 code 均服务端校验/固定，不可变更
 //
 // 参数：
 //   - c: gin 上下文

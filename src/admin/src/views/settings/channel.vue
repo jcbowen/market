@@ -107,7 +107,8 @@
 
           <n-form label-placement="left" label-width="110">
             <n-form-item label="渠道名称">
-              <n-input v-model:value="modalChannel.name" placeholder="显示名称" />
+              <!-- 渠道为内置固定项，名称只读展示不可修改（服务端同样忽略传入名称） -->
+              <n-text>{{ modalChannel.name }}</n-text>
             </n-form-item>
             <template v-if="needsAppID(modalChannel.code)">
               <n-form-item label="AppID">
@@ -530,7 +531,6 @@ async function onToggle(ch: ClientChannel, on: boolean) {
   try {
     await updateClientChannel(ch.id, {
       code: ch.code,
-      name: ch.name,
       app_id: ch.app_id,
       app_secret: '',
       enabled: ch.enabled,
@@ -554,15 +554,10 @@ async function saveChannel() {
     return
   }
   const ch = modalChannel.value
-  if (!ch.name.trim()) {
-    message.warning('渠道名称不能为空')
-    return
-  }
   saving.value = true
   try {
     await updateClientChannel(ch.id, {
       code: ch.code,
-      name: ch.name,
       app_id: ch.app_id,
       // Secret 留空时服务端保留原值，避免未重新输入时清空
       app_secret: ch.app_secret,

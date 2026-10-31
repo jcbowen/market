@@ -17,9 +17,9 @@
           <n-icon><SearchOutline /></n-icon>
         </template>
       </n-input>
-      <n-button v-if="registerable" size="small" @click="showRegister = true">
+      <n-button v-if="canRegister" size="small" @click="showRegister = true">
         <template #icon><n-icon><PersonAddOutline /></n-icon></template>
-        新增会员
+        添加会员
       </n-button>
     </div>
 
@@ -55,6 +55,16 @@
             <span class="phone">{{ maskPhone(u.phone) }}</span>
           </div>
           <n-tag v-if="u.status === 0" size="small" type="error">已拉黑</n-tag>
+          <!-- 查看订单：不触发选中（已拉黑会员也允许查看） -->
+          <n-button
+            v-if="canViewOrder"
+            size="tiny"
+            quaternary
+            type="primary"
+            @click.stop="openOrders(u)"
+          >
+            订单
+          </n-button>
         </div>
       </div>
     </n-spin>
@@ -77,11 +87,11 @@
       </n-button>
     </div>
 
-    <!-- 快速注册会员弹窗（registerable 开启时可用；后端幂等，已注册手机号自动复用并关联本社区） -->
+    <!-- 快速注册会员弹窗（「添加会员」按钮触发；后端幂等，已注册手机号自动复用并关联本社区） -->
     <n-modal
       :show="showRegister"
       preset="card"
-      title="新增会员"
+      title="添加会员"
       style="width: 400px; max-width: 92vw"
       @update:show="(v: boolean) => (showRegister = v)"
     >
@@ -117,6 +127,14 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- 会员订单弹窗（行内「订单」按钮触发）：订单号点击仅收起订单弹窗并经 open-order
+         转发给页面层，本选择器保持打开——有订单详情的页面盖开详情弹窗，无监听的页面回到列表 -->
+    <user-orders-modal
+      v-model:show="showOrders"
+      :user="ordersUser"
+      @open-order="onOpenOrder"
+    />
   </n-modal>
 </template>
 
@@ -125,15 +143,19 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { PersonAddOutline, SearchOutline } from '@vicons/ionicons5'
 import { createUser, getUserList } from '@/api/user'
+import { useAuthStore } from '@/stores/auth'
 import type { User } from '@/api/types'
+import UserOrdersModal from '@/views/user/components/UserOrdersModal.vue'
 
 /**
  * 会员选择弹窗组件（公共组件，优惠券手动发放 / 收银台代客下单共用）
  * 分页浏览当前社区会员（数据源 getUserList，按当前社区语境过滤），
  * 支持昵称/手机号模糊搜索（300ms 防抖）。
  * 选择交互：单选模式点击行即回传并关闭；多选模式点选/取消（跨页保留），底部确认批量回传。
- * 已拉黑会员置灰且不可选。
- * 开启 registerable 时提供「新增会员」快速注册（手机号幂等：已注册自动复用并关联本社区），
+ * 已拉黑会员置灰且不可选（仍可查看订单）。
+ * 行内「订单」按钮（order:view 权限）打开会员订单弹窗（信息卡+历史订单+常买商品），
+ * 订单号点击经 open-order 透传给页面层（订单列表页/收银台订单页盖开订单详情），本选择器保持打开。
+ * 默认提供「添加会员」快速注册（registerable，user:create 权限显隐；手机号幂等：已注册自动复用并关联本社区），
  * 注册成功单选模式直接选中回传，多选模式加入已选列表。
  */
 
@@ -143,7 +165,7 @@ const props = withDefaults(
     show: boolean
     /** 是否多选模式 */
     multiple?: boolean
-    /** 是否提供「新增会员」快速注册入口 */
+    /** 是否提供「添加会员」快速注册入口（默认开启；按钮另受 user:create 权限显隐） */
     registerable?: boolean
     /** 注册场景（仅影响后端会员-社区关联来源标记）：admin 后台 / pos 收银台 */
     registerScene?: 'admin' | 'pos'
@@ -156,7 +178,7 @@ const props = withDefaults(
   }>(),
   {
     multiple: false,
-    registerable: false,
+    registerable: true,
     registerScene: 'admin',
     title: '选择会员',
     selected: () => [],
@@ -170,7 +192,15 @@ const emit = defineEmits<{
   (e: 'select', user: User): void
   /** 多选模式确认回传 */
   (e: 'confirm', users: User[]): void
+  /** 会员订单弹窗内点击订单号：透传给页面层打开订单详情（本选择器随之关闭） */
+  (e: 'open-order', orderId: number): void
 }>()
+
+const authStore = useAuthStore()
+/** 行内「订单」按钮：查看订单走订单列表接口，按 order:view 权限显隐 */
+const canViewOrder = authStore.hasPermission('order:view')
+/** 「添加会员」按钮：registerable 开关 + user:create 权限双重控制 */
+const canRegister = computed(() => props.registerable && authStore.hasPermission('user:create'))
 
 const PAGE_SIZE = 10
 const pageSize = PAGE_SIZE
@@ -312,6 +342,29 @@ function removePicked(u: User) {
 function onConfirm() {
   emit('confirm', [...selectedUsers.value])
   emit('update:show', false)
+}
+
+// --- 行内查看会员订单 ---
+const showOrders = ref(false)
+const ordersUser = ref<User | null>(null)
+
+/**
+ * 打开会员订单弹窗（展示该会员信息卡、历史订单与常买商品）
+ * @param u 目标会员（已拉黑也允许查看）
+ */
+function openOrders(u: User) {
+  ordersUser.value = u
+  showOrders.value = true
+}
+
+/**
+ * 会员订单弹窗内点击订单号：收起订单弹窗并透传给页面层打开订单详情，
+ * 本选择器保持打开（未监听 open-order 的页面自然回到会员列表，无断头路）
+ * @param orderId 订单 ID
+ */
+function onOpenOrder(orderId: number) {
+  showOrders.value = false
+  emit('open-order', orderId)
 }
 
 // --- 快速注册会员 ---

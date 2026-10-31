@@ -237,8 +237,8 @@
     </n-space>
   </n-modal>
 
-  <!-- 会员选择器（筛选用，单选；复用公共 UserPicker 组件） -->
-  <user-picker v-model:show="userPickerVisible" title="按会员筛选订单" @select="onUserPicked" />
+  <!-- 会员选择器（筛选用，单选；复用公共 UserPicker 组件；订单号点击打开订单详情弹窗） -->
+  <user-picker v-model:show="userPickerVisible" title="按会员筛选订单" @select="onUserPicked" @open-order="openDetail" />
 
   <!-- 商品选择器（筛选用，单选；按商品过滤含全部规格） -->
   <n-modal

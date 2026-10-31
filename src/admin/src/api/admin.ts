@@ -401,14 +401,14 @@ export function getClientChannels() {
 
 /**
  * 更新客户端渠道配置
- * app_secret 提交为空时服务端保留原值
+ * app_secret 提交为空时服务端保留原值；渠道名称为内置固定，不在更新字段内（服务端忽略传入名称）
  * @param id 渠道 ID
  * @param data 渠道配置数据
  * @returns 更新后的渠道信息
  */
 export function updateClientChannel(
   id: number,
-  data: Pick<ClientChannel, 'code' | 'name' | 'app_id' | 'app_secret' | 'enabled'> & { pay_methods?: string[] },
+  data: Pick<ClientChannel, 'code' | 'app_id' | 'app_secret' | 'enabled'> & { pay_methods?: string[] },
 ) {
   return request<ApiResult<ClientChannel>>({
     url: `/api/v1/admin/settings/channels/${id}`,

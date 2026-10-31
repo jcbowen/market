@@ -52,6 +52,7 @@
       v-if="canBind"
       v-model:show="showUserPicker"
       title="补绑会员"
+      register-scene="pos"
       @select="onSelectMember"
     />
   </n-modal>

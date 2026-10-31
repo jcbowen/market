@@ -129,7 +129,7 @@ func (s *ChannelService) EnsureDefaultClientChannels() error {
 	return nil
 }
 
-// ListClientChannels 查询客户端渠道列表（按固定常用程度顺序，与 channel.OrderIndex 一致）
+// ListClientChannels 查询客户端渠道列表（启用渠道在前、停用在后，组内按固定常用程度顺序，与 channel.OrderIndex 一致）
 //
 // 参数：
 //   - ctx: 上下文
@@ -147,10 +147,16 @@ func (s *ChannelService) ListClientChannels(ctx context.Context, onlyEnabled boo
 	if err := db.Find(&list).Error; err != nil {
 		return nil, fmt.Errorf("查询客户端渠道列表失败: %w", err)
 	}
-	// 排序功能已移除：按内置固定顺序（常用程度）返回，未知渠道排最后
+	// 排序功能已移除：启用渠道整体前置、停用渠道后置（切换开关后启用的渠道自动浮到前面），
+	// 两组内部按内置固定顺序（常用程度）返回，未知渠道排最后；
+	// 停用统一加偏移一个全长周期，组内相对顺序不变
+	offset := len(channel.All())
 	order := make(map[string]int, len(list))
 	for _, row := range list {
 		order[row.Code] = channel.OrderIndex(row.Code)
+		if !row.Enabled {
+			order[row.Code] += offset
+		}
 	}
 	for i := 1; i < len(list); i++ {
 		for j := i; j > 0 && order[list[j].Code] < order[list[j-1].Code]; j-- {
@@ -242,8 +248,9 @@ func validatePayMethods(code string, methods []string) (string, error) {
 	return string(out), nil
 }
 
-// SaveClientChannel 保存渠道配置（名称/凭证/启用/支付方式绑定）
-// AppSecret 为空时保留原值，避免未重新输入时清空已保存内容；code 不可变更；
+// SaveClientChannel 保存渠道配置（凭证/启用/支付方式绑定）
+// 名称与 code 均为内置固定不可修改：名称忽略传入值保留库中原值；
+// AppSecret 为空时保留原值，避免未重新输入时清空已保存内容；
 // pay_methods 做语法、平台兼容与去重校验（validatePayMethods），
 // 绑定微信支付的渠道另要求 AppID（微信 AppID 属渠道身份，见 model.ClientChannel.IsConfigured）
 //
@@ -261,9 +268,6 @@ func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveCl
 	if !channel.IsValid(req.Code) {
 		return nil, bizerr.New(codes.InvalidArgument, fmt.Sprintf("未知客户端渠道: %s", req.Code))
 	}
-	if req.Name == "" {
-		return nil, bizerr.New(codes.InvalidArgument, "渠道名称不能为空")
-	}
 
 	var row model.ClientChannel
 	if err := s.db.GetDb().WithContext(ctx).First(&row, req.Id).Error; err != nil {
@@ -276,7 +280,6 @@ func (s *ChannelService) SaveClientChannel(ctx context.Context, req *user.SaveCl
 		return nil, bizerr.New(codes.InvalidArgument, "渠道标识不可变更")
 	}
 
-	row.Name = req.Name
 	row.AppID = strings.TrimSpace(req.AppId)
 	if req.AppSecret != "" {
 		row.AppSecret = req.AppSecret

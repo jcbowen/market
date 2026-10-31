@@ -341,10 +341,21 @@
       @close-abandoned="onRepayAbandoned"
     />
 
-    <!-- 会员选择器（筛选用，单选；复用公共 UserPicker） -->
-    <user-picker v-model:show="userPickerVisible" title="按会员筛选订单" @select="onUserPicked" />
+    <!-- 会员选择器（筛选用，单选；复用公共 UserPicker；订单号点击打开订单详情弹窗） -->
+    <user-picker
+      v-model:show="userPickerVisible"
+      title="按会员筛选订单"
+      register-scene="pos"
+      @select="onUserPicked"
+      @open-order="openOrderDetail"
+    />
     <!-- 会员选择器（散客单补绑会员用，详情弹窗内触发；与筛选用互不干扰） -->
-    <user-picker v-model:show="bindPickerVisible" title="补绑会员" @select="onBindUserSelect" />
+    <user-picker
+      v-model:show="bindPickerVisible"
+      title="补绑会员"
+      register-scene="pos"
+      @select="onBindUserSelect"
+    />
 
     <!-- 商品选择器（筛选用，单选；与后台订单列表同款：仅上架商品 + 关键字防抖 + 分页） -->
     <n-modal
