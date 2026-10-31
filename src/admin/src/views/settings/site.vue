@@ -81,6 +81,8 @@
             </n-button>
           </n-space>
 
+          <!-- 外部引导锚点：渠道管理 gzh/mp 卡片「域名校验文件」链接跳转至此滚动定位 -->
+          <div id="verify-files" style="scroll-margin-top: 80px"></div>
           <n-divider title-placement="left">平台验证文件</n-divider>
           <n-alert type="default" :show-icon="false" class="mb-16" style="font-size: 12px">
             微信公众号配置「JS接口安全域名 / 网页授权域名」与小程序配置「业务域名」时，需把平台下发的
@@ -154,8 +156,9 @@
 <script setup lang="ts">
 // 页面组件名与路由 name 保持一致，供 keep-alive include 按组件名匹配
 defineOptions({ name: 'SiteSetting' })
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { refreshOnActivated } from '@/utils/activateRefresh'
+import { useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { getSiteSetting, updateSiteSetting, listVerifyFiles, saveVerifyFile, deleteVerifyFile } from '@/api/admin'
 import type { SiteSetting, VerifyFileInfo } from '@/api/admin'
@@ -171,6 +174,7 @@ import { useAuthStore } from '@/stores/auth'
  */
 const authStore = useAuthStore()
 const isSuperAdmin = computed(() => authStore.isSuperAdmin)
+const route = useRoute()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -299,8 +303,14 @@ async function save() {
 
 // keep-alive 缓存下切回本页不重新挂载，需重新拉取：
 // 带着旧表单值整份 PUT 会覆盖他人刚改的配置，未保存的本地编辑以最新值为准丢弃
-onMounted(loadPage)
-refreshOnActivated(loadPage)
+onMounted(() => {
+  loadPage()
+  scrollToAnchor()
+})
+refreshOnActivated(() => {
+  loadPage()
+  scrollToAnchor()
+})
 
 /**
  * 页面进入/切回时的全量刷新：站点设置与平台验证文件列表
@@ -308,6 +318,17 @@ refreshOnActivated(loadPage)
 function loadPage() {
   load()
   loadVerifyFiles()
+}
+
+/**
+ * 处理外部引导锚点（渠道管理 gzh/mp 卡片「域名校验文件」链接带 anchor=verify-files
+ * 跳转过来时），平滑滚动到「平台验证文件」分区
+ */
+function scrollToAnchor() {
+  if (route.query.anchor !== 'verify-files') return
+  nextTick(() => {
+    document.getElementById('verify-files')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
 }
 
 // ---------------- 平台验证文件 ----------------

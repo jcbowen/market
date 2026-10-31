@@ -74,6 +74,9 @@
               <n-button v-if="scanMode(ch.code) === 'guide'" text size="tiny" type="primary" @click="goSiteSetting">
                 去配置
               </n-button>
+              <n-button v-if="needsVerifyFile(ch.code)" text size="tiny" type="primary" @click="goVerifyFileGuide">
+                域名校验文件
+              </n-button>
             </template>
           </div>
         </div>
@@ -448,6 +451,22 @@ async function loadSiteBase() {
  */
 function goSiteSetting() {
   router.push('/system/site')
+}
+
+/**
+ * 微信系渠道需要域名归属校验文件：gzh 公众号（JS接口安全域名/网页授权域名）、
+ * mp 小程序（业务域名 web-view）；h5/alimp 等无需
+ * @param code 渠道标识
+ */
+function needsVerifyFile(code: string): boolean {
+  return code === 'gzh' || code === 'mp'
+}
+
+/**
+ * 跳转站点设置页并锚定到「平台验证文件」分区
+ */
+function goVerifyFileGuide() {
+  router.push({ path: '/system/site', query: { anchor: 'verify-files' } })
 }
 
 /**
