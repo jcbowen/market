@@ -89,7 +89,10 @@
           class="product-card"
           @click="goProductDetail(item.id)"
         >
-          <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" />
+          <!-- 正方形商品图容器：与商品图 600×600（1:1）口径一致，aspectFill 零裁切 -->
+          <view class="product-image-box">
+            <image class="product-image" :src="item.main_image || '/static/logo.png'" mode="aspectFill" />
+          </view>
           <view class="product-info">
             <text class="product-name">{{ item.name }}</text>
             <text class="product-price">{{ formatPrice(item.price) }}</text>
@@ -404,9 +407,21 @@ function onLogout() {
   overflow: hidden;
 }
 
-.product-image {
+/* 正方形商品图容器：padding-bottom 100% 撑高（小程序 webview 对 aspect-ratio 支持参差，用经典兼容写法） */
+.product-image-box {
+  position: relative;
   width: 100%;
-  height: 320rpx;
+  height: 0;
+  padding-bottom: 100%;
+  overflow: hidden;
+}
+
+.product-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .product-info {
