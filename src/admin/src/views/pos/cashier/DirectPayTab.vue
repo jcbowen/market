@@ -79,7 +79,7 @@
     <receipt-modal v-model:show="showPaid" :receipt="receipt" @bound="onReceiptBound" />
 
     <!-- 会员选择（单选，含现场注册；与商品下单共用） -->
-    <user-picker v-model:show="showUserPicker" title="选择会员" registerable register-scene="pos" @select="onSelectMember" />
+    <user-picker v-model:show="showUserPicker" title="选择会员" register-scene="pos" @select="onSelectMember" />
   </div>
 </template>
 

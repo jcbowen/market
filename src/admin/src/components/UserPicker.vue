@@ -229,7 +229,14 @@ onUnmounted(() => {
 watch(
   () => props.show,
   (v) => {
-    if (v) init()
+    if (v) {
+      init()
+      return
+    }
+    // 关闭时复位内嵌会员订单弹窗：点遮罩关外层时内层 modal 随内容卸载，
+    // 本地状态若残留，下次打开会直接弹出上一个会员的订单弹窗
+    showOrders.value = false
+    ordersUser.value = null
   }
 )
 

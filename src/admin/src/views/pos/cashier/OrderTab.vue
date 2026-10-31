@@ -330,7 +330,7 @@
   </n-modal>
 
   <!-- 会员选择（单选，支持现场注册新会员） -->
-  <user-picker v-model:show="showUserPicker" title="选择会员" registerable register-scene="pos" @select="onSelectMember" />
+  <user-picker v-model:show="showUserPicker" title="选择会员" register-scene="pos" @select="onSelectMember" />
 </template>
 
 <script setup lang="ts">
