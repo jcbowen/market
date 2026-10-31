@@ -64,16 +64,68 @@ rm -f "$SHUTDOWN_MARKER" 2>/dev/null || true
 
 # ---------- 工具函数 ----------
 
-# prepare_dir 确保目录存在且属主为指定 uid（属主已正确时跳过递归 chown，
-# 避免大附件目录每次启动都全量扫描）
-prepare_dir() {
-  local path=$1 uid=$2
-  mkdir -p "$path" 2>/dev/null || true
-  local cur
-  cur=$(stat -c %u "$path" 2>/dev/null || echo -1)
-  if [ "$cur" != "$uid" ]; then
-    chown -R "$uid:$uid" "$path" 2>/dev/null || true
+# warn_permission 打印数据目录不可写告警及可直接复制的修复命令
+# 参数: $1 容器内目录路径；$2 目标用户名；$3 uid；$4 gid；$5 原因描述
+# 返回: 无（仅打印日志，不中断启动——保持原有容错口径，服务能跑则继续跑）
+# 异常: 无
+# 示例: warn_permission /var/lib/mysql mysql 999 999 "属主修正失败（chown 返回非 0）"
+warn_permission() {
+  local path=$1 owner=$2 uid=$3 gid=$4 reason=$5
+  log "警告: $path $reason，mysqld/redis/业务进程可能因 Permission denied 反复重启"
+  log "  修复: docker exec -u root <容器名> chown -R $uid:$gid $path"
+  log "  宿主侧: docker inspect -f '{{.Mounts}}' <容器名> 取 Source 路径，再执行 chown -R $uid:$gid <宿主路径>"
+  log "  若 chown 报 Operation not permitted（文件锁，如宝塔「防篡改」chattr +i/+a），先解锁再重试"
+}
+
+# ensure_owner 把目录属主递归修正为目标用户，失败时打印带修复命令的告警
+# 参数: $1 目录路径；$2 用户名；$3 uid；$4 gid；$5 强制递归标记（非空=即使顶层属主匹配也递归授权）
+# 返回: 0（成功或无需修正）；失败仅告警，不中断启动
+# 异常: 无
+# 说明: 强制递归用于 MySQL/Redis 数据目录——历史上出现过「顶层目录属主恰好匹配，
+#       内部文件属主仍是旧运行时/root 留下的，跳过递归 chown 后启动报 errno 13；
+#       这两个目录体积有限，每次启动递归授权的开销远小于数据库起不来的代价
+# 示例: ensure_owner /var/lib/mysql mysql 999 999 1
+ensure_owner() {
+  local path=$1 owner=$2 uid=$3 gid=$4 force=${5:-}
+  if [ -z "$force" ] && [ "$(stat -c %u "$path" 2>/dev/null || echo -1)" = "$uid" ]; then
+    return 0
   fi
+  if chown -R "$uid:$gid" "$path" 2>/dev/null; then
+    return 0
+  fi
+  warn_permission "$path" "$owner" "$uid" "$gid" "属主修正失败（chown 返回非 0）"
+  return 0
+}
+
+# probe_writable 以目标用户身份实测目录可写（root 视角 test -w 恒真，测不出 bind mount 真实权限）
+# 参数: $1 目录路径；$2 用户名；$3 uid；$4 gid
+# 返回: 0（可写）；不可写时打印带修复命令的告警，不中断启动
+# 异常: 无
+# 示例: probe_writable /data redis 999 999
+probe_writable() {
+  local path=$1 owner=$2 uid=$3 gid=$4
+  runuser -u "$owner" -- test -w "$path" 2>/dev/null && return 0
+  warn_permission "$path" "$owner" "$uid" "$gid" "对用户 $owner 实测不可写"
+  return 0
+}
+
+# prepare_dir 确保目录存在并归属指定用户，随后校验目标用户可写
+# 参数: $1 目录路径；$2 用户名；$3 强制递归标记（可选，非空=每次递归授权，MySQL/Redis 用）
+# 返回: 0；授权/校验失败仅告警，不中断启动
+# 异常: 无
+# 示例: prepare_dir "$MYSQL_DATA" mysql force
+#       prepare_dir "$APP_DIR/uploads" appuser   # 属主已正确时跳过递归扫描
+prepare_dir() {
+  local path=$1 owner=$2 force=${3:-}
+  local uid gid
+  mkdir -p "$path" 2>/dev/null || true
+  if ! uid=$(id -u "$owner" 2>/dev/null); then
+    log "警告: 用户 $owner 不存在，跳过 $path 的授权校验"
+    return 0
+  fi
+  gid=$(id -g "$owner" 2>/dev/null) || gid=$uid
+  ensure_owner "$path" "$owner" "$uid" "$gid" "$force"
+  probe_writable "$path" "$owner" "$uid" "$gid"
 }
 
 # sql_escape 转义 SQL 字符串字面量中的反斜杠与单引号
@@ -161,18 +213,20 @@ trap shutdown TERM INT
 
 # ---------- 目录授权 ----------
 
-prepare_dir "$RUNTIME_DIR" 10001
-prepare_dir "$APP_DIR/uploads" 10001
-prepare_dir "$APP_DIR/logs" 10001
-prepare_dir "$APP_DIR/data/geoip" 10001
+prepare_dir "$RUNTIME_DIR" appuser
+prepare_dir "$APP_DIR/uploads" appuser
+prepare_dir "$APP_DIR/logs" appuser
+prepare_dir "$APP_DIR/data/geoip" appuser
 # 登录密码加密 RSA 私钥目录：gateway 首启自动生成落盘（bin/config.allinone.yaml 的
 # password_rsa_key_file 指向此处），挂载宿主目录后容器重建/升级镜像密钥不丢
-prepare_dir "$APP_DIR/data/ssl" 10001
+prepare_dir "$APP_DIR/data/ssl" appuser
 # 平台验证文件目录：gateway 伪静态下发的落盘目标（/app 属 root，非 root 的 gateway
 # 无权就地 mkdir，须在此预创建授权；verifyfs.Save 自身另有 MkdirAll 兜底）
-prepare_dir "$APP_DIR/verify" 10001
-prepare_dir "$MYSQL_DATA" "$(id -u mysql)"
-prepare_dir /data "$(id -u redis)"
+prepare_dir "$APP_DIR/verify" appuser
+# MySQL/Redis 数据目录强制递归授权（force 标记）：宿主目录里可能残留旧运行时或
+# root 写入的文件，顶层属主恰好匹配时若跳过递归 chown，启动即报 errno 13 Permission denied
+prepare_dir "$MYSQL_DATA" mysql force
+prepare_dir /data redis force
 
 # ---------- GeoIP 定位库（可选，非致命） ----------
 
